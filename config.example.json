@@ -1,0 +1,33 @@
+{
+  "client_id": "cliente_exemplo",
+  "environment": "development",
+  "channels": {
+    "whatsapp": {
+      "enabled": true,
+      "provider": "meta",
+      "account_id": "WABA_ID_EXEMPLO",
+      "secret_env": "HERMES_WHATSAPP_TOKEN"
+    },
+    "instagram": {
+      "enabled": true,
+      "provider": "meta",
+      "account_id": "IG_ACCOUNT_ID_EXEMPLO",
+      "secret_env": "HERMES_INSTAGRAM_TOKEN"
+    },
+    "email": {
+      "enabled": true,
+      "provider": "imap_smtp",
+      "account_id": "atendimento@example.invalid",
+      "secret_env": "HERMES_EMAIL_PASSWORD"
+    }
+  },
+  "pipeline": {
+    "initial_stage": "novo_contato",
+    "automatic_forward_only": true,
+    "stages": ["novo_contato", "em_atendimento", "qualificado", "agendado", "fechado"]
+  },
+  "idempotency": {
+    "namespace": "cliente_exemplo",
+    "ttl_seconds": 604800
+  }
+}

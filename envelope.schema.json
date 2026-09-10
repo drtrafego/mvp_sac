@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/hermes/multicanal/envelope.schema.json",
+  "title": "Hermes Normalized Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "event_id", "provider_event_id", "channel", "provider", "account_id", "identity", "direction", "occurred_at", "received_at", "message", "dedupe_key"],
+  "properties": {
+    "version": {"const": "1.0"},
+    "event_id": {"type": "string", "minLength": 1},
+    "provider_event_id": {"type": "string", "minLength": 1},
+    "channel": {"enum": ["whatsapp", "instagram", "email"]},
+    "provider": {"type": "string", "minLength": 1},
+    "account_id": {"type": "string", "minLength": 1},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "account_id", "external_user_id", "canonical_key"],
+      "properties": {
+        "channel": {"enum": ["whatsapp", "instagram", "email"]},
+        "account_id": {"type": "string", "minLength": 1},
+        "external_user_id": {"type": "string", "minLength": 1},
+        "canonical_key": {"type": "string", "minLength": 1},
+        "display_name": {"type": ["string", "null"]}
+      }
+    },
+    "direction": {"enum": ["inbound", "outbound"]},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "received_at": {"type": "string", "format": "date-time"},
+    "message": {"type": "object"},
+    "acquisition": {"type": ["object", "null"]},
+    "raw": {"type": ["object", "null"]},
+    "dedupe_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

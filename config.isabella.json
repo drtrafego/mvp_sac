@@ -1,0 +1,47 @@
+{
+  "client_id": "bella-franklin-desenvolvimento-sistemicos",
+  "client_name": "Bella Franklin Desenvolvimento Sistemicos",
+  "environment": "staging",
+  "schema": "bella_franklin",
+  "channels": {
+    "whatsapp": {
+      "enabled": false,
+      "provider": "meta",
+      "account_id": null,
+      "phone_number_id": null,
+      "status": "aguardando_waba_e_numero"
+    },
+    "instagram": {
+      "enabled": true,
+      "provider": "meta",
+      "account_id": "17841400715053626",
+      "page_id": "239367175926974",
+      "username": "isabellafranklind",
+      "status": "identificado_aguardando_app_e_token"
+    },
+    "email": {
+      "enabled": false,
+      "provider": null,
+      "account_id": null,
+      "inbound": null,
+      "outbound": null,
+      "status": "dominio_sem_mx_aguardando_caixa_e_provedor"
+    }
+  },
+  "pipeline": {
+    "initial_stage": "novo_contato",
+    "automatic_forward_only": true,
+    "stages": [
+      "novo_contato",
+      "em_atendimento",
+      "qualificado",
+      "agendado",
+      "fechado"
+    ],
+    "status": "nomes_provisorios_aguardando_confirmacao"
+  },
+  "idempotency": {
+    "namespace": "bella-franklin-desenvolvimento-sistemicos",
+    "ttl_seconds": 2592000
+  }
+}

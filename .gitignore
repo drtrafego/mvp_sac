@@ -1,0 +1,24 @@
+# Segredos e credenciais — nada disto vai para o repositório
+homologacao/secrets/
+compose.homologacao.yaml
+.env
+.env.*
+!.env.example
+!.env.isabella.example
+!.env.v2.example
+
+# Dado real de cliente (sanitizado, mas real)
+painel/autonomia.json
+
+# Provas e artefatos pesados
+provas/
+*.png
+*.sqlite3
+*.sqlite3-*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+var/
+backups/

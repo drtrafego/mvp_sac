@@ -1,0 +1,52 @@
+x-runtime: &runtime
+  build: .
+  restart: unless-stopped
+  env_file:
+    - path: .env.isabella
+      required: true
+  environment:
+    DATABASE_PATH: /data/isabella-multicanal.sqlite3
+    BACKEND_HOST: 0.0.0.0
+    STRICT_CONFIG: "true"
+  volumes:
+    - multicanal-data:/data
+  init: true
+  stop_grace_period: 30s
+
+services:
+  server:
+    <<: *runtime
+    command: ["python3", "-m", "backend.cli", "server"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+
+  worker-inbound:
+    <<: *runtime
+    command: ["python3", "-m", "backend.cli", "worker-inbound"]
+    depends_on:
+      server:
+        condition: service_healthy
+
+  worker-outbound:
+    <<: *runtime
+    command: ["python3", "-m", "backend.cli", "worker-outbound"]
+    depends_on:
+      server:
+        condition: service_healthy
+
+  worker-email-imap:
+    <<: *runtime
+    profiles: ["imap"]
+    command: ["python3", "-m", "backend.cli", "worker-email-imap"]
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  multicanal-data:

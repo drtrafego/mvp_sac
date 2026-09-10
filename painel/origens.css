@@ -1,0 +1,160 @@
+/* Apresentacao de canais e origens. Herda os tokens de styles.css
+ * (--surface, --line, --muted, --accent). Cada bloco recebe a cor da marca
+ * pela variavel --marca, definida inline pelo origens.js. */
+
+.selo {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--marca) 16%, transparent);
+  color: var(--marca);
+  border: 1px solid color-mix(in srgb, var(--marca) 32%, transparent);
+  flex: none;
+}
+.selo svg { width: 62%; height: 62%; display: block; }
+.selo b { font-weight: 850; letter-spacing: -.04em; line-height: 1; }
+.selo-xs { width: 22px; height: 22px; border-radius: 7px; }
+.selo-xs b { font-size: 12px; }
+.selo-md { width: 34px; height: 34px; border-radius: 10px; }
+.selo-md b { font-size: 17px; }
+.selo-lg { width: 44px; height: 44px; border-radius: 13px; }
+.selo-lg b { font-size: 22px; }
+/* Logos multicoloridos (Google) nao herdam a cor da marca. */
+.selo-colorido { background: #fff; border-color: #ffffff26; }
+.selo-colorido svg { width: 66%; height: 66%; }
+.selo-vazio { color: var(--muted); background: #ffffff0d; border-color: var(--line); font-size: 12px; }
+
+/* --------------------------------------------------------------- canais */
+
+.canal {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--marca, var(--muted));
+  vertical-align: middle;
+}
+.canal svg { width: 15px; height: 15px; display: block; flex: none; }
+.canal > span:not(.sr) { font-size: 11px; color: #c3cbd2; }
+.canal .ponto { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.canais { display: inline-flex; align-items: center; gap: 7px; flex: none; }
+.canais .canal svg { width: 14px; height: 14px; opacity: .92; }
+.sr {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---------------------------------------------------------- chip origem */
+
+.chip-origem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--marca) 9%, #ffffff05);
+  border: 1px solid color-mix(in srgb, var(--marca) 22%, transparent);
+  max-width: 100%;
+  min-width: 0;
+}
+.chip-glifo {
+  display: inline-grid; place-items: center; flex: none;
+  width: 22px; height: 22px; border-radius: 7px;
+  background: color-mix(in srgb, var(--marca) 18%, transparent);
+  color: var(--marca);
+}
+.chip-glifo svg { width: 14px; height: 14px; display: block; }
+.chip-texto { display: grid; min-width: 0; line-height: 1.25; }
+.chip-texto small {
+  font-size: 9px; letter-spacing: .09em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--marca) 62%, var(--muted));
+}
+.chip-texto strong {
+  font-size: 12px; font-weight: 650; color: #eef1ec;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chip-mini { padding: 3px 8px 3px 4px; gap: 6px; }
+.chip-mini .chip-glifo { width: 18px; height: 18px; border-radius: 6px; }
+.chip-mini .chip-glifo svg { width: 11px; height: 11px; }
+.chip-mini .chip-texto strong { font-size: 11px; }
+
+/* ---------------------------------------------------------- estado/selo */
+
+.estado {
+  font-size: 9px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase;
+  padding: 3px 7px; border-radius: 999px; white-space: nowrap; flex: none;
+}
+.e-ativo { background: #1e3318; color: #b8f35a; }
+.e-homologacao { background: #33301a; color: #f0cf7a; }
+.e-planejado { background: #23282d; color: #9aa7b2; }
+.e-desativado { background: #2b2224; color: #d79c94; }
+
+/* ----------------------------------------------------- cartao ferramenta */
+
+.grade-ferramentas { display: grid; gap: 10px; padding: 14px; }
+.cartao-ferramenta {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--marca) 7%, transparent), transparent 62%), var(--surface2);
+  overflow: hidden;
+}
+.cartao-ferramenta > header {
+  display: flex; align-items: center; gap: 11px;
+  padding: 12px 14px; border-bottom: 1px solid var(--line);
+}
+.cartao-ferramenta > header > div { display: grid; min-width: 0; flex: 1; }
+.cartao-ferramenta > header strong { font-size: 13.5px; letter-spacing: -.01em; }
+.cartao-ferramenta > header small {
+  font-size: 10px; color: var(--muted); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cartao-total {
+  font-size: 17px; font-weight: 800; letter-spacing: -.04em;
+  color: var(--marca); flex: none;
+}
+.lista-origens { list-style: none; margin: 0; padding: 4px 0; display: grid; }
+.linha-origem {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto auto;
+  align-items: center; gap: 9px;
+  padding: 8px 14px;
+}
+.linha-origem + .linha-origem { border-top: 1px solid #ffffff08; }
+.linha-glifo { color: color-mix(in srgb, var(--marca) 78%, #ffffff); display: grid; place-items: center; }
+.linha-glifo svg { width: 15px; height: 15px; display: block; }
+.linha-nome {
+  font-size: 12px; color: #dfe4e8;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.linha-total { font-size: 12px; font-weight: 750; color: #fff; min-width: 34px; text-align: right; }
+
+/* -------------------------------------------------------- filtro origem */
+
+.filtros-origem {
+  display: flex; align-items: center; gap: 6px;
+  padding: 11px 14px; border-bottom: 1px solid var(--line);
+  overflow-x: auto; scrollbar-width: thin;
+}
+.filtros-rotulo {
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--muted); flex: none; margin-right: 2px;
+}
+.filtro-origem {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid transparent; border-radius: 999px;
+  background: #20252a; color: var(--muted);
+  padding: 6px 11px; font-size: 11px; white-space: nowrap; flex: none;
+}
+.filtro-origem:hover { background: #262c32; color: #dfe4e8; }
+.filtro-origem .filtro-glifo { display: grid; place-items: center; color: var(--marca, currentColor); }
+.filtro-origem .filtro-glifo svg { width: 13px; height: 13px; display: block; }
+.filtro-origem.ativo {
+  background: color-mix(in srgb, var(--marca, var(--accent)) 17%, transparent);
+  border-color: color-mix(in srgb, var(--marca, var(--accent)) 45%, transparent);
+  color: #fff;
+}
+
+@media (max-width: 720px) {
+  .linha-origem { grid-template-columns: 20px minmax(0, 1fr) auto; row-gap: 4px; }
+  .linha-origem .canais { grid-column: 2; }
+  .linha-origem .estado { grid-column: 3; }
+}

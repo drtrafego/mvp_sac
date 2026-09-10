@@ -1,0 +1,18 @@
+{
+  "tenant_id": "cliente-exemplo",
+  "tenant_name": "Cliente Exemplo",
+  "agent_id": "agente-exemplo",
+  "agent_name": "Agente Exemplo",
+  "schema_name": "sac_cliente_exemplo_agente_exemplo",
+  "owner_role": "sac_owner",
+  "app_role": "sac_app",
+  "worker_role": "sac_worker",
+  "registry_key": "agente-exemplo",
+  "runtime_config": {
+    "hermes": {
+      "base_url": "https://hermes.exemplo.internal",
+      "model": "Hermes"
+    }
+  },
+  "hermes_api_key_secret_ref": "cliente-exemplo/agente-exemplo/hermes-api-key"
+}

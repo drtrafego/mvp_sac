@@ -1,0 +1,37 @@
+services:
+  sac-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.v2
+    image: hermes-sac-v2:local
+    env_file: ["${SAC_ENV_FILE:-.env.v2}"]
+    command: ["python", "-m", "backend.runtime_v2", "server"]
+    ports: ["127.0.0.1:8080:8080"]
+    volumes:
+      - ${SAC_SECRET_HOST_DIR:?configure SAC_SECRET_HOST_DIR}:/run/secrets/sac:ro
+    read_only: true
+    tmpfs: [/tmp]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  sac-worker:
+    image: hermes-sac-v2:local
+    env_file: ["${SAC_ENV_FILE:-.env.v2}"]
+    command: ["python", "-m", "backend.runtime_v2", "worker"]
+    volumes:
+      - ${SAC_SECRET_HOST_DIR:?configure SAC_SECRET_HOST_DIR}:/run/secrets/sac:ro
+    read_only: true
+    tmpfs: [/tmp]
+    restart: unless-stopped
+    depends_on:
+      sac-server:
+        condition: service_healthy
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
