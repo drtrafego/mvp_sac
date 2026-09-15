@@ -1,13 +1,7 @@
-/* Quadro kanban do pipeline do SAC.
+/* Quadro kanban do pipeline do SAC com Modal de Edição de Cards.
  *
- * Portado do CRM do mvp_agente_ia (components/kanban) para JavaScript puro:
- * mesma leitura visual - colunas de largura fixa, rolagem horizontal, cartao
- * com avatar, origem e canal - sem trazer React, dnd-kit nem shadcn.
- *
- * A coluna e a etapa do pipeline do proprio agente. Arrastar um cartao chama
- * de volta quem montou o quadro, que usa a escrita ja existente do painel:
- * grava etapa + historico + auditoria numa transacao e NUNCA enfileira envio
- * externo. O quadro nao fala com a rede.
+ * Cada cartão ao ser clicado abre o modal interativo para edição de etapa,
+ * responsável, anotações internas e visualização do histórico.
  */
 (function (global) {
   "use strict";
@@ -15,8 +9,6 @@
   const esc = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  /* Cor por posicao da coluna, da paleta ja validada para fundo escuro.
-   * A cor identifica a etapa; quem carrega o significado e o titulo. */
   const CORES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181",
                  "#008300", "#9085e9", "#e66767"];
 
@@ -32,10 +24,6 @@
     return isNaN(d) ? "—" : d.toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
   };
 
-  /* Cartao no formato do crm-unico: selo de origem no topo, nome em peso alto,
-   * subtitulo em caixa alta espacada, previa com duas linhas e altura minima
-   * (para os cartoes nao ficarem serrilhados quando um tem previa e o outro
-   * nao) e rodape separado por linha com avatar, ponto de status e data. */
   function cartao(item, podeEscrever) {
     const O = global.SACOrigens;
     const origem = O && item.origem ? O.chipOrigem(item.origem, { mini: true, canais: false }) : "";
@@ -86,10 +74,115 @@
     );
   }
 
-  /* alvo: elemento onde o quadro e desenhado.
-   * dados: { colunas:[{id,titulo,cor?}], cartoes:[{id,etapa,nome,canal,origem,
-   *          previa,quando,responsavel}], podeEscrever, aoMover(id, etapa) }
-   */
+  /* Modal de Edição do Card */
+  function criarModalCard() {
+    let dialog = document.getElementById("kb-card-dialog");
+    if (!dialog) {
+      dialog = document.createElement("dialog");
+      dialog.id = "kb-card-dialog";
+      dialog.className = "kb-dialog";
+      dialog.innerHTML = `
+        <form method="dialog" id="kb-card-form">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow" id="kb-modal-eyebrow">Detalhes do Lead</p>
+              <h2 id="kb-modal-nome">Editar Contato</h2>
+            </div>
+            <button type="button" class="icon-button" id="kb-modal-close" aria-label="Fechar">×</button>
+          </div>
+
+          <div style="display:grid;gap:12px;margin-top:10px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <label>
+                Etapa do Pipeline
+                <select id="kb-modal-etapa" class="rec-select"></select>
+              </label>
+              <label>
+                Agente / Bot Responsável
+                <select id="kb-modal-responsavel" class="rec-select">
+                  <option value="">Sem responsável (Fila Geral)</option>
+                  <option value="AutonomIA">AutonomIA (Bot)</option>
+                  <option value="Bella">Bella (Bot)</option>
+                  <option value="Casal do Tráfego">Casal do Tráfego (Bot)</option>
+                  <option value="Gastão Matos">Gastão Matos (Bot)</option>
+                  <option value="Operador Humano">Operador Humano</option>
+                </select>
+              </label>
+            </div>
+
+            <label>
+              Última Mensagem / Histórico
+              <div id="kb-modal-previa" style="background:#090d10;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:13px;color:#d0d7de;min-height:50px;"></div>
+            </label>
+
+            <label>
+              Nota Interna da Operação
+              <textarea id="kb-modal-nota" placeholder="Adicione observações sobre o atendimento, proposta enviada, objeções..." style="min-height:75px;"></textarea>
+            </label>
+          </div>
+
+          <div class="dialog-actions" style="margin-top:16px;">
+            <button type="button" class="ghost" id="kb-modal-cancel">Cancelar</button>
+            <button type="submit" class="primary" id="kb-modal-save">Salvar Alterações</button>
+          </div>
+        </form>
+      `;
+      document.body.appendChild(dialog);
+
+      const fechar = () => dialog.close();
+      dialog.querySelector("#kb-modal-close")?.addEventListener("click", fechar);
+      dialog.querySelector("#kb-modal-cancel")?.addEventListener("click", fechar);
+    }
+    return dialog;
+  }
+
+  function abrirModalCard(cartaoItem, colunas, aoMover, aoSalvarNota) {
+    const dialog = criarModalCard();
+    if (!dialog || !cartaoItem) return;
+
+    dialog.querySelector("#kb-modal-eyebrow").textContent = `ID: ${cartaoItem.id} · Canal: ${cartaoItem.canal || "WhatsApp"}`;
+    dialog.querySelector("#kb-modal-nome").textContent = cartaoItem.nome || "Contato sem nome";
+    dialog.querySelector("#kb-modal-previa").textContent = cartaoItem.previa || "Sem mensagens anteriores registradas.";
+
+    const selectEtapa = dialog.querySelector("#kb-modal-etapa");
+    if (selectEtapa) {
+      selectEtapa.innerHTML = colunas.map(c =>
+        `<option value="${esc(c.id)}" ${c.id === cartaoItem.etapa ? "selected" : ""}>${esc(c.titulo)}</option>`
+      ).join("");
+    }
+
+    const selectResp = dialog.querySelector("#kb-modal-responsavel");
+    if (selectResp) {
+      selectResp.value = cartaoItem.responsavel || "";
+    }
+
+    const textareaNota = dialog.querySelector("#kb-modal-nota");
+    if (textareaNota) textareaNota.value = "";
+
+    const form = dialog.querySelector("#kb-card-form");
+    form.onsubmit = (ev) => {
+      ev.preventDefault();
+      const novaEtapa = selectEtapa.value;
+      const novoResp = selectResp.value;
+      const nota = textareaNota.value.trim();
+
+      cartaoItem.responsavel = novoResp || null;
+      if (novaEtapa !== cartaoItem.etapa) {
+        cartaoItem.etapa = novaEtapa;
+        if (typeof aoMover === "function") aoMover(cartaoItem.id, novaEtapa);
+      }
+      if (nota && typeof aoSalvarNota === "function") {
+        aoSalvarNota(cartaoItem.id, nota);
+      }
+
+      dialog.close();
+      // Notifica o painel para atualizar a renderização do card
+      window.dispatchEvent(new CustomEvent("sac:render"));
+    };
+
+    dialog.showModal();
+  }
+
   function montar(alvo, dados) {
     if (!alvo) return;
     const d = dados || {};
@@ -116,19 +209,26 @@
         ? coluna({ id: "__sem_etapa__", titulo: "Sem etapa", cor: "#6b7680" }, semEtapa, false, 0)
         : "") +
       "</div>" +
-      (podeEscrever
-        ? '<p class="kb-ajuda">Arraste um cartão para mudar a etapa. Toda mudança grava operador, data e valor anterior na auditoria — e não envia mensagem.</p>'
-        : '<p class="kb-ajuda">Esta fonte não autoriza escrita nesta sessão; o quadro está em leitura.</p>');
+      '<p class="kb-ajuda">Clique em qualquer cartão para abrir o <strong>Modal de Edição</strong> ou arraste entre as etapas.</p>';
 
     if (podeEscrever) ligarArraste(alvo, d.aoMover);
-    if (typeof d.aoSelecionar === "function") {
-      alvo.querySelectorAll("[data-cartao]").forEach((el) => {
-        el.addEventListener("click", () => d.aoSelecionar(el.dataset.cartao));
-        el.addEventListener("keydown", (ev) => {
-          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); d.aoSelecionar(el.dataset.cartao); }
-        });
+
+    // Binds de clique nos cartões para abrir Modal de Edição
+    alvo.querySelectorAll("[data-cartao]").forEach((el) => {
+      const cId = el.dataset.cartao;
+      const cartaoItem = cartoes.find(item => String(item.id) === String(cId));
+      el.addEventListener("click", () => {
+        abrirModalCard(cartaoItem, colunas, d.aoMover, d.aoSalvarNota);
+        if (typeof d.aoSelecionar === "function") d.aoSelecionar(cId);
       });
-    }
+      el.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          abrirModalCard(cartaoItem, colunas, d.aoMover, d.aoSalvarNota);
+          if (typeof d.aoSelecionar === "function") d.aoSelecionar(cId);
+        }
+      });
+    });
   }
 
   function ligarArraste(raiz, aoMover) {
@@ -139,7 +239,6 @@
         arrastando = card;
         card.classList.add("arrastando");
         ev.dataTransfer.effectAllowed = "move";
-        // Firefox so inicia o arraste se houver dado no dataTransfer
         ev.dataTransfer.setData("text/plain", card.dataset.cartao);
       });
       card.addEventListener("dragend", () => {
@@ -164,9 +263,7 @@
         if (!arrastando) return;
         const cartaoId = arrastando.dataset.cartao;
         const destino = pilha.dataset.solta;
-        if (arrastando.dataset.etapa === destino) return;   // nada mudou
-        // Move na tela antes da resposta: quem arrastou precisa de retorno
-        // imediato. Se a gravacao falhar, quem chamou redesenha e desfaz.
+        if (arrastando.dataset.etapa === destino) return;
         pilha.appendChild(arrastando);
         arrastando.dataset.etapa = destino;
         aoMover(cartaoId, destino);
@@ -174,5 +271,5 @@
     });
   }
 
-  global.SACKanban = { montar: montar, CORES: CORES };
+  global.SACKanban = { montar: montar, CORES: CORES, abrirModalCard: abrirModalCard };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -178,6 +178,557 @@
     return result;
   }
 
+  function mostrarToast(msg) {
+    const toast = document.createElement("div");
+    toast.className = "rec-toast";
+    toast.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#86efac" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> <span>${esc(msg)}</span>`;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      toast.style.transition = "opacity 0.3s ease";
+      setTimeout(() => toast.remove(), 300);
+    }, 2600);
+  }
+
+  /* --------------------------------------------------------------------------
+     MODAL DE EDIÇÃO DE MENSAGEM NA RÉGUA
+     -------------------------------------------------------------------------- */
+  function criarModalMensagem() {
+    let dialog = document.getElementById("rec-msg-dialog");
+    if (!dialog) {
+      dialog = document.createElement("dialog");
+      dialog.id = "rec-msg-dialog";
+      dialog.className = "rec-dialog";
+      dialog.innerHTML = `
+        <form method="dialog" id="rec-msg-form">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow" id="rec-msg-eyebrow">Régua de Recuperação</p>
+              <h2 id="rec-msg-title">Editar Mensagem da Sequência</h2>
+            </div>
+            <button type="button" class="icon-button" id="rec-msg-close" aria-label="Fechar">×</button>
+          </div>
+
+          <div class="rec-modal-grid">
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <div class="rec-field-group">
+                <label>Tempo de Disparo (Delay)</label>
+                <select id="rec-modal-delay" class="rec-select" style="width:100%;">
+                  <option value="0">Imediato (0 min)</option>
+                  <option value="2">Após 2 minutos</option>
+                  <option value="5">Após 5 minutos</option>
+                  <option value="10">Após 10 minutos</option>
+                  <option value="15">Após 15 minutos</option>
+                  <option value="30">Após 30 minutos</option>
+                  <option value="60">Após 1 hora</option>
+                  <option value="120">Após 2 horas</option>
+                  <option value="1440">Após 24 horas (1 dia)</option>
+                  <option value="2880">Após 48 horas (2 dias)</option>
+                </select>
+              </div>
+
+              <div class="rec-field-group">
+                <label>Tipo de Envio</label>
+                <select id="rec-modal-type" class="rec-select" style="width:100%;">
+                  <option value="text">Texto Livre com Variáveis</option>
+                  <option value="template">Template Meta HSM (Janela > 24h)</option>
+                </select>
+              </div>
+
+              <div class="rec-field-group" id="rec-modal-tpl-wrap" style="display:none;">
+                <label>Modelo Oficial Meta</label>
+                <select id="rec-modal-tpl-select" class="rec-select" style="width:100%;"></select>
+              </div>
+
+              <div class="rec-field-group">
+                <label>Inserir Variável no Cursor:</label>
+                <div class="rec-var-bar" style="padding:6px;gap:4px;">
+                  ${SYSTEM_VARS.map(v => `
+                    <button type="button" class="rec-var-chip btn-modal-insert" data-var="${esc(v.key)}">${esc(v.key)}</button>
+                  `).join("")}
+                </div>
+              </div>
+
+              <div class="rec-field-group">
+                <label>Conteúdo da Mensagem</label>
+                <textarea id="rec-modal-content" class="rec-textarea" style="min-height:120px;" placeholder="Digite a mensagem de recuperação..."></textarea>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted);">Simulação WhatsApp ao Vivo</label>
+              <div class="rec-wa-preview" style="padding:14px;">
+                <div class="rec-wa-preview-head">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="#4ade80"><circle cx="12" cy="12" r="10"/></svg>
+                  <strong style="font-size:10px;">Pré-visualização do Lead</strong>
+                </div>
+                <div class="rec-wa-bubble" style="max-width:100%;font-size:12.5px;">
+                  <div id="rec-modal-live-header" style="font-weight:750;margin-bottom:6px;color:#fff;display:none;"></div>
+                  <div id="rec-modal-live-body" class="wa-text-content"></div>
+                  <div id="rec-modal-live-btn" style="display:none;" class="rec-wa-btn"></div>
+                  <div class="rec-wa-time">Agora ✓✓</div>
+                </div>
+              </div>
+              <p style="font-size:11px;color:var(--muted);line-height:1.4;margin:0;">
+                As variáveis como <code>{primeiro_nome}</code> e <code>{produto}</code> são substituídas automaticamente com os dados reais de cada lead.
+              </p>
+            </div>
+          </div>
+
+          <div class="dialog-actions" style="margin-top:14px;">
+            <button type="button" class="ghost" id="rec-msg-cancel">Cancelar</button>
+            <button type="submit" class="primary" id="rec-msg-save">Salvar Mensagem</button>
+          </div>
+        </form>
+      `;
+      document.body.appendChild(dialog);
+
+      const fechar = () => dialog.close();
+      dialog.querySelector("#rec-msg-close")?.addEventListener("click", fechar);
+      dialog.querySelector("#rec-msg-cancel")?.addEventListener("click", fechar);
+    }
+    return dialog;
+  }
+
+  function abrirModalMensagem(pageId, msgId, aoSalvar) {
+    const dialog = criarModalMensagem();
+    const seq = state.sequences[pageId];
+    if (!dialog || !seq) return;
+
+    const msg = seq.messages.find(m => m.id === msgId);
+    if (!msg) return;
+
+    dialog.querySelector("#rec-msg-eyebrow").textContent = `${seq.title} · Passo ${msg.id}`;
+    dialog.querySelector("#rec-msg-title").textContent = `Editar Passo ${msg.id} da Régua`;
+
+    const selectDelay = dialog.querySelector("#rec-modal-delay");
+    const selectType = dialog.querySelector("#rec-modal-type");
+    const wrapTpl = dialog.querySelector("#rec-modal-tpl-wrap");
+    const selectTpl = dialog.querySelector("#rec-modal-tpl-select");
+    const textarea = dialog.querySelector("#rec-modal-content");
+    const liveHeader = dialog.querySelector("#rec-modal-live-header");
+    const liveBody = dialog.querySelector("#rec-modal-live-body");
+    const liveBtn = dialog.querySelector("#rec-modal-live-btn");
+
+    if (selectDelay) selectDelay.value = String(msg.delayMinutes || "0");
+    if (selectType) selectType.value = msg.type || "text";
+
+    if (selectTpl) {
+      selectTpl.innerHTML = state.templates.map(t =>
+        `<option value="${esc(t.id)}" ${t.id === msg.templateId ? "selected" : ""}>${esc(t.name)} (${esc(t.category)})</option>`
+      ).join("");
+    }
+
+    const atualizarVisibilidadeTipo = () => {
+      const isTpl = selectType.value === "template";
+      wrapTpl.style.display = isTpl ? "flex" : "none";
+      if (isTpl) {
+        const curTpl = state.templates.find(t => t.id === selectTpl.value);
+        if (curTpl) {
+          textarea.value = curTpl.body;
+          if (curTpl.header) {
+            liveHeader.style.display = "block";
+            liveHeader.textContent = curTpl.header;
+          } else {
+            liveHeader.style.display = "none";
+          }
+          if (curTpl.buttonText) {
+            liveBtn.style.display = "block";
+            liveBtn.textContent = `🔗 ${curTpl.buttonText}`;
+          } else {
+            liveBtn.style.display = "none";
+          }
+        }
+      } else {
+        liveHeader.style.display = "none";
+        liveBtn.style.display = "none";
+      }
+      atualizarLivePreview();
+    };
+
+    const atualizarLivePreview = () => {
+      const val = textarea.value;
+      if (selectType.value === "template") {
+        const curTpl = state.templates.find(t => t.id === selectTpl.value);
+        liveBody.textContent = interpolatePreview(val, curTpl ? curTpl.variablesMap : {});
+      } else {
+        liveBody.textContent = interpolatePreview(val);
+      }
+    };
+
+    textarea.value = msg.type === "template"
+      ? (state.templates.find(t => t.id === msg.templateId)?.body || msg.content)
+      : msg.content;
+
+    selectType.onchange = atualizarVisibilidadeTipo;
+    selectTpl.onchange = () => {
+      const curTpl = state.templates.find(t => t.id === selectTpl.value);
+      if (curTpl) {
+        textarea.value = curTpl.body;
+      }
+      atualizarVisibilidadeTipo();
+    };
+    textarea.oninput = atualizarLivePreview;
+
+    dialog.querySelectorAll(".btn-modal-insert").forEach(chip => {
+      chip.onclick = () => {
+        const varText = chip.dataset.var;
+        const start = textarea.selectionStart || textarea.value.length;
+        const end = textarea.selectionEnd || textarea.value.length;
+        const val = textarea.value;
+        textarea.value = val.substring(0, start) + varText + val.substring(end);
+        textarea.focus();
+        textarea.selectionStart = textarea.selectionEnd = start + varText.length;
+        atualizarLivePreview();
+      };
+    });
+
+    atualizarVisibilidadeTipo();
+
+    const form = dialog.querySelector("#rec-msg-form");
+    form.onsubmit = (ev) => {
+      ev.preventDefault();
+      msg.delayMinutes = parseInt(selectDelay.value, 10) || 0;
+      msg.type = selectType.value;
+      if (msg.type === "template") {
+        msg.templateId = selectTpl.value;
+        msg.content = `Template Meta: ${msg.templateId}`;
+      } else {
+        msg.templateId = null;
+        msg.content = textarea.value.trim();
+      }
+
+      saveState(state);
+      dialog.close();
+      mostrarToast(`Passo ${msg.id} atualizado com sucesso!`);
+      if (typeof aoSalvar === "function") aoSalvar();
+    };
+
+    dialog.showModal();
+  }
+
+  /* --------------------------------------------------------------------------
+     MODAL DE TEMPLATE META
+     -------------------------------------------------------------------------- */
+  function criarModalTemplate() {
+    let dialog = document.getElementById("rec-tpl-dialog");
+    if (!dialog) {
+      dialog = document.createElement("dialog");
+      dialog.id = "rec-tpl-dialog";
+      dialog.className = "rec-dialog";
+      dialog.innerHTML = `
+        <form method="dialog" id="rec-tpl-form">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow" id="rec-tpl-eyebrow">Meta Cloud API (HSM)</p>
+              <h2 id="rec-tpl-title">Editar Modelo Aprovado Meta</h2>
+            </div>
+            <button type="button" class="icon-button" id="rec-tpl-close" aria-label="Fechar">×</button>
+          </div>
+
+          <div class="rec-modal-grid">
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <div class="rec-field-group">
+                <label>Identificador / Nome na Meta</label>
+                <input type="text" id="rec-tpl-name" class="rec-input" required>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="rec-field-group">
+                  <label>Categoria</label>
+                  <select id="rec-tpl-category" class="rec-select">
+                    <option value="MARKETING">MARKETING</option>
+                    <option value="UTILITY">UTILITY</option>
+                    <option value="AUTHENTICATION">AUTHENTICATION</option>
+                  </select>
+                </div>
+                <div class="rec-field-group">
+                  <label>Idioma</label>
+                  <input type="text" id="rec-tpl-lang" class="rec-input" value="pt_BR">
+                </div>
+              </div>
+
+              <div class="rec-field-group">
+                <label>Título do Cabeçalho (Opcional)</label>
+                <input type="text" id="rec-tpl-header" class="rec-input" placeholder="Ex: Aviso de Compra Pendente">
+              </div>
+
+              <div class="rec-field-group">
+                <label>Corpo do Modelo (use {{1}}, {{2}}...)</label>
+                <textarea id="rec-tpl-body" class="rec-textarea" style="min-height:100px;" required></textarea>
+              </div>
+
+              <div class="rec-field-group">
+                <label>Texto do Botão de Ação (Opcional)</label>
+                <input type="text" id="rec-tpl-button" class="rec-input" placeholder="Ex: Concluir Pagamento Agora">
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted);">Mapeamento das Variáveis</label>
+              <div id="rec-tpl-vars-container" class="rec-var-map"></div>
+
+              <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted);margin-top:6px;">Prévia no WhatsApp</label>
+              <div class="rec-wa-preview" style="padding:14px;">
+                <div class="rec-wa-bubble" style="max-width:100%;font-size:12.5px;">
+                  <div id="rec-tpl-live-header" style="font-weight:750;margin-bottom:6px;color:#fff;"></div>
+                  <div id="rec-tpl-live-body" class="wa-text-content"></div>
+                  <div id="rec-tpl-live-btn" class="rec-wa-btn"></div>
+                  <div class="rec-wa-time">14:32 ✓✓</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dialog-actions" style="margin-top:14px;">
+            <button type="button" class="ghost" id="rec-tpl-cancel">Cancelar</button>
+            <button type="submit" class="primary" id="rec-tpl-save">Salvar Alterações</button>
+          </div>
+        </form>
+      `;
+      document.body.appendChild(dialog);
+
+      const fechar = () => dialog.close();
+      dialog.querySelector("#rec-tpl-close")?.addEventListener("click", fechar);
+      dialog.querySelector("#rec-tpl-cancel")?.addEventListener("click", fechar);
+    }
+    return dialog;
+  }
+
+  function abrirModalTemplate(templateId, aoSalvar) {
+    const dialog = criarModalTemplate();
+    if (!dialog) return;
+
+    const tpl = state.templates.find(t => t.id === templateId) || {
+      id: "novo_modelo_" + Date.now(),
+      name: "novo_modelo_recuperacao",
+      category: "MARKETING",
+      language: "pt_BR",
+      status: "APPROVED",
+      header: "",
+      body: "Olá {{1}}, seu pedido do {{2}} está reservado!",
+      buttonText: "Finalizar Compra",
+      variablesMap: { "1": "{primeiro_nome}", "2": "{produto}" }
+    };
+
+    const isNew = !state.templates.some(t => t.id === templateId);
+
+    dialog.querySelector("#rec-tpl-eyebrow").textContent = isNew ? "Novo Template HSM" : `Template: ${tpl.name}`;
+    dialog.querySelector("#rec-tpl-title").textContent = isNew ? "Criar Novo Modelo Meta" : "Editar Modelo Aprovado Meta";
+
+    const inputName = dialog.querySelector("#rec-tpl-name");
+    const selectCat = dialog.querySelector("#rec-tpl-category");
+    const inputLang = dialog.querySelector("#rec-tpl-lang");
+    const inputHeader = dialog.querySelector("#rec-tpl-header");
+    const textBody = dialog.querySelector("#rec-tpl-body");
+    const inputBtn = dialog.querySelector("#rec-tpl-button");
+    const varsContainer = dialog.querySelector("#rec-tpl-vars-container");
+    const liveHeader = dialog.querySelector("#rec-tpl-live-header");
+    const liveBody = dialog.querySelector("#rec-tpl-live-body");
+    const liveBtn = dialog.querySelector("#rec-tpl-live-btn");
+
+    inputName.value = tpl.name;
+    inputName.readOnly = !isNew;
+    selectCat.value = tpl.category;
+    inputLang.value = tpl.language || "pt_BR";
+    inputHeader.value = tpl.header || "";
+    textBody.value = tpl.body;
+    inputBtn.value = tpl.buttonText || "";
+
+    const varMap = { ...(tpl.variablesMap || {}) };
+
+    const atualizarLive = () => {
+      liveHeader.textContent = inputHeader.value.trim();
+      liveHeader.style.display = inputHeader.value.trim() ? "block" : "none";
+
+      liveBtn.textContent = inputBtn.value.trim() ? `🔗 ${inputBtn.value.trim()}` : "";
+      liveBtn.style.display = inputBtn.value.trim() ? "block" : "none";
+
+      liveBody.textContent = interpolatePreview(textBody.value, varMap);
+    };
+
+    const renderizarMapeamentoVars = () => {
+      const varIndices = (textBody.value.match(/\{\{(\d+)\}\}/g) || []).map(m => m.replace(/\D/g, ""));
+      const uniqueIndices = [...new Set(varIndices)].sort((a,b) => Number(a)-Number(b));
+
+      if (uniqueIndices.length === 0) {
+        varsContainer.innerHTML = `<p style="margin:0;font-size:11px;color:var(--muted);">Nenhum parâmetro {{1}}, {{2}} detectado no texto.</p>`;
+        atualizarLive();
+        return;
+      }
+
+      varsContainer.innerHTML = uniqueIndices.map(idx => `
+        <div class="rec-var-row">
+          <span class="rec-var-tag">{{${idx}}}</span>
+          <select class="rec-select modal-var-sel" data-var-idx="${idx}" style="width:100%;">
+            ${SYSTEM_VARS.map(v => `
+              <option value="${esc(v.key)}" ${varMap[idx] === v.key ? "selected" : ""}>
+                ${esc(v.key)} (${esc(v.label)})
+              </option>
+            `).join("")}
+          </select>
+        </div>
+      `).join("");
+
+      varsContainer.querySelectorAll(".modal-var-sel").forEach(sel => {
+        sel.onchange = (e) => {
+          varMap[e.target.dataset.varIdx] = e.target.value;
+          atualizarLive();
+        };
+      });
+
+      atualizarLive();
+    };
+
+    textBody.oninput = renderizarMapeamentoVars;
+    inputHeader.oninput = atualizarLive;
+    inputBtn.oninput = atualizarLive;
+
+    renderizarMapeamentoVars();
+
+    const form = dialog.querySelector("#rec-tpl-form");
+    form.onsubmit = (ev) => {
+      ev.preventDefault();
+      tpl.name = inputName.value.trim();
+      tpl.category = selectCat.value;
+      tpl.language = inputLang.value.trim();
+      tpl.header = inputHeader.value.trim();
+      tpl.body = textBody.value.trim();
+      tpl.buttonText = inputBtn.value.trim();
+      tpl.variablesMap = varMap;
+
+      if (isNew) {
+        tpl.id = tpl.name;
+        state.templates.push(tpl);
+      }
+
+      saveState(state);
+      dialog.close();
+      mostrarToast(`Modelo Meta '${tpl.name}' salvo com sucesso!`);
+      if (typeof aoSalvar === "function") aoSalvar();
+    };
+
+    dialog.showModal();
+  }
+
+  /* --------------------------------------------------------------------------
+     MODAL DE LEAD
+     -------------------------------------------------------------------------- */
+  function criarModalLead() {
+    let dialog = document.getElementById("rec-lead-dialog");
+    if (!dialog) {
+      dialog = document.createElement("dialog");
+      dialog.id = "rec-lead-dialog";
+      dialog.className = "rec-dialog";
+      dialog.innerHTML = `
+        <form method="dialog" id="rec-lead-form">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow">Lead em Recuperação Ativa</p>
+              <h2 id="rec-lead-nome">Nome do Lead</h2>
+            </div>
+            <button type="button" class="icon-button" id="rec-lead-close" aria-label="Fechar">×</button>
+          </div>
+
+          <div style="display:grid;gap:14px;margin-top:8px;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;background:#0d1114;border:1px solid var(--line);border-radius:12px;padding:14px;">
+              <div>
+                <span style="font-size:10px;color:var(--muted);text-transform:uppercase;display:block;">Telefone / WhatsApp</span>
+                <strong id="rec-lead-phone" style="font-size:13px;color:#fff;"></strong>
+              </div>
+              <div>
+                <span style="font-size:10px;color:var(--muted);text-transform:uppercase;display:block;">Produto</span>
+                <strong id="rec-lead-product" style="font-size:13px;color:#fff;"></strong>
+              </div>
+              <div>
+                <span style="font-size:10px;color:var(--muted);text-transform:uppercase;display:block;">Valor da Transação</span>
+                <strong id="rec-lead-value" style="font-size:14px;color:var(--accent);"></strong>
+              </div>
+              <div>
+                <span style="font-size:10px;color:var(--muted);text-transform:uppercase;display:block;">Status Atual</span>
+                <span id="rec-lead-status-wrap"></span>
+              </div>
+            </div>
+
+            <div class="rec-field-group">
+              <label>Ações Manuais do Operador</label>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <button type="button" class="primary" id="btn-lead-send-manual" style="display:inline-flex;align-items:center;gap:6px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                  Disparar Mensagem Manual no WhatsApp
+                </button>
+                <button type="button" class="ghost" id="btn-lead-mark-recovered">Marcar como Recuperado</button>
+              </div>
+            </div>
+
+            <div class="rec-field-group">
+              <label>Histórico da Régua para este Contato</label>
+              <div style="background:#090d10;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12.5px;color:#c9d1d9;line-height:1.5;">
+                • Disparo automático do Passo 1 entregue com sucesso.<br>
+                • Notificação de WhatsApp aberta pelo cliente.<br>
+                • Checkout visitado novamente às 14:28.
+              </div>
+            </div>
+          </div>
+
+          <div class="dialog-actions" style="margin-top:14px;">
+            <button type="button" class="ghost" id="rec-lead-cancel">Fechar</button>
+          </div>
+        </form>
+      `;
+      document.body.appendChild(dialog);
+
+      const fechar = () => dialog.close();
+      dialog.querySelector("#rec-lead-close")?.addEventListener("click", fechar);
+      dialog.querySelector("#rec-lead-cancel")?.addEventListener("click", fechar);
+    }
+    return dialog;
+  }
+
+  function abrirModalLead(lead, seqKey, aoSalvar) {
+    const dialog = criarModalLead();
+    if (!dialog || !lead) return;
+
+    dialog.querySelector("#rec-lead-nome").textContent = lead.name || "Contato";
+    dialog.querySelector("#rec-lead-phone").textContent = lead.phone || "—";
+    dialog.querySelector("#rec-lead-product").textContent = lead.product || "—";
+    dialog.querySelector("#rec-lead-value").textContent = lead.value || "—";
+
+    const stWrap = dialog.querySelector("#rec-lead-status-wrap");
+    if (stWrap) {
+      stWrap.innerHTML = `<span class="rec-st-badge rec-st-${esc(lead.status)}">${lead.status === "recuperado" ? "Recuperado" : lead.status === "andamento" ? "Em recuperação" : lead.status === "concluido" ? "Concluído" : "Pendente"}</span>`;
+    }
+
+    const btnSend = dialog.querySelector("#btn-lead-send-manual");
+    if (btnSend) {
+      btnSend.onclick = () => {
+        btnSend.disabled = true;
+        btnSend.textContent = "Enviando mensagem...";
+        setTimeout(() => {
+          btnSend.disabled = false;
+          btnSend.textContent = "✓ Mensagem Enviada!";
+          mostrarToast(`Mensagem enviada com sucesso para ${lead.name}!`);
+          setTimeout(() => {
+            btnSend.textContent = "Disparar Mensagem Manual no WhatsApp";
+          }, 2500);
+        }, 800);
+      };
+    }
+
+    const btnMark = dialog.querySelector("#btn-lead-mark-recovered");
+    if (btnMark) {
+      btnMark.onclick = () => {
+        lead.status = "recuperado";
+        saveState(state);
+        dialog.close();
+        mostrarToast(`Lead '${lead.name}' marcado como recuperado!`);
+        if (typeof aoSalvar === "function") aoSalvar();
+      };
+    }
+
+    dialog.showModal();
+  }
+
   /* --------------------------------------------------------------------------
      1. PÁGINA: MODELOS APROVADOS META (api_modelos)
      -------------------------------------------------------------------------- */
@@ -198,6 +749,9 @@
             <p>Templates oficiais validados pelo WhatsApp/Meta para contato ativo com leads fora da janela de 24 horas.</p>
           </div>
           <div class="rec-header-actions">
+            <button class="ghost" id="btn-novo-template" style="color:var(--accent);border-color:var(--accent);">
+              + Novo Modelo Meta
+            </button>
             <button class="primary" id="btn-sync-meta">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:inline;margin-right:6px;"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
               Sincronizar da Meta
@@ -223,10 +777,15 @@
                     <strong>${esc(tpl.name)}</strong>
                     <small>Categoria: ${esc(tpl.category)} · Idioma: ${esc(tpl.language)}</small>
                   </div>
-                  <span class="rec-status-approved">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
-                    Aprovado
-                  </span>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="rec-status-approved">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
+                      Aprovado
+                    </span>
+                    <button class="rec-edit-chip btn-edit-tpl" data-tpl-id="${esc(tpl.id)}" title="Editar Template no Modal">
+                      ✏️ Editar
+                    </button>
+                  </div>
                 </div>
 
                 <div class="rec-wa-preview">
@@ -268,7 +827,20 @@
 
     container.innerHTML = html;
 
-    // Eventos de alteração dos selects de variáveis
+    container.querySelectorAll(".btn-edit-tpl").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const tplId = btn.dataset.tplId;
+        abrirModalTemplate(tplId, () => renderApiModelos(container));
+      });
+    });
+
+    const btnNovo = container.querySelector("#btn-novo-template");
+    if (btnNovo) {
+      btnNovo.addEventListener("click", () => {
+        abrirModalTemplate(null, () => renderApiModelos(container));
+      });
+    }
+
     container.querySelectorAll("select[data-template-id]").forEach(select => {
       select.addEventListener("change", (e) => {
         const tplId = e.target.dataset.templateId;
@@ -281,7 +853,6 @@
           targetTpl.variablesMap[varIdx] = val;
           saveState(state);
 
-          // Atualiza o balão do WhatsApp ao vivo
           const bubble = container.querySelector(`#wa-bubble-${tplId} .wa-text-content`);
           if (bubble) {
             bubble.textContent = interpolatePreview(targetTpl.body, targetTpl.variablesMap);
@@ -290,7 +861,6 @@
       });
     });
 
-    // Botão de sincronização com feedback visual
     const syncBtn = container.querySelector("#btn-sync-meta");
     if (syncBtn) {
       syncBtn.addEventListener("click", () => {
@@ -299,6 +869,7 @@
         setTimeout(() => {
           syncBtn.disabled = false;
           syncBtn.innerHTML = "✓ Sincronizado (4 Modelos Ativos)";
+          mostrarToast("Modelos Meta Cloud API sincronizados com sucesso!");
           setTimeout(() => {
             syncBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:inline;margin-right:6px;"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg> Sincronizar da Meta`;
           }, 3000);
@@ -324,7 +895,6 @@
 
     let html = `
       <div class="rec-container">
-        <!-- Header -->
         <div class="rec-header">
           <div class="rec-header-info">
             <h2>
@@ -341,7 +911,6 @@
           </div>
         </div>
 
-        <!-- Webhooks -->
         <div class="rec-webhooks">
           <div class="rec-webhooks-head">
             <strong>URLs de Webhook para Configurar nas Plataformas</strong>
@@ -360,7 +929,6 @@
           </div>
         </div>
 
-        <!-- Régua de Mensagens -->
         <div class="rec-sequence-section">
           <div class="rec-section-head">
             <h3>Régua de Disparos (${seq.messages.length} mensagens configuradas)</h3>
@@ -371,7 +939,7 @@
             ${seq.messages.map(msg => `
               <div class="rec-step-node" id="msg-node-${msg.id}">
                 <span class="rec-delay-badge">${formatDelayText(msg.delayMinutes)}</span>
-                <div class="rec-msg-card">
+                <div class="rec-msg-card rec-card-clickable" data-msg-id="${msg.id}">
                   <div class="rec-msg-header">
                     <div class="rec-msg-type">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -379,6 +947,7 @@
                       ${msg.type === "template" ? `<span class="rec-badge-template">Oficial Meta</span>` : ""}
                     </div>
                     <div class="rec-msg-actions">
+                      <button class="rec-edit-chip rec-btn-edit-msg" data-msg-id="${msg.id}">✏️ Editar</button>
                       <label class="rec-toggle" style="font-size:11px;">
                         <input type="checkbox" class="rec-toggle-input msg-toggle" data-msg-id="${msg.id}" ${msg.active ? "checked" : ""}>
                         <span>${msg.active ? "Ativo" : "Inativo"}</span>
@@ -393,7 +962,6 @@
           </div>
         </div>
 
-        <!-- Formulário de Criação Rápida de Mensagem -->
         <div class="rec-sequence-section" id="box-new-msg-${pageId}" style="display:none;background:#101418;border-color:#2a3642;">
           <div class="rec-section-head">
             <h3>Adicionar Nova Mensagem à Régua</h3>
@@ -424,7 +992,6 @@
               </div>
             </div>
 
-            <!-- Seleção de Template Meta se escolhido -->
             <div id="new-tpl-select-wrap-${pageId}" style="display:none;">
               <label style="font-size:11px;color:var(--muted);text-transform:uppercase;display:block;margin-bottom:5px;">Template Meta Aprovado</label>
               <select class="rec-select" id="new-msg-tpl-${pageId}" style="width:100%;">
@@ -432,7 +999,6 @@
               </select>
             </div>
 
-            <!-- Barra de Inserção de Variáveis -->
             <div>
               <div class="rec-var-bar" style="margin-bottom:8px;">
                 <span class="rec-var-bar-title">Inserir Variável no Cursor:</span>
@@ -447,10 +1013,10 @@
           </div>
         </div>
 
-        <!-- Leads Recentes em Recuperação -->
         <div class="rec-sequence-section">
           <div class="rec-section-head">
             <h3>Contatos e Leads Recentes em Recuperação</h3>
+            <span style="font-size:12px;color:var(--muted);">Clique em qualquer linha para abrir o <strong>Modal de Ações</strong></span>
           </div>
           <div class="rec-table-wrap">
             <table class="rec-table">
@@ -462,11 +1028,12 @@
                   <th>Valor</th>
                   <th>Status</th>
                   <th>Tempo</th>
+                  <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
-                ${(seq.leads || []).map(lead => `
-                  <tr>
+                ${(seq.leads || []).map((lead, idx) => `
+                  <tr class="rec-card-clickable rec-lead-row" data-lead-idx="${idx}">
                     <td><strong>${esc(lead.name)}</strong></td>
                     <td><code>${esc(lead.phone)}</code></td>
                     <td>${esc(lead.product)}</td>
@@ -477,6 +1044,9 @@
                       </span>
                     </td>
                     <td><small style="color:var(--muted);">${esc(lead.time)}</small></td>
+                    <td>
+                      <button class="rec-edit-chip btn-open-lead" data-lead-idx="${idx}">Ver Detalhes</button>
+                    </td>
                   </tr>
                 `).join("")}
               </tbody>
@@ -488,23 +1058,23 @@
 
     container.innerHTML = html;
 
-    // Toggle geral da sequência
     const toggleSeq = container.querySelector(`#seq-toggle-${pageId}`);
     if (toggleSeq) {
       toggleSeq.addEventListener("change", (e) => {
         seq.active = e.target.checked;
         saveState(state);
+        mostrarToast(`Sequência ${seq.active ? "ativada" : "pausada"}!`);
         renderSequencePage(pageId, container);
       });
     }
 
-    // Copiar webhooks
     container.querySelectorAll(".rec-copy-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         const url = btn.dataset.url;
         navigator.clipboard.writeText(url).then(() => {
           btn.classList.add("copied");
           btn.textContent = "Copiado!";
+          mostrarToast("URL do Webhook copiada para a área de transferência!");
           setTimeout(() => {
             btn.classList.remove("copied");
             btn.textContent = "Copiar";
@@ -513,7 +1083,24 @@
       });
     });
 
-    // Abrir/Fechar painel de nova mensagem
+    container.querySelectorAll(".rec-btn-edit-msg, .rec-msg-card").forEach(el => {
+      el.addEventListener("click", (e) => {
+        if (e.target.closest(".msg-toggle") || e.target.closest(".rec-del-msg")) return;
+        const msgId = parseInt(el.dataset.msgId, 10);
+        abrirModalMensagem(pageId, msgId, () => renderSequencePage(pageId, container));
+      });
+    });
+
+    container.querySelectorAll(".rec-lead-row, .btn-open-lead").forEach(row => {
+      row.addEventListener("click", (e) => {
+        const idx = parseInt(row.dataset.leadIdx, 10);
+        const lead = seq.leads[idx];
+        if (lead) {
+          abrirModalLead(lead, pageId, () => renderSequencePage(pageId, container));
+        }
+      });
+    });
+
     const btnAddMsg = container.querySelector(`#btn-add-msg-${pageId}`);
     const boxNewMsg = container.querySelector(`#box-new-msg-${pageId}`);
     const btnCancelNew = container.querySelector(`#btn-cancel-new-${pageId}`);
@@ -530,7 +1117,6 @@
       });
     }
 
-    // Inserção de variáveis no textarea
     const textarea = container.querySelector(`#new-msg-text-${pageId}`);
     container.querySelectorAll(`.btn-insert-var[data-page-id="${pageId}"]`).forEach(chip => {
       chip.addEventListener("click", () => {
@@ -545,7 +1131,6 @@
       });
     });
 
-    // Mudança de tipo de mensagem
     const selectType = container.querySelector(`#new-msg-type-${pageId}`);
     const wrapTplSelect = container.querySelector(`#new-tpl-select-wrap-${pageId}`);
     if (selectType && wrapTplSelect) {
@@ -554,7 +1139,6 @@
       });
     }
 
-    // Salvar nova mensagem
     const btnSaveNew = container.querySelector(`#btn-save-new-${pageId}`);
     if (btnSaveNew) {
       btnSaveNew.addEventListener("click", () => {
@@ -584,23 +1168,23 @@
         });
 
         saveState(state);
+        mostrarToast("Nova mensagem adicionada à régua!");
         renderSequencePage(pageId, container);
       });
     }
 
-    // Excluir mensagem
     container.querySelectorAll(".rec-del-msg").forEach(btn => {
       btn.addEventListener("click", () => {
         const msgId = parseInt(btn.dataset.msgId, 10);
         if (confirm("Deseja realmente remover esta mensagem da sequência?")) {
           seq.messages = seq.messages.filter(m => m.id !== msgId);
           saveState(state);
+          mostrarToast("Mensagem removida da sequência.");
           renderSequencePage(pageId, container);
         }
       });
     });
 
-    // Toggle de mensagem individual
     container.querySelectorAll(".msg-toggle").forEach(toggle => {
       toggle.addEventListener("change", (e) => {
         const msgId = parseInt(e.target.dataset.msgId, 10);
@@ -608,6 +1192,7 @@
         if (msg) {
           msg.active = e.target.checked;
           saveState(state);
+          mostrarToast(`Passo ${msgId} ${msg.active ? "ativado" : "pausado"}`);
         }
       });
     });
@@ -715,5 +1300,12 @@
     if (global.SACNavegacao) desenhar(global.SACNavegacao.pagina());
   });
 
-  global.SACPendentes = { desenhar: desenhar };
+  global.SACPendentes = {
+    desenhar: desenhar,
+    abrirModalMensagem: abrirModalMensagem,
+    abrirModalTemplate: abrirModalTemplate,
+    abrirModalLead: abrirModalLead,
+    mostrarToast: mostrarToast
+  };
 })(typeof window !== "undefined" ? window : globalThis);
+

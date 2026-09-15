@@ -199,16 +199,16 @@ function backendSource(agent, index){
   };
 }
 
-function snapshotSource(){
-  const declared = config.snapshotSource || {};
-  return {
+function snapshotSources(){
+  const declaredList = config.snapshotSources || (config.snapshotSource ? [config.snapshotSource] : []);
+  return declaredList.map(declared => ({
     id: declared.id || "snapshot:autonomia",
     kind: SNAPSHOT_KIND,
     label: declared.label || "Snapshot",
     sublabel: declared.agent || "",
     permissions: {read:true, write:false},
     accent: declared.accent || "#b8f35a"
-  };
+  }));
 }
 
 function agentPath(source, suffix){
@@ -765,7 +765,7 @@ async function boot(){
   state.channel = prefs.channel || "all";
   state.originSlug = prefs.originSlug || "all";
   await loadSnapshot();
-  state.sources = state.snapshot.status === "ready" ? [snapshotSource()] : [];
+  state.sources = state.snapshot.status === "ready" ? snapshotSources() : [];
   await restoreSession();
   await loadBackendSources();
   state.sourceId = state.sources.some(item => item.id === prefs.sourceId)
