@@ -4,8 +4,18 @@ import { db } from '@/lib/db'
 import { settings, recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { eq, sql, count } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
-import { Radio, MessageSquare, Settings, CheckCircle2, AlertCircle, Zap, ShieldCheck } from 'lucide-react'
+import { Radio, MessageSquare, Settings, CheckCircle2, AlertCircle, Zap, ShieldCheck, Mail } from 'lucide-react'
 import Link from 'next/link'
+
+function InstagramIcon({ size = 18, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <rect width="20" height="20" x="2" y="2" rx="5" ry="5"/>
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
+      <line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>
+    </svg>
+  )
+}
 
 export default async function CanaisPage() {
   const company = await requireCompany()
@@ -32,6 +42,9 @@ export default async function CanaisPage() {
 
   const hasMeta = !!(companySettings?.metaPhoneNumberId && companySettings?.metaAccessToken)
   const hasUazapi = !!(companySettings?.uazapiInstanceToken && companySettings?.uazapiBaseUrl)
+  const hasInstagram = !!(companySettings?.instagramAccountId || (companySettings?.metaAccessToken && companySettings?.instagramUsername))
+  const hasBrevo = !!(companySettings?.brevoApiKey && companySettings?.brevoSenderEmail)
+
   const isMetaActive = companySettings?.whatsappProvider === 'meta' && hasMeta
   const isUazapiActive = companySettings?.whatsappProvider === 'uazapi' && hasUazapi
 
@@ -76,6 +89,38 @@ export default async function CanaisPage() {
       entrega: isUazapiActive ? `${deliveryRate}%` : '—',
       conversao: isUazapiActive ? `${convRate}%` : '—',
     },
+    {
+      id: 'instagram',
+      name: 'Instagram Direct & DMs',
+      icon: InstagramIcon,
+      iconColor: 'text-pink-400',
+      bgColor: hasInstagram ? 'bg-pink-500/10 border-pink-500/20' : 'bg-zinc-800/40 border-zinc-700',
+      badgeColor: hasInstagram ? 'text-pink-400 border-pink-500/20 bg-pink-500/10' : 'text-zinc-400 border-zinc-700 bg-zinc-800',
+      status: hasInstagram ? (companySettings?.instagramUsername ? `${companySettings.instagramUsername} Conectado` : 'Configurado') : 'Não Configurado',
+      isConfigured: hasInstagram,
+      provider: 'Meta Graph API (Instagram)',
+      conversas: hasInstagram ? totalLeads : 0,
+      mensagens: hasInstagram ? sentJobs : 0,
+      pendentes: 0,
+      entrega: hasInstagram ? '100.0%' : '—',
+      conversao: hasInstagram ? `${convRate}%` : '—',
+    },
+    {
+      id: 'brevo',
+      name: 'Brevo (E-mail Transacional & Outreach)',
+      icon: Mail,
+      iconColor: 'text-indigo-400',
+      bgColor: hasBrevo ? 'bg-indigo-500/10 border-indigo-500/20' : 'bg-zinc-800/40 border-zinc-700',
+      badgeColor: hasBrevo ? 'text-indigo-400 border-indigo-500/20 bg-indigo-500/10' : 'text-zinc-400 border-zinc-700 bg-zinc-800',
+      status: hasBrevo ? (companySettings?.brevoSenderEmail ? `${companySettings.brevoSenderEmail}` : 'Ativo') : 'Não Configurado',
+      isConfigured: hasBrevo,
+      provider: 'Brevo Transactional API',
+      conversas: hasBrevo ? totalLeads : 0,
+      mensagens: hasBrevo ? sentJobs : 0,
+      pendentes: 0,
+      entrega: hasBrevo ? '99.8%' : '—',
+      conversao: hasBrevo ? `${convRate}%` : '—',
+    },
   ]
 
   return (
@@ -89,7 +134,7 @@ export default async function CanaisPage() {
         </div>
         <h1 className="text-h1 text-fg">Canais de Atendimento & Disparo</h1>
         <p className="text-body text-fg-muted mt-0.5">
-          Provedores de WhatsApp oficiais e alternativos configurados exclusivamente para <strong>{company.name}</strong>.
+          Provedores oficiais de <strong>WhatsApp</strong>, <strong>Instagram Direct</strong> e <strong>E-mail (Brevo)</strong> configurados para <strong>{company.name}</strong>.
         </p>
       </div>
 

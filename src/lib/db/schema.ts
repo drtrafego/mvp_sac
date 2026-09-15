@@ -39,6 +39,12 @@ export const settings = pgTable('settings', {
   brevoApiKey: text('brevo_api_key'),
   brevoSenderEmail: text('brevo_sender_email'),
   brevoSenderName: text('brevo_sender_name'),
+  // Instagram Direct (Meta Graph API)
+  instagramUsername: text('instagram_username'),
+  instagramAccountId: text('instagram_account_id'),
+  instagramAccessToken: text('instagram_access_token'),
+  instagramVerifyToken: text('instagram_verify_token'),
+  instagramPageId: text('instagram_page_id'),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
 

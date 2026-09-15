@@ -61,6 +61,11 @@ export async function GET(): Promise<NextResponse> {
       brevoApiKey: '',
       brevoSenderEmail: '',
       brevoSenderName: '',
+      instagramUsername: '',
+      instagramAccountId: '',
+      instagramAccessToken: '',
+      instagramVerifyToken: '',
+      instagramPageId: '',
     })
   }
 
@@ -81,6 +86,11 @@ export async function GET(): Promise<NextResponse> {
     brevoApiKey: mask(row.brevoApiKey),
     brevoSenderEmail: row.brevoSenderEmail ?? '',
     brevoSenderName: row.brevoSenderName ?? '',
+    instagramUsername: row.instagramUsername ?? '',
+    instagramAccountId: row.instagramAccountId ?? '',
+    instagramAccessToken: mask(row.instagramAccessToken),
+    instagramVerifyToken: row.instagramVerifyToken ?? '',
+    instagramPageId: row.instagramPageId ?? '',
   })
 }
 
@@ -113,6 +123,11 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
         brevoApiKey: resolveSecret(body.brevoApiKey, existing.brevoApiKey),
         brevoSenderEmail: body.brevoSenderEmail ?? existing.brevoSenderEmail,
         brevoSenderName: body.brevoSenderName ?? existing.brevoSenderName,
+        instagramUsername: body.instagramUsername ?? existing.instagramUsername,
+        instagramAccountId: body.instagramAccountId ?? existing.instagramAccountId,
+        instagramAccessToken: resolveSecret(body.instagramAccessToken, existing.instagramAccessToken),
+        instagramVerifyToken: body.instagramVerifyToken ?? existing.instagramVerifyToken,
+        instagramPageId: body.instagramPageId ?? existing.instagramPageId,
         updatedAt: new Date(),
       })
       .where(eq(settings.id, existing.id))
@@ -144,6 +159,11 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       brevoApiKey: body.brevoApiKey || null,
       brevoSenderEmail: body.brevoSenderEmail || null,
       brevoSenderName: body.brevoSenderName || null,
+      instagramUsername: body.instagramUsername || null,
+      instagramAccountId: body.instagramAccountId || null,
+      instagramAccessToken: body.instagramAccessToken || null,
+      instagramVerifyToken: body.instagramVerifyToken || null,
+      instagramPageId: body.instagramPageId || null,
       updatedAt: new Date(),
     })
     .returning()

@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { eq, count, and, desc, sql, gte, lte, lt } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
+import Link from 'next/link'
 import {
   Users,
   MessageSquare,
@@ -267,18 +268,52 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
         {/* Canais e Plataformas Conectadas */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line-subtle text-micro text-fg-subtle">
-          <span className="font-semibold text-fg">Canal Oficial:</span>
+          <Link href="/canais" className="font-semibold text-fg hover:text-brand-ink transition-colors flex items-center gap-1">
+            Canais:
+          </Link>
           <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
-            <MessageSquare size={12} className="text-emerald-400" /> WhatsApp (Meta Cloud API / Uazapi)
+            <MessageSquare size={12} className="text-emerald-400" /> WhatsApp
           </span>
-          <span className="mx-2 text-fg-faint">•</span>
-          <span className="font-semibold text-fg">Origens & Checkouts:</span>
-          <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">Mineração (Google Places)</span>
-          <span className="text-[10px] font-bold text-blue-500 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">Meta Ads</span>
-          <span className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">Hotmart</span>
-          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">Kiwify</span>
-          <span className="text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">Greenn</span>
-          <span className="text-[10px] font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded">Zouti</span>
+          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink-400">
+              <rect width="20" height="20" x="2" y="2" rx="5" ry="5"/>
+              <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
+              <line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>
+            </svg>
+            Instagram DM
+          </span>
+          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
+            <Mail size={12} className="text-indigo-400" /> E-mail (Brevo)
+          </span>
+
+          <span className="mx-1 text-fg-faint">•</span>
+
+          <Link href="/origens" className="font-semibold text-fg hover:text-brand-ink transition-colors">
+            Origens & Checkouts:
+          </Link>
+          {/* Mineração com subcategorias */}
+          <Link href="/origens" className="inline-flex items-center gap-1.5 text-[10px] font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded hover:bg-cyan-500/20 transition-all">
+            <span>⛏️ Mineração</span>
+            <span className="text-[9px] font-normal text-cyan-300/80">(WhatsApp • E-mail • Insta)</span>
+          </Link>
+          <Link href="/origens" className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded hover:bg-blue-500/20 transition-all">
+            Meta Ads
+          </Link>
+          <Link href="/origens" className="text-[10px] font-bold text-pink-400 bg-pink-500/10 border border-pink-500/20 px-2 py-0.5 rounded hover:bg-pink-500/20 transition-all">
+            Instagram
+          </Link>
+          <Link href="/origens" className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2 py-0.5 rounded hover:bg-orange-500/20 transition-all">
+            Hotmart
+          </Link>
+          <Link href="/origens" className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded hover:bg-emerald-500/20 transition-all">
+            Kiwify
+          </Link>
+          <Link href="/origens" className="text-[10px] font-bold text-lime-400 bg-lime-500/10 border border-lime-500/20 px-2 py-0.5 rounded hover:bg-lime-500/20 transition-all">
+            Greenn
+          </Link>
+          <Link href="/origens" className="text-[10px] font-bold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded hover:bg-purple-500/20 transition-all">
+            Zouti
+          </Link>
         </div>
       </div>
 

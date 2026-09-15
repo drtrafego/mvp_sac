@@ -45,6 +45,11 @@ interface SettingsData {
   brevoApiKey: string
   brevoSenderEmail: string
   brevoSenderName: string
+  instagramUsername: string
+  instagramAccountId: string
+  instagramAccessToken: string
+  instagramVerifyToken: string
+  instagramPageId: string
 }
 
 interface Member {
@@ -85,6 +90,11 @@ const defaults: SettingsData = {
   brevoApiKey: '',
   brevoSenderEmail: '',
   brevoSenderName: '',
+  instagramUsername: '',
+  instagramAccountId: '',
+  instagramAccessToken: '',
+  instagramVerifyToken: '',
+  instagramPageId: '',
 }
 
 function SecretInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
@@ -353,6 +363,7 @@ export default function ConfiguracoesPage() {
   const zoutiWebhookUrl = webhookUrl('zouti')
   const kiwifyWebhookUrl = webhookUrl('kiwify')
   const metaWebhookUrl = slug ? `${origin}/api/webhooks/whatsapp` : null
+  const instagramWebhookUrl = webhookUrl('instagram')
 
   useEffect(() => {
     fetch('/api/settings')
@@ -380,6 +391,11 @@ export default function ConfiguracoesPage() {
         brevoApiKey: data.brevoApiKey ?? '',
         brevoSenderEmail: data.brevoSenderEmail ?? '',
         brevoSenderName: data.brevoSenderName ?? '',
+        instagramUsername: data.instagramUsername ?? '',
+        instagramAccountId: data.instagramAccountId ?? '',
+        instagramAccessToken: data.instagramAccessToken ?? '',
+        instagramVerifyToken: data.instagramVerifyToken ?? '',
+        instagramPageId: data.instagramPageId ?? '',
       }))
   }, [])
 
@@ -624,6 +640,97 @@ export default function ConfiguracoesPage() {
           />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
             Nome que aparecerá para o destinatário na caixa de entrada.
+          </p>
+        </div>
+      </section>
+
+      {/* Instagram Direct (Meta Graph API) */}
+      <section className="panel space-y-4 p-[var(--space-card)]">
+        <div className="flex items-center gap-2">
+          <h2 className="text-h2 text-fg">Instagram Direct & Mensagens</h2>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20">
+            Meta Graph API
+          </span>
+        </div>
+        <Separator className="bg-line-subtle" />
+        <div className="text-micro text-fg-muted space-y-1.5 max-w-[var(--w-form)]">
+          <p>
+            Permite receber DMs do Instagram, responder leads de prospecção/mineração e automatizar o atendimento direto na sua conta do Instagram.
+          </p>
+          <div className="p-3 rounded-[var(--r-md)] bg-surface-inset border border-line-subtle space-y-1 text-fg-subtle">
+            <p className="font-semibold text-fg">📋 Como conectar seu Instagram:</p>
+            <ol className="list-decimal list-inside space-y-0.5">
+              <li>Converta sua conta do Instagram para <strong>Comercial / Profissional</strong>.</li>
+              <li>Conecte sua conta do Instagram à sua <strong>Página do Facebook</strong> no Meta Business Suite.</li>
+              <li>Copie a <strong>URL do Webhook do Instagram</strong> abaixo e cadastre em seu App no Meta for Developers (produto <em>Instagram</em>, campo <em>messages</em>).</li>
+              <li>Preencha seu <strong>Token de Acesso</strong> e <strong>Instagram Account ID</strong> abaixo.</li>
+            </ol>
+          </div>
+        </div>
+
+        <WebhookUrlBox url={instagramWebhookUrl} label="URL do Webhook (configurar no Meta Developers > Instagram Webhook)" />
+
+        <div className="space-y-1.5">
+          <Label>@ Usuário do Instagram</Label>
+          <Input
+            value={form.instagramUsername}
+            onChange={e => set('instagramUsername', e.target.value)}
+            placeholder="@suaempresa"
+            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Nome de usuário do perfil oficial da sua empresa no Instagram.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Instagram Business Account ID</Label>
+          <Input
+            value={form.instagramAccountId}
+            onChange={e => set('instagramAccountId', e.target.value)}
+            placeholder="17841400000000000"
+            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Obtido no Meta Graph API Explorer ou no painel do Meta Business Suite associado à conta.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>ID da Página do Facebook (Page ID)</Label>
+          <Input
+            value={form.instagramPageId}
+            onChange={e => set('instagramPageId', e.target.value)}
+            placeholder="100234567890123"
+            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            ID da Página do Facebook vinculada ao perfil do Instagram.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Token de Acesso do Instagram (Meta System User Token)</Label>
+          <SecretInput
+            value={form.instagramAccessToken}
+            onChange={v => set('instagramAccessToken', v)}
+            placeholder="EAAxxxxxxx..."
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Token de acesso permanente com permissões <code className="text-fg font-mono text-[11px]">instagram_manage_messages</code>, <code className="text-fg font-mono text-[11px]">instagram_basic</code> e <code className="text-fg font-mono text-[11px]">pages_manage_metadata</code>. Se não preenchido, usa o Access Token geral da Meta.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Verify Token do Webhook do Instagram</Label>
+          <Input
+            value={form.instagramVerifyToken}
+            onChange={e => set('instagramVerifyToken', e.target.value)}
+            placeholder="meu_token_instagram_secreto"
+            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Token secreto definido por você para validação do webhook no portal Meta for Developers.
           </p>
         </div>
       </section>
