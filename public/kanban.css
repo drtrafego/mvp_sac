@@ -1,0 +1,113 @@
+/* Quadro kanban do pipeline. Leitura visual portada do CRM do mvp_agente_ia:
+ * colunas de largura fixa, rolagem horizontal, cartão com avatar e origem. */
+
+.kb-quadro {
+  display: flex; gap: 12px; align-items: flex-start;
+  overflow-x: auto; overflow-y: hidden;
+  padding: 2px 2px 14px; scrollbar-width: thin;
+  scroll-snap-type: x proximity;
+}
+
+.kb-coluna {
+  width: 306px; min-width: 306px; flex: none; scroll-snap-align: start;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: 16px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--etapa) 8%, transparent), transparent 46%), var(--surface);
+  max-height: 66vh;
+}
+.kb-coluna-topo {
+  display: flex; align-items: center; gap: 9px;
+  padding: 13px 15px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: #14181b; border-radius: 16px 16px 0 0; z-index: 1;
+}
+.kb-marca { width: 8px; height: 8px; border-radius: 3px; background: var(--etapa); flex: none; }
+.kb-coluna-topo h3 {
+  margin: 0; font-size: 12.5px; font-weight: 650; flex: 1; letter-spacing: -.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.kb-contagem {
+  font-size: 11px; font-weight: 750; color: var(--muted); font-variant-numeric: tabular-nums;
+  background: #ffffff0d; border-radius: 999px; padding: 2px 8px; flex: none;
+}
+
+.kb-pilha {
+  display: grid; gap: 9px; padding: 11px; overflow-y: auto; min-height: 78px;
+  scrollbar-width: thin; border-radius: 0 0 16px 16px;
+}
+.kb-pilha.sobre { background: color-mix(in srgb, var(--etapa) 12%, transparent); outline: 1px dashed color-mix(in srgb, var(--etapa) 55%, transparent); outline-offset: -5px; }
+.kb-vazia { margin: 0; padding: 16px 4px; text-align: center; color: var(--muted); font-size: 11.5px; }
+
+.kb-card {
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface2);
+  padding: 12px; display: grid; gap: 10px; cursor: pointer;
+  transition: background .18s ease, border-color .18s ease;
+}
+.kb-card:hover { background: #1d2327; border-color: #3a444b; }
+.kb-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kb-card.arrastavel { cursor: grab; }
+.kb-card.arrastando { opacity: .4; cursor: grabbing; }
+
+/* topo: origem à esquerda, canal à direita */
+.kb-topo { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.kb-topo .chip-origem { min-width: 0; }
+.kb-sem-origem {
+  font-size: 9px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); background: #ffffff0a; border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px 9px;
+}
+.kb-canal { display: inline-flex; align-items: center; flex: none; opacity: .9; }
+.kb-canal svg { width: 15px; height: 15px; }
+
+/* corpo */
+.kb-corpo { display: grid; gap: 5px; }
+.kb-nome {
+  margin: 0; font-size: 13.5px; font-weight: 800; letter-spacing: -.015em; line-height: 1.2;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.kb-sub {
+  margin: 0; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: #8e9aa2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.kb-sep { margin: 0 6px; color: #4d565c; }
+/* min-height mantém todos os cartões do mesmo tamanho, com ou sem prévia */
+.kb-previa {
+  margin: 2px 0 0; font-size: 11.5px; line-height: 1.45; color: #9aa6ad;
+  min-height: 2.9em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* rodapé */
+.kb-rodape {
+  display: flex; align-items: center; justify-content: space-between; gap: 9px;
+  padding-top: 9px; border-top: 1px solid #ffffff0d;
+}
+.kb-quem { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.kb-avatar {
+  position: relative; width: 24px; height: 24px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-size: 10px; font-weight: 800;
+  background: #2f3a44; color: #dbe3ea; border: 1px solid #ffffff1a;
+}
+.kb-ponto {
+  position: absolute; right: -1px; bottom: -1px; width: 8px; height: 8px;
+  border-radius: 50%; background: #6b7680; border: 1.5px solid var(--surface2);
+}
+.kb-avatar.atribuido .kb-ponto { background: #19c37d; }
+.kb-etiqueta {
+  font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--muted); background: #ffffff08; border: 1px solid #ffffff0d;
+  border-radius: 8px; padding: 3px 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.kb-data {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  font-size: 10.5px; font-weight: 700; color: #7f8a92; font-variant-numeric: tabular-nums;
+}
+.kb-data svg { width: 12px; height: 12px; }
+
+.kb-ajuda { margin: 4px 2px 0; font-size: 11px; color: #8b968d; line-height: 1.45; }
+
+@media (max-width: 720px) {
+  .kb-coluna { width: 84vw; min-width: 84vw; max-height: none; }
+  /* Arrastar em toque é ruim; a mudança de etapa continua no painel lateral. */
+  .kb-ajuda::after { content: " No celular, use o seletor de etapa no detalhe da conversa."; }
+}
