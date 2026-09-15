@@ -29,7 +29,7 @@ export async function queryAgentsDb<T = Record<string, unknown>>(
   if (!sql) return null
 
   try {
-    const rows = await sql(query, params)
+    const rows = await (sql as any)(query, params)
     return rows as unknown as T[]
   } catch (error) {
     console.error('[Agents DB Error]:', error)
