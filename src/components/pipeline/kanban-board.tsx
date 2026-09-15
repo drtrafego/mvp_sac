@@ -82,16 +82,7 @@ function getPlatformBadge(platform?: string | null) {
 }
 
 export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] }) {
-  const [leads, setLeads] = useState<KanbanLead[]>(() => {
-    if (initialLeads.length > 0) return initialLeads
-    return [
-      { id: 1, name: 'Lucas Andrade', phone: '5511987654321', productName: 'Mentoria Tráfego Pro', productValue: 199700, eventType: 'carrinho_abandonado', platform: 'Hotmart', stage: 'novo_contato', channel: 'whatsapp', agentName: 'AutonomIA' },
-      { id: 2, name: 'Camila Rodrigues', phone: '5521998877665', productName: 'Curso Estratégia 10x', productValue: 49700, eventType: 'cartao_recusado', platform: 'Kiwify', stage: 'em_atendimento', channel: 'whatsapp', agentName: 'Bella' },
-      { id: 3, name: 'Rodrigo Silveira', phone: '5531988771122', productName: 'Comunidade Escala', productValue: 99700, eventType: 'pix', platform: 'Greenn', stage: 'qualificado', channel: 'instagram', agentName: 'Casal do Tráfego' },
-      { id: 4, name: 'Juliana Costa', phone: '5541991234567', productName: 'Mentoria Tráfego Pro', productValue: 199700, eventType: 'boleto', platform: 'Hotmart', stage: 'agendado', channel: 'whatsapp', agentName: 'AutonomIA' },
-      { id: 5, name: 'Marcelo Pereira', phone: '5581987612345', productName: 'Acelerador de Vendas', productValue: 29700, eventType: 'compra_aprovada', platform: 'Kiwify', stage: 'fechado', channel: 'email', agentName: 'AutonomIA' },
-    ]
-  })
+  const [leads, setLeads] = useState<KanbanLead[]>(initialLeads)
 
   const [filterChannel, setFilterChannel] = useState<string>('all')
   const [filterAgent, setFilterAgent] = useState<string>('all')

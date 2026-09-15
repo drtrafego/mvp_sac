@@ -1,11 +1,14 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Search, RefreshCw, Inbox, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
+import PeriodBar from '@/components/shared/PeriodBar'
+import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
 
@@ -142,10 +145,20 @@ export default function LeadsPage() {
   const [status, setStatus] = useState('all')
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
+  const searchParams = useSearchParams()
+  const { from, to } = resolvePeriod({
+    from: searchParams.get('from') ?? undefined,
+    to: searchParams.get('to') ?? undefined,
+  })
 
   const fetchLeads = useCallback(async (pg: number) => {
     setLoading(true)
-    const params = new URLSearchParams({ limit: String(PAGE_SIZE + 1), offset: String(pg * PAGE_SIZE) })
+    const params = new URLSearchParams({
+      limit: String(PAGE_SIZE + 1),
+      offset: String(pg * PAGE_SIZE),
+      from,
+      to,
+    })
     if (eventType !== 'all') params.set('event_type', eventType)
     if (status !== 'all') params.set('status', status)
     const data = await fetch(`/api/leads?${params}`).then(r => r.json())
@@ -153,7 +166,7 @@ export default function LeadsPage() {
     setHasMore(rows.length > PAGE_SIZE)
     setLeads(rows.slice(0, PAGE_SIZE))
     setLoading(false)
-  }, [eventType, status])
+  }, [eventType, status, from, to])
 
   useEffect(() => {
     setPage(0)
@@ -191,20 +204,23 @@ export default function LeadsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-h1 text-fg">Leads</h1>
           <p className="text-body text-fg-muted mt-1">{subtitle}</p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => fetchLeads(page)}
-          className="shrink-0 gap-2 text-fg-muted hover:text-fg"
-        >
-          <RefreshCw size={14} />
-          Atualizar
-        </Button>
+        <div className="flex items-center gap-2">
+          <PeriodBar from={from} to={to} />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => fetchLeads(page)}
+            className="shrink-0 gap-2 text-fg-muted hover:text-fg"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            Atualizar
+          </Button>
+        </div>
       </div>
 
       {/* Filtros */}

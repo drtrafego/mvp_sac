@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
 import { eq, and, gte, lte, sql, desc, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
-import { getDateRange } from '@/lib/date-utils'
+import { resolvePeriod } from '@/lib/period'
 import { Suspense } from 'react'
 import { Users, DollarSign, ShoppingBag, TrendingUp, WifiOff } from 'lucide-react'
 import { VendasFilters } from './vendas-filters'
@@ -79,14 +79,14 @@ export default async function AnalyticsVendasPage({ searchParams }: PageProps) {
   const [company, params] = await Promise.all([requireCompany(), searchParams])
   const cid = company.id
 
-  const period = params.period ?? '30d'
-  const now = new Date()
-  const { fromDate, toDate } = getDateRange(period, now, params.from, params.to)
+  const { from, to } = resolvePeriod(params)
+  const fromDate = new Date(`${from}T00:00:00-03:00`)
+  const toDate = new Date(`${to}T23:59:59.999-03:00`)
 
   const baseConditions = [
     eq(recoveryLeads.companyId, cid),
     eq(recoveryLeads.eventType, 'compra_aprovada'),
-    ...(fromDate ? [gte(recoveryLeads.createdAt, fromDate)] : []),
+    gte(recoveryLeads.createdAt, fromDate),
     lte(recoveryLeads.createdAt, toDate),
   ]
 
@@ -318,6 +318,8 @@ export default async function AnalyticsVendasPage({ searchParams }: PageProps) {
       <div className="card-section p-3 rise rise-1">
         <Suspense fallback={null}>
           <VendasFilters
+            from={from}
+            to={to}
             products={products}
             utmSources={utmSourceOptions}
             utmMediums={utmMediumOptions}

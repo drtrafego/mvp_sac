@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, Fragment } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Plus, Copy, Check, X, ShieldCheck, Zap, RefreshCw, ChevronRight } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
@@ -10,6 +11,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MessageCard, formatDelay } from './message-card'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
+import PeriodBar from '@/components/shared/PeriodBar'
+import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
 
 /* Altura única de controle: 44px no toque, 36px a partir do desktop */
@@ -162,9 +165,11 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
   const [upsellDelayMinutes, setUpsellDelayMinutes] = useState<number>(1440)
   const [savingUpsell, setSavingUpsell] = useState(false)
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
-  const [period, setPeriod] = useState('30d')
-  const [customFrom, setCustomFrom] = useState('')
-  const [customTo, setCustomTo] = useState('')
+  const searchParams = useSearchParams()
+  const { from, to } = resolvePeriod({
+    from: searchParams.get('from') ?? undefined,
+    to: searchParams.get('to') ?? undefined,
+  })
   const [leadsLoading, setLeadsLoading] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState('')
   const [availableProducts, setAvailableProducts] = useState<string[]>([])
@@ -181,11 +186,9 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
   const kiwifyWebhookUrl = companySlug ? `${origin}/api/webhooks/kiwify/${companySlug}` : null
   const metaWebhookUrl = `${origin}/api/webhooks/whatsapp`
 
-  const fetchLeads = useCallback((p: string, from?: string, to?: string, product?: string) => {
+  const fetchLeads = useCallback((fromDateStr: string, toDateStr: string, product?: string) => {
     setLeadsLoading(true)
-    let url = `/api/leads?event_type=${eventType}&limit=100&period=${p}`
-    if (p === 'custom' && from) url += `&from=${from}`
-    if (p === 'custom' && to) url += `&to=${to}`
+    let url = `/api/leads?event_type=${eventType}&limit=100&from=${fromDateStr}&to=${toDateStr}`
     if (product) url += `&product=${encodeURIComponent(product)}`
     fetch(url)
       .then(r => r.json())
@@ -217,8 +220,8 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
   }, [eventType])
 
   useEffect(() => {
-    fetchLeads(period, customFrom, customTo, selectedProduct)
-  }, [fetchLeads, period, selectedProduct])
+    fetchLeads(from, to, selectedProduct)
+  }, [fetchLeads, from, to, selectedProduct])
 
   async function handleToggle(active: boolean) {
     const res = await fetch(`/api/sequences/${eventType}`, {
@@ -586,7 +589,7 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
                 : <span className="num text-micro font-normal text-fg-subtle">{leads.length} registros</span>}
             </h2>
             <button
-              onClick={() => fetchLeads(period, customFrom, customTo, selectedProduct)}
+              onClick={() => fetchLeads(from, to, selectedProduct)}
               disabled={leadsLoading}
               className="focus-ring flex h-[var(--control-lg)] w-[var(--control-lg)] lg:h-[var(--control-md)] lg:w-[var(--control-md)] cursor-pointer items-center justify-center rounded-[var(--r-md)] text-fg-subtle transition-colors hover:bg-surface-inset hover:text-fg disabled:opacity-40"
               title="Atualizar"
@@ -594,7 +597,7 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
               <RefreshCw size={14} className={leadsLoading ? 'animate-spin' : ''} />
             </button>
           </div>
-          <div className="w-full md:w-auto flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-1.5">
+          <div className="w-full md:w-auto flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
             {availableProducts.length > 0 && (
               <Select
                 value={selectedProduct || '__all__'}
@@ -612,65 +615,9 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
                 </SelectContent>
               </Select>
             )}
-            {/* Chips de período: rolagem horizontal no celular */}
-            <div
-              className="flex gap-1.5 overflow-x-auto -mx-4 px-4 lg:mx-0 lg:px-0 lg:flex-wrap lg:items-center"
-              style={{ scrollbarWidth: 'none' }}
-            >
-              {[
-                { value: 'today', label: 'Hoje' },
-                { value: 'yesterday', label: 'Ontem' },
-                { value: '7d', label: '7 dias' },
-                { value: '14d', label: '14 dias' },
-                { value: '30d', label: '30 dias' },
-                { value: 'month', label: 'Este mês' },
-                { value: 'all', label: 'Tudo' },
-                { value: 'custom', label: 'Personalizado' },
-              ].map(({ value, label }) => (
-                <button
-                  key={value}
-                  onClick={() => setPeriod(value)}
-                  className={`focus-ring shrink-0 inline-flex items-center rounded-[var(--r-md)] border px-3.5 text-micro font-medium transition-colors cursor-pointer h-[var(--control-lg)] lg:h-[var(--control-sm)] lg:px-2.5 ${
-                    period === value
-                      ? 'bg-surface-overlay border-line-strong text-fg'
-                      : 'border-line-subtle bg-surface-inset text-fg-subtle hover:text-fg'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <PeriodBar from={from} to={to} />
           </div>
         </div>
-
-        {period === 'custom' && (
-          <div className="flex flex-wrap gap-3 items-center">
-            <div className="flex items-center gap-2">
-              <label className="block text-label uppercase text-fg-subtle">De</label>
-              <input
-                type="date"
-                value={customFrom}
-                onChange={e => {
-                  setCustomFrom(e.target.value)
-                  if (e.target.value) fetchLeads('custom', e.target.value, customTo)
-                }}
-                className={cn(FIELD, CONTROL_H, 'native-field num rounded-[var(--r-md)] border px-2.5 text-body outline-none')}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="block text-label uppercase text-fg-subtle">Até</label>
-              <input
-                type="date"
-                value={customTo}
-                onChange={e => {
-                  setCustomTo(e.target.value)
-                  if (customFrom) fetchLeads('custom', customFrom, e.target.value)
-                }}
-                className={cn(FIELD, CONTROL_H, 'native-field num rounded-[var(--r-md)] border px-2.5 text-body outline-none')}
-              />
-            </div>
-          </div>
-        )}
 
         {leadsLoading ? (
           <div className="space-y-2">

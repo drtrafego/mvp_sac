@@ -21,6 +21,13 @@ export function getDateRange(
   fromStr?: string,
   toStr?: string,
 ): { fromDate: Date | null; toDate: Date } {
+  if (fromStr && toStr) {
+    return {
+      fromDate: parseBrazilDate(fromStr),
+      toDate: new Date(`${toStr}T23:59:59.999-03:00`),
+    }
+  }
+
   const todayStart = brazilTodayMidnight(now)
   const DAY = 24 * 60 * 60 * 1000
 

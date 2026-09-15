@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import DateRangePicker from "@/components/shared/DateRangePicker";
 
@@ -18,6 +18,7 @@ type Props = {
 export default function PeriodBar({ from, to, children }: Props) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const fromD = new Date(from + "T12:00:00");
 
@@ -27,7 +28,13 @@ export default function PeriodBar({ from, to, children }: Props) {
     const fim = new Date(d.getFullYear(), d.getMonth() + 1, 0);
     const iso = (x: Date) =>
       `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
-    router.push(`${pathname}?from=${iso(inicio)}&to=${iso(fim)}`);
+    const params = new URLSearchParams(searchParams ? searchParams.toString() : "");
+    params.set("from", iso(inicio));
+    params.set("to", iso(fim));
+    params.delete("month");
+    params.delete("year");
+    params.delete("period");
+    router.push(`${pathname}?${params.toString()}`);
   };
 
   return (

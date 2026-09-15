@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect, createContext, useContext } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -25,7 +26,10 @@ import {
   FileCheck,
   Send,
   ListOrdered,
-  ShieldCheck,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -75,39 +79,43 @@ export function NavItem({
   icon: Icon,
   isActive,
   badge,
+  collapsed = false,
 }: {
   label: string
   href: string
   icon: React.ElementType
   isActive: boolean
   badge?: string
+  collapsed?: boolean
 }) {
   return (
     <Link
       href={href}
       title={label}
       className={cn(
-        'nav-item focus-ring group relative flex items-center justify-between px-3 py-2.5 lg:py-[6.5px] rounded-[var(--r-md)]',
-        'text-[0.8125rem] transition-colors duration-150 ease-out cursor-pointer',
+        'nav-item focus-ring group relative flex items-center rounded-[var(--r-md)] transition-all duration-150 ease-out cursor-pointer',
+        collapsed
+          ? 'justify-center w-10 h-10 mx-auto px-0'
+          : 'justify-between px-3 py-2 text-[0.8125rem]',
         isActive
-          ? 'bg-[var(--line-subtle)] text-fg font-medium'
+          ? 'bg-[var(--line-subtle)] text-brand-ink font-medium shadow-sm'
           : 'text-fg-subtle hover:text-fg hover:bg-[var(--line-subtle)] font-normal'
       )}
     >
-      <div className="flex items-center gap-2.5 min-w-0">
+      <div className={cn('flex items-center min-w-0', collapsed ? 'justify-center' : 'gap-2.5')}>
         {isActive && (
           <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-full bg-brand-ink" />
         )}
         <Icon
-          size={15}
+          size={16}
           className={cn(
             'shrink-0 transition-colors duration-150',
             isActive ? 'text-brand-ink' : 'text-fg-faint group-hover:text-fg-muted'
           )}
         />
-        <span className="nav-label truncate leading-none">{label}</span>
+        {!collapsed && <span className="nav-label truncate leading-none">{label}</span>}
       </div>
-      {badge && (
+      {!collapsed && badge && (
         <span className="text-[10px] uppercase font-bold text-brand-ink bg-brand-glow px-1.5 py-0.2 rounded border border-brand-solid/20">
           {badge}
         </span>
@@ -120,10 +128,12 @@ export function SidebarNavContent({
   hideMain = false,
   className,
   isAdmin,
+  collapsed = false,
 }: {
   hideMain?: boolean
   className?: string
   isAdmin?: boolean
+  collapsed?: boolean
 }) {
   const pathname = usePathname()
 
@@ -131,20 +141,25 @@ export function SidebarNavContent({
     href === '/' ? pathname === '/' : pathname.startsWith(href)
 
   return (
-    <nav className={cn('scroll-thin min-h-0 overflow-y-auto px-2.5 py-3 space-y-4', className)}>
+    <nav className={cn('scroll-thin min-h-0 overflow-y-auto px-2 py-3 space-y-4', className)}>
       {/* Seção Super Admin (Gestão de Empresas SaaS) */}
       {isAdmin && (
         <div className="space-y-0.5">
-          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-amber-400/90 flex items-center justify-between">
-            <span>Gestão SaaS (Super Admin)</span>
-            <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">Master</span>
-          </p>
+          {!collapsed ? (
+            <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-amber-400/90 flex items-center justify-between">
+              <span>Gestão SaaS (Super Admin)</span>
+              <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">Master</span>
+            </p>
+          ) : (
+            <div className="h-px bg-amber-500/20 my-2 mx-1" />
+          )}
           <NavItem
             label="Empresas & Clientes"
             href="/empresas"
             icon={Building2}
             isActive={isActive('/empresas')}
             badge="Admin"
+            collapsed={collapsed}
           />
         </div>
       )}
@@ -152,52 +167,72 @@ export function SidebarNavContent({
       {/* 1. Atendimento & Pipeline */}
       {!hideMain && (
         <div className="space-y-0.5">
-          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-            <span>Atendimento</span>
-          </p>
+          {!collapsed ? (
+            <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
+              <span>Atendimento</span>
+            </p>
+          ) : (
+            <div className="h-px bg-line-subtle my-2 mx-1" />
+          )}
           {mainNav.map(({ label, href, icon }) => (
-            <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} />
+            <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
           ))}
         </div>
       )}
 
       {/* 2. Análise & Métricas */}
       <div className="space-y-0.5">
-        <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-          <span>Análise & Métricas</span>
-        </p>
+        {!collapsed ? (
+          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
+            <span>Análise & Métricas</span>
+          </p>
+        ) : (
+          <div className="h-px bg-line-subtle my-2 mx-1" />
+        )}
         {analyticsNav.map(({ label, href, icon }) => (
-          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} />
+          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
         ))}
       </div>
 
       {/* 3. Recuperação de Vendas */}
       <div className="space-y-0.5">
-        <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-          <span>Recuperação de Vendas</span>
-        </p>
+        {!collapsed ? (
+          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
+            <span>Recuperação de Vendas</span>
+          </p>
+        ) : (
+          <div className="h-px bg-line-subtle my-2 mx-1" />
+        )}
         {recoveryNav.map(({ label, href, icon }) => (
-          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} />
+          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
         ))}
       </div>
 
       {/* 4. API Oficial & Automação */}
       <div className="space-y-0.5">
-        <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-          <span>API Oficial & Automação</span>
-        </p>
+        {!collapsed ? (
+          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
+            <span>API Oficial & Automação</span>
+          </p>
+        ) : (
+          <div className="h-px bg-line-subtle my-2 mx-1" />
+        )}
         {automationNav.map(({ label, href, icon }) => (
-          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} />
+          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
         ))}
       </div>
 
       {/* 5. Sistema */}
       <div className="space-y-0.5">
-        <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-          <span>Sistema & Configurações</span>
-        </p>
+        {!collapsed ? (
+          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
+            <span>Sistema & Configurações</span>
+          </p>
+        ) : (
+          <div className="h-px bg-line-subtle my-2 mx-1" />
+        )}
         {bottomNav.map(({ label, href, icon }) => (
-          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} />
+          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
         ))}
       </div>
     </nav>
@@ -205,35 +240,37 @@ export function SidebarNavContent({
 }
 
 /** Rodapé com Perfil do Stack Auth, Painel de Empresas, tema e sair */
-export function SidebarFooter({ isAdmin }: SidebarProps) {
+export function SidebarFooter({ isAdmin, collapsed = false }: SidebarProps & { collapsed?: boolean }) {
   const user = useUser()
 
   const displayName = user?.displayName || user?.primaryEmail?.split('@')[0] || 'Usuário'
   const email = user?.primaryEmail || 'Autenticado via Stack Auth'
 
   return (
-    <div className="px-2.5 py-3 border-t border-line-subtle space-y-2 shrink-0 bg-surface-panel">
+    <div className={cn('py-3 border-t border-line-subtle space-y-2 shrink-0 bg-surface-panel', collapsed ? 'px-1.5' : 'px-2.5')}>
       {/* Cartão de Perfil do Stack Auth */}
       {user && (
-        <div className="flex items-center gap-2.5 p-2 rounded-xl bg-surface-base border border-line-subtle">
-          <div className="w-8 h-8 rounded-full bg-brand-glow border border-brand-solid/30 flex items-center justify-center text-brand-ink font-bold text-micro shrink-0 overflow-hidden">
+        <div className={cn('flex items-center rounded-xl bg-surface-base border border-line-subtle', collapsed ? 'justify-center p-1.5' : 'gap-2.5 p-2')}>
+          <div className="w-8 h-8 rounded-full bg-brand-glow border border-brand-solid/30 flex items-center justify-center text-brand-ink font-bold text-micro shrink-0 overflow-hidden" title={`${displayName} (${email})`}>
             {user.profileImageUrl ? (
               <img src={user.profileImageUrl} alt={displayName} className="w-full h-full object-cover" />
             ) : (
               displayName.slice(0, 2).toUpperCase()
             )}
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1">
-              <span className="text-micro font-bold text-fg truncate">{displayName}</span>
-              {isAdmin && (
-                <span className="text-[9px] uppercase font-bold text-amber-400 bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">
-                  Super Admin
-                </span>
-              )}
+          {!collapsed && (
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1">
+                <span className="text-micro font-bold text-fg truncate">{displayName}</span>
+                {isAdmin && (
+                  <span className="text-[9px] uppercase font-bold text-amber-400 bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">
+                    Admin
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-fg-faint truncate font-mono">{email}</p>
             </div>
-            <p className="text-[11px] text-fg-faint truncate font-mono">{email}</p>
-          </div>
+          )}
         </div>
       )}
 
@@ -242,56 +279,99 @@ export function SidebarFooter({ isAdmin }: SidebarProps) {
           <Link
             href="/empresas"
             title="Painel de Todas as Empresas / Clientes"
-            className="nav-item focus-ring flex items-center gap-2.5 px-3 py-2 rounded-[var(--r-md)] text-[0.8125rem] font-medium text-[var(--st-atencao)] hover:bg-[var(--line-subtle)] transition-colors duration-150 ease-out w-full cursor-pointer"
+            className={cn(
+              'nav-item focus-ring flex items-center rounded-[var(--r-md)] text-[0.8125rem] font-medium text-[var(--st-atencao)] hover:bg-[var(--line-subtle)] transition-colors duration-150 ease-out cursor-pointer',
+              collapsed ? 'justify-center w-10 h-10 mx-auto' : 'gap-2.5 px-3 py-2 w-full'
+            )}
           >
-            <Building2 size={15} className="shrink-0" />
-            <span className="nav-label">🏢 Alternar Empresa</span>
+            <Building2 size={16} className="shrink-0" />
+            {!collapsed && <span className="nav-label">🏢 Alternar Empresa</span>}
           </Link>
         )}
-        <ThemeToggle />
+        
+        {!collapsed ? (
+          <ThemeToggle />
+        ) : (
+          <div className="flex justify-center py-1">
+            <ThemeToggle />
+          </div>
+        )}
+
         <button
           onClick={() => user?.signOut()}
           title="Sair da Conta"
-          className="nav-item focus-ring flex items-center gap-2.5 px-3 py-2 rounded-[var(--r-md)] text-fg-subtle hover:text-fg hover:bg-[var(--line-subtle)] transition-colors duration-150 ease-out w-full text-[0.8125rem] cursor-pointer"
+          className={cn(
+            'nav-item focus-ring flex items-center rounded-[var(--r-md)] text-fg-subtle hover:text-fg hover:bg-[var(--line-subtle)] transition-colors duration-150 ease-out text-[0.8125rem] cursor-pointer',
+            collapsed ? 'justify-center w-10 h-10 mx-auto' : 'gap-2.5 px-3 py-2 w-full'
+          )}
         >
-          <LogOut size={15} className="shrink-0" />
-          <span className="nav-label">Sair da Conta</span>
+          <LogOut size={16} className="shrink-0" />
+          {!collapsed && <span className="nav-label">Sair da Conta</span>}
         </button>
       </div>
     </div>
   )
 }
 
-export function SidebarBrand() {
+export function SidebarBrand({ collapsed = false }: { collapsed?: boolean }) {
   return (
-    <div className="nav-brand flex items-center gap-2.5">
+    <div className={cn('nav-brand flex items-center', collapsed ? 'justify-center w-full' : 'gap-2.5')}>
       <div
-        className="w-7 h-7 rounded-[var(--r-md)] flex items-center justify-center shrink-0"
-        style={{ background: 'var(--brand-glow)', border: '1px solid rgba(34,197,94,0.22)' }}
+        className="w-7 h-7 rounded-[var(--r-md)] flex items-center justify-center shrink-0 shadow-sm"
+        style={{ background: 'var(--brand-glow)', border: '1px solid rgba(34,197,94,0.25)' }}
       >
-        <Zap size={13} className="text-brand-ink" />
+        <Zap size={14} className="text-brand-ink" />
       </div>
-      <span className="nav-brand-text text-fg text-h3 font-semibold tracking-tight">SAC Hermes</span>
+      {!collapsed && (
+        <span className="nav-brand-text text-fg text-h3 font-semibold tracking-tight">SAC Hermes</span>
+      )}
     </div>
   )
 }
 
 export function Sidebar({ isAdmin }: SidebarProps) {
+  const [collapsed, setCollapsed] = useState(false)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+    const saved = localStorage.getItem('sac_sidebar_collapsed')
+    if (saved === 'true') {
+      setCollapsed(true)
+    }
+  }, [])
+
+  const toggleCollapsed = () => {
+    setCollapsed(prev => {
+      const next = !prev
+      localStorage.setItem('sac_sidebar_collapsed', String(next))
+      return next
+    })
+  }
+
   return (
     <aside
       className={cn(
-        'sidebar-rail hidden lg:grid h-full shrink-0 border-r border-line-subtle bg-surface-panel',
-        'w-16 xl:w-[248px] 2xl:w-[272px]',
+        'sidebar-rail hidden lg:grid h-full shrink-0 border-r border-line-subtle bg-surface-panel transition-all duration-200 ease-in-out',
+        collapsed ? 'w-[68px]' : 'w-[252px]',
         'grid-rows-[auto_1fr_auto]'
       )}
     >
-      <div className="nav-brand px-4 h-14 flex items-center border-b border-line-subtle">
-        <SidebarBrand />
+      <div className={cn('nav-brand h-14 flex items-center border-b border-line-subtle px-3', collapsed ? 'justify-center' : 'justify-between')}>
+        <SidebarBrand collapsed={collapsed} />
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title={collapsed ? 'Expandir Menu' : 'Recolher Menu'}
+          className="text-fg-faint hover:text-fg hover:bg-[var(--line-subtle)] p-1.5 rounded-lg transition-colors cursor-pointer"
+        >
+          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
       </div>
 
-      <SidebarNavContent isAdmin={isAdmin} />
+      <SidebarNavContent isAdmin={isAdmin} collapsed={collapsed} />
 
-      <SidebarFooter isAdmin={isAdmin} />
+      <SidebarFooter isAdmin={isAdmin} collapsed={collapsed} />
     </aside>
   )
 }

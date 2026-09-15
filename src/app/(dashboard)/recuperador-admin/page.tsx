@@ -31,16 +31,6 @@ import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
 
-function InstagramIcon({ size = 12, className = '' }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <rect width="20" height="20" x="2" y="2" rx="5" ry="5"/>
-      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
-      <line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>
-    </svg>
-  )
-}
-
 const eventTypeLabels: Record<string, string> = {
   boleto: 'Boleto',
   pix: 'Pix',
@@ -262,12 +252,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               </span>
               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Agentes: AutonomIA, Bella, Casal do Tráfego
+                Atendimento Multicanal & Recuperação
               </span>
             </div>
             <h1 className="text-h1 text-fg">Central de Atendimento & Vendas</h1>
             <p className="text-body text-fg-muted mt-0.5">
-              Visão geral multicanal (WhatsApp Oficial, Instagram, E-mail) integrada com Hotmart, Kiwify, Greenn e Zouti.
+              Visão geral multicanal integrada com WhatsApp Oficial, Mineração (Google Places), Meta Ads e Checkouts.
             </p>
           </div>
           <Suspense fallback={null}>
@@ -277,18 +267,14 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
         {/* Canais e Plataformas Conectadas */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line-subtle text-micro text-fg-subtle">
-          <span className="font-semibold text-fg">Canais:</span>
+          <span className="font-semibold text-fg">Canal Oficial:</span>
           <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
-            <MessageSquare size={12} className="text-emerald-400" /> WhatsApp Meta Cloud API
-          </span>
-          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
-            <InstagramIcon size={12} className="text-pink-400" /> Instagram Direct
-          </span>
-          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
-            <Mail size={12} className="text-blue-400" /> Brevo E-mail
+            <MessageSquare size={12} className="text-emerald-400" /> WhatsApp (Meta Cloud API / Uazapi)
           </span>
           <span className="mx-2 text-fg-faint">•</span>
-          <span className="font-semibold text-fg">Plataformas:</span>
+          <span className="font-semibold text-fg">Origens & Checkouts:</span>
+          <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">Mineração (Google Places)</span>
+          <span className="text-[10px] font-bold text-blue-500 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">Meta Ads</span>
           <span className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">Hotmart</span>
           <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">Kiwify</span>
           <span className="text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">Greenn</span>

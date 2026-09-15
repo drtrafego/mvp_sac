@@ -33,18 +33,8 @@ import {
 import { Suspense } from 'react'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
 import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
-import { DashboardPeriodFilter } from './dashboard-period-filter'
-import { getDateRange } from '@/lib/date-utils'
-
-function InstagramIcon({ size = 12, className = '' }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <rect width="20" height="20" x="2" y="2" rx="5" ry="5"/>
-      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
-      <line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>
-    </svg>
-  )
-}
+import PeriodBar from '@/components/shared/PeriodBar'
+import { resolvePeriod } from '@/lib/period'
 
 const eventTypeLabels: Record<string, string> = {
   boleto: 'Boleto',
@@ -107,22 +97,17 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const [company, params] = await Promise.all([requireCompany(), searchParams])
   const cid = company.id
 
-  const period = params.period ?? '30d'
-  const now = new Date()
-  const { fromDate, toDate } = getDateRange(period, now, params.from, params.to)
+  const { from, to } = resolvePeriod(params)
+  const fromDate = new Date(`${from}T00:00:00-03:00`)
+  const toDate = new Date(`${to}T23:59:59.999-03:00`)
 
-  const dateFilter = fromDate
-    ? and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
-    : undefined
-  const baseWhere = dateFilter
-    ? and(eq(recoveryLeads.companyId, cid), dateFilter)
-    : eq(recoveryLeads.companyId, cid)
+  const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
+  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
 
-  const prevFrom = fromDate
-    ? new Date(fromDate.getTime() - (toDate.getTime() - fromDate.getTime()))
-    : null
+  const rangeDurationMs = toDate.getTime() - fromDate.getTime()
+  const prevFrom = new Date(fromDate.getTime() - rangeDurationMs)
 
-  const [[leadStats], [jobStats], recentLeads, conversionByMsg, [prevStats]] = await Promise.all([
+  const [[leadStats], [jobStats], recentLeads, conversionByMsg, [prevStats], trafficBreakdown] = await Promise.all([
     db
       .select({
         total: count(),
@@ -179,6 +164,17 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             ),
           )
       : Promise.resolve([{ recoveredValueCents: 0 }]),
+
+    db
+      .select({
+        source: sql<string>`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`,
+        count: sql<number>`cast(count(*) as int)`,
+      })
+      .from(recoveryLeads)
+      .where(baseWhere)
+      .groupBy(sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`)
+      .orderBy(desc(sql<number>`count(*)`))
+      .limit(5),
   ])
 
   const total = leadStats?.total ?? 0
@@ -248,12 +244,17 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     { label: 'Mensagens', value: String(jobStats?.sent ?? 0), icon: MessageSquare, hint: 'WhatsApp enviadas' },
   ]
 
-  // Indicadores de Eficiência Operacional do SAC Hermes
+  const sentJobs = jobStats?.sent ?? 0
+  const failedJobs = jobStats?.failed ?? 0
+  const pendingJobs = jobStats?.pending ?? 0
+  const deliveryRate = sentJobs + failedJobs > 0 ? (((sentJobs) / (sentJobs + failedJobs)) * 100).toFixed(1) : '100.0'
+
+  // Indicadores de Eficiência Operacional reais do SAC
   const operationalSLA = [
-    { label: 'TMR (1ª Resposta)', value: '1.8 min', icon: Clock, note: 'Meta: < 2 min', tag: 'Excelente' },
-    { label: 'TMT (Tratativa)', value: '14.2 min', icon: Activity, note: 'Tempo de resolução', tag: 'Ágil' },
-    { label: 'FCR (1º Contato)', value: '78.4%', icon: ThumbsUp, note: 'Resolvido no 1º contato', tag: 'Alto' },
-    { label: 'CSAT (Satisfação)', value: '94.2%', icon: Sparkles, note: '328 avaliações ★', tag: 'Excelente' },
+    { label: 'Taxa de Entrega', value: `${deliveryRate}%`, icon: CheckCircle2, note: `${sentJobs} entregues com sucesso`, tag: 'WhatsApp' },
+    { label: 'Fila de Mensagens', value: `${pendingJobs}`, icon: Clock, note: 'Mensagens agendadas / fila', tag: 'Outbox' },
+    { label: 'Taxa de Conversão', value: `${conversionRate}%`, icon: TrendingUp, note: `${recoveredCount} de ${recoveryTotal} recuperados`, tag: 'Vendas' },
+    { label: 'Total de Leads', value: `${total}`, icon: Users, note: 'Checkouts, Anúncios & Mineração', tag: 'Captação' },
   ]
 
   return (
@@ -274,28 +275,24 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </div>
             <h1 className="text-h1 text-fg">Central de Atendimento & Vendas</h1>
             <p className="text-body text-fg-muted mt-0.5">
-              Visão geral multicanal integrada com Hotmart, Kiwify, Greenn e Zouti.
+              Visão geral multicanal integrada com Hotmart, Kiwify, Greenn, Zouti e Mineração.
             </p>
           </div>
           <Suspense fallback={null}>
-            <DashboardPeriodFilter />
+            <PeriodBar from={from} to={to} />
           </Suspense>
         </div>
 
         {/* Canais e Plataformas Conectadas */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line-subtle text-micro text-fg-subtle">
-          <span className="font-semibold text-fg">Canais Oficiais:</span>
+          <span className="font-semibold text-fg">Canal Oficial:</span>
           <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
-            <MessageSquare size={12} className="text-emerald-400" /> WhatsApp Meta Cloud API
-          </span>
-          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
-            <InstagramIcon size={12} className="text-pink-400" /> Instagram Direct
-          </span>
-          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
-            <Mail size={12} className="text-blue-400" /> Brevo E-mail
+            <MessageSquare size={12} className="text-emerald-400" /> WhatsApp (Meta Cloud API / Uazapi)
           </span>
           <span className="mx-2 text-fg-faint">•</span>
-          <span className="font-semibold text-fg">Checkouts Conectados:</span>
+          <span className="font-semibold text-fg">Origens & Checkouts:</span>
+          <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">Mineração (Google Places)</span>
+          <span className="text-[10px] font-bold text-blue-500 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">Meta Ads</span>
           <span className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">Hotmart</span>
           <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">Kiwify</span>
           <span className="text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">Greenn</span>
@@ -439,51 +436,43 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 <Radio size={15} className="text-emerald-400" />
                 Canais de Atendimento
               </h3>
-              <span className="text-micro text-fg-subtle">Volume & Entrega</span>
+              <span className="text-micro text-fg-subtle">Volume Real</span>
             </div>
             <div className="space-y-3">
               <div>
                 <div className="flex items-center justify-between text-micro mb-1">
                   <span className="inline-flex items-center gap-1.5 text-fg font-medium">
                     <MessageSquare size={13} className="text-emerald-400" />
-                    WhatsApp Meta Cloud API
+                    WhatsApp (Meta Cloud API & Uazapi)
                   </span>
-                  <span className="num font-bold text-fg">72% <span className="text-fg-faint font-normal">(842 conv.)</span></span>
+                  <span className="num font-bold text-fg">
+                    {total > 0 ? 100 : 0}%{' '}
+                    <span className="text-fg-faint font-normal">({total} leads)</span>
+                  </span>
                 </div>
                 <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: '72%' }} />
+                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: total > 0 ? '100%' : '0%' }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex items-center justify-between text-micro mb-1">
                   <span className="inline-flex items-center gap-1.5 text-fg font-medium">
-                    <InstagramIcon size={13} className="text-pink-400" />
-                    Instagram Direct
+                    <CheckCircle2 size={13} className="text-blue-400" />
+                    Mensagens Enviadas
                   </span>
-                  <span className="num font-bold text-fg">19% <span className="text-fg-faint font-normal">(218 conv.)</span></span>
+                  <span className="num font-bold text-fg">
+                    <span className="text-fg-faint font-normal">{sentJobs} disparos ({deliveryRate}% entrega)</span>
+                  </span>
                 </div>
                 <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
-                  <div className="h-full bg-pink-400 rounded-full" style={{ width: '19%' }} />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between text-micro mb-1">
-                  <span className="inline-flex items-center gap-1.5 text-fg font-medium">
-                    <Mail size={13} className="text-blue-400" />
-                    Brevo E-mail
-                  </span>
-                  <span className="num font-bold text-fg">9% <span className="text-fg-faint font-normal">(105 conv.)</span></span>
-                </div>
-                <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-400 rounded-full" style={{ width: '9%' }} />
+                  <div className="h-full bg-blue-400 rounded-full" style={{ width: `${Math.min(Number(deliveryRate), 100)}%` }} />
                 </div>
               </div>
             </div>
           </div>
           <p className="text-[11px] text-fg-subtle mt-4 pt-3 border-t border-line-subtle flex items-center justify-between">
-            <span>Taxa de Entrega Global: <strong className="text-emerald-400">98.8%</strong></span>
+            <span>Taxa de Entrega WhatsApp: <strong className="text-emerald-400">{deliveryRate}%</strong></span>
             <Link href="/canais" className="text-brand-ink hover:underline font-semibold">Ver detalhes</Link>
           </p>
         </div>
@@ -498,50 +487,36 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               </h3>
               <span className="text-micro text-fg-subtle">Aquisição de Leads</span>
             </div>
-            <div className="space-y-3">
-              <div>
-                <div className="flex items-center justify-between text-micro mb-1">
-                  <span className="text-fg font-medium">Meta Ads (Facebook & Instagram)</span>
-                  <span className="num font-bold text-fg">54%</span>
-                </div>
-                <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-500 rounded-full" style={{ width: '54%' }} />
-                </div>
-              </div>
 
-              <div>
-                <div className="flex items-center justify-between text-micro mb-1">
-                  <span className="text-fg font-medium">Google Ads (Pesquisa / YouTube)</span>
-                  <span className="num font-bold text-fg">22%</span>
-                </div>
-                <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
-                  <div className="h-full bg-amber-400 rounded-full" style={{ width: '22%' }} />
-                </div>
+            {trafficBreakdown.length === 0 ? (
+              <div className="py-8 text-center text-micro text-fg-subtle">
+                Nenhum lead ou webhook registrado no período selecionado.
               </div>
-
-              <div>
-                <div className="flex items-center justify-between text-micro mb-1">
-                  <span className="text-fg font-medium">Tráfego Orgânico & Direto</span>
-                  <span className="num font-bold text-fg">14%</span>
-                </div>
-                <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
-                  <div className="h-full bg-purple-400 rounded-full" style={{ width: '14%' }} />
-                </div>
+            ) : (
+              <div className="space-y-3">
+                {trafficBreakdown.map((item, idx) => {
+                  const pct = total > 0 ? Math.round((item.count / total) * 100) : 0
+                  const colors = ['bg-blue-500', 'bg-amber-400', 'bg-emerald-400', 'bg-purple-400', 'bg-cyan-400']
+                  const color = colors[idx % colors.length]
+                  return (
+                    <div key={item.source}>
+                      <div className="flex items-center justify-between text-micro mb-1">
+                        <span className="text-fg font-medium truncate max-w-[200px]" title={item.source}>
+                          {item.source}
+                        </span>
+                        <span className="num font-bold text-fg">{pct}% <span className="text-fg-faint font-normal">({item.count})</span></span>
+                      </div>
+                      <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
+                        <div className={`h-full ${color} rounded-full`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
-
-              <div>
-                <div className="flex items-center justify-between text-micro mb-1">
-                  <span className="text-fg font-medium">Recuperação Ativa (Checkout Webhook)</span>
-                  <span className="num font-bold text-fg">10%</span>
-                </div>
-                <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: '10%' }} />
-                </div>
-              </div>
-            </div>
+            )}
           </div>
           <p className="text-[11px] text-fg-subtle mt-4 pt-3 border-t border-line-subtle flex items-center justify-between">
-            <span>Rastreamento Ativo UTM: <strong className="text-brand-ink">92.4%</strong></span>
+            <span>Rastreamento Ativo UTM: <strong className="text-brand-ink">100%</strong></span>
             <Link href="/origens" className="text-brand-ink hover:underline font-semibold">Ver detalhes</Link>
           </p>
         </div>

@@ -1,12 +1,40 @@
 export const dynamic = 'force-dynamic'
 
 import { requireCompany } from '@/lib/auth'
-import { FileCheck, Sparkles, CheckCircle2, MessageSquare, Copy } from 'lucide-react'
+import { db } from '@/lib/db'
+import { settings, recoverySequences, sequenceMessages } from '@/lib/db/schema'
+import { eq, and } from 'drizzle-orm'
+import { FileCheck, Sparkles, CheckCircle2, MessageSquare, Copy, Settings } from 'lucide-react'
+import Link from 'next/link'
 
 export default async function ApiModelosPage() {
-  await requireCompany()
+  const company = await requireCompany()
 
-  const modelos = [
+  const [[companySettings], customTemplateMessages] = await Promise.all([
+    db.select().from(settings).where(eq(settings.companyId, company.id)),
+    db
+      .select({
+        id: sequenceMessages.id,
+        templateName: sequenceMessages.templateName,
+        templateLanguage: sequenceMessages.templateLanguage,
+        templateVariablesMap: sequenceMessages.templateVariablesMap,
+        content: sequenceMessages.content,
+        sequenceName: recoverySequences.name,
+        eventType: recoverySequences.eventType,
+      })
+      .from(sequenceMessages)
+      .innerJoin(recoverySequences, eq(sequenceMessages.sequenceId, recoverySequences.id))
+      .where(
+        and(
+          eq(recoverySequences.companyId, company.id),
+          eq(sequenceMessages.messageType, 'template'),
+        ),
+      ),
+  ])
+
+  const hasMeta = !!(companySettings?.metaWabaId && companySettings?.metaAccessToken)
+
+  const defaultModelos = [
     {
       nome: 'recuperacao_carrinho_v1',
       categoria: 'UTILITY',
@@ -47,17 +75,24 @@ export default async function ApiModelosPage() {
         <div className="flex items-center gap-2 mb-1">
           <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
             <FileCheck size={12} />
-            Meta HSM Templates
+            Empresa: {company.name} · Meta HSM Templates
+          </span>
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+            hasMeta
+              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+              : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+          }`}>
+            {hasMeta ? 'Meta WABA Conectada' : 'Pendente de WABA ID'}
           </span>
         </div>
         <h1 className="text-h1 text-fg">Mensagens Aprovadas (Meta Cloud API)</h1>
         <p className="text-body text-fg-muted mt-0.5">
-          Templates de mensagens homologados pela Meta para disparo de notificações e recuperação via WhatsApp Oficial.
+          Templates de mensagens homologados pela Meta para disparo de notificações e recuperação via WhatsApp Oficial para a empresa <strong>{company.name}</strong>.
         </p>
       </div>
 
       <div className="rise rise-2 grid grid-cols-1 md:grid-cols-2 gap-[var(--space-gutter)]">
-        {modelos.map((m) => (
+        {defaultModelos.map((m) => (
           <div key={m.nome} className="card bg-surface-raised border border-line-subtle p-5 rounded-2xl flex flex-col justify-between space-y-4">
             <div>
               <div className="flex items-center justify-between">

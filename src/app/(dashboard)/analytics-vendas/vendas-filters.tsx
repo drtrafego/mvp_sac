@@ -4,16 +4,7 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { useCallback, useState, type CSSProperties } from 'react'
 import { X, Check, RefreshCw, SlidersHorizontal, LayoutGrid } from 'lucide-react'
 import { Sheet } from '@/components/ui/sheet'
-
-const PERIODS = [
-  { value: 'today', label: 'Hoje' },
-  { value: 'yesterday', label: 'Ontem' },
-  { value: '7d', label: '7 dias' },
-  { value: '14d', label: '14 dias' },
-  { value: '30d', label: '30 dias' },
-  { value: 'month', label: 'Este mês' },
-  { value: 'custom', label: 'Personalizado' },
-]
+import PeriodBar from '@/components/shared/PeriodBar'
 
 const PAYMENT_TYPES = [
   { value: '', label: 'Todos' },
@@ -73,6 +64,8 @@ interface Product {
 }
 
 interface VendasFiltersProps {
+  from: string
+  to: string
   products: Product[]
   utmSources: string[]
   utmMediums: string[]
@@ -121,7 +114,7 @@ const PRODUCT_GROUPS = [
   { key: 'outros', label: 'Outros', color: 'var(--fg-subtle)' },
 ] as const
 
-export function VendasFilters({ products, utmSources, utmMediums, utmCampaigns, utmContents, utmTerms, sckValues }: VendasFiltersProps) {
+export function VendasFilters({ from, to, products, utmSources, utmMediums, utmCampaigns, utmContents, utmTerms, sckValues }: VendasFiltersProps) {
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
@@ -134,10 +127,7 @@ export function VendasFilters({ products, utmSources, utmMediums, utmCampaigns, 
     setTimeout(() => setRefreshing(false), 800)
   }
 
-  const period = searchParams.get('period') ?? '30d'
   const payment = searchParams.get('payment') ?? ''
-  const from = searchParams.get('from') ?? ''
-  const to = searchParams.get('to') ?? ''
   const utmSource = searchParams.get('utmSource') ?? ''
   const utmMedium = searchParams.get('utmMedium') ?? ''
   const utmCampaign = searchParams.get('utmCampaign') ?? ''
@@ -368,33 +358,9 @@ export function VendasFilters({ products, utmSources, utmMediums, utmCampaigns, 
 
   return (
     <div className="space-y-3">
-      {/* Linha única: período à esquerda, ações à direita */}
-      <div className="flex items-center gap-2">
-        <div
-          className="-mx-1 flex min-w-0 flex-1 gap-1.5 overflow-x-auto px-1 py-1"
-          style={{ scrollbarWidth: 'none' }}
-        >
-          {PERIODS.map(({ value, label }) => {
-            const isActive = period === value
-            return (
-              <button
-                key={value}
-                onClick={() =>
-                  value !== 'custom'
-                    ? update({ period: value, from: '', to: '' })
-                    : update({ period: 'custom' })
-                }
-                className={`focus-ring shrink-0 inline-flex items-center rounded-[var(--r-sm)] border px-3 text-body font-medium transition-colors ${CHIP} ${
-                  isActive
-                    ? 'border-line-strong bg-surface-overlay text-fg'
-                    : 'border-line-subtle bg-surface-raised text-fg-muted hover:border-line-default hover:text-fg'
-                }`}
-              >
-                {label}
-              </button>
-            )
-          })}
-        </div>
+      {/* Linha única: PeriodBar oficial à esquerda, ações e filtros à direita */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <PeriodBar from={from} to={to} />
 
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -419,30 +385,6 @@ export function VendasFilters({ products, utmSources, utmMediums, utmCampaigns, 
           </button>
         </div>
       </div>
-
-      {/* Datas do período personalizado */}
-      {period === 'custom' && (
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-micro text-fg-subtle">
-            De
-            <input
-              type="date"
-              value={from}
-              onChange={(e) => update({ from: e.target.value })}
-              className={`native-field focus-ring rounded-[var(--r-sm)] border border-line-default bg-surface-inset px-2.5 text-body text-fg ${CONTROL}`}
-            />
-          </label>
-          <label className="flex items-center gap-2 text-micro text-fg-subtle">
-            Até
-            <input
-              type="date"
-              value={to}
-              onChange={(e) => update({ to: e.target.value })}
-              className={`native-field focus-ring rounded-[var(--r-sm)] border border-line-default bg-surface-inset px-2.5 text-body text-fg ${CONTROL}`}
-            />
-          </label>
-        </div>
-      )}
 
       {/* Chips do que está aplicado */}
       {appliedChips.length > 0 && (
