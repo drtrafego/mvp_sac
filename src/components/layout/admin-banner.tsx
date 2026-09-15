@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeft } from 'lucide-react'
+import { Building2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface AdminBannerProps {
@@ -25,16 +25,16 @@ export function AdminBanner({ companyName }: AdminBannerProps) {
         borderColor: 'color-mix(in oklch, var(--st-atencao) 22%, transparent)',
       }}
     >
-      <span className="min-w-0 truncate">
-        Modo Admin: visualizando <strong className="font-semibold">{companyName}</strong>
+      <span className="min-w-0 truncate font-medium">
+        🏢 Empresa selecionada: <strong className="font-bold text-fg">{companyName}</strong>
       </span>
       <button
         onClick={handleExit}
-        className="focus-ring flex shrink-0 cursor-pointer items-center gap-1.5 rounded-[var(--r-sm)] px-3 py-1.5 text-micro font-medium text-st-atencao transition-colors"
-        style={{ background: 'color-mix(in oklch, var(--st-atencao) 14%, transparent)' }}
+        className="focus-ring flex shrink-0 cursor-pointer items-center gap-1.5 rounded-[var(--r-sm)] px-3 py-1.5 text-micro font-semibold text-st-atencao hover:text-white transition-colors"
+        style={{ background: 'color-mix(in oklch, var(--st-atencao) 20%, transparent)' }}
       >
-        <ArrowLeft size={13} />
-        Voltar ao Admin
+        <Building2 size={14} />
+        Trocar Empresa / Painel Geral
       </button>
     </div>
   )

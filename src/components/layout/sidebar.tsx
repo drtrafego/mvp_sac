@@ -17,6 +17,7 @@ import {
   Building2,
   BarChart3,
   Columns3,
+  Bot,
   Zap,
   Webhook,
 } from 'lucide-react'
@@ -30,6 +31,11 @@ export const mainNav = [
   { label: 'Inbox', href: '/inbox', icon: MessageSquare },
   { label: 'Leads', href: '/leads', icon: Users },
   { label: 'Analytics Vendas', href: '/analytics-vendas', icon: BarChart3 },
+]
+
+export const managementNav = [
+  { label: 'Empresas / Clientes', href: '/empresas', icon: Building2 },
+  { label: 'Agentes & Bots', href: '/pipeline', icon: Bot },
 ]
 
 export const recoveryNav = [
@@ -118,6 +124,15 @@ export function SidebarNavContent({
 
       <div className="space-y-0.5">
         <p className="nav-group-label px-3 mb-1.5 text-label uppercase text-fg-faint">
+          <span>Gestão & Agentes</span>
+        </p>
+        {managementNav.map(({ label, href, icon }) => (
+          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} />
+        ))}
+      </div>
+
+      <div className="space-y-0.5">
+        <p className="nav-group-label px-3 mb-1.5 text-label uppercase text-fg-faint">
           <span>Recuperação</span>
         </p>
         {recoveryNav.map(({ label, href, icon }) => (
@@ -137,22 +152,20 @@ export function SidebarNavContent({
   )
 }
 
-/** Rodapé com Painel Admin, tema e sair. Usado na sidebar e no Sheet mobile. */
+/** Rodapé com Painel de Empresas, tema e sair. Usado na sidebar e no Sheet mobile. */
 export function SidebarFooter({ isAdmin }: SidebarProps) {
   const user = useUser()
 
   return (
     <div className="px-2.5 py-3 border-t border-line-subtle space-y-0.5 shrink-0">
-      {isAdmin && (
-        <Link
-          href="/empresas"
-          title="Painel Admin"
-          className="nav-item focus-ring flex items-center gap-2.5 px-3 py-3 lg:py-[7px] rounded-[var(--r-md)] text-[0.8125rem] font-medium text-[var(--st-atencao)] hover:bg-[var(--line-subtle)] transition-colors duration-150 ease-out w-full cursor-pointer"
-        >
-          <Building2 size={16} className="shrink-0" />
-          <span className="nav-label">Painel Admin</span>
-        </Link>
-      )}
+      <Link
+        href="/empresas"
+        title="Painel de Empresas / Clientes"
+        className="nav-item focus-ring flex items-center gap-2.5 px-3 py-3 lg:py-[7px] rounded-[var(--r-md)] text-[0.8125rem] font-medium text-[var(--st-atencao)] hover:bg-[var(--line-subtle)] transition-colors duration-150 ease-out w-full cursor-pointer"
+      >
+        <Building2 size={16} className="shrink-0" />
+        <span className="nav-label">🏢 Trocar Empresa</span>
+      </Link>
       <ThemeToggle />
       <button
         onClick={() => user?.signOut()}

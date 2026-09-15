@@ -27,10 +27,10 @@ import {
   Layers,
 } from 'lucide-react'
 import { Suspense } from 'react'
-import { DashboardPeriodFilter } from './dashboard-period-filter'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
-import { getDateRange } from '@/lib/date-utils'
 import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
+import PeriodBar from '@/components/shared/PeriodBar'
+import { resolvePeriod } from '@/lib/period'
 
 const eventTypeLabels: Record<string, string> = {
   boleto: 'Boleto',
@@ -95,32 +95,24 @@ function tint(cssVar: string, pct: number): string {
 }
 
 interface PageProps {
-  searchParams: Promise<{ period?: string }>
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>
 }
 
 export default async function DashboardPage({ searchParams }: PageProps) {
   const [company, params] = await Promise.all([requireCompany(), searchParams])
   const cid = company.id
 
-  const period = params.period ?? '30d'
-  const now = new Date()
-  const { fromDate, toDate } = getDateRange(period, now)
+  const { from, to } = resolvePeriod(params)
+  const fromDate = new Date(from + 'T00:00:00-03:00')
+  const toDate = new Date(to + 'T23:59:59.999-03:00')
 
-  const dateFilter = fromDate
-    ? and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
-    : undefined
-
-  const baseWhere = dateFilter
-    ? and(eq(recoveryLeads.companyId, cid), dateFilter)
-    : eq(recoveryLeads.companyId, cid)
+  const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
+  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
 
   /*
-    Janela anterior de mesma duração, encostada no início da janela atual. Em
-    "Tudo" não existe recorte de data, então também não existe comparação.
+    Janela anterior de mesma duração, encostada no início da janela atual.
   */
-  const prevFrom = fromDate
-    ? new Date(fromDate.getTime() - (toDate.getTime() - fromDate.getTime()))
-    : null
+  const prevFrom = new Date(fromDate.getTime() - (toDate.getTime() - fromDate.getTime()))
 
   const [[leadStats], [jobStats], recentLeads, conversionByMsg, [prevStats]] = await Promise.all([
     db
@@ -270,7 +262,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </p>
           </div>
           <Suspense fallback={null}>
-            <DashboardPeriodFilter />
+            <PeriodBar from={from} to={to} />
           </Suspense>
         </div>
 

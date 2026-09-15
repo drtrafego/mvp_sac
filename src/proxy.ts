@@ -8,10 +8,17 @@ const PUBLIC_PATHS = [
   '/_next',
   '/favicon.ico',
   '/public',
+  '/index.html',
+  '/sac',
 ]
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  // Permitir arquivos estáticos (css, js, json, svg, png, etc.)
+  if (/\.(css|js|json|svg|png|jpg|jpeg|ico|woff|woff2|ttf|eot)$/i.test(pathname)) {
+    return NextResponse.next()
+  }
 
   // Se a rota for da API de Agente (/api/agent/...) e ALLOWED_IPS estiver configurada, valida o IP do agente
   if (pathname.startsWith('/api/agent/')) {
@@ -25,7 +32,7 @@ export async function proxy(request: NextRequest) {
   }
 
   // Se a rota for pública ou estática, permite sem autenticação adicional
-  if (PUBLIC_PATHS.some(path => pathname.startsWith(path))) {
+  if (PUBLIC_PATHS.some(path => pathname.startsWith(path)) || pathname === '/' || pathname === '/sac') {
     return NextResponse.next()
   }
 
