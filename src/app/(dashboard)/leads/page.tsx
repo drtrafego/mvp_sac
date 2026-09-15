@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Search, RefreshCw, Inbox, X } from 'lucide-react'
+import { Search, RefreshCw, Inbox, X, UploadCloud, Download, UserPlus } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { ImportLeadsModal } from '@/components/leads/ImportLeadsModal'
-import { UploadCloud, Download } from 'lucide-react'
+import { AddLeadModal } from '@/components/leads/AddLeadModal'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
@@ -38,10 +38,6 @@ const eventLabels: Record<string, string> = {
   compra_aprovada: 'Compra Aprovada',
 }
 
-/*
-  Os selects do Base UI mostram o valor cru no gatilho quando o Root não recebe
-  `items`. Sem isso o filtro aparecia escrito "all" em vez de "Todos os tipos".
-*/
 const EVENT_TYPE_OPTIONS: Record<string, string> = {
   all: 'Todos os tipos',
   boleto: 'Boleto',
@@ -60,7 +56,6 @@ const STATUS_OPTIONS: Record<string, string> = {
   failed: 'Falhou',
 }
 
-/* Cor do ponto por tipo de evento. O texto ao lado fica sempre neutro. */
 const eventDot: Record<string, string> = {
   boleto: 'text-ev-boleto',
   pix: 'text-ev-pix',
@@ -77,11 +72,6 @@ const paymentLabels: Record<string, string> = {
   paypal: 'PayPal',
 }
 
-/*
-  Altura de controle: 44px no toque, 36px a partir de lg. O Select traz a altura
-  numa variante de data-attribute, que tem especificidade maior que a classe
-  utilitária solta, então ela precisa ser sobrescrita na mesma forma.
-*/
 const CONTROL_HEIGHT = 'h-[var(--control-lg)] lg:h-[var(--control-md)]'
 const SELECT_HEIGHT = 'data-[size=default]:h-[var(--control-lg)] lg:data-[size=default]:h-[var(--control-md)]'
 const FIELD_SKIN = 'bg-surface-inset dark:bg-surface-inset border-line-subtle focus-visible:ring-0 focus-visible:border-line-default'
@@ -147,6 +137,7 @@ export default function LeadsPage() {
   const [status, setStatus] = useState('all')
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
+  const [addLeadModalOpen, setAddLeadModalOpen] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
   const searchParams = useSearchParams()
   const { from, to } = resolvePeriod({
@@ -182,13 +173,12 @@ export default function LeadsPage() {
     fetchLeads(next)
   }
 
-  
   function exportCSV() {
     if (filtered.length === 0) {
-      alert('Nenhum lead para exportar.');
-      return;
+      alert('Nenhum lead para exportar.')
+      return
     }
-    const headers = ['Nome', 'Telefone', 'Email', 'Produto', 'Valor (R$)', 'Evento', 'Status', 'Origem', 'Data'];
+    const headers = ['Nome', 'Telefone', 'Email', 'Produto', 'Valor (R$)', 'Evento', 'Status', 'Origem', 'Data']
     const rows = filtered.map(l => [
       `"${(l.name || '').replace(/"/g, '""')}"`,
       `"${l.phone}"`,
@@ -199,15 +189,15 @@ export default function LeadsPage() {
       `"${l.status || ''}"`,
       `"${(l as any).trackingSource || l.platform || 'organico'}"`,
       `"${l.createdAt || ''}"`
-    ]);
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `leads_export_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    ])
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const encodedUri = encodeURI(csvContent)
+    const link = document.createElement('a')
+    link.setAttribute('href', encodedUri)
+    link.setAttribute('download', `leads_export_${new Date().toISOString().split('T')[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
   }
 
   function clearFilters() {
@@ -241,6 +231,13 @@ export default function LeadsPage() {
           <p className="text-body text-fg-muted mt-1">{subtitle}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            onClick={() => setAddLeadModalOpen(true)}
+            className="shrink-0 gap-1.5 bg-brand-solid hover:bg-brand-solid/90 text-on-accent font-bold text-micro shadow-sm"
+          >
+            <UserPlus size={15} />
+            + Adicionar Lead (1x1)
+          </Button>
           <Button
             onClick={() => setImportModalOpen(true)}
             className="shrink-0 gap-1.5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-micro"
@@ -278,210 +275,182 @@ export default function LeadsPage() {
             onChange={e => setSearch(e.target.value)}
             placeholder="Buscar por nome, telefone, email ou produto..."
             aria-label="Buscar leads"
-            className={cn('pl-9 focus-ring placeholder:text-fg-subtle text-fg', CONTROL_HEIGHT, FIELD_SKIN)}
+            className={`${FIELD_SKIN} ${CONTROL_HEIGHT} pl-9 text-base lg:text-sm`}
           />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              aria-label="Limpar busca"
+              className="focus-ring absolute right-0 top-1/2 -translate-y-1/2 flex min-h-11 min-w-11 items-center justify-center text-fg-subtle hover:text-fg lg:right-3 lg:min-h-0 lg:min-w-0"
+            >
+              <X size={13} />
+            </button>
+          )}
         </div>
-        <Select value={eventType} onValueChange={v => v && setEventType(v)} items={EVENT_TYPE_OPTIONS}>
-          <SelectTrigger className={cn('w-full lg:w-52 text-fg focus-ring', SELECT_HEIGHT, FIELD_SKIN, 'dark:hover:bg-surface-inset')}>
-            <SelectValue placeholder="Tipo de evento" />
-          </SelectTrigger>
-          <SelectContent className="bg-surface-overlay border border-line-default">
-            {Object.entries(EVENT_TYPE_OPTIONS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={status} onValueChange={v => v && setStatus(v)} items={STATUS_OPTIONS}>
-          <SelectTrigger className={cn('w-full lg:w-44 text-fg focus-ring', SELECT_HEIGHT, FIELD_SKIN, 'dark:hover:bg-surface-inset')}>
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent className="bg-surface-overlay border border-line-default">
-            {Object.entries(STATUS_OPTIONS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-3">
+          <Select value={eventType} onValueChange={v => v && setEventType(v)} items={EVENT_TYPE_OPTIONS}>
+            <SelectTrigger aria-label="Filtrar por tipo de evento" className={`${FIELD_SKIN} ${SELECT_HEIGHT} min-w-0 text-base sm:w-44 lg:text-sm`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-surface-overlay border-line-subtle">
+              {Object.entries(EVENT_TYPE_OPTIONS).map(([val, label]) => (
+                <SelectItem key={val} value={val}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={status} onValueChange={v => v && setStatus(v)} items={STATUS_OPTIONS}>
+            <SelectTrigger aria-label="Filtrar por status" className={`${FIELD_SKIN} ${SELECT_HEIGHT} min-w-0 text-base sm:w-40 lg:text-sm`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-surface-overlay border-line-subtle">
+              {Object.entries(STATUS_OPTIONS).map(([val, label]) => (
+                <SelectItem key={val} value={val}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      {/* Chips dos filtros ativos, removíveis um a um */}
-      {(eventType !== 'all' || status !== 'all') && (
-        <div className="flex flex-wrap items-center gap-2">
-          {eventType !== 'all' && (
-            <button
-              type="button"
-              onClick={() => setEventType('all')}
-              aria-label={`Remover filtro ${EVENT_TYPE_OPTIONS[eventType]}`}
-              className="badge focus-ring min-h-8 lg:min-h-0 gap-1.5 border-line-subtle bg-surface-inset text-fg-muted transition-colors hover:text-fg cursor-pointer"
-            >
-              <span className={cn('dot', eventDot[eventType] ?? 'text-fg-faint')} />
-              {EVENT_TYPE_OPTIONS[eventType]}
-              <X size={12} />
-            </button>
-          )}
-          {status !== 'all' && (
-            <button
-              type="button"
-              onClick={() => setStatus('all')}
-              aria-label={`Remover filtro ${STATUS_OPTIONS[status]}`}
-              className="badge focus-ring min-h-8 lg:min-h-0 gap-1.5 border-line-subtle bg-surface-inset text-fg-muted transition-colors hover:text-fg cursor-pointer"
-            >
-              {STATUS_OPTIONS[status]}
-              <X size={12} />
-            </button>
-          )}
-        </div>
-      )}
+      {/* Lista Mobile */}
+      <div className="space-y-2 lg:hidden">
+        {loading ? (
+          <div className="panel flex items-center justify-center p-8 text-fg-muted">
+            <RefreshCw size={16} className="animate-spin mr-2" /> Carregando...
+          </div>
+        ) : filtered.length === 0 ? (
+          <EmptyState hasFilters={hasFilters} onClear={clearFilters} />
+        ) : (
+          filtered.map(lead => {
+            const dot = getStatusDot(lead.status, lead.convertedFrom)
+            const label = getStatusLabel(lead.status, lead.eventType, lead.convertedFrom)
+            const evColor = eventDot[lead.eventType] ?? 'text-fg-faint'
+            const evLabel = eventLabels[lead.eventType] ?? lead.eventType
+            return (
+              <MobileRowCard
+                key={lead.id}
+                title={lead.name ?? 'Cliente'}
+                subtitle={lead.phone}
+                href={`/inbox/${lead.id}`}
+                badges={
+                  <span className="text-micro font-semibold text-fg">
+                    {fmtCurrency(lead.productValue)}
+                  </span>
+                }
+                meta={
+                  <>
+                    <span className="truncate">{lead.productName ?? '-'}</span>
+                    <span>•</span>
+                    <span className={`inline-flex items-center gap-1 text-micro text-fg`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${evColor} bg-current`} />
+                      {evLabel}
+                    </span>
+                    <span>•</span>
+                    <span className={`inline-flex items-center gap-1 text-micro text-fg`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${dot} bg-current`} />
+                      {label}
+                    </span>
+                  </>
+                }
+              />
+            )
+          })
+        )}
+      </div>
 
-      {/* Tabela */}
-      <div className="card-section overflow-hidden">
-        {/* Mobile: cada lead vira um card clicável */}
-        <div className="md:hidden p-3 space-y-2">
-          {loading && (
-            <div className="space-y-2">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="skeleton h-[104px] w-full rounded-[var(--r-lg)]" />
-              ))}
-            </div>
-          )}
-          {!loading && filtered.length === 0 && (
-            <EmptyState hasFilters={hasFilters} onClear={clearFilters} />
-          )}
-          {!loading && filtered.map(lead => (
-            <MobileRowCard
-              key={lead.id}
-              href={`/inbox/${lead.id}`}
-              title={lead.name ?? '-'}
-              subtitle={
-                <span className="inline-flex items-center gap-1.5 num">
-                  <span className="text-brand-ink">
-                    <WhatsAppGlyph size={12} />
-                  </span>
-                  {lead.phone}
-                </span>
-              }
-              meta={
-                <>
-                  <span className="truncate max-w-[60%]">{lead.productName ?? '-'}</span>
-                  <span className="num font-medium text-fg">{fmtCurrency(lead.productValue)}</span>
-                  <span className="text-fg-subtle">
-                    {paymentLabels[lead.paymentType ?? ''] ?? (lead.paymentType ?? '-')}
-                  </span>
-                </>
-              }
-              badges={
-                <>
-                  <span className="inline-flex items-center gap-1.5 text-micro text-fg-muted">
-                    <span className={cn('dot', eventDot[lead.eventType] ?? 'text-fg-faint')} />
-                    {eventLabels[lead.eventType] ?? lead.eventType}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 text-micro text-fg-muted">
-                    <span className={cn('dot', getStatusDot(lead.status, lead.convertedFrom))} />
-                    {getStatusLabel(lead.status, lead.eventType, lead.convertedFrom)}
-                  </span>
-                </>
-              }
-            />
-          ))}
-        </div>
-
-        {/* Desktop: tabela */}
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-body">
+      {/* Tabela Desktop */}
+      <div className="hidden lg:block panel overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-body">
             <thead>
               <tr className="border-b border-line-subtle">
-                {/*
-                  Concatenação simples em vez de cn(): o tailwind-merge trata
-                  text-label como classe de cor e a descartaria por causa do
-                  text-fg-subtle que vem depois.
-                */}
                 {COLUMNS.map(col => (
                   <th
                     key={col.label}
-                    className={`px-4 py-2.5 text-left text-label uppercase text-fg-subtle whitespace-nowrap ${col.className ?? ''}`}
+                    className={cn(
+                      'px-4 py-3 text-label uppercase text-fg-subtle font-semibold whitespace-nowrap',
+                      col.className
+                    )}
                   >
                     {col.label}
                   </th>
                 ))}
-                {/* Coluna espaçadora: absorve a sobra em monitor grande */}
-                <th className="w-full" aria-hidden="true" />
+                <th className="px-4 py-3 text-label uppercase text-fg-subtle font-semibold w-12" />
               </tr>
             </thead>
             <tbody>
-              {loading && Array.from({ length: 8 }).map((_, i) => (
-                <tr key={i} className="border-b border-line-subtle">
-                  <td className="px-4 h-12"><div className="skeleton h-3 w-40" /></td>
-                  <td className="px-4 h-12"><div className="skeleton h-3 w-28" /></td>
-                  <td className="px-4 h-12"><div className="skeleton h-3 w-36" /></td>
-                  <td className="px-4 h-12"><div className="skeleton h-3 w-16" /></td>
-                  <td className="px-4 h-12"><div className="skeleton h-3 w-20" /></td>
-                  <td className="px-4 h-12"><div className="skeleton h-3 w-16" /></td>
-                  <td className="px-4 h-12"><div className="skeleton h-3 w-24" /></td>
-                  <td className="px-4 h-12"><div className="skeleton h-3 w-28" /></td>
-                  <td />
-                </tr>
-              ))}
-              {!loading && filtered.length === 0 && (
+              {loading ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 1} className="px-4 py-6">
+                  <td colSpan={COLUMNS.length + 1} className="text-center py-12 text-fg-muted">
+                    <RefreshCw size={16} className="inline animate-spin mr-2" /> Carregando leads...
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={COLUMNS.length + 1} className="py-6">
                     <EmptyState hasFilters={hasFilters} onClear={clearFilters} />
                   </td>
                 </tr>
-              )}
-              {!loading && filtered.map(lead => (
-                <tr key={lead.id} className="tr-hover border-b border-line-subtle">
-                  <td className="px-4 h-12 max-w-[280px]">
-                    <Link
-                      href={`/inbox/${lead.id}`}
-                      title={lead.name ?? undefined}
-                      className="block truncate text-fg hover:text-brand-ink"
-                    >
-                      {lead.name ?? '-'}
-                    </Link>
-                  </td>
-                  <td className="px-4 h-12">
-                    <div className="flex items-center gap-2">
-                      <span className="num text-micro text-fg-muted">{lead.phone}</span>
-                      {lead.phone && (
-                        <a
-                          href={`https://wa.me/${lead.phone.replace(/\D/g, '')}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Abrir no WhatsApp"
-                          aria-label="Abrir conversa no WhatsApp"
-                          className="shrink-0 text-fg-faint transition-colors duration-150 hover:text-brand-ink"
-                        >
-                          <WhatsAppGlyph />
-                        </a>
+              ) : (
+                filtered.map(lead => {
+                  const isRecovered = lead.status === 'converted' && lead.convertedFrom && lead.convertedFrom !== 'webhook'
+                  const dot = getStatusDot(lead.status, lead.convertedFrom)
+                  const label = getStatusLabel(lead.status, lead.eventType, lead.convertedFrom)
+                  const evColor = eventDot[lead.eventType] ?? 'text-fg-faint'
+                  const evLabel = eventLabels[lead.eventType] ?? lead.eventType
+                  return (
+                    <tr
+                      key={lead.id}
+                      className={cn(
+                        'group border-b border-line-subtle last:border-0 hover:bg-surface-raised transition-colors',
+                        isRecovered && 'bg-st-positivo/5'
                       )}
-                    </div>
-                  </td>
-                  <td className="px-4 h-12 max-w-[240px] text-fg-muted">
-                    <span className="truncate block" title={lead.productName ?? undefined}>{lead.productName ?? '-'}</span>
-                  </td>
-                  <td className="px-4 h-12 num whitespace-nowrap font-medium text-fg">
-                    {fmtCurrency(lead.productValue)}
-                  </td>
-                  <td className="px-4 h-12 whitespace-nowrap text-micro text-fg-subtle">
-                    {paymentLabels[lead.paymentType ?? ''] ?? (lead.paymentType ?? '-')}
-                  </td>
-                  <td className="px-4 h-12 whitespace-nowrap">
-                    <span className="inline-flex items-center gap-2 text-fg-muted">
-                      <span className={cn('dot', eventDot[lead.eventType] ?? 'text-fg-faint')} />
-                      {eventLabels[lead.eventType] ?? lead.eventType}
-                    </span>
-                  </td>
-                  <td className="px-4 h-12 whitespace-nowrap">
-                    <span className="inline-flex items-center gap-2 text-fg-muted">
-                      <span className={cn('dot', getStatusDot(lead.status, lead.convertedFrom))} />
-                      {getStatusLabel(lead.status, lead.eventType, lead.convertedFrom)}
-                    </span>
-                  </td>
-                  <td className="px-4 h-12 num whitespace-nowrap text-micro text-fg-subtle">
-                    {lead.createdAt ? new Date(lead.createdAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '-'}
-                  </td>
-                  <td />
-                </tr>
-              ))}
+                    >
+                      <td className="px-4 py-3 max-w-[280px]">
+                        <p className="font-semibold text-fg truncate">{lead.name ?? 'Cliente'}</p>
+                        {lead.email && <p className="text-micro text-fg-subtle truncate">{lead.email}</p>}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <Link
+                          href={`/inbox/${lead.id}`}
+                          className="inline-flex items-center gap-1.5 font-mono text-micro font-medium text-fg hover:text-brand-ink transition-colors"
+                        >
+                          <span className="text-brand-ink">
+                            <WhatsAppGlyph size={14} />
+                          </span>
+                          {lead.phone}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-fg-subtle max-w-[240px] truncate">
+                        {lead.productName ?? '-'}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-fg font-medium">
+                        {fmtCurrency(lead.productValue)}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-micro text-fg-subtle">
+                        {paymentLabels[lead.paymentType ?? ''] ?? lead.paymentType ?? '-'}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5 text-micro text-fg">
+                          <span className={`h-1.5 w-1.5 rounded-full ${evColor} bg-current`} />
+                          {evLabel}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5 text-micro text-fg">
+                          <span className={`h-1.5 w-1.5 rounded-full ${dot} bg-current`} />
+                          {label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-micro text-fg-subtle">
+                        {lead.createdAt ? new Date(lead.createdAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '-'}
+                      </td>
+                      <td />
+                    </tr>
+                  )
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -513,6 +482,18 @@ export default function LeadsPage() {
           </div>
         </div>
       </div>
+
+      {/* Modais de Cadastro 1x1 e Importação em Massa */}
+      <AddLeadModal
+        open={addLeadModalOpen}
+        onOpenChange={setAddLeadModalOpen}
+        onSuccess={() => fetchLeads(page)}
+      />
+      <ImportLeadsModal
+        open={importModalOpen}
+        onOpenChange={setImportModalOpen}
+        onSuccess={() => fetchLeads(page)}
+      />
     </div>
   )
 }
@@ -528,7 +509,7 @@ function EmptyState({ hasFilters, onClear }: { hasFilters: boolean; onClear: () 
         <p className="text-body text-fg-muted max-w-[46ch]">
           {hasFilters
             ? 'Nenhum lead corresponde aos filtros aplicados. Ajuste a busca ou limpe os filtros para ver a lista completa.'
-            : 'Assim que uma plataforma enviar o primeiro webhook, os leads aparecem nesta lista.'}
+            : 'Assim que uma plataforma enviar o primeiro webhook ou você cadastrar manualmente, os leads aparecem nesta lista.'}
         </p>
       </div>
       {hasFilters && (
