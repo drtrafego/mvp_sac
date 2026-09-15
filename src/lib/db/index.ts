@@ -37,6 +37,7 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS uazapi_base_url text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS uazapi_instance_token text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS whatsapp_provider text DEFAULT 'meta'`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS supabase_database_url text`,
 
           // message_jobs
           client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS external_wamid text`,
@@ -54,6 +55,11 @@ function ensureSchema(client: any): Promise<void> {
           // Garante registro em settings para cada empresa
           client`INSERT INTO settings (company_id) SELECT id FROM companies ON CONFLICT (company_id) DO NOTHING`,
         ])
+
+        // Dispara sincronização automática dos agentes do Supabase em segundo plano
+        setTimeout(() => {
+          import('@/lib/sync-agents').then(m => m.syncAgentsAndCompanies()).catch(() => {})
+        }, 1000)
       } catch (err: any) {
         console.error('[DB Schema Sync Error]', err?.message || err)
       }

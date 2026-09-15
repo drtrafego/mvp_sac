@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Pencil, Trash2, LogIn, RefreshCw, Copy, Check, Link2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, LogIn, RefreshCw, Copy, Check, Link2, Bot, Database, Sparkles, CheckCircle2, AlertCircle, ChevronRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 
@@ -22,7 +22,6 @@ const WEBHOOKS = [
   { key: 'kiwify', label: 'Kiwify', color: 'var(--plat-kiwify)' },
 ] as const
 
-// Ação de ícone: alvo de 44px abaixo de lg, 36px a partir de lg
 const ICON_ACTION =
   'focus-ring inline-flex h-[var(--control-lg)] w-[var(--control-lg)] items-center justify-center rounded-[var(--r-sm)] text-fg-subtle transition-colors hover:bg-surface-inset hover:text-fg lg:h-[var(--control-md)] lg:w-[var(--control-md)]'
 
@@ -43,40 +42,68 @@ export default function EmpresasPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [entering, setEntering] = useState<number | null>(null)
-  // Uma chave por botão de cópia: convite e as quatro URLs de webhook
   const [copied, setCopied] = useState<string | null>(null)
+
+  // Supabase Hub state
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState('')
+  const [supabaseStatus, setSupabaseStatus] = useState<{ configured: boolean; hasEnv: boolean; url: string | null } | null>(null)
+  const [showUrlField, setShowUrlField] = useState(false)
   const [syncing, setSyncing] = useState(false)
-  const [syncMsg, setSyncMsg] = useState<string | null>(null)
+  const [syncReport, setSyncReport] = useState<any | null>(null)
   const router = useRouter()
 
   async function loadCompanies() {
     setLoading(true)
-    const res = await fetch('/api/admin/companies')
-    const data = await res.json()
-    setCompanies(data)
-    setLoading(false)
+    try {
+      const res = await fetch('/api/admin/companies')
+      const data = await res.json()
+      if (Array.isArray(data)) setCompanies(data)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function loadSupabaseStatus() {
+    try {
+      const res = await fetch('/api/admin/sync-agents')
+      const data = await res.json()
+      setSupabaseStatus(data)
+      if (data.url && !supabaseUrlInput) {
+        setSupabaseUrlInput(data.url)
+      }
+    } catch {}
   }
 
   async function handleSyncAgents() {
     setSyncing(true)
-    setSyncMsg(null)
+    setSyncReport(null)
     try {
-      const res = await fetch('/api/admin/sync-agents', { method: 'POST' })
+      const res = await fetch('/api/admin/sync-agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supabaseUrl: supabaseUrlInput.trim() || undefined,
+        }),
+      })
       const data = await res.json()
-      if (data.ok) {
-        setSyncMsg(data.message || 'Agentes e empresas sincronizados com sucesso!')
-        loadCompanies()
-      } else {
-        setSyncMsg(`Erro: ${data.message || data.error || 'Falha ao sincronizar'}`)
-      }
-    } catch (err) {
-      setSyncMsg('Erro de conexão ao sincronizar agentes.')
+      setSyncReport(data)
+      loadCompanies()
+      loadSupabaseStatus()
+    } catch (err: any) {
+      setSyncReport({
+        ok: false,
+        message: 'Erro de conexão ao sincronizar agentes.',
+        details: [String(err?.message || err)],
+      })
     } finally {
       setSyncing(false)
     }
   }
 
-  useEffect(() => { loadCompanies() }, [])
+  useEffect(() => {
+    loadCompanies()
+    loadSupabaseStatus()
+  }, [])
 
   async function handleEnter(companyId: number) {
     setEntering(companyId)
@@ -108,22 +135,16 @@ export default function EmpresasPage() {
   }
 
   return (
-    <div className="max-w-4xl space-y-4">
-      <div className="flex items-start justify-between gap-4 rise rise-1">
+    <div className="max-w-4xl space-y-5">
+      {/* Cabeçalho */}
+      <div className="flex flex-wrap items-center justify-between gap-4 rise rise-1">
         <div>
-          <h1 className="text-h1 text-fg">Empresas</h1>
-          <p className="text-body text-fg-muted mt-1">Gerencie todas as empresas do sistema ou sincronize do Supabase</p>
+          <h1 className="text-h1 text-fg">Central de Agentes & Empresas</h1>
+          <p className="text-body text-fg-muted mt-1">
+            Gerencie os workspaces dos 3 agentes (Gastão Matos, Gramado Plaza, Dr. Lucas) ou conecte via Supabase.
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleSyncAgents}
-            disabled={syncing}
-            className="focus-ring inline-flex h-[var(--control-lg)] items-center gap-2 rounded-[var(--r-sm)] border border-brand-solid/40 bg-surface-raised px-3.5 text-body font-medium text-brand-ink transition-colors hover:bg-surface-inset disabled:opacity-50 cursor-pointer lg:h-[var(--control-md)]"
-          >
-            <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
-            <span>{syncing ? 'Sincronizando...' : 'Sincronizar Agentes (Supabase)'}</span>
-          </button>
           <button onClick={() => setShowCreate(true)} className={PRIMARY_BUTTON}>
             <Plus size={16} />
             Nova empresa
@@ -131,12 +152,105 @@ export default function EmpresasPage() {
         </div>
       </div>
 
-      {syncMsg && (
-        <div className="rounded-xl border border-brand-solid/30 bg-surface-panel p-3.5 text-micro font-medium text-fg flex items-center justify-between shadow-xs">
-          <span>{syncMsg}</span>
-          <button onClick={() => setSyncMsg(null)} className="text-fg-subtle hover:text-fg text-xs font-bold">✕</button>
+      {/* Card Principal: Hub de Sincronização Supabase */}
+      <div className="rounded-2xl border border-brand-solid/30 bg-surface-panel p-5 shadow-xs space-y-4 rise rise-1">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-brand-glow border border-brand-solid/30 flex items-center justify-center text-brand-ink shrink-0">
+              <Database size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-h3 text-fg font-bold">Integração Central Supabase</h2>
+                <span className={cn(
+                  'text-[10px] font-bold px-2 py-0.5 rounded-full border',
+                  supabaseStatus?.configured
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                )}>
+                  {supabaseStatus?.configured ? 'Conectado' : 'Aguardando Configuração'}
+                </span>
+              </div>
+              <p className="text-micro text-fg-subtle mt-0.5">
+                Importa automaticamente os 3 bots (Gastão Matos, Gramado Plaza, Dr. Lucas), seus leads de CRM e conversas.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSyncAgents}
+              disabled={syncing}
+              className="focus-ring inline-flex h-10 items-center gap-2 rounded-xl bg-brand-solid px-4 text-xs font-bold text-on-accent transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer shadow-sm"
+            >
+              <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+              <span>{syncing ? 'Sincronizando do Supabase...' : 'Sincronizar Agentes & CRM'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowUrlField(!showUrlField)}
+              className="text-xs font-semibold text-brand-ink hover:underline px-2 py-1"
+            >
+              {showUrlField ? 'Ocultar URL' : 'Configurar URL'}
+            </button>
+          </div>
         </div>
-      )}
+
+        {/* Campo opcional para colar a URL do Supabase */}
+        {showUrlField && (
+          <div className="p-3.5 rounded-xl bg-surface-inset border border-line-subtle space-y-2 text-micro">
+            <label className="font-semibold text-fg block">
+              String de Conexão Supabase (Porta 6543 / Transaction Mode):
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={supabaseUrlInput}
+                onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                placeholder="postgresql://postgres.[ref]:[senha]@aws-0-[region].pooler.supabase.com:6543/postgres"
+                className="flex-1 h-9 px-3 rounded-lg bg-surface-panel border border-line-subtle text-fg text-xs font-mono placeholder:text-fg-faint"
+              />
+              <button
+                type="button"
+                onClick={handleSyncAgents}
+                disabled={syncing || !supabaseUrlInput.trim()}
+                className="h-9 px-3 bg-surface-panel hover:bg-surface-raised border border-brand-solid/40 text-brand-ink rounded-lg font-bold text-xs cursor-pointer"
+              >
+                Salvar & Sincronizar
+              </button>
+            </div>
+            <p className="text-[11px] text-fg-subtle">
+              Dica: Copie a URL Transaction Mode do Supabase (porta 6543) para multiplexar conexões sem exceder o limite do pooler.
+            </p>
+          </div>
+        )}
+
+        {/* Feedback da sincronização */}
+        {syncReport && (
+          <div className={cn(
+            'p-4 rounded-xl border text-micro space-y-2',
+            syncReport.ok
+              ? 'bg-emerald-500/10 border-emerald-500/20 text-fg'
+              : 'bg-amber-500/10 border-amber-500/20 text-fg'
+          )}>
+            <div className="flex items-center justify-between">
+              <span className="font-bold flex items-center gap-1.5">
+                {syncReport.ok ? <CheckCircle2 size={16} className="text-emerald-400" /> : <AlertCircle size={16} className="text-amber-400" />}
+                {syncReport.message}
+              </span>
+              <button onClick={() => setSyncReport(null)} className="text-fg-subtle hover:text-fg font-bold">✕</button>
+            </div>
+            {syncReport.details && syncReport.details.length > 0 && (
+              <ul className="space-y-1 text-[11px] text-fg-subtle pt-1 border-t border-line-subtle/50 font-mono">
+                {syncReport.details.map((d: string, idx: number) => (
+                  <li key={idx}>• {d}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
 
       {showCreate && (
         <CreateCompanyForm
@@ -147,7 +261,7 @@ export default function EmpresasPage() {
 
       {loading ? (
         <div className="space-y-3">
-          {[0, 1, 2].map((i) => <div key={i} className="skeleton h-32" />)}
+          {[0, 1, 2].map((i) => <div key={i} className="skeleton h-32 rounded-2xl" />)}
         </div>
       ) : (
         <div className="space-y-3 rise rise-2">
@@ -160,13 +274,15 @@ export default function EmpresasPage() {
                   onCancel={() => setEditingId(null)}
                 />
               ) : (
-                <div className="card p-5">
+                <div className="card p-5 rounded-2xl border border-line-subtle hover:border-brand-solid/40 transition-colors">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                        <h2 className="text-h2 text-fg">{company.name}</h2>
-                        <span className="num text-micro text-fg-subtle">/{company.slug}</span>
-                        <span className="text-label uppercase text-fg-faint">{company.plan}</span>
+                        <h2 className="text-h2 text-fg font-bold">{company.name}</h2>
+                        <span className="num text-micro text-fg-subtle font-mono">/{company.slug}</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-surface-inset border border-line-subtle text-brand-ink">
+                          {company.plan}
+                        </span>
                       </div>
 
                       <ul className="mt-3 space-y-1">
@@ -177,38 +293,25 @@ export default function EmpresasPage() {
                             <li key={key} className="flex items-center gap-2">
                               <span className="dot" style={{ color }} />
                               <span className="w-16 shrink-0 text-micro text-fg-subtle">{label}</span>
-                              <span className="num min-w-0 flex-1 truncate text-micro text-fg-muted" title={path}>
+                              <span className="num min-w-0 flex-1 truncate text-micro text-fg-muted font-mono" title={path}>
                                 {path}
                               </span>
                               <button
                                 onClick={() => copyText(copyKey, `${window.location.origin}${path}`)}
                                 aria-label={`Copiar URL do webhook ${label}`}
-                                className="focus-ring inline-flex h-[var(--control-lg)] w-[var(--control-lg)] shrink-0 items-center justify-center rounded-[var(--r-sm)] text-fg-subtle transition-colors hover:bg-surface-inset hover:text-fg lg:h-8 lg:w-8"
+                                className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-fg-subtle transition-colors hover:bg-surface-inset hover:text-fg cursor-pointer"
                               >
                                 {copied === copyKey
-                                  ? <Check size={14} className="text-st-positivo" />
-                                  : <Copy size={14} />}
+                                  ? <Check size={13} className="text-st-positivo" />
+                                  : <Copy size={13} />}
                               </button>
                             </li>
                           )
                         })}
                       </ul>
-
-                      <div className="mt-3 text-micro">
-                        {company.stackAuthUserId ? (
-                          <span className="text-fg-subtle">
-                            User ID: <span className="num text-fg-muted">{company.stackAuthUserId}</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 text-fg-muted">
-                            <span className="dot" style={{ color: 'var(--st-atencao)' }} />
-                            Sem usuário vinculado
-                          </span>
-                        )}
-                      </div>
                     </div>
 
-                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 pt-1">
                       <button
                         title="Copiar link de convite"
                         aria-label="Copiar link de convite"
@@ -218,14 +321,6 @@ export default function EmpresasPage() {
                         {copied === `invite-${company.id}`
                           ? <Check size={15} className="text-st-positivo" />
                           : <Link2 size={15} />}
-                      </button>
-                      <button
-                        title="Regenerar token de convite"
-                        aria-label="Regenerar token de convite"
-                        onClick={() => handleRegenerateToken(company.id)}
-                        className={ICON_ACTION}
-                      >
-                        <RefreshCw size={15} />
                       </button>
                       <button
                         title="Editar empresa"
@@ -239,17 +334,17 @@ export default function EmpresasPage() {
                         title="Excluir empresa"
                         aria-label="Excluir empresa"
                         onClick={() => handleDelete(company.id, company.name)}
-                        className={cn(ICON_ACTION, 'text-st-negativo hover:text-st-negativo')}
+                        className={ICON_ACTION}
                       >
                         <Trash2 size={15} />
                       </button>
                       <button
                         onClick={() => handleEnter(company.id)}
                         disabled={entering === company.id}
-                        className={`${PRIMARY_BUTTON} ml-1`}
+                        className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-xl bg-brand-solid px-3.5 text-micro font-bold text-on-accent transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer shadow-xs ml-1"
                       >
-                        <LogIn size={14} />
-                        {entering === company.id ? 'Entrando...' : 'Entrar'}
+                        <LogIn size={13} />
+                        {entering === company.id ? 'Entrando...' : 'Acessar Workspace'}
                       </button>
                     </div>
                   </div>
@@ -257,11 +352,6 @@ export default function EmpresasPage() {
               )}
             </div>
           ))}
-          {companies.length === 0 && (
-            <div className="card px-5 py-12 text-center text-body text-fg-subtle">
-              Nenhuma empresa cadastrada.
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -271,116 +361,139 @@ export default function EmpresasPage() {
 function CreateCompanyForm({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
-  const [plan, setPlan] = useState('free')
-  const [saving, setSaving] = useState(false)
+  const [plan, setPlan] = useState('pro')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  function handleNameChange(v: string) {
-    setName(v)
-    setSlug(v.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))
+  function handleNameChange(val: string) {
+    setName(val)
+    setSlug(
+      val
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+    )
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setSaving(true)
+    setLoading(true)
+    setError('')
     const res = await fetch('/api/admin/companies', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, slug, plan }),
     })
-    if (res.ok) onCreated()
-    else setSaving(false)
+    const data = await res.json()
+    setLoading(false)
+    if (!res.ok) {
+      setError(data.error || 'Erro ao criar empresa')
+      return
+    }
+    onCreated()
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card-section space-y-4 p-5">
-      <h2 className="text-h2 text-fg">Nova empresa</h2>
-      <div className="grid gap-3 sm:grid-cols-2">
+    <form onSubmit={handleSubmit} className="card p-5 space-y-4 rise rise-1 rounded-2xl border border-line-subtle">
+      <h2 className="text-h2 text-fg font-bold">Nova Empresa</h2>
+      {error && <p className="text-micro text-st-negativo">{error}</p>}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className={FIELD_LABEL}>Nome</label>
-          <input value={name} onChange={e => handleNameChange(e.target.value)} className={FIELD} required />
+          <label className={FIELD_LABEL}>Nome da empresa</label>
+          <input
+            className={FIELD}
+            value={name}
+            onChange={(e) => handleNameChange(e.target.value)}
+            placeholder="Ex: Minha Empresa"
+            required
+          />
         </div>
         <div>
-          <label className={FIELD_LABEL}>Slug (URL)</label>
-          <input value={slug} onChange={e => setSlug(e.target.value)} className={`${FIELD} num`} required />
+          <label className={FIELD_LABEL}>Slug (URL do webhook)</label>
+          <input
+            className={FIELD}
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            placeholder="Ex: minha-empresa"
+            required
+          />
         </div>
       </div>
-      <div className="max-w-[var(--w-form)]">
+      <div>
         <label className={FIELD_LABEL}>Plano</label>
-        <select value={plan} onChange={e => setPlan(e.target.value)} className={FIELD}>
+        <select className={FIELD} value={plan} onChange={(e) => setPlan(e.target.value)}>
           <option value="free">Free</option>
           <option value="pro">Pro</option>
           <option value="enterprise">Enterprise</option>
         </select>
       </div>
-      <div className="flex gap-2">
-        <button type="submit" disabled={saving} className={PRIMARY_BUTTON}>
-          {saving ? 'Criando...' : 'Criar empresa'}
-        </button>
+      <div className="flex justify-end gap-2 pt-1">
         <button type="button" onClick={onCancel} className={GHOST_BUTTON}>Cancelar</button>
+        <button type="submit" disabled={loading} className={PRIMARY_BUTTON}>
+          {loading ? 'Criando...' : 'Criar empresa'}
+        </button>
       </div>
     </form>
   )
 }
 
-function EditCompanyForm({ company, onSaved, onCancel }: { company: Company; onSaved: () => void; onCancel: () => void }) {
+function EditCompanyForm({
+  company,
+  onSaved,
+  onCancel,
+}: {
+  company: Company
+  onSaved: () => void
+  onCancel: () => void
+}) {
   const [name, setName] = useState(company.name)
-  const [slug, setSlug] = useState(company.slug)
-  const [plan, setPlan] = useState(company.plan || 'free')
-  const [userId, setUserId] = useState(company.stackAuthUserId || '')
-  const [saving, setSaving] = useState(false)
+  const [plan, setPlan] = useState(company.plan)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setSaving(true)
+    setLoading(true)
+    setError('')
     const res = await fetch(`/api/admin/companies/${company.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, slug, plan, stackAuthUserId: userId || null }),
+      body: JSON.stringify({ name, plan }),
     })
-    if (res.ok) onSaved()
-    else setSaving(false)
+    const data = await res.json()
+    setLoading(false)
+    if (!res.ok) {
+      setError(data.error || 'Erro ao salvar empresa')
+      return
+    }
+    onSaved()
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card-section space-y-4 p-5">
-      <h2 className="inline-flex items-center gap-2 text-h2 text-fg">
-        <span className="dot" style={{ color: 'var(--st-atencao)' }} />
-        Editando: {company.name}
-      </h2>
-      <div className="grid gap-3 sm:grid-cols-2">
+    <form onSubmit={handleSubmit} className="card p-5 space-y-4 rounded-2xl border border-line-subtle">
+      <h2 className="text-h2 text-fg font-bold">Editar Empresa</h2>
+      {error && <p className="text-micro text-st-negativo">{error}</p>}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className={FIELD_LABEL}>Nome</label>
-          <input value={name} onChange={e => setName(e.target.value)} className={FIELD} required />
+          <input className={FIELD} value={name} onChange={(e) => setName(e.target.value)} required />
         </div>
-        <div>
-          <label className={FIELD_LABEL}>Slug</label>
-          <input value={slug} onChange={e => setSlug(e.target.value)} className={`${FIELD} num`} required />
-        </div>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className={FIELD_LABEL}>Plano</label>
-          <select value={plan} onChange={e => setPlan(e.target.value)} className={FIELD}>
+          <select className={FIELD} value={plan} onChange={(e) => setPlan(e.target.value)}>
             <option value="free">Free</option>
             <option value="pro">Pro</option>
             <option value="enterprise">Enterprise</option>
           </select>
         </div>
-        <div>
-          <label className={FIELD_LABEL}>Stack Auth User ID</label>
-          <input
-            value={userId}
-            onChange={e => setUserId(e.target.value)}
-            placeholder="Vazio = sem usuário"
-            className={`${FIELD} num`}
-          />
-        </div>
       </div>
-      <div className="flex gap-2">
-        <button type="submit" disabled={saving} className={PRIMARY_BUTTON}>
-          {saving ? 'Salvando...' : 'Salvar'}
-        </button>
+      <div className="flex justify-end gap-2 pt-1">
         <button type="button" onClick={onCancel} className={GHOST_BUTTON}>Cancelar</button>
+        <button type="submit" disabled={loading} className={PRIMARY_BUTTON}>
+          {loading ? 'Salvando...' : 'Salvar'}
+        </button>
       </div>
     </form>
   )

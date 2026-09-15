@@ -45,6 +45,8 @@ export const settings = pgTable('settings', {
   instagramAccessToken: text('instagram_access_token'),
   instagramVerifyToken: text('instagram_verify_token'),
   instagramPageId: text('instagram_page_id'),
+  // Supabase (Centralização dos Agentes IA)
+  supabaseDatabaseUrl: text('supabase_database_url'),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
 
