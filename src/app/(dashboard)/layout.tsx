@@ -2,18 +2,15 @@ export const dynamic = 'force-dynamic'
 
 import { redirect } from 'next/navigation'
 import { getCurrentCompany, getCurrentUser } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { settings, recoveryLeads } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 import { Sidebar } from '@/components/layout/sidebar'
 import { MobileTopbar } from '@/components/layout/mobile-topbar'
 import { MobileTabBar } from '@/components/layout/mobile-tabbar'
 import { AdminBanner } from '@/components/layout/admin-banner'
 import { Suspense } from 'react'
 
-/*
-  O padding acompanha a largura da tela em vez de ter dois degraus fixos, e o
-  fundo continua sangrando de borda a borda. O teto de largura fica no wrapper
-  interno, então em monitor grande sobra margem simétrica em vez de card esticado.
-  O pb extra no celular reserva o espaço da tab bar inferior.
-*/
 const MAIN_CLASS =
   'scroll-thin flex-1 overflow-auto p-[var(--space-shell)] pb-[calc(var(--space-shell)+5rem)] lg:pb-[var(--space-shell)] bg-surface-base'
 
@@ -25,6 +22,56 @@ function Shell({ children }: { children: React.ReactNode }) {
   return <div className="shell flex min-h-full flex-col">{children}</div>
 }
 
+async function getActiveConnections(companyId: number) {
+  try {
+    const [settingsRow] = await db
+      .select()
+      .from(settings)
+      .where(eq(settings.companyId, companyId))
+
+    // Checar se há leads de cada plataforma/origem
+    const leadsPlatforms = await db
+      .select({
+        platform: recoveryLeads.platform,
+        source: recoveryLeads.trackingSource,
+      })
+      .from(recoveryLeads)
+      .where(eq(recoveryLeads.companyId, companyId))
+      .limit(200)
+
+    const platformSet = new Set(leadsPlatforms.map(l => (l.platform || '').toLowerCase()))
+    const sourceSet = new Set(leadsPlatforms.map(l => (l.source || '').toLowerCase()))
+
+    const hasHotmart = !!(settingsRow?.hotmartWebhookToken || settingsRow?.hotmartClientId || platformSet.has('hotmart'))
+    const hasKiwify = !!(settingsRow?.kiwifyWebhookToken || platformSet.has('kiwify'))
+    const hasGreenn = !!(settingsRow?.greennWebhookToken || settingsRow?.greennApiKey || platformSet.has('greenn'))
+    const hasZouti = !!(settingsRow?.zoutiWebhookToken || settingsRow?.zoutiApiKey || platformSet.has('zouti'))
+    const hasInstagram = !!(settingsRow?.instagramAccountId || settingsRow?.instagramUsername || settingsRow?.instagramAccessToken || platformSet.has('instagram') || sourceSet.has('instagram') || sourceSet.has('instagram_direct'))
+    const hasMineracao = !!(platformSet.has('mineracao') || sourceSet.has('mineracao') || sourceSet.has('prospeccao') || settingsRow?.brevoApiKey)
+
+    // Se nenhuma plataforma estiver configurada ainda, mantém Hotmart/Geral como padrão
+    const noneConfigured = !hasHotmart && !hasKiwify && !hasGreenn && !hasZouti && !hasInstagram && !hasMineracao
+
+    return {
+      hotmart: hasHotmart || noneConfigured,
+      kiwify: hasKiwify,
+      greenn: hasGreenn,
+      zouti: hasZouti,
+      instagram: hasInstagram,
+      mineracao: hasMineracao,
+    }
+  } catch {
+    return {
+      hotmart: true,
+      kiwify: false,
+      greenn: false,
+      zouti: false,
+      instagram: false,
+      mineracao: false,
+    }
+  }
+}
+
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser()
   if (!user) redirect('/handler/sign-in')
@@ -34,12 +81,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
     // Admin sem empresa selecionada → vai para painel admin
     if (!company) redirect('/empresas')
 
+    const activeConnections = await getActiveConnections(company.id)
+
     return (
       <div className="flex flex-col h-screen bg-surface-base">
         <AdminBanner companyName={company.name} companyId={company.id} />
         <div className="flex flex-1 overflow-hidden">
           <Suspense fallback={SIDEBAR_FALLBACK}>
-            <Sidebar isAdmin />
+            <Sidebar isAdmin activeConnections={activeConnections} />
           </Suspense>
           <div className="flex flex-1 min-w-0 flex-col overflow-hidden">
             <MobileTopbar />
@@ -48,7 +97,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             </main>
           </div>
         </div>
-        <MobileTabBar isAdmin />
+        <MobileTabBar isAdmin activeConnections={activeConnections} />
       </div>
     )
   }
@@ -57,10 +106,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const company = await getCurrentCompany()
   if (!company) redirect('/handler/sign-in')
 
+  const activeConnections = await getActiveConnections(company.id)
+
   return (
     <div className="flex h-screen bg-surface-base">
       <Suspense fallback={SIDEBAR_FALLBACK}>
-        <Sidebar />
+        <Sidebar activeConnections={activeConnections} />
       </Suspense>
       <div className="flex flex-1 min-w-0 flex-col overflow-hidden">
         <MobileTopbar />
@@ -68,7 +119,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <Shell>{children}</Shell>
         </main>
       </div>
-      <MobileTabBar />
+      <MobileTabBar activeConnections={activeConnections} />
     </div>
   )
 }

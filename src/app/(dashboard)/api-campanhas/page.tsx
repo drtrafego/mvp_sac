@@ -92,7 +92,7 @@ export default async function ApiCampanhasPage() {
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                 c.isActive
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                  : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                  : 'bg-surface-inset text-fg-subtle border-line-subtle'
               }`}>
                 {c.status}
               </span>

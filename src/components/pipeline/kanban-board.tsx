@@ -155,7 +155,7 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
     <div className="flex flex-col gap-4 relative">
       {/* Toast Notification */}
       {savedToast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-[#121d14] border border-[#2e4d28] text-[#86efac] px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-body font-medium animate-in fade-in slide-in-from-bottom-3">
+        <div className="fixed bottom-6 right-6 z-50 bg-surface-panel border border-brand-solid/30 text-brand-ink px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-body font-medium animate-in fade-in slide-in-from-bottom-3">
           <Sparkles size={16} />
           {savedToast}
         </div>
@@ -318,7 +318,7 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
         selectedLead &&
         createPortal(
           <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-            <div className="bg-[#111518] border border-line-subtle rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-surface-panel border border-line-subtle rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
               <div className="p-5 border-b border-line-subtle flex items-center justify-between">
                 <div>
                   <p className="text-[11px] uppercase tracking-wider text-fg-subtle font-bold">Editar Card do Pipeline</p>
@@ -358,7 +358,7 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
                     <select
                       value={modalStage}
                       onChange={(e) => setModalStage(e.target.value)}
-                      className="w-full bg-[#090c0e] border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:border-brand-ink outline-none"
+                      className="w-full bg-surface-base border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:border-brand-ink outline-none"
                     >
                       {STAGES.map((s) => (
                         <option key={s.id} value={s.id} className="bg-surface-raised">{s.label}</option>
@@ -371,7 +371,7 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
                     <select
                       value={modalAgent}
                       onChange={(e) => setModalAgent(e.target.value)}
-                      className="w-full bg-[#090c0e] border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:border-brand-ink outline-none"
+                      className="w-full bg-surface-base border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:border-brand-ink outline-none"
                     >
                       {agentsList.map((ag) => (
                         <option key={ag} value={ag} className="bg-surface-raised">{ag}</option>
@@ -386,7 +386,7 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
                     value={modalNotes}
                     onChange={(e) => setModalNotes(e.target.value)}
                     placeholder="Observações sobre o cliente, objeções de pagamento, propostas enviadas..."
-                    className="w-full bg-[#090c0e] border border-line-subtle rounded-xl p-3 text-body text-fg focus:border-brand-ink outline-none min-h-[85px] resize-y"
+                    className="w-full bg-surface-base border border-line-subtle rounded-xl p-3 text-body text-fg focus:border-brand-ink outline-none min-h-[85px] resize-y"
                   />
                 </div>
 

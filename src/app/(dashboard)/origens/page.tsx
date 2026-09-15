@@ -209,8 +209,8 @@ function normalizeSource(rawSource: string | null, rawMedium: string | null = nu
     name: rawSource,
     category: 'other',
     subcategory: 'outros',
-    color: 'bg-zinc-500',
-    badgeColor: 'text-zinc-400 bg-zinc-500/10 border-zinc-500/20',
+    color: 'bg-fg-subtle',
+    badgeColor: 'text-fg-subtle bg-surface-inset border-line-subtle',
     iconName: 'direct',
   }
 }

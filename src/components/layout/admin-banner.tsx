@@ -67,13 +67,7 @@ export function AdminBanner({ companyName, companyId }: AdminBannerProps) {
   }
 
   return (
-    <div
-      className="relative z-50 flex flex-wrap items-center justify-between gap-3 border-b px-4 py-2 text-micro"
-      style={{
-        background: 'linear-gradient(90deg, #121815 0%, #0d1210 100%)',
-        borderColor: 'rgba(34, 197, 94, 0.2)',
-      }}
-    >
+    <div className="relative z-50 flex flex-wrap items-center justify-between gap-3 border-b border-brand-solid/25 bg-surface-panel px-4 py-2 text-micro shadow-xs">
       <div className="flex items-center gap-3" ref={dropdownRef}>
         <div className="flex items-center gap-2">
           <span className="flex h-2 w-2 relative">

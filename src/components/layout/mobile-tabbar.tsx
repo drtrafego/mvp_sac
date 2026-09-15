@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { LayoutDashboard, MessageSquare, Users, BarChart3, Menu } from 'lucide-react'
 import { Sheet } from '@/components/ui/sheet'
-import { SidebarNavContent, SidebarFooter } from './sidebar'
+import { SidebarNavContent, SidebarFooter, ActiveConnections } from './sidebar'
 import { cn } from '@/lib/utils'
 
 const tabs = [
@@ -17,9 +17,10 @@ const tabs = [
 
 interface MobileTabBarProps {
   isAdmin?: boolean
+  activeConnections?: ActiveConnections
 }
 
-export function MobileTabBar({ isAdmin }: MobileTabBarProps) {
+export function MobileTabBar({ isAdmin, activeConnections }: MobileTabBarProps) {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
 
@@ -47,7 +48,7 @@ export function MobileTabBar({ isAdmin }: MobileTabBarProps) {
                 href={href}
                 className={cn(
                   'flex flex-1 flex-col items-center justify-center gap-1 text-[11px] leading-none transition-colors',
-                  active ? 'text-brand-ink' : 'text-fg-subtle hover:text-fg'
+                  active ? 'text-brand-ink font-bold' : 'text-fg-subtle hover:text-fg'
                 )}
               >
                 <Icon size={19} className="shrink-0" />
@@ -62,7 +63,7 @@ export function MobileTabBar({ isAdmin }: MobileTabBarProps) {
             aria-label="Abrir menu"
             className={cn(
               'flex flex-1 flex-col items-center justify-center gap-1 text-[11px] leading-none transition-colors cursor-pointer',
-              open ? 'text-brand-ink' : 'text-fg-subtle hover:text-fg'
+              open ? 'text-brand-ink font-bold' : 'text-fg-subtle hover:text-fg'
             )}
           >
             <Menu size={19} className="shrink-0" />
@@ -72,7 +73,7 @@ export function MobileTabBar({ isAdmin }: MobileTabBarProps) {
       </nav>
 
       <Sheet open={open} onOpenChange={setOpen} side="right" title="Menu">
-        <SidebarNavContent isAdmin={isAdmin} />
+        <SidebarNavContent isAdmin={isAdmin} activeConnections={activeConnections} />
         <SidebarFooter isAdmin={isAdmin} />
       </Sheet>
     </>
