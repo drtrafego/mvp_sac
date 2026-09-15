@@ -8,8 +8,24 @@ RUN pip install --no-cache-dir --requirement requirements-v2.txt \
     && useradd --create-home --uid 10001 sac
 
 COPY adapters.py ./
+COPY readyz_probe.py ./
 COPY multicanal ./multicanal
 COPY backend ./backend
+
+# A imagem oficial python:slim apaga todos os .pyc, e os containers rodam com
+# read_only + PYTHONDONTWRITEBYTECODE: nenhum bytecode chega a ser gravado em
+# tempo de execucao. Sem isto, todo processo novo -- inclusive cada
+# healthcheck -- recompila a stdlib a partir do fonte. Compilar uma vez aqui
+# custa ~7 s de build e ~21 MB de imagem, e some com esse custo recorrente.
+# O `|| true` cobre fontes da stdlib que nao compilam de proposito; o passo
+# seguinte falha o build se o bytecode nao tiver sido de fato gerado.
+RUN python -m compileall -q /usr/local/lib/python3.12 /app || true
+RUN python - <<'PY'
+import pathlib, sys
+total = len(list(pathlib.Path("/usr/local/lib/python3.12").rglob("*.pyc")))
+print(f"bytecode pre-compilado: {total} arquivos")
+sys.exit(0 if total > 800 else 1)
+PY
 
 USER 10001:10001
 EXPOSE 8080

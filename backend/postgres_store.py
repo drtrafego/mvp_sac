@@ -88,6 +88,20 @@ class ClaimedDomainEvent:
     attempts: int
 
 
+class PanelConflictError(Exception):
+    """Escrita do painel recusada pelo estado atual do control plane.
+
+    Separada de ``ValueError`` (pedido malformado) e de ``KeyError`` (fora do
+    escopo) porque o frontend precisa distinguir "voce errou o preenchimento"
+    de "o cadastro ja esta assim". Vira 409 na rota.
+    """
+
+    def __init__(self, code: str, message: str = "") -> None:
+        super().__init__(code)
+        self.code = code
+        self.message = message or code
+
+
 class PostgresStore(AnalyticsQueries):
     """DB-API PostgreSQL store permanently scoped to one tenant and agent.
 
@@ -1289,4 +1303,301 @@ class PostgresStore(AnalyticsQueries):
                                          "changed": True, "idempotency_key": key})
         return {"conversationId": conversation_id, "contactId": contact_id, "noteId": note_id,
                 "idempotencyKey": key, "idempotent": False,
+                "auditId": None if audit_id is None else str(audit_id)}
+
+    # ------------------------------------- contas de canal (control plane)
+    #
+    # Estas rotas escrevem em ``public.sac_channel_accounts``, que fica fora do
+    # schema do agente. Duas regras valem para todas elas:
+    #
+    # * o par ``tenant_id``/``agent_id`` do WHERE e sempre o do store, fixado no
+    #   construtor; nenhum id vem do pedido HTTP;
+    # * as colunas ``*_secret_ref`` guardam **caminho**, nunca valor. O valor so
+    #   existe no cofre em disco e este modulo nunca o le nem o escreve.
+    #
+    # A trilha vai para ``sac_audit_log`` do schema do agente, na mesma
+    # transacao da escrita, e registra qual referencia foi tocada -- jamais o
+    # valor e jamais o tamanho.
+
+    PANEL_CHANNEL_TABLE = "public.sac_channel_accounts"
+    PANEL_CHANNEL_CREATE_ACTION = "panel.channel_account.create"
+    PANEL_CHANNEL_UPDATE_ACTION = "panel.channel_account.update"
+    PANEL_CHANNEL_DISABLE_ACTION = "panel.channel_account.disable"
+    PANEL_CHANNEL_ENDPOINT_ACTION = "panel.channel_account.endpoint"
+    PANEL_CHANNEL_SECRET_ACTION = "panel.channel_account.secret_ref"
+    PANEL_CHANNEL_OBJECT = "channel_account"
+
+    PANEL_CHANNEL_SELECT: tuple[str, ...] = (
+        "id", "channel", "provider", "external_account_id", "public_endpoint_id",
+        "signature_secret_ref", "verify_secret_ref", "signature_header",
+        "access_token_secret_ref", "api_key_secret_ref",
+        "smtp_username_secret_ref", "smtp_password_secret_ref",
+        "imap_username_secret_ref", "imap_password_secret_ref",
+        "display_name", "status", "config", "created_at", "updated_at")
+
+    # Nome exposto -> coluna. O cliente nunca envia nome de coluna.
+    PANEL_CHANNEL_SECRET_COLUMNS: Mapping[str, str] = {
+        "signature": "signature_secret_ref",
+        "verify": "verify_secret_ref",
+        "accessToken": "access_token_secret_ref",
+        "apiKey": "api_key_secret_ref",
+        "smtpUsername": "smtp_username_secret_ref",
+        "smtpPassword": "smtp_password_secret_ref",
+        "imapUsername": "imap_username_secret_ref",
+        "imapPassword": "imap_password_secret_ref",
+    }
+
+    # Colunas que a edicao do painel pode tocar. ``channel``/``provider`` e as
+    # colunas de referencia ficam de fora de proposito.
+    PANEL_CHANNEL_UPDATABLE = frozenset({
+        "display_name", "external_account_id", "signature_header", "status", "config"})
+
+    @classmethod
+    def _panel_channel_public(cls, row: Any) -> dict[str, Any]:
+        """Projecao da conta: caminhos de cofre sim, valor de segredo nunca."""
+        def cell(name: str) -> Any:
+            return cls._value(row, name, cls.PANEL_CHANNEL_SELECT.index(name))
+
+        def text(name: str) -> Optional[str]:
+            value = cell(name)
+            return None if value is None else str(value)
+
+        return {
+            "id": str(cell("id")),
+            "channel": text("channel"),
+            "provider": text("provider"),
+            "externalAccountId": text("external_account_id"),
+            "publicEndpointId": text("public_endpoint_id"),
+            "signatureHeader": text("signature_header"),
+            "displayName": text("display_name"),
+            "status": text("status"),
+            "config": cls._panel_json(cell("config")),
+            "secretRefs": {field: text(column) for field, column
+                           in cls.PANEL_CHANNEL_SECRET_COLUMNS.items()},
+            "createdAt": cls._panel_iso(cell("created_at")),
+            "updatedAt": cls._panel_iso(cell("updated_at")),
+        }
+
+    @classmethod
+    def _panel_channel_columns(cls) -> str:
+        return ",".join(cls.PANEL_CHANNEL_SELECT)
+
+    def _panel_channel_fetch(self, cur: Cursor, account_id: str, *,
+                             lock: bool = False) -> dict[str, Any]:
+        cur.execute(
+            f"SELECT {self._panel_channel_columns()} FROM {self.PANEL_CHANNEL_TABLE} "
+            "WHERE tenant_id=%s AND agent_id=%s AND id=%s"
+            + (" FOR UPDATE" if lock else ""),
+            (*self._scope(), self._panel_account_id(account_id)))
+        row = cur.fetchone()
+        if row is None:
+            raise KeyError("conta de canal inexistente")
+        return self._panel_channel_public(row)
+
+    @staticmethod
+    def _panel_account_id(account_id: Any) -> str:
+        value = str(account_id or "").strip()
+        if not value or len(value) > 128 or "\x00" in value:
+            raise ValueError("id de conta invalido")
+        return value
+
+    def panel_channel_accounts(self) -> dict[str, Any]:
+        """Contas do agente. Colunas explicitas; nenhuma delas carrega valor."""
+        with self._transaction() as cur:
+            cur.execute(
+                f"SELECT {self._panel_channel_columns()} FROM {self.PANEL_CHANNEL_TABLE} "
+                "WHERE tenant_id=%s AND agent_id=%s ORDER BY channel, id",
+                self._scope())
+            rows = list(cur.fetchall())
+        return {"accounts": [self._panel_channel_public(row) for row in rows]}
+
+    def panel_channel_account(self, account_id: str) -> dict[str, Any]:
+        with self._transaction() as cur:
+            return {"account": self._panel_channel_fetch(cur, account_id)}
+
+    def panel_create_channel_account(self, *, account_id: str, channel: str, provider: str,
+                                     external_account_id: str, display_name: Optional[str],
+                                     signature_header: Optional[str], status: str,
+                                     config: Mapping[str, Any],
+                                     actor_id: str) -> dict[str, Any]:
+        """Cria a conta desativada, sem endpoint e sem nenhuma referencia."""
+        actor = self._panel_actor(actor_id)
+        new_id = self._panel_account_id(account_id)
+        scope = self._scope()
+        with self._transaction() as cur:
+            cur.execute(
+                f"SELECT 1 FROM {self.PANEL_CHANNEL_TABLE} WHERE tenant_id=%s AND agent_id=%s "
+                "AND channel=%s AND provider=%s AND external_account_id=%s",
+                (*scope, channel, provider, external_account_id))
+            if cur.fetchone() is not None:
+                raise PanelConflictError(
+                    "conta_duplicada",
+                    "ja existe conta com este canal, provedor e id externo")
+            cur.execute(
+                f"INSERT INTO {self.PANEL_CHANNEL_TABLE} "
+                "(tenant_id,agent_id,id,channel,provider,external_account_id,"
+                "display_name,signature_header,status,config) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) "
+                f"RETURNING {self._panel_channel_columns()}",
+                (*scope, new_id, channel, provider, external_account_id,
+                 display_name, signature_header, status, self._json(dict(config))))
+            account = self._panel_channel_public(cur.fetchone())
+            audit_id = self._audit(
+                cur, actor_id=actor, action=self.PANEL_CHANNEL_CREATE_ACTION,
+                object_type=self.PANEL_CHANNEL_OBJECT, object_id=new_id,
+                data={"before": None, "after": self._panel_channel_audit(account),
+                      "changed": True})
+        return {"account": account, "created": True,
+                "auditId": None if audit_id is None else str(audit_id)}
+
+    @staticmethod
+    def _panel_channel_audit(account: Mapping[str, Any]) -> dict[str, Any]:
+        """O que entra na trilha: estado publico, sem valor de segredo.
+
+        As referencias entram porque sao caminho, nao credencial: a auditoria
+        precisa dizer *qual* referencia mudou para a revisao ser possivel.
+        """
+        return {"channel": account.get("channel"), "provider": account.get("provider"),
+                "external_account_id": account.get("externalAccountId"),
+                "display_name": account.get("displayName"),
+                "signature_header": account.get("signatureHeader"),
+                "status": account.get("status"), "config": account.get("config"),
+                "public_endpoint_id": account.get("publicEndpointId"),
+                "secret_refs": {field: ref for field, ref
+                                in (account.get("secretRefs") or {}).items()
+                                if ref}}
+
+    def panel_update_channel_account(self, account_id: str, *, changes: Mapping[str, Any],
+                                     actor_id: str) -> dict[str, Any]:
+        """Edicao parcial das colunas publicas; nunca toca coluna de referencia."""
+        actor = self._panel_actor(actor_id)
+        target = self._panel_account_id(account_id)
+        assignments: list[str] = []
+        params: list[Any] = []
+        for column, value in changes.items():
+            if column not in self.PANEL_CHANNEL_UPDATABLE:
+                raise ValueError("coluna nao editavel pelo painel")
+            if column == "config":
+                assignments.append(f"{column}=%s::jsonb")
+                params.append(self._json(dict(value or {})))
+            else:
+                assignments.append(f"{column}=%s")
+                params.append(value)
+        if not assignments:
+            raise ValueError("nenhuma alteracao pedida")
+        with self._transaction() as cur:
+            before = self._panel_channel_fetch(cur, target, lock=True)
+            cur.execute(
+                f"UPDATE {self.PANEL_CHANNEL_TABLE} SET {','.join(assignments)},"
+                "updated_at=clock_timestamp() WHERE tenant_id=%s AND agent_id=%s AND id=%s "
+                f"RETURNING {self._panel_channel_columns()}",
+                (*params, *self._scope(), target))
+            row = cur.fetchone()
+            if row is None:
+                raise KeyError("conta de canal inexistente")
+            after = self._panel_channel_public(row)
+            changed = self._panel_channel_audit(before) != self._panel_channel_audit(after)
+            audit_id = self._audit(
+                cur, actor_id=actor, action=self.PANEL_CHANNEL_UPDATE_ACTION,
+                object_type=self.PANEL_CHANNEL_OBJECT, object_id=target,
+                data={"before": self._panel_channel_audit(before),
+                      "after": self._panel_channel_audit(after), "changed": changed})
+        return {"account": after, "changed": changed,
+                "auditId": None if audit_id is None else str(audit_id)}
+
+    def panel_disable_channel_account(self, account_id: str, *,
+                                      actor_id: str) -> dict[str, Any]:
+        """Desativa a conta. Nao apaga: identidades e threads apontam para ela."""
+        actor = self._panel_actor(actor_id)
+        target = self._panel_account_id(account_id)
+        with self._transaction() as cur:
+            before = self._panel_channel_fetch(cur, target, lock=True)
+            changed = before.get("status") != "disabled"
+            if changed:
+                cur.execute(
+                    f"UPDATE {self.PANEL_CHANNEL_TABLE} SET status='disabled',"
+                    "updated_at=clock_timestamp() "
+                    "WHERE tenant_id=%s AND agent_id=%s AND id=%s",
+                    (*self._scope(), target))
+            after = self._panel_channel_fetch(cur, target)
+            audit_id = self._audit(
+                cur, actor_id=actor, action=self.PANEL_CHANNEL_DISABLE_ACTION,
+                object_type=self.PANEL_CHANNEL_OBJECT, object_id=target,
+                data={"before": {"status": before.get("status")},
+                      "after": {"status": after.get("status")}, "changed": changed})
+        return {"account": after, "changed": changed,
+                "auditId": None if audit_id is None else str(audit_id)}
+
+    def panel_generate_channel_endpoint(self, account_id: str, *, endpoint_id: str,
+                                        signature_ref: str, verify_ref: Optional[str],
+                                        signature_header: Optional[str],
+                                        actor_id: str) -> dict[str, Any]:
+        """Grava endpoint publico e referencia de assinatura na mesma escrita.
+
+        O CHECK ``sac_channel_accounts_webhook_pair`` exige que endpoint e
+        ``signature_secret_ref`` existam juntos, entao nao ha ordem alternativa:
+        ou os dois entram, ou nenhum entra. Endpoint ja existente e devolvido
+        como esta -- regerar quebraria um webhook em producao.
+        """
+        actor = self._panel_actor(actor_id)
+        target = self._panel_account_id(account_id)
+        with self._transaction() as cur:
+            before = self._panel_channel_fetch(cur, target, lock=True)
+            if before.get("publicEndpointId"):
+                return {"account": before, "created": False, "auditId": None}
+            cur.execute(
+                f"UPDATE {self.PANEL_CHANNEL_TABLE} SET public_endpoint_id=%s,"
+                "signature_secret_ref=%s,verify_secret_ref=COALESCE(verify_secret_ref,%s),"
+                "signature_header=COALESCE(signature_header,%s),updated_at=clock_timestamp() "
+                "WHERE tenant_id=%s AND agent_id=%s AND id=%s AND public_endpoint_id IS NULL "
+                f"RETURNING {self._panel_channel_columns()}",
+                (endpoint_id, signature_ref, verify_ref, signature_header,
+                 *self._scope(), target))
+            row = cur.fetchone()
+            if row is None:
+                raise PanelConflictError("endpoint_ja_existe",
+                                         "esta conta ja tem endpoint publico")
+            after = self._panel_channel_public(row)
+            audit_id = self._audit(
+                cur, actor_id=actor, action=self.PANEL_CHANNEL_ENDPOINT_ACTION,
+                object_type=self.PANEL_CHANNEL_OBJECT, object_id=target,
+                data={"before": {"public_endpoint_id": None},
+                      "after": {"public_endpoint_id": after.get("publicEndpointId"),
+                                "signature_secret_ref": signature_ref,
+                                "verify_secret_ref":
+                                    (after.get("secretRefs") or {}).get("verify")},
+                      "changed": True})
+        return {"account": after, "created": True,
+                "auditId": None if audit_id is None else str(audit_id)}
+
+    def panel_record_channel_secret(self, account_id: str, *, field: str,
+                                    secret_ref: str, actor_id: str,
+                                    already_referenced: bool) -> dict[str, Any]:
+        """Registra na trilha que houve gravacao no cofre e fixa a referencia.
+
+        Nao recebe, nao le e nao devolve valor de segredo: o parametro e o
+        caminho. A trilha guarda agente, conta, campo, referencia, operador e
+        data -- nunca o valor e nunca o tamanho.
+        """
+        actor = self._panel_actor(actor_id)
+        target = self._panel_account_id(account_id)
+        column = self.PANEL_CHANNEL_SECRET_COLUMNS.get(str(field))
+        if column is None:
+            raise ValueError("campo de segredo invalido")
+        with self._transaction() as cur:
+            before = self._panel_channel_fetch(cur, target, lock=True)
+            if not already_referenced:
+                cur.execute(
+                    f"UPDATE {self.PANEL_CHANNEL_TABLE} SET {column}=%s,"
+                    "updated_at=clock_timestamp() "
+                    "WHERE tenant_id=%s AND agent_id=%s AND id=%s",
+                    (secret_ref, *self._scope(), target))
+            after = self._panel_channel_fetch(cur, target)
+            audit_id = self._audit(
+                cur, actor_id=actor, action=self.PANEL_CHANNEL_SECRET_ACTION,
+                object_type=self.PANEL_CHANNEL_OBJECT, object_id=target,
+                data={"field": str(field), "secret_ref": secret_ref,
+                      "channel": before.get("channel"), "provider": before.get("provider"),
+                      "vault_write": True, "reference_created": not already_referenced})
+        return {"account": after, "secretRef": secret_ref,
                 "auditId": None if audit_id is None else str(audit_id)}

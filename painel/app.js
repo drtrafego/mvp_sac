@@ -676,6 +676,9 @@ function renderConversationDetail(){
 }
 
 function renderPipeline(){
+  // O quadro kanban e o funil substituiram este bloco na pagina de Pipeline;
+  // o elemento pode nao existir mais.
+  if(!$("#pipeline")) return;
   const stages = pipelineView();
   $("#pipeline").innerHTML = stages.length ? stages.map(stage => `
     <div class="stage"><strong>${Number(stage.contacts || 0)}</strong><span>${escapeHtml(stageView(stage.id).label)}</span></div>`).join("")

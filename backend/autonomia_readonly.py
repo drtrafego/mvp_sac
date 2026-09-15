@@ -18,6 +18,8 @@ import json
 import os
 import re
 import signal
+import stat
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,18 +43,59 @@ class QueryDatabase(Protocol):
 
 
 class ContactedWhatsappCatalog:
-    """Contagem do registro operacional atual, sem serializar os contatos."""
+    """Contagem do registro operacional atual, sem serializar os contatos.
+
+    O arquivo montado passa de 400 KB e ``/readyz`` o consulta a cada
+    healthcheck. A validacao de seguranca (nao ser symlink, ser arquivo comum
+    e nao ser legivel por outros) continua acontecendo em toda chamada; apenas
+    o parse do JSON e reaproveitado, e so enquanto a identidade do arquivo
+    -- dispositivo, inode, tamanho e mtime -- permanecer igual. Qualquer
+    escrita, troca atomica ou remontagem muda a assinatura e forca a releitura.
+
+    O mtime sozinho nao basta: o kernel o preenche com um relogio grosseiro
+    (medido neste XFS: duas escritas seguidas ficaram com o mesmo mtime_ns).
+    Uma reescrita do mesmo tamanho, no mesmo tique, seria invisivel. Por isso
+    a leitura so vira cache confiavel depois que o arquivo "assenta": enquanto
+    o mtime estiver a menos de RACE_MARGIN_NS do instante em que lemos, a
+    proxima chamada rele. E a mesma defesa que o git usa para arquivos
+    "racily clean".
+    """
+
+    RACE_MARGIN_NS = 1_000_000_000
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
+        self._signature: tuple[int, int, int, int] | None = None
+        self._read_at_ns = 0
+        self._count = 0
+
+    def _signature_now(self) -> tuple[int, int, int, int]:
+        try:
+            # lstat: nao segue symlink, entao um link vira S_ISLNK e e recusado.
+            info = self.path.lstat()
+        except OSError as exc:
+            raise RuntimeError("registro de abordados ausente ou inseguro") from exc
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+            raise RuntimeError("registro de abordados ausente ou inseguro")
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
 
     def count(self) -> int:
-        if self.path.is_symlink() or not self.path.is_file() or self.path.stat().st_mode & 0o077:
-            raise RuntimeError("registro de abordados ausente ou inseguro")
+        signature = self._signature_now()
+        settled = signature[3] + self.RACE_MARGIN_NS < self._read_at_ns
+        if signature == self._signature and settled:
+            return self._count
+        # O instante e tomado ANTES da leitura: uma escrita concorrente com
+        # ela fica com mtime >= read_at e nao chega a ser dada como assentada.
+        read_at = time.time_ns()
         payload = json.loads(self.path.read_text())
         if not isinstance(payload, dict):
             raise RuntimeError("registro de abordados invalido")
-        return len(payload)
+        # So publica o cache depois do parse: um arquivo invalido continua
+        # sendo recusado nas proximas chamadas.
+        self._count = len(payload)
+        self._signature = signature
+        self._read_at_ns = read_at
+        return self._count
 
 
 def _iso(value: Any) -> str | None:

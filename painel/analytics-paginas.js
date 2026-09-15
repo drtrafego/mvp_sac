@@ -211,7 +211,10 @@
       previa: (c.lastMessage && c.lastMessage.text) || "",
       quando: typeof relativeTime === "function"
         ? relativeTime((c.lastMessage && c.lastMessage.occurredAt) || c.updatedAt) : "",
-      responsavel: c.assignedTo
+      responsavel: c.assignedTo,
+      etapaRotulo: typeof stageView === "function" && c.contact
+        ? stageView(c.contact.pipelineStage).label : "",
+      criadoEm: c.createdAt
     }));
     K.montar(caixa, {
       colunas: etapas,

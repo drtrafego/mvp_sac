@@ -31,7 +31,13 @@ from urllib.parse import parse_qs, unquote
 from .panel_analytics import (ANALYTICS_REPORTS, AnalyticsCache, ComputationBudget,
                               DEFAULT_TIMEZONE, MAX_WINDOW_DAYS, resolve_window)
 from .panel_auth import LoginThrottle, OperatorDirectory, PanelSession, SessionStore
-from .postgres_store import ConnectionFactory, PostgresStore
+from .panel_config import (ConfigError, DEFAULT_SIGNATURE_HEADER, SecretVault,
+                           SecretWriteQuota, VaultUnavailable, account_checklist,
+                           agent_checklist, derive_secret_ref, new_account_id,
+                           new_endpoint_id, reject_server_owned, secret_fields_for,
+                           validate_account_changes, validate_new_account,
+                           validate_secret_field, validate_secret_value, webhook_location)
+from .postgres_store import ConnectionFactory, PanelConflictError, PostgresStore
 
 SESSION_COOKIE = "sac_panel_session"
 CSRF_HEADER = "X-SAC-Panel-CSRF"
@@ -187,7 +193,10 @@ class PanelApplication:
                  analytics_cache: AnalyticsCache | None = None,
                  analytics_budget: ComputationBudget | None = None,
                  analytics_timezone: str = DEFAULT_TIMEZONE,
-                 analytics_max_days: int = MAX_WINDOW_DAYS) -> None:
+                 analytics_max_days: int = MAX_WINDOW_DAYS,
+                 vault: SecretVault | None = None,
+                 webhook_base_url: str = "",
+                 secret_quota: SecretWriteQuota | None = None) -> None:
         self.directory = directory
         self.sessions = sessions
         self.catalog = catalog
@@ -203,6 +212,12 @@ class PanelApplication:
         # configuracao nao pode virar 500 na cara do cliente.
         resolve_window(timezone_name=analytics_timezone, max_days=self.analytics_max_days)
         self.analytics_timezone = analytics_timezone
+        # Cofre ausente desliga a subarvore /channels inteira (503). Nao existe
+        # meio-termo: sem cofre nao ha como apurar estado nem gravar segredo, e
+        # responder "ausente" para tudo enganaria a tela de pendencias.
+        self.vault = vault
+        self.webhook_base_url = str(webhook_base_url or "")
+        self.secret_quota = secret_quota or SecretWriteQuota()
 
     @classmethod
     def handles(cls, path: str) -> bool:
@@ -404,6 +419,11 @@ class PanelApplication:
                 return self._write_assignment(environ, method, session, agent, store, tail[1])
             if len(tail) == 3 and tail[0] == "contacts" and tail[2] == "stage":
                 return self._write_stage(environ, method, session, agent, store, tail[1])
+            if tail[0] == "channels":
+                return self._channels_route(environ, method, session, agent, store, tail[1:])
+            if tail == ["channel-checklist"]:
+                self._only(method, _SAFE_METHODS)
+                return self._channel_checklist(session, agent, store)
         except KeyError:
             raise _HttpError("404 Not Found", "not_found")
         except ValueError:
@@ -503,6 +523,202 @@ class PanelApplication:
                                        actor_id=session.operator.id,
                                        reason=payload.get("reason"))
         return "200 OK", result, []
+
+    # --------------------------------------------- Configuracao de canais
+    #
+    # Toda a subarvore /channels segue as mesmas travas das outras escritas do
+    # painel (sessao, permissao de escrita no agente, CSRF) e acrescenta tres
+    # proprias:
+    #
+    # * ``public_endpoint_id`` e o id da conta sao gerados aqui; enviados pelo
+    #   cliente viram 400 explicito, nunca sao aceitos e nunca sao ignorados em
+    #   silencio;
+    # * o valor do segredo entra por uma rota so, vai direto para o cofre e nao
+    #   volta em nenhuma resposta, log ou linha de auditoria;
+    # * ativar conta com pendencia bloqueante e recusado aqui antes de o CHECK
+    #   do banco recusar, para o operador ver a lista em vez de um 503.
+
+    _CHANNEL_COLUMN_TO_PUBLIC = {"display_name": "displayName",
+                                 "external_account_id": "externalAccountId",
+                                 "signature_header": "signatureHeader",
+                                 "status": "status", "config": "config"}
+
+    def _require_vault(self) -> SecretVault:
+        if self.vault is None:
+            raise _HttpError("503 Service Unavailable", "cofre_nao_configurado")
+        return self.vault
+
+    def _account_payload(self, account: Mapping[str, Any]) -> dict[str, Any]:
+        """Conta para o frontend: referencia e estado, jamais valor de segredo."""
+        vault = self._require_vault()
+        refs = dict(account.get("secretRefs") or {})
+        url, path = webhook_location(self.webhook_base_url, account.get("publicEndpointId"))
+        payload = {key: value for key, value in account.items() if key != "secretRefs"}
+        payload["secrets"] = {field: {"ref": refs.get(field),
+                                      "state": vault.state(refs.get(field))}
+                              for field in secret_fields_for(str(account.get("provider") or ""))}
+        payload["webhookUrl"] = url
+        payload["webhookPath"] = path
+        return payload
+
+    def _channels_route(self, environ, method: str, session: PanelSession,
+                        agent: PanelAgent, store: Any, tail: list[str]):
+        self._require_vault()
+        try:
+            if not tail:
+                if method in _SAFE_METHODS:
+                    return self._list_channels(session, agent, store)
+                self._only(method, frozenset({"POST"}))
+                return self._create_channel(environ, session, agent, store)
+            if len(tail) == 1:
+                if method in _SAFE_METHODS:
+                    account = store.panel_channel_account(tail[0])["account"]
+                    return "200 OK", {"account": self._account_payload(account)}, []
+                if method == "PATCH":
+                    return self._update_channel(environ, session, agent, store, tail[0])
+                if method == "DELETE":
+                    return self._disable_channel(environ, session, agent, store, tail[0])
+                raise _HttpError("405 Method Not Allowed", "method_not_allowed")
+            if len(tail) == 2 and tail[1] == "endpoint":
+                self._only(method, frozenset({"POST"}))
+                return self._generate_endpoint(environ, session, agent, store, tail[0])
+            if len(tail) == 3 and tail[1] == "secrets":
+                self._only(method, frozenset({"PUT"}))
+                return self._write_secret(environ, session, agent, store, tail[0], tail[2])
+            raise _HttpError("404 Not Found", "not_found")
+        except ConfigError as exc:
+            # ConfigError e ValueError; capturado aqui para preservar o codigo
+            # estavel em vez de virar o "invalid_request" generico do agente.
+            raise _HttpError("400 Bad Request", exc.code, field=exc.field,
+                             message=exc.message)
+        except PanelConflictError as exc:
+            raise _HttpError("409 Conflict", exc.code, message=exc.message)
+        except VaultUnavailable as exc:
+            raise _HttpError("409 Conflict", exc.code, message=exc.message)
+
+    def _list_channels(self, session: PanelSession, agent: PanelAgent, store: Any):
+        accounts = store.panel_channel_accounts()["accounts"]
+        return "200 OK", {"agent": self._agent_payload(session, agent),
+                          "accounts": [self._account_payload(item) for item in accounts],
+                          "webhookBaseUrl": self.webhook_base_url or None}, []
+
+    def _create_channel(self, environ, session: PanelSession, agent: PanelAgent, store: Any):
+        self._require_write(session, agent)
+        self._require_csrf(environ, session)
+        draft = validate_new_account(self._body(environ))
+        result = store.panel_create_channel_account(
+            account_id=new_account_id(), channel=draft.channel, provider=draft.provider,
+            external_account_id=draft.external_account_id, display_name=draft.display_name,
+            signature_header=draft.signature_header, status=draft.status,
+            config=draft.config, actor_id=session.operator.id)
+        return "201 Created", {"account": self._account_payload(result["account"]),
+                               "created": True, "auditId": result["auditId"]}, []
+
+    def _update_channel(self, environ, session: PanelSession, agent: PanelAgent,
+                        store: Any, account_id: str):
+        self._require_write(session, agent)
+        self._require_csrf(environ, session)
+        current = store.panel_channel_account(account_id)["account"]
+        changes = validate_account_changes(current, self._body(environ))
+        if changes.get("status") == "active":
+            self._refuse_activation_with_pending(current, changes)
+        result = store.panel_update_channel_account(current["id"], changes=changes,
+                                                    actor_id=session.operator.id)
+        return "200 OK", {"account": self._account_payload(result["account"]),
+                          "changed": result["changed"], "auditId": result["auditId"]}, []
+
+    def _refuse_activation_with_pending(self, current: Mapping[str, Any],
+                                        changes: Mapping[str, Any]) -> None:
+        """Falha fechada antes do banco: ativar so com o checklist limpo."""
+        preview = dict(current)
+        for column, value in changes.items():
+            preview[self._CHANNEL_COLUMN_TO_PUBLIC[column]] = value
+        checklist = account_checklist(preview, self._require_vault().state)
+        if not checklist["canActivate"]:
+            raise _HttpError("409 Conflict", "ativacao_com_pendencia",
+                             message="a conta ainda tem pendencia que impede ativar",
+                             pendencias=[item for item in checklist["pendencias"]
+                                         if item["blocks"]])
+
+    def _disable_channel(self, environ, session: PanelSession, agent: PanelAgent,
+                         store: Any, account_id: str):
+        self._require_write(session, agent)
+        self._require_csrf(environ, session)
+        result = store.panel_disable_channel_account(account_id,
+                                                     actor_id=session.operator.id)
+        return "200 OK", {"account": self._account_payload(result["account"]),
+                          "changed": result["changed"], "auditId": result["auditId"]}, []
+
+    def _generate_endpoint(self, environ, session: PanelSession, agent: PanelAgent,
+                           store: Any, account_id: str):
+        """Gera a capacidade publica e a referencia de assinatura, juntas.
+
+        O CHECK ``sac_channel_accounts_webhook_pair`` exige as duas ao mesmo
+        tempo, entao esta rota e a unica que provisiona entrada de webhook. O
+        valor da assinatura entra depois, por ``PUT .../secrets/signature``.
+        """
+        self._require_write(session, agent)
+        self._require_csrf(environ, session)
+        reject_server_owned(self._body(environ))
+        current = store.panel_channel_account(account_id)["account"]
+        provider = str(current.get("provider") or "")
+        scope = (agent.tenant_id, agent.agent_id, current["id"])
+        result = store.panel_generate_channel_endpoint(
+            current["id"], endpoint_id=new_endpoint_id(),
+            signature_ref=derive_secret_ref(*scope, "signature"),
+            verify_ref=derive_secret_ref(*scope, "verify") if provider == "meta" else None,
+            signature_header=None if provider == "meta" else DEFAULT_SIGNATURE_HEADER,
+            actor_id=session.operator.id)
+        account = self._account_payload(result["account"])
+        return ("201 Created" if result["created"] else "200 OK",
+                {"account": account, "created": result["created"],
+                 "publicEndpointId": account.get("publicEndpointId"),
+                 "webhookUrl": account.get("webhookUrl"),
+                 "webhookPath": account.get("webhookPath"),
+                 "auditId": result["auditId"]}, [])
+
+    def _write_secret(self, environ, session: PanelSession, agent: PanelAgent,
+                      store: Any, account_id: str, field: str):
+        """Unica rota que recebe valor de segredo. Escreve e nao devolve nada.
+
+        O valor sai do corpo, e validado, vai para o cofre e some. Nao entra em
+        variavel de resposta, em excecao, em log nem na trilha de auditoria --
+        a trilha guarda apenas *que* houve gravacao e em *qual* referencia.
+        """
+        self._require_write(session, agent)
+        self._require_csrf(environ, session)
+        vault = self._require_vault()
+        # O orcamento e gasto por tentativa, antes de qualquer consulta: uma
+        # sessao roubada nao usa esta rota para varrer contas nem caminhos.
+        if not self.secret_quota.consume(session.key):
+            raise _HttpError("429 Too Many Requests", "muitas_gravacoes",
+                             message="limite de gravacoes desta sessao atingido")
+        payload = self._body(environ)
+        current = store.panel_channel_account(account_id)["account"]
+        validate_secret_field(str(current.get("provider") or ""), field)
+        validate_secret_value(payload.get("value"))
+        existing = (current.get("secretRefs") or {}).get(field)
+        if field == "signature" and not existing:
+            raise _HttpError("409 Conflict", "endpoint_nao_gerado",
+                             message="gere o endpoint publico antes de gravar a "
+                                     "assinatura; o banco exige os dois juntos")
+        ref = existing or derive_secret_ref(agent.tenant_id, agent.agent_id,
+                                            current["id"], field)
+        vault.write(ref, payload.get("value"))
+        result = store.panel_record_channel_secret(
+            current["id"], field=field, secret_ref=ref, actor_id=session.operator.id,
+            already_referenced=bool(existing))
+        return "200 OK", {"accountId": current["id"], "field": field, "secretRef": ref,
+                          "state": vault.state(ref), "stored": True,
+                          "auditId": result["auditId"],
+                          "remainingAttempts": self.secret_quota.remaining(session.key)}, []
+
+    def _channel_checklist(self, session: PanelSession, agent: PanelAgent, store: Any):
+        """Lista de pendencias por canal; e o que a tela mostra como 'falta'."""
+        vault = self._require_vault()
+        accounts = store.panel_channel_accounts()["accounts"]
+        return "200 OK", {"agent": self._agent_payload(session, agent),
+                          **agent_checklist(accounts, vault.state)}, []
 
     def _assignable(self, assignee: str, agent: PanelAgent) -> bool:
         """Responsavel precisa poder agir: exige permissao de escrita no agente.

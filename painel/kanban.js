@@ -22,27 +22,50 @@
 
   const inicial = (nome) => (String(nome || "?").trim()[0] || "?").toUpperCase();
 
+  const CAL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" aria-hidden="true"><rect x="3.4" y="5.2" width="17.2" height="15.4" rx="2.4"/>' +
+    '<path d="M3.4 9.8h17.2M8.4 3v4.4M15.6 3v4.4"/></svg>';
+
+  const dataCurta = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return isNaN(d) ? "—" : d.toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
+  };
+
+  /* Cartao no formato do crm-unico: selo de origem no topo, nome em peso alto,
+   * subtitulo em caixa alta espacada, previa com duas linhas e altura minima
+   * (para os cartoes nao ficarem serrilhados quando um tem previa e o outro
+   * nao) e rodape separado por linha com avatar, ponto de status e data. */
   function cartao(item, podeEscrever) {
     const O = global.SACOrigens;
     const origem = O && item.origem ? O.chipOrigem(item.origem, { mini: true, canais: false }) : "";
     const canal = O && item.canal ? O.iconeCanal(item.canal, false) : "";
+    const rotuloCanal = O && item.canal ? O.resolverCanal(item.canal).label : "";
+    const atribuido = !!item.responsavel;
     return (
       '<article class="kb-card' + (podeEscrever ? " arrastavel" : "") + '"' +
       (podeEscrever ? ' draggable="true"' : "") +
       ' tabindex="0" data-cartao="' + esc(item.id) + '" data-etapa="' + esc(item.etapa || "") + '">' +
-      '<header class="kb-card-topo">' +
-      '<span class="kb-avatar">' + esc(inicial(item.nome)) + "</span>" +
-      '<span class="kb-nome">' + esc(item.nome || "Contato sem nome") + "</span>" +
-      (item.quando ? '<time class="kb-quando">' + esc(item.quando) + "</time>" : "") +
-      "</header>" +
-      (item.previa ? '<p class="kb-previa">' + esc(item.previa) + "</p>" : "") +
-      '<footer class="kb-card-rodape">' +
-      (canal ? '<span class="kb-canal">' + canal + "</span>" : "") +
-      (origem || "") +
-      (item.responsavel
-        ? '<span class="kb-resp" title="Responsável">' + esc(inicial(item.responsavel)) + "</span>"
-        : "") +
-      "</footer></article>"
+
+      '<div class="kb-topo">' + (origem || '<span class="kb-sem-origem">Sem origem</span>') +
+      (canal ? '<span class="kb-canal" title="' + esc(rotuloCanal) + '">' + canal + "</span>" : "") +
+      "</div>" +
+
+      '<div class="kb-corpo">' +
+      '<h4 class="kb-nome">' + esc(item.nome || "Contato sem nome") + "</h4>" +
+      '<p class="kb-sub">' + esc(rotuloCanal || "—") +
+      (item.etapaRotulo ? '<span class="kb-sep">·</span>' + esc(item.etapaRotulo) : "") + "</p>" +
+      '<p class="kb-previa">' + esc(item.previa || "Sem mensagem registrada…") + "</p>" +
+      "</div>" +
+
+      '<div class="kb-rodape">' +
+      '<span class="kb-quem">' +
+      '<span class="kb-avatar' + (atribuido ? " atribuido" : "") + '">' + esc(inicial(item.nome)) +
+      '<i class="kb-ponto"></i></span>' +
+      '<span class="kb-etiqueta">' + esc(atribuido ? item.responsavel : "sem responsável") + "</span>" +
+      "</span>" +
+      '<span class="kb-data">' + CAL + "<span>" + esc(item.quando || dataCurta(item.criadoEm)) + "</span></span>" +
+      "</div></article>"
     );
   }
 

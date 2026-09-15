@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="operador.css">
   <link rel="stylesheet" href="analytics.css">
   <link rel="stylesheet" href="kanban.css">
+  <link rel="stylesheet" href="configuracao.css">
 </head>
 <body>
   <div class="shell">
@@ -70,7 +71,6 @@
         <div id="pipeline-kanban"></div>
         <div class="grade-graficos">
           <div class="larga" id="pipeline-funil"></div>
-          <div class="larga"><article class="card"><div class="panel-head"><div><p class="eyebrow">Fluxo</p><h2>Pipeline por etapa</h2></div></div><div class="pipeline" id="pipeline"></div></article></div>
         </div>
       </section>
 
@@ -99,6 +99,26 @@
           <div class="larga" id="operacao-operadores"></div>
         </div>
       </section>
+
+      <!-- CONFIGURAÇÃO -->
+      <section class="pagina" id="pagina-configuracao" data-pagina="configuracao">
+        <div id="config-pendencias"></div>
+        <div id="config-contas"></div>
+      </section>
+
+      <section class="pagina" id="pagina-api_modelos" data-pagina="api_modelos"><div id="api_modelos-corpo"></div></section>
+
+      <section class="pagina" id="pagina-api_campanhas" data-pagina="api_campanhas"><div id="api_campanhas-corpo"></div></section>
+
+      <section class="pagina" id="pagina-api_followup" data-pagina="api_followup"><div id="api_followup-corpo"></div></section>
+
+      <section class="pagina" id="pagina-hot_carrinho" data-pagina="hot_carrinho"><div id="hot_carrinho-corpo"></div></section>
+
+      <section class="pagina" id="pagina-hot_boleto" data-pagina="hot_boleto"><div id="hot_boleto-corpo"></div></section>
+
+      <section class="pagina" id="pagina-hot_recusado" data-pagina="hot_recusado"><div id="hot_recusado-corpo"></div></section>
+
+      <section class="pagina" id="pagina-hot_aprovada" data-pagina="hot_aprovada"><div id="hot_aprovada-corpo"></div></section>
     </main>
   </div>
 
@@ -117,6 +137,8 @@
   <script src="analytics.js" defer></script>
   <script src="navegacao.js" defer></script>
   <script src="kanban.js" defer></script>
+  <script src="configuracao.js" defer></script>
+  <script src="paginas-pendentes.js" defer></script>
   <script src="app.js" defer></script>
   <script src="analytics-paginas.js" defer></script>
 </body>

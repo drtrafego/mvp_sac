@@ -24,6 +24,7 @@ from .panel_analytics import AnalyticsCache, DEFAULT_TIMEZONE, MAX_WINDOW_DAYS
 from .panel_api import (DisabledPanelApplication, PanelApplication, PanelAgent,
                         PostgresPanelAgentCatalog)
 from .panel_auth import OperatorDirectory, SessionStore
+from .panel_config import SecretVault, SecretWriteQuota, normalize_webhook_base
 from .postgres_store import ConnectionFactory, PostgresStore
 from .secret_resolver import DirectorySecretResolver
 from .tenant_registry import PostgresTenantRegistry, TenantBinding
@@ -276,6 +277,10 @@ class RuntimeSettings:
     panel_analytics_timezone: str = DEFAULT_TIMEZONE
     panel_analytics_cache_seconds: float = 60.0
     panel_analytics_max_days: int = MAX_WINDOW_DAYS
+    # Configuração de canais. A base pública só serve para montar a URL que o
+    # operador cola no provedor; sem ela o painel devolve apenas o caminho.
+    panel_webhook_base_url: str = ""
+    panel_secret_writes_per_session: int = 20
 
     @property
     def panel_enabled(self) -> bool:
@@ -293,8 +298,12 @@ class RuntimeSettings:
             idle = float(env.get("PANEL_SESSION_IDLE_SECONDS", "1800"))
             cache_seconds = float(env.get("PANEL_ANALYTICS_CACHE_SECONDS", "60"))
             max_days = int(env.get("PANEL_ANALYTICS_MAX_DAYS", str(MAX_WINDOW_DAYS)))
+            secret_writes = int(env.get("PANEL_SECRET_WRITES_PER_SESSION", "20"))
         except ValueError as exc:
             raise ValueError("porta ou intervalo invalido") from exc
+        if not 1 <= secret_writes <= 500:
+            raise ValueError("PANEL_SECRET_WRITES_PER_SESSION fora do limite")
+        webhook_base = normalize_webhook_base(env.get("PANEL_WEBHOOK_BASE_URL", ""))
         if not 1 <= port <= 65535 or not 0.05 <= poll <= 60:
             raise ValueError("porta ou intervalo fora do limite")
         if not 60 <= ttl <= 86400 or not 60 <= idle <= ttl:
@@ -316,7 +325,9 @@ class RuntimeSettings:
                    panel_session_ttl_seconds=ttl, panel_session_idle_seconds=idle,
                    panel_analytics_timezone=analytics_tz,
                    panel_analytics_cache_seconds=cache_seconds,
-                   panel_analytics_max_days=max_days)
+                   panel_analytics_max_days=max_days,
+                   panel_webhook_base_url=webhook_base,
+                   panel_secret_writes_per_session=secret_writes)
 
 
 def usa_pooler_transacional(database_url: str) -> bool:
@@ -365,7 +376,13 @@ def build_panel(settings: RuntimeSettings, factory: ConnectionFactory,
         cookie_path=settings.panel_cookie_path,
         analytics_cache=AnalyticsCache(ttl_seconds=settings.panel_analytics_cache_seconds),
         analytics_timezone=settings.panel_analytics_timezone,
-        analytics_max_days=settings.panel_analytics_max_days)
+        analytics_max_days=settings.panel_analytics_max_days,
+        # O cofre de escrita aponta para o mesmo SECRET_DIR que o resolver de
+        # leitura usa; escrita e leitura ficam em objetos separados de propósito.
+        vault=SecretVault(settings.secret_dir),
+        webhook_base_url=settings.panel_webhook_base_url,
+        secret_quota=SecretWriteQuota(
+            max_writes=settings.panel_secret_writes_per_session))
 
 
 def build_gateway(settings: RuntimeSettings, connection_factory: ConnectionFactory | None = None):

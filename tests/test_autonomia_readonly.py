@@ -1,11 +1,17 @@
 import io
 import json
+import os
+import tempfile
+import time
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from unittest import mock
 
 from backend.autonomia_readonly import (
     AutonomiaReadOnlyApplication,
     AutonomiaRepository,
+    ContactedWhatsappCatalog,
     mask_handle,
     redact_text,
 )
@@ -163,6 +169,106 @@ class ApplicationTests(unittest.TestCase):
             "/api/v1/autonomia/conversations/mining_email%3Athread-email/messages")
         self.assertEqual(status, 200)
         self.assertEqual(payload["messages"][0]["direction"], "inbound")
+
+
+class ContactedWhatsappCatalogTests(unittest.TestCase):
+    """O arquivo e relido a cada /readyz; o cache so pode valer enquanto ele nao mudar."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "contatados.json"
+        self.write({"5511900000001": 1, "5511900000002": 1})
+        self.catalog = ContactedWhatsappCatalog(self.path)
+
+    def write(self, payload):
+        self.path.write_text(json.dumps(payload))
+        self.path.chmod(0o600)
+
+    def settle(self, segundos=10):
+        """Envelhece o mtime para fora da janela de corrida, sem sleep no teste."""
+        quando = time.time_ns() - segundos * 1_000_000_000
+        os.utime(self.path, ns=(quando, quando))
+
+    def spy_on_reads(self):
+        original = Path.read_text
+        return mock.patch.object(Path, "read_text", autospec=True, side_effect=original)
+
+    def test_conta_as_chaves_do_registro(self):
+        self.assertEqual(self.catalog.count(), 2)
+
+    def test_cache_evita_reler_o_arquivo_enquanto_ele_nao_muda(self):
+        self.settle()
+        self.catalog.count()
+        with self.spy_on_reads() as spy:
+            self.assertEqual(self.catalog.count(), 2)
+            self.assertEqual(self.catalog.count(), 2)
+        self.assertEqual(spy.call_count, 0, "cache nao deveria reabrir o arquivo")
+
+    def test_cache_invalida_quando_o_arquivo_muda(self):
+        self.settle()
+        self.assertEqual(self.catalog.count(), 2)
+        self.write({"5511900000001": 1, "5511900000002": 1, "5511900000003": 1})
+        self.settle()
+        with self.spy_on_reads() as spy:
+            self.assertEqual(self.catalog.count(), 3)
+        self.assertEqual(spy.call_count, 1, "mudanca no arquivo deve forcar releitura")
+
+    def test_reescrita_do_mesmo_tamanho_no_mesmo_tique_ainda_invalida(self):
+        """O mtime do kernel e grosseiro: duas escritas seguidas podem ficar
+        com o mesmo mtime_ns e o mesmo tamanho. O cache nao pode acreditar."""
+        self.assertEqual(self.catalog.count(), 2)
+        antes = self.path.stat()
+        self.write({"5511900000009": 1, "5511900000008": 1})
+        depois = self.path.stat()
+        self.assertEqual(antes.st_size, depois.st_size)
+        with self.spy_on_reads() as spy:
+            self.assertEqual(self.catalog.count(), 2)
+        self.assertGreaterEqual(spy.call_count, 1,
+                                "arquivo recem-escrito nao pode vir do cache")
+
+    def test_arquivo_recem_escrito_nao_e_dado_como_assentado(self):
+        """Enquanto o mtime estiver dentro da janela de corrida, rele sempre."""
+        with self.spy_on_reads() as spy:
+            self.catalog.count()
+            self.catalog.count()
+        self.assertEqual(spy.call_count, 2)
+
+    def test_troca_atomica_do_arquivo_invalida_o_cache(self):
+        self.settle()
+        self.assertEqual(self.catalog.count(), 2)
+        substituto = Path(self.tmp.name) / "novo.json"
+        substituto.write_text(json.dumps({"5511900000004": 1}))
+        substituto.chmod(0o600)
+        os.replace(substituto, self.path)
+        self.assertEqual(self.catalog.count(), 1)
+
+    def test_symlink_e_recusado(self):
+        alvo = Path(self.tmp.name) / "alvo.json"
+        alvo.write_text(json.dumps({"a": 1}))
+        alvo.chmod(0o600)
+        link = Path(self.tmp.name) / "link.json"
+        link.symlink_to(alvo)
+        with self.assertRaises(RuntimeError):
+            ContactedWhatsappCatalog(link).count()
+
+    def test_arquivo_legivel_por_outros_e_recusado(self):
+        self.path.chmod(0o644)
+        with self.assertRaises(RuntimeError):
+            ContactedWhatsappCatalog(self.path).count()
+
+    def test_arquivo_ausente_e_recusado(self):
+        with self.assertRaises(RuntimeError):
+            ContactedWhatsappCatalog(Path(self.tmp.name) / "nao-existe.json").count()
+
+    def test_payload_invalido_nao_fica_em_cache(self):
+        self.write(["nao", "e", "dict"])
+        catalog = ContactedWhatsappCatalog(self.path)
+        for _ in range(2):
+            with self.assertRaises(RuntimeError):
+                catalog.count()
+        self.write({"5511900000005": 1})
+        self.assertEqual(catalog.count(), 1)
 
 
 if __name__ == "__main__":

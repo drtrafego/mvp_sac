@@ -2,27 +2,68 @@
  * Herda os tokens de styles.css. Carrega depois dele. */
 
 /* ------------------------------------------------------------- navegação */
+/* Árvore: seção agrupa páginas irmãs. A seção da página ativa nunca fecha. */
 
-.nav-paginas { display: grid; gap: 2px; margin: 0 0 22px; }
-.nav-paginas button {
-  all: unset; cursor: pointer; display: flex; align-items: center; gap: 10px;
-  padding: 9px 11px; border-radius: 10px; color: #aeb6bd; font-size: 13px;
+.nav-paginas { display: grid; gap: 3px; margin: 0 0 20px; }
+
+.nav-secao-topo {
+  all: unset; cursor: pointer; display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: 9px; width: 100%; box-sizing: border-box;
+  color: var(--muted); font-size: 10.5px; font-weight: 700;
+  letter-spacing: .11em; text-transform: uppercase;
 }
-.nav-paginas button svg { width: 16px; height: 16px; flex: none; opacity: .8; }
-.nav-paginas button:hover { background: #171c1f; color: #fff; }
-.nav-paginas button.ativa { background: #1e2620; color: #fff; font-weight: 600; }
-.nav-paginas button.ativa svg { color: var(--accent); opacity: 1; }
-.nav-paginas button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.nav-secao {
-  margin: 18px 0 7px; padding-left: 11px; color: var(--muted);
-  font-size: 10px; letter-spacing: .13em; text-transform: uppercase;
+.nav-secao-topo:hover { background: #161b1e; color: #cfd6dc; }
+.nav-secao-topo:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.nav-secao-topo > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-secao-icone { display: grid; place-items: center; color: var(--marca, var(--muted)); flex: none; }
+.nav-secao-icone svg { width: 15px; height: 15px; display: block; }
+.nav-secao-bloco.com-ativa .nav-secao-topo { color: #e6ebef; }
+
+.nav-seta {
+  width: 0; height: 0; flex: none; margin-left: 2px;
+  border-left: 4px solid currentColor; border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent; opacity: .65;
+  transition: transform .16s ease;
 }
+.nav-secao-bloco.aberta .nav-seta { transform: rotate(90deg); }
+
+/* fechado some de verdade: sem altura, sem foco alcançável */
+.nav-filhos { display: none; padding: 2px 0 6px 7px; margin-left: 6px; border-left: 1px solid #23292d; }
+.nav-secao-bloco.aberta .nav-filhos { display: grid; gap: 1px; }
+.nav-secao-bloco[style*="--marca"].aberta .nav-filhos {
+  border-left-color: color-mix(in srgb, var(--marca) 40%, transparent);
+}
+
+.nav-item {
+  all: unset; cursor: pointer; display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px; border-radius: 9px; color: #a7b0b7; font-size: 12.5px;
+}
+.nav-item svg { width: 15px; height: 15px; flex: none; opacity: .8; }
+.nav-item > span:not(.nav-marcador) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item:hover { background: #171c1f; color: #fff; }
+.nav-item.ativa { background: #1e2620; color: #fff; font-weight: 600; }
+.nav-item.ativa svg { color: var(--accent); opacity: 1; }
+.nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.nav-marcador {
+  width: 5px; height: 5px; min-width: 5px; border-radius: 50%; flex: 0 0 auto;
+  background: currentColor; opacity: .45; margin: 0 4px;
+}
+.nav-item.ativa .nav-marcador { background: var(--accent); opacity: 1; }
+
+/* ponto âmbar: página cuja fonte de dados ainda não está ligada */
+.nav-pendente {
+  width: 6px; height: 6px; border-radius: 50%; background: #f0b429; flex: none;
+}
+.nav-item.pendente { color: #8d949a; }
 
 .pagina { display: none; }
 .pagina.ativa { display: block; }
 
 /* ------------------------------------------------------- período / filtro */
 
+/* mesmo motivo da dica: `hidden` tem de vencer o display do componente */
+.filtros-periodo[hidden] { display: none !important; }
 .filtros-periodo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .filtros-periodo button {
   border: 1px solid var(--line); border-radius: 999px; background: #191e21;
@@ -173,4 +214,29 @@
 @media (max-width: 720px) {
   .destaques { grid-template-columns: 1fr; }
   .barra-linha, .funil-etapa, .funil-passo { grid-template-columns: minmax(72px, 1fr) minmax(0, 1.6fr) auto; }
+}
+
+/* ------------------------------------------- páginas ainda sem fonte ligada */
+
+.pend-bloco {
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  padding: 26px 28px; max-width: 74ch; display: grid; gap: 13px;
+}
+.pend-selo {
+  justify-self: start; font-size: 9px; font-weight: 750; letter-spacing: .12em;
+  text-transform: uppercase; padding: 4px 9px; border-radius: 999px;
+  background: #33301a; color: #f0b429;
+}
+.pend-bloco h2 { margin: 0; font-size: 19px; letter-spacing: -.02em; }
+.pend-resumo { margin: 0; font-size: 13.5px; line-height: 1.55; color: #c4ccd2; }
+.pend-detalhe { margin: 6px 0 0; display: grid; gap: 15px; }
+.pend-detalhe dt {
+  color: var(--muted); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase;
+}
+.pend-detalhe dd { margin: 5px 0 0; font-size: 12.5px; line-height: 1.5; color: #dfe4e8; }
+.pend-detalhe ul { margin: 0; padding-left: 18px; display: grid; gap: 5px; }
+.pend-detalhe li::marker { color: #f0b429; }
+.pend-nota {
+  margin: 6px 0 0; padding-top: 13px; border-top: 1px solid var(--line);
+  font-size: 11.5px; line-height: 1.5; color: #8b968d;
 }

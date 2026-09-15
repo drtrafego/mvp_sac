@@ -179,3 +179,12 @@
   #pagina-conversas .conversation-list { max-height: 46vh; }
   #pagina-conversas .conversation { min-height: 430px; }
 }
+
+
+/* --------------------------------------------------- largura da barra lateral */
+
+/* Com navegação em árvore, "Mensagens aprovadas" e "Carrinho abandonado" não
+ * cabiam nos 246px originais e truncavam já no terceiro caractere. */
+@media (min-width: 1051px) {
+  .shell { grid-template-columns: 264px minmax(0, 1fr); }
+}
