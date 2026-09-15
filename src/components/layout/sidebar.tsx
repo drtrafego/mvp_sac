@@ -1,126 +1,101 @@
 'use client'
 
-import { useState, useEffect, createContext, useContext } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
-  LayoutDashboard,
-  Receipt,
-  QrCode,
-  ShoppingCart,
-  CreditCard,
-  CheckCircle,
+  Activity,
   MessageSquare,
-  Settings,
-  LogOut,
-  Users,
-  BookOpen,
-  Building2,
-  BarChart3,
   Columns3,
-  Zap,
-  Webhook,
+  Users,
+  BarChart3,
   Radio,
   Globe,
-  Activity,
-  FileCheck,
-  Send,
-  ListOrdered,
-  PanelLeftClose,
-  PanelLeftOpen,
+  Zap,
+  Layers,
+  Settings,
+  Webhook,
+  BookOpen,
+  Building2,
+  LogOut,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Filter,
 } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { cn } from '@/lib/utils'
 
-export const mainNav = [
-  { label: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { label: 'Pipeline Kanban', href: '/pipeline', icon: Columns3 },
-  { label: 'Inbox / Conversas', href: '/inbox', icon: MessageSquare },
+function MetaInfinityIcon({ size = 15, className = 'text-sky-400' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={cn('shrink-0', className)}>
+      <path d="M18.178 8c5.096 0 5.096 8 0 8-5.095 0-7.26-8-12.355-8-5.096 0-5.096 8 0 8 5.095 0 7.26-8 12.355-8z" />
+    </svg>
+  )
+}
+
+function HotmartLogoIcon({ size = 15, className = 'text-orange-500' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={cn('shrink-0', className)}>
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="currentColor" fillOpacity="0.1" />
+      <path d="M8.5 8v8M15.5 8v8M8.5 12h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export const atendimentoNav = [
+  { label: 'Visão geral', href: '/', icon: Activity },
+  { label: 'Conversas', href: '/inbox', icon: MessageSquare },
+  { label: 'Pipeline', href: '/pipeline', icon: Columns3 },
   { label: 'Leads Recentes', href: '/leads', icon: Users },
 ]
 
-export const analyticsNav = [
+export const analiseNav = [
   { label: 'Analytics Vendas', href: '/analytics-vendas', icon: BarChart3 },
   { label: 'Canais de Atendimento', href: '/canais', icon: Radio },
   { label: 'Origens de Tráfego', href: '/origens', icon: Globe },
-  { label: 'Operação & SLA', href: '/operacao', icon: Activity },
+  { label: 'Operação & SLA', href: '/operacao', icon: Zap },
+  { label: 'Recuperador Admin', href: '/recuperador-admin', icon: Layers },
 ]
 
-export const recoveryNav = [
-  { label: 'Carrinho Abandonado', href: '/carrinho', icon: ShoppingCart },
-  { label: 'Boleto Bancário', href: '/boleto', icon: Receipt },
-  { label: 'Pix Pendente', href: '/pix', icon: QrCode },
-  { label: 'Cartão Recusado', href: '/cartao-recusado', icon: CreditCard },
-  { label: 'Compra Aprovada', href: '/compra-aprovada', icon: CheckCircle },
+export const apiOficialNav = [
+  { label: 'Mensagens aprovadas', href: '/api-modelos' },
+  { label: 'Campanhas ativas', href: '/api-campanhas' },
+  { label: 'Follow-up', href: '/api-followup' },
 ]
 
-export const automationNav = [
-  { label: 'Mensagens Aprovadas (HSM)', href: '/api-modelos', icon: FileCheck },
-  { label: 'Campanhas Ativas', href: '/api-campanhas', icon: Send },
-  { label: 'Follow-up Sequências', href: '/api-followup', icon: ListOrdered },
+export const hotmartNav = [
+  { label: 'Carrinho abandonado', href: '/carrinho' },
+  { label: 'Boleto Bancário', href: '/boleto' },
+  { label: 'Pix Pendente', href: '/pix' },
+  { label: 'Cartão recusado', href: '/cartao-recusado' },
+  { label: 'Compra aprovada', href: '/compra-aprovada' },
 ]
 
-export const bottomNav = [
+export const ajustesNav = [
+  { label: 'Configuração', href: '/configuracoes', icon: Settings },
   { label: 'Webhooks Log', href: '/webhooks-log', icon: Webhook },
   { label: 'Biblioteca', href: '/biblioteca', icon: BookOpen },
-  { label: 'Configurações & Contas', href: '/configuracoes', icon: Settings },
 ]
 
 interface SidebarProps {
   isAdmin?: boolean
 }
 
-export function NavItem({
-  label,
-  href,
-  icon: Icon,
-  isActive,
-  badge,
-  collapsed = false,
-}: {
-  label: string
-  href: string
-  icon: React.ElementType
-  isActive: boolean
-  badge?: string
-  collapsed?: boolean
-}) {
+export function SidebarBrand({ collapsed = false }: { collapsed?: boolean }) {
   return (
-    <Link
-      href={href}
-      title={label}
-      className={cn(
-        'nav-item focus-ring group relative flex items-center rounded-[var(--r-md)] transition-all duration-150 ease-out cursor-pointer',
-        collapsed
-          ? 'justify-center w-10 h-10 mx-auto px-0'
-          : 'justify-between px-3 py-2 text-[0.8125rem]',
-        isActive
-          ? 'bg-[var(--line-subtle)] text-brand-ink font-medium shadow-sm'
-          : 'text-fg-subtle hover:text-fg hover:bg-[var(--line-subtle)] font-normal'
-      )}
-    >
-      <div className={cn('flex items-center min-w-0', collapsed ? 'justify-center' : 'gap-2.5')}>
-        {isActive && (
-          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-full bg-brand-ink" />
-        )}
-        <Icon
-          size={16}
-          className={cn(
-            'shrink-0 transition-colors duration-150',
-            isActive ? 'text-brand-ink' : 'text-fg-faint group-hover:text-fg-muted'
-          )}
-        />
-        {!collapsed && <span className="nav-label truncate leading-none">{label}</span>}
+    <div className={cn('flex items-center', collapsed ? 'justify-center w-full' : 'gap-3')}>
+      <div className="w-9 h-9 rounded-xl bg-[#CCFF00] flex items-center justify-center font-black text-black text-base shadow-sm shrink-0">
+        H
       </div>
-      {!collapsed && badge && (
-        <span className="text-[10px] uppercase font-bold text-brand-ink bg-brand-glow px-1.5 py-0.2 rounded border border-brand-solid/20">
-          {badge}
-        </span>
+      {!collapsed && (
+        <div className="flex flex-col min-w-0">
+          <span className="font-bold text-fg text-sm tracking-tight leading-tight">SAC Hermes</span>
+          <span className="text-[9px] font-bold tracking-wider text-fg-subtle uppercase">CENTRAL MULTICANAL</span>
+        </div>
       )}
-    </Link>
+    </div>
   )
 }
 
@@ -140,114 +115,354 @@ export function SidebarNavContent({
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
 
+  // Estado de recolhimento de cada seção da sidebar
+  const [sectionsOpen, setSectionsOpen] = useState<{ [key: string]: boolean }>({
+    atendimento: true,
+    analise: false,
+    api_oficial: true,
+    hotmart: true,
+    ajustes: true,
+  })
+
+  // Garantir que a seção ativa esteja sempre aberta
+  useEffect(() => {
+    if (analiseNav.some(item => isActive(item.href))) {
+      setSectionsOpen(prev => ({ ...prev, analise: true }))
+    }
+    if (apiOficialNav.some(item => isActive(item.href))) {
+      setSectionsOpen(prev => ({ ...prev, api_oficial: true }))
+    }
+    if (hotmartNav.some(item => isActive(item.href))) {
+      setSectionsOpen(prev => ({ ...prev, hotmart: true }))
+    }
+    if (ajustesNav.some(item => isActive(item.href))) {
+      setSectionsOpen(prev => ({ ...prev, ajustes: true }))
+    }
+  }, [pathname])
+
+  const toggleSection = (key: string) => {
+    setSectionsOpen(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
   return (
-    <nav className={cn('scroll-thin min-h-0 overflow-y-auto px-2 py-3 space-y-4', className)}>
-      {/* Seção Super Admin (Gestão de Empresas SaaS) */}
+    <nav className={cn('scroll-thin min-h-0 overflow-y-auto px-2 py-3 space-y-3', className)}>
+      {/* Super Admin */}
       {isAdmin && (
-        <div className="space-y-0.5">
+        <div className="space-y-1">
           {!collapsed ? (
-            <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-amber-400/90 flex items-center justify-between">
-              <span>Gestão SaaS (Super Admin)</span>
+            <div className="flex items-center justify-between px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-400/90">
+              <span>Gestão SaaS</span>
               <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">Master</span>
-            </p>
+            </div>
           ) : (
             <div className="h-px bg-amber-500/20 my-2 mx-1" />
           )}
-          <NavItem
-            label="Empresas & Clientes"
+          <Link
             href="/empresas"
-            icon={Building2}
-            isActive={isActive('/empresas')}
-            badge="Admin"
-            collapsed={collapsed}
-          />
+            title="Empresas & Clientes"
+            className={cn(
+              'nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
+              collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-3 py-2 text-[0.8125rem]',
+              isActive('/empresas')
+                ? 'bg-surface-raised text-amber-400 font-semibold shadow-sm'
+                : 'text-fg-subtle hover:text-fg hover:bg-surface-raised'
+            )}
+          >
+            <div className={cn('flex items-center min-w-0', collapsed ? 'justify-center' : 'gap-2.5')}>
+              <Building2 size={16} className={cn('shrink-0', isActive('/empresas') ? 'text-amber-400' : 'text-fg-faint')} />
+              {!collapsed && <span className="truncate">Empresas & Clientes</span>}
+            </div>
+          </Link>
         </div>
       )}
 
-      {/* 1. Atendimento & Pipeline */}
+      {/* 1. SEÇÃO ATENDIMENTO */}
       {!hideMain && (
-        <div className="space-y-0.5">
+        <div className="space-y-1">
           {!collapsed ? (
-            <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
+            <button
+              type="button"
+              onClick={() => toggleSection('atendimento')}
+              className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors group cursor-pointer"
+            >
               <span>Atendimento</span>
-            </p>
+              <ChevronDown
+                size={13}
+                className={cn('text-fg-faint group-hover:text-fg-muted transition-transform duration-200', !sectionsOpen.atendimento && '-rotate-90')}
+              />
+            </button>
           ) : (
             <div className="h-px bg-line-subtle my-2 mx-1" />
           )}
-          {mainNav.map(({ label, href, icon }) => (
-            <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
-          ))}
+
+          {(collapsed || sectionsOpen.atendimento) && (
+            <div className="space-y-0.5">
+              {atendimentoNav.map(({ label, href, icon: Icon }) => {
+                const active = isActive(href)
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    title={label}
+                    className={cn(
+                      'nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
+                      collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-3 py-2 text-[0.8125rem]',
+                      active
+                        ? 'bg-surface-raised text-fg font-semibold shadow-sm border border-line-subtle/60'
+                        : 'text-fg-muted hover:text-fg hover:bg-surface-raised/60'
+                    )}
+                  >
+                    <div className={cn('flex items-center min-w-0', collapsed ? 'justify-center' : 'gap-2.5')}>
+                      <Icon
+                        size={15}
+                        className={cn(
+                          'shrink-0 transition-colors',
+                          active ? 'text-[#CCFF00]' : 'text-fg-faint group-hover:text-fg-muted'
+                        )}
+                      />
+                      {!collapsed && <span className="truncate">{label}</span>}
+                    </div>
+                  </Link>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
-      {/* 2. Análise & Métricas */}
-      <div className="space-y-0.5">
+      {/* 2. SEÇÃO ANÁLISE */}
+      <div className="space-y-1">
         {!collapsed ? (
-          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-            <span>Análise & Métricas</span>
-          </p>
+          <button
+            type="button"
+            onClick={() => toggleSection('analise')}
+            className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors group cursor-pointer"
+          >
+            <span>Análise</span>
+            <ChevronDown
+              size={13}
+              className={cn('text-fg-faint group-hover:text-fg-muted transition-transform duration-200', !sectionsOpen.analise && '-rotate-90')}
+            />
+          </button>
         ) : (
           <div className="h-px bg-line-subtle my-2 mx-1" />
         )}
-        {analyticsNav.map(({ label, href, icon }) => (
-          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
-        ))}
+
+        {(collapsed || sectionsOpen.analise) && (
+          <div className="space-y-0.5">
+            {analiseNav.map(({ label, href, icon: Icon }) => {
+              const active = isActive(href)
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  title={label}
+                  className={cn(
+                    'nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
+                    collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-3 py-2 text-[0.8125rem]',
+                    active
+                      ? 'bg-surface-raised text-fg font-semibold shadow-sm border border-line-subtle/60'
+                      : 'text-fg-muted hover:text-fg hover:bg-surface-raised/60'
+                  )}
+                >
+                  <div className={cn('flex items-center min-w-0', collapsed ? 'justify-center' : 'gap-2.5')}>
+                    <Icon
+                      size={15}
+                      className={cn(
+                        'shrink-0 transition-colors',
+                        active ? 'text-[#CCFF00]' : 'text-fg-faint group-hover:text-fg-muted'
+                      )}
+                    />
+                    {!collapsed && <span className="truncate">{label}</span>}
+                  </div>
+                </Link>
+              )
+            })}
+          </div>
+        )}
       </div>
 
-      {/* 3. Recuperação de Vendas */}
-      <div className="space-y-0.5">
+      {/* 3. SEÇÃO API OFICIAL (META & UAZAPI) */}
+      <div className="space-y-1">
         {!collapsed ? (
-          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-            <span>Recuperação de Vendas</span>
-          </p>
+          <button
+            type="button"
+            onClick={() => toggleSection('api_oficial')}
+            className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors group cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <MetaInfinityIcon size={14} className="text-sky-400" />
+              <span>API Oficial</span>
+            </div>
+            <ChevronDown
+              size={13}
+              className={cn('text-fg-faint group-hover:text-fg-muted transition-transform duration-200', !sectionsOpen.api_oficial && '-rotate-90')}
+            />
+          </button>
         ) : (
           <div className="h-px bg-line-subtle my-2 mx-1" />
         )}
-        {recoveryNav.map(({ label, href, icon }) => (
-          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
-        ))}
+
+        {(collapsed || sectionsOpen.api_oficial) && (
+          <div className={cn('space-y-0.5', !collapsed && 'border-l-2 border-sky-500/80 ml-3 pl-2.5')}>
+            {apiOficialNav.map(({ label, href }) => {
+              const active = isActive(href)
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  title={label}
+                  className={cn(
+                    'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
+                    collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-2.5 py-1.5 text-[0.8125rem]',
+                    active
+                      ? 'bg-surface-raised text-fg font-semibold'
+                      : 'text-fg-muted hover:text-fg hover:bg-surface-raised/50'
+                  )}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', active ? 'bg-sky-400' : 'bg-fg-faint')} />
+                    {!collapsed && <span className="truncate">{label}</span>}
+                  </div>
+                  {!collapsed && <span className="h-1.5 w-1.5 rounded-full bg-amber-400/90 shrink-0" />}
+                </Link>
+              )
+            })}
+          </div>
+        )}
       </div>
 
-      {/* 4. API Oficial & Automação */}
-      <div className="space-y-0.5">
+      {/* 4. SEÇÃO HOTMART / CHECKOUTS */}
+      <div className="space-y-1">
         {!collapsed ? (
-          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-            <span>API Oficial & Automação</span>
-          </p>
+          <button
+            type="button"
+            onClick={() => toggleSection('hotmart')}
+            className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors group cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <HotmartLogoIcon size={14} className="text-orange-500" />
+              <span>Hotmart</span>
+            </div>
+            <ChevronDown
+              size={13}
+              className={cn('text-fg-faint group-hover:text-fg-muted transition-transform duration-200', !sectionsOpen.hotmart && '-rotate-90')}
+            />
+          </button>
         ) : (
           <div className="h-px bg-line-subtle my-2 mx-1" />
         )}
-        {automationNav.map(({ label, href, icon }) => (
-          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
-        ))}
+
+        {(collapsed || sectionsOpen.hotmart) && (
+          <div className={cn('space-y-0.5', !collapsed && 'border-l-2 border-orange-500/80 ml-3 pl-2.5')}>
+            {hotmartNav.map(({ label, href }) => {
+              const active = isActive(href)
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  title={label}
+                  className={cn(
+                    'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
+                    collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-2.5 py-1.5 text-[0.8125rem]',
+                    active
+                      ? 'bg-surface-raised text-fg font-semibold'
+                      : 'text-fg-muted hover:text-fg hover:bg-surface-raised/50'
+                  )}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', active ? 'bg-orange-400' : 'bg-fg-faint')} />
+                    {!collapsed && <span className="truncate">{label}</span>}
+                  </div>
+                  {!collapsed && <span className="h-1.5 w-1.5 rounded-full bg-amber-400/90 shrink-0" />}
+                </Link>
+              )
+            })}
+          </div>
+        )}
       </div>
 
-      {/* 5. Sistema */}
-      <div className="space-y-0.5">
+      {/* 5. SEÇÃO AJUSTES */}
+      <div className="space-y-1">
         {!collapsed ? (
-          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-            <span>Sistema & Configurações</span>
-          </p>
+          <button
+            type="button"
+            onClick={() => toggleSection('ajustes')}
+            className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors group cursor-pointer"
+          >
+            <span>Ajustes</span>
+            <ChevronDown
+              size={13}
+              className={cn('text-fg-faint group-hover:text-fg-muted transition-transform duration-200', !sectionsOpen.ajustes && '-rotate-90')}
+            />
+          </button>
         ) : (
           <div className="h-px bg-line-subtle my-2 mx-1" />
         )}
-        {bottomNav.map(({ label, href, icon }) => (
-          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} collapsed={collapsed} />
-        ))}
+
+        {(collapsed || sectionsOpen.ajustes) && (
+          <div className="space-y-0.5">
+            {ajustesNav.map(({ label, href, icon: Icon }) => {
+              const active = isActive(href)
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  title={label}
+                  className={cn(
+                    'nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
+                    collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-3 py-2 text-[0.8125rem]',
+                    active
+                      ? 'bg-surface-raised text-fg font-semibold shadow-sm border border-line-subtle/60'
+                      : 'text-fg-muted hover:text-fg hover:bg-surface-raised/60'
+                  )}
+                >
+                  <div className={cn('flex items-center min-w-0', collapsed ? 'justify-center' : 'gap-2.5')}>
+                    <Icon
+                      size={15}
+                      className={cn(
+                        'shrink-0 transition-colors',
+                        active ? 'text-[#CCFF00]' : 'text-fg-faint group-hover:text-fg-muted'
+                      )}
+                    />
+                    {!collapsed && <span className="truncate">{label}</span>}
+                  </div>
+                </Link>
+              )
+            })}
+          </div>
+        )}
       </div>
     </nav>
   )
 }
 
-/** Rodapé com Perfil do Stack Auth, Painel de Empresas, tema e sair */
+/** Rodapé com Card de Cliente, Perfil, Tema e LogOut */
 export function SidebarFooter({ isAdmin, collapsed = false }: SidebarProps & { collapsed?: boolean }) {
   const user = useUser()
 
   const displayName = user?.displayName || user?.primaryEmail?.split('@')[0] || 'Usuário'
-  const email = user?.primaryEmail || 'Autenticado via Stack Auth'
+  const email = user?.primaryEmail || 'Sessão Ativa'
 
   return (
-    <div className={cn('py-3 border-t border-line-subtle space-y-2 shrink-0 bg-surface-panel', collapsed ? 'px-1.5' : 'px-2.5')}>
+    <div className={cn('py-3 border-t border-line-subtle space-y-2.5 shrink-0 bg-surface-panel', collapsed ? 'px-1.5' : 'px-2.5')}>
+      {/* Card de Cliente / Status de Envio */}
+      {!collapsed && (
+        <div className="space-y-1.5 px-1">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-fg-subtle">Cliente</p>
+          <p className="text-[11px] text-fg-faint">Sessão da empresa ativa conectada.</p>
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-2.5 space-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <span className="text-[11px] font-bold text-fg">Central Multicanal Ativa</span>
+            </div>
+            <p className="text-[10px] text-fg-muted leading-tight">
+              Mensagens de recuperação e SAC prontas para envio oficial via WhatsApp.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Cartão de Perfil do Stack Auth */}
       {user && (
         <div className={cn('flex items-center rounded-xl bg-surface-base border border-line-subtle', collapsed ? 'justify-center p-1.5' : 'gap-2.5 p-2')}>
@@ -313,22 +528,6 @@ export function SidebarFooter({ isAdmin, collapsed = false }: SidebarProps & { c
   )
 }
 
-export function SidebarBrand({ collapsed = false }: { collapsed?: boolean }) {
-  return (
-    <div className={cn('nav-brand flex items-center', collapsed ? 'justify-center w-full' : 'gap-2.5')}>
-      <div
-        className="w-7 h-7 rounded-[var(--r-md)] flex items-center justify-center shrink-0 shadow-sm"
-        style={{ background: 'var(--brand-glow)', border: '1px solid rgba(34,197,94,0.25)' }}
-      >
-        <Zap size={14} className="text-brand-ink" />
-      </div>
-      {!collapsed && (
-        <span className="nav-brand-text text-fg text-h3 font-semibold tracking-tight">SAC Hermes</span>
-      )}
-    </div>
-  )
-}
-
 export function Sidebar({ isAdmin }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [mounted, setMounted] = useState(false)
@@ -357,13 +556,13 @@ export function Sidebar({ isAdmin }: SidebarProps) {
         'grid-rows-[auto_1fr_auto]'
       )}
     >
-      <div className={cn('nav-brand h-14 flex items-center border-b border-line-subtle px-3', collapsed ? 'justify-center' : 'justify-between')}>
+      <div className={cn('nav-brand h-16 flex items-center border-b border-line-subtle px-3', collapsed ? 'justify-center' : 'justify-between')}>
         <SidebarBrand collapsed={collapsed} />
         <button
           type="button"
           onClick={toggleCollapsed}
           title={collapsed ? 'Expandir Menu' : 'Recolher Menu'}
-          className="text-fg-faint hover:text-fg hover:bg-[var(--line-subtle)] p-1.5 rounded-lg transition-colors cursor-pointer"
+          className="text-fg-faint hover:text-fg hover:bg-surface-raised p-1.5 rounded-lg transition-colors cursor-pointer"
         >
           {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>

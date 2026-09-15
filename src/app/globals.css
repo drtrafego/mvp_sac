@@ -638,35 +638,6 @@ html:not(.dark) .native-field {
   background: var(--line-strong);
 }
 
-/*
-  Entre 1024 e 1279 a sidebar vira um trilho só de ícones. É justamente a faixa
-  em que ela já aparece e o conteúdo fica mais apertado; o trilho devolve cerca
-  de 180px para a área útil. A classe fica só no <aside>, então o mesmo
-  componente de navegação continua completo dentro do Sheet do celular.
-*/
-@media (min-width: 1024px) and (max-width: 1279px) {
-  .sidebar-rail .nav-label,
-  .sidebar-rail .nav-group-label span {
-    display: none;
-  }
-  .sidebar-rail .nav-item {
-    justify-content: center;
-    padding-inline: 0;
-  }
-  .sidebar-rail .nav-group-label {
-    height: 1px;
-    padding: 0;
-    margin: 0.5rem 0.75rem;
-    background: var(--line-subtle);
-  }
-  .sidebar-rail .nav-brand-text {
-    display: none;
-  }
-  .sidebar-rail .nav-brand {
-    justify-content: center;
-  }
-}
-
 /* Anel de foco visível em qualquer controle, sem depender do componente */
 .focus-ring:focus-visible {
   outline: none;
