@@ -1,0 +1,732 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  /*
+    A variável precisa apontar para a fonte injetada pelo next/font no <html>.
+    Antes era `var(--font-sans)`, uma auto-referência que não resolvia para nada,
+    então `font-sans` caía no serifado padrão do navegador e o app inteiro
+    renderizava em Times New Roman.
+  */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-heading: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  /*
+    ─── Tokens semânticos do produto ──────────────────────────────────────
+    Superfícies, linhas, texto e marca com o mesmo nome nos dois temas. Componente
+    novo deve consumir estes tokens (bg-surface-raised, text-fg-muted,
+    border-line-subtle) em vez de cor crua da rampa do Tailwind, que é o que
+    deixava o tema claro frágil.
+  */
+  --color-surface-base: var(--surface-base);
+  --color-surface-panel: var(--surface-panel);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-surface-inset: var(--surface-inset);
+  --color-line-subtle: var(--line-subtle);
+  --color-line-default: var(--line-default);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-fg-faint: var(--fg-faint);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-solid: var(--brand-solid);
+
+  /* Cor por tipo de evento, usada só em ícone, filete e ponto de status */
+  --color-ev-boleto: var(--ev-boleto);
+  --color-ev-pix: var(--ev-pix);
+  --color-ev-carrinho: var(--ev-carrinho);
+  --color-ev-cartao: var(--ev-cartao);
+  --color-ev-aprovada: var(--ev-aprovada);
+
+  /* Cor por plataforma de pagamento, fixa por identidade da marca */
+  --color-plat-hotmart: var(--plat-hotmart);
+  --color-plat-greenn: var(--plat-greenn);
+  --color-plat-zouti: var(--plat-zouti);
+  --color-plat-kiwify: var(--plat-kiwify);
+
+  /* Status reduzido a cinco leituras */
+  --color-st-positivo: var(--st-positivo);
+  --color-st-atencao: var(--st-atencao);
+  --color-st-negativo: var(--st-negativo);
+  --color-st-info: var(--st-info);
+
+  /*
+    ─── Escala tipográfica ────────────────────────────────────────────────
+    Só display, métrica e títulos são fluidos. Rótulo, corpo e micro ficam
+    fixos: texto pequeno que encolhe fica ilegível no celular e texto pequeno
+    que cresce em monitor grande parece amador.
+  */
+  --text-display: clamp(2.5rem, 1.6rem + 2.6vw, 4rem);
+  --text-display--line-height: 0.95;
+  --text-display--letter-spacing: -0.03em;
+  --text-display--font-weight: 600;
+
+  --text-metric: clamp(1.75rem, 1.3rem + 1.4vw, 2.5rem);
+  --text-metric--line-height: 1;
+  --text-metric--letter-spacing: -0.02em;
+  --text-metric--font-weight: 600;
+
+  --text-metric-sm: clamp(1.25rem, 1.05rem + 0.6vw, 1.625rem);
+  --text-metric-sm--line-height: 1.05;
+  --text-metric-sm--letter-spacing: -0.015em;
+  --text-metric-sm--font-weight: 600;
+
+  --text-h1: clamp(1.375rem, 1.15rem + 0.8vw, 1.875rem);
+  --text-h1--line-height: 1.15;
+  --text-h1--letter-spacing: -0.02em;
+  --text-h1--font-weight: 600;
+
+  --text-h2: clamp(1rem, 0.94rem + 0.25vw, 1.125rem);
+  --text-h2--line-height: 1.3;
+  --text-h2--letter-spacing: -0.01em;
+  --text-h2--font-weight: 600;
+
+  --text-h3: 0.9375rem;
+  --text-h3--line-height: 1.35;
+  --text-h3--letter-spacing: -0.005em;
+  --text-h3--font-weight: 500;
+
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.5;
+
+  --text-label: 0.6875rem;
+  --text-label--line-height: 1.2;
+  --text-label--letter-spacing: 0.08em;
+  --text-label--font-weight: 600;
+
+  --text-micro: 0.75rem;
+  --text-micro--line-height: 1.4;
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /*
+    Superfícies da aplicação. O escopo padrão carrega os valores do tema escuro,
+    que é o tema padrão do produto. O tema claro sobrescreve em html:not(.dark),
+    que tem especificidade maior. Antes essas cores eram literais em style inline
+    e em classes bg-[#...], então nenhum remapeamento alcançava o tema claro.
+
+    O preto tem dois pontos de azul em vez de cinza neutro puro porque neutro
+    absoluto gera banding na compressão de vídeo.
+  */
+  --surface-base: #08090a;
+  --surface-panel: #0c0e10;
+  --surface-raised: #111315;
+  --surface-overlay: #16191c;
+  --surface-inset: #0a0b0d;
+
+  --line-subtle: rgba(255, 255, 255, 0.06);
+  --line-default: rgba(255, 255, 255, 0.10);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  --fg: #f4f5f6;
+  --fg-muted: #9ba1a6;
+  --fg-subtle: #6b7177;
+  --fg-faint: #4a4f54;
+
+  --brand: #22c55e;
+  --brand-ink: #4ade80;
+  /* Escuro o bastante para o branco de .text-on-accent passar de 4,5:1 em cima */
+  --brand-solid: #15803d;
+  --brand-glow: rgba(34, 197, 94, 0.10);
+
+  /* Pix é azul céu, não ciano, porque ciano é a cor fixa da Kiwify e as duas
+     famílias aparecem juntas no Analytics. Compra aprovada é lima porque o
+     verde fica reservado ao dinheiro. */
+  --ev-boleto: #facc15;
+  --ev-pix: #38bdf8;
+  --ev-carrinho: #fb923c;
+  --ev-cartao: #f87171;
+  --ev-aprovada: #a3e635;
+
+  --plat-hotmart: #f97316;
+  --plat-greenn: #10b981;
+  --plat-zouti: #8b5cf6;
+  --plat-kiwify: #06b6d4;
+
+  --st-positivo: #4ade80;
+  --st-atencao: #fbbf24;
+  --st-negativo: #f87171;
+  --st-info: #60a5fa;
+
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-focus: 0 0 0 2px var(--surface-base), 0 0 0 4px rgba(34, 197, 94, 0.55);
+
+  /* Raios com sistema. Antes conviviam 16px no .card, rounded-2xl nos cards de
+     tipo e rounded-lg nas sequências, na mesma tela. */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+
+  /* Espaçamento fluido: acompanha a tela em vez de ter dois degraus fixos */
+  --space-gutter: clamp(0.75rem, 0.55rem + 0.6vw, 1.25rem);
+  --space-card: clamp(1rem, 0.8rem + 0.6vw, 1.5rem);
+  --space-section: clamp(1.25rem, 0.9rem + 1.1vw, 2.25rem);
+  --space-shell: clamp(1rem, 0.55rem + 1.4vw, 2.5rem);
+
+  /* Teto de largura do conteúdo. O fundo continua sangrando de borda a borda,
+     só o conteúdo para de esticar. */
+  --w-content: 1440px;
+  --w-wide: 1760px;
+  --w-form: 560px;
+
+  --control-sm: 30px;
+  --control-md: 36px;
+  --control-lg: 44px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* Aliases mantidos: componentes antigos ainda referenciam estes nomes */
+  --app-bg: var(--surface-base);
+  --app-panel: var(--surface-panel);
+  --app-elev: var(--surface-raised);
+  --app-control: oklch(0.371 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/*
+  A família fica FORA de @layer de propósito. O Stack Auth injeta o próprio
+  preflight, com `font-family` em `html` sem layer, e regra sem layer sempre
+  vence regra dentro de layer, não importa a especificidade. Enquanto isso viveu
+  em `@layer base`, o painel inteiro renderizava na fonte de sistema mesmo com a
+  Geist carregada.
+*/
+html:root,
+html:root body {
+  font-family: var(--font-sans);
+}
+
+/*
+  Tema claro: remapeia as variáveis de cor do Tailwind v4.
+  Como as classes utilitárias antigas (bg-neutral-900, text-white, border-white/10)
+  referenciam CSS variables, basta redefiní-las aqui sem tocar nos componentes.
+  Componente novo deve usar os tokens semânticos, que também são redefinidos
+  abaixo; este bloco é a rede de segurança para o que ainda usa cor crua.
+*/
+html:not(.dark) {
+  /* Fundos escuros → fundos claros */
+  --color-neutral-950: oklch(0.96 0 0);   /* bg-neutral-950: cinza claro (fundo principal) */
+  --color-neutral-900: oklch(1 0 0);       /* bg-neutral-900: branco (cards) */
+  --color-neutral-800: oklch(0.94 0 0);   /* bg-neutral-800: cinza muito claro (inputs) */
+
+  /* white → quase preto (para text-white, border-white/10, bg-white/5 etc.) */
+  --color-white: oklch(0.13 0 0);
+
+  /*
+    Textos secundários: ficam mais escuros para contrastar no fundo claro.
+    A escala inteira é invertida em rampa contínua, do mais forte (100) ao mais
+    fraco (700). Sem os tons 100 e 300 o texto ficava cinza claro sobre fundo
+    claro, ou seja, ilegível (balão de mensagem recebida, hovers do inbox).
+  */
+  --color-neutral-100: oklch(0.18 0 0);   /* text-neutral-100: preto */
+  --color-neutral-200: oklch(0.22 0 0);   /* text-neutral-200: quase preto */
+  --color-neutral-300: oklch(0.30 0 0);   /* text-neutral-300: cinza escuro */
+  --color-neutral-400: oklch(0.38 0 0);   /* text-neutral-400: cinza médio-escuro */
+  --color-neutral-500: oklch(0.46 0 0);   /* text-neutral-500: cinza médio */
+  --color-neutral-600: oklch(0.50 0 0);   /* text-neutral-600: cinza de apoio */
+  --color-neutral-700: oklch(0.55 0 0);   /* text-neutral-700: rótulos discretos */
+
+  /*
+    Acentos. Os tons 300 e 400 foram escolhidos para brilhar sobre preto, então
+    no fundo claro viravam pastéis quase invisíveis (item ativo da sidebar, KPIs,
+    badges de status). Aqui cada um desce para a versão saturada e escura, que
+    mantém a mesma leitura de cor com contraste suficiente.
+  */
+  --color-green-400: oklch(0.63 0.17 149);
+  --color-green-300: oklch(0.58 0.16 149);
+  --color-emerald-400: oklch(0.60 0.14 163);
+  --color-emerald-300: oklch(0.56 0.13 163);
+  --color-red-400: oklch(0.55 0.22 27);
+  --color-amber-400: oklch(0.60 0.15 75);
+  --color-amber-300: oklch(0.56 0.14 75);
+  --color-yellow-400: oklch(0.60 0.15 85);
+  --color-orange-400: oklch(0.60 0.19 45);
+  --color-orange-300: oklch(0.56 0.18 45);
+  --color-blue-400: oklch(0.55 0.20 258);
+  --color-blue-300: oklch(0.51 0.19 258);
+  --color-cyan-400: oklch(0.60 0.13 220);
+
+  /*
+    Superfícies das classes .card, .card-section e .card-kpi. São CSS puro com
+    rgba branco, que no fundo claro ficava quase invisível. Como as listas de
+    card do mobile usam .card, isso aparecia em toda tabela convertida.
+  */
+  --surface-bg: rgba(0, 0, 0, 0.02);
+  --surface-bg-hover: rgba(0, 0, 0, 0.04);
+  --surface-border: rgba(0, 0, 0, 0.10);
+  --surface-border-hover: rgba(0, 0, 0, 0.16);
+  --surface-solid: oklch(0.99 0 0);
+
+  /*
+    Tokens semânticos no claro. A assimetria é proposital: no escuro a superfície
+    elevada é mais clara que o fundo, no claro ela é branca e o fundo é cinza.
+    Elevação no escuro é luz, elevação no claro é sombra.
+  */
+  --surface-base: #f7f8f9;
+  --surface-panel: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-overlay: #ffffff;
+  --surface-inset: #f1f2f4;
+
+  --line-subtle: rgba(9, 11, 13, 0.07);
+  --line-default: rgba(9, 11, 13, 0.12);
+  --line-strong: rgba(9, 11, 13, 0.20);
+
+  --fg: #0d0f11;
+  --fg-muted: #4e545a;
+  --fg-subtle: #71787e;
+  --fg-faint: #9ba1a6;
+
+  --brand: #16a34a;
+  --brand-ink: #15803d;
+  --brand-solid: #15803d;
+  --brand-glow: rgba(22, 163, 74, 0.08);
+
+  --ev-boleto: #ca8a04;
+  --ev-pix: #0284c7;
+  --ev-carrinho: #ea580c;
+  --ev-cartao: #dc2626;
+  --ev-aprovada: #65a30d;
+
+  --plat-hotmart: #ea580c;
+  --plat-greenn: #059669;
+  --plat-zouti: #7c3aed;
+  --plat-kiwify: #0891b2;
+
+  --st-positivo: #15803d;
+  --st-atencao: #b45309;
+  --st-negativo: #dc2626;
+  --st-info: #1d4ed8;
+
+  --shadow-card: 0 1px 2px rgba(9, 11, 13, 0.05);
+  --shadow-raised: 0 1px 3px rgba(9, 11, 13, 0.08), 0 1px 2px rgba(9, 11, 13, 0.04);
+  --shadow-overlay: 0 16px 40px rgba(9, 11, 13, 0.14);
+  --shadow-focus: 0 0 0 2px var(--surface-base), 0 0 0 4px rgba(22, 163, 74, 0.45);
+
+  --app-control: oklch(0.92 0 0);
+}
+
+/* ─── Superfícies e componentes ─────────────────────────────────────────── */
+
+/*
+  As superfícies de card ficam em @layer components de propósito: assim uma
+  utilitária como `bg-surface-raised` aplicada no mesmo elemento vence o fundo
+  da classe, em vez de perder para ela e obrigar a um style inline.
+*/
+@layer components {
+
+/* Card base: vidro sutil, bordas finas, hover interativo */
+.card {
+  border-radius: var(--r-lg);
+  border: 1px solid var(--surface-border, var(--line-subtle));
+  background: var(--surface-bg, rgba(255, 255, 255, 0.025));
+  box-shadow: var(--shadow-card);
+  transition: border-color 140ms var(--ease-standard),
+              background 140ms var(--ease-standard);
+}
+.card:hover {
+  border-color: var(--surface-border-hover, var(--line-default));
+  background: var(--surface-bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+/* Card section: fundo sólido para tabelas e seções */
+.card-section {
+  border-radius: var(--r-lg);
+  border: 1px solid var(--surface-border, var(--line-subtle));
+  background: var(--surface-solid, var(--surface-raised));
+  box-shadow: var(--shadow-card);
+}
+
+/* Painel que agrupa outros cards */
+.panel {
+  border-radius: var(--r-xl);
+  border: 1px solid var(--line-subtle);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+}
+
+/*
+  Card destacado: receita recuperada. O brilho vive dentro do card, num gradiente
+  radial. O halo externo antigo virava mancha borrada na compressão de vídeo.
+*/
+.card-highlight {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  background: var(--surface-raised);
+}
+.card-highlight::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(480px circle at 85% 0%, var(--brand-glow), transparent 70%);
+}
+.card-highlight > * {
+  position: relative;
+}
+
+/* KPI card grande: números de destaque */
+.card-kpi {
+  border-radius: var(--r-lg);
+  border: 1px solid var(--surface-border, var(--line-subtle));
+  background: var(--surface-bg, rgba(255, 255, 255, 0.025));
+  box-shadow: var(--shadow-card);
+  transition: border-color 140ms var(--ease-standard),
+              background 140ms var(--ease-standard);
+  cursor: default;
+}
+.card-kpi:hover {
+  border-color: var(--surface-border-hover, var(--line-default));
+  background: var(--surface-bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+/* Badge moderno */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+}
+
+/*
+  Status como ponto mais texto. Vinte linhas com dois badges cada geram quarenta
+  retângulos coloridos; quarenta pontos de 6px organizam a mesma informação.
+*/
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  flex: none;
+  background: currentColor;
+}
+
+/* Linha de tabela com hover sutil */
+.tr-hover {
+  transition: background 140ms var(--ease-standard);
+}
+.tr-hover:hover {
+  background: var(--surface-bg-hover, rgba(255, 255, 255, 0.025));
+}
+
+/* Barra de progresso mini */
+.progress-bar {
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--surface-border, var(--line-subtle));
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 700ms var(--ease-out);
+}
+
+}
+/* fim do @layer components: daqui para baixo só utilitárias, que devem vencer */
+
+/*
+  Texto sobre fundo saturado (verde, azul, âmbar). No tema claro o token
+  --color-white vira quase preto, então text-white perderia contraste em cima
+  de um botão verde. Aqui o branco é fixo nos dois temas.
+*/
+.text-on-accent {
+  color: oklch(1 0 0);
+}
+
+/*
+  Campos nativos (select, input date). O navegador desenha a lista suspensa e o
+  calendário conforme o color-scheme, que precisa acompanhar o tema.
+*/
+.native-field {
+  color-scheme: dark;
+}
+html:not(.dark) .native-field {
+  color-scheme: light;
+}
+
+/*
+  Todo dado numérico usa a monoespaçada com largura fixa de dígito. Sem isso o
+  número muda de largura ao atualizar e o layout treme durante a gravação.
+*/
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Moeda e centavos subordinados ao inteiro, para o número principal saltar */
+.num-affix {
+  font-size: 0.55em;
+  color: var(--fg-muted);
+  font-weight: 500;
+}
+
+/* ─── Shell da aplicação ────────────────────────────────────────────────── */
+
+/*
+  O fundo do <main> sangra de borda a borda, o conteúdo para de esticar. Em
+  2560px sobram margens simétricas em vez de cards em forma de tarja.
+*/
+.shell {
+  width: 100%;
+  max-width: var(--w-content);
+  margin-inline: auto;
+}
+/*
+  Telas que precisam encostar nas bordas do <main>, como o Inbox, anulam o
+  padding do shell em vez de repetir os valores em classe utilitária.
+*/
+.bleed-shell {
+  margin: calc(var(--space-shell) * -1);
+  margin-bottom: calc((var(--space-shell) + 5rem) * -1);
+}
+@media (min-width: 1024px) {
+  .bleed-shell {
+    margin-bottom: calc(var(--space-shell) * -1);
+  }
+}
+
+/* Barra de rolagem discreta, no lugar da barra cinza nativa do sistema */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-default) transparent;
+  overscroll-behavior: contain;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--line-default);
+  border-radius: 9999px;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+}
+
+/*
+  Entre 1024 e 1279 a sidebar vira um trilho só de ícones. É justamente a faixa
+  em que ela já aparece e o conteúdo fica mais apertado; o trilho devolve cerca
+  de 180px para a área útil. A classe fica só no <aside>, então o mesmo
+  componente de navegação continua completo dentro do Sheet do celular.
+*/
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .sidebar-rail .nav-label,
+  .sidebar-rail .nav-group-label span {
+    display: none;
+  }
+  .sidebar-rail .nav-item {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .sidebar-rail .nav-group-label {
+    height: 1px;
+    padding: 0;
+    margin: 0.5rem 0.75rem;
+    background: var(--line-subtle);
+  }
+  .sidebar-rail .nav-brand-text {
+    display: none;
+  }
+  .sidebar-rail .nav-brand {
+    justify-content: center;
+  }
+}
+
+/* Anel de foco visível em qualquer controle, sem depender do componente */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* ─── Movimento ─────────────────────────────────────────────────────────── */
+
+@keyframes rv-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes rv-shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+@keyframes rv-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* Entrada escalonada: a tela se monta em vez de simplesmente aparecer */
+.rise {
+  animation: rv-rise 320ms var(--ease-out) both;
+}
+.rise-1 { animation-delay: 40ms; }
+.rise-2 { animation-delay: 80ms; }
+.rise-3 { animation-delay: 120ms; }
+.rise-4 { animation-delay: 160ms; }
+.rise-5 { animation-delay: 200ms; }
+.rise-6 { animation-delay: 240ms; }
+
+/* Indicador ao vivo, usado só quando existe algo realmente pendente */
+.live-dot {
+  animation: rv-pulse 2s var(--ease-standard) infinite;
+}
+
+/* Esqueleto de carregamento: texto "Carregando..." em cinza filma como bug */
+.skeleton {
+  border-radius: var(--r-md);
+  background: linear-gradient(
+    90deg,
+    var(--surface-raised) 25%,
+    var(--surface-overlay) 50%,
+    var(--surface-raised) 75%
+  );
+  border: 1px solid var(--line-subtle);
+  background-size: 200% 100%;
+  animation: rv-shimmer 1.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .live-dot,
+  .skeleton {
+    animation: none;
+  }
+  .progress-fill {
+    transition: none;
+  }
+}
