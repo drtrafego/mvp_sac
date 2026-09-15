@@ -2,29 +2,80 @@
 
 import { useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import {
-  format,
-  startOfMonth,
-  endOfMonth,
-  startOfWeek,
-  endOfWeek,
-  eachDayOfInterval,
-  addMonths,
-  subDays,
-  startOfDay,
-  isSameMonth,
-  isSameDay,
-  isWithinInterval,
-  isBefore,
-} from "date-fns";
-import { ptBR } from "date-fns/locale";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
 
-const fmtISO = (d: Date) => format(d, "yyyy-MM-dd");
-const parseISO = (s: string) => {
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function fmtISO(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function parseISO(s: string): Date {
   const [y, m, d] = s.split("-").map(Number);
   return new Date(y!, m! - 1, d!);
-};
+}
+
+function formatLabelDate(d: Date): string {
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${String(d.getFullYear()).slice(-2)}`;
+}
+
+function startOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+function endOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+}
+
+function addMonths(d: Date, n: number): Date {
+  return new Date(d.getFullYear(), d.getMonth() + n, 1);
+}
+
+function subDays(d: Date, n: number): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - n);
+}
+
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function isSameMonth(d1: Date, d2: Date): boolean {
+  return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth();
+}
+
+function isSameDay(d1: Date | null, d2: Date | null): boolean {
+  if (!d1 || !d2) return false;
+  return (
+    d1.getFullYear() === d2.getFullYear() &&
+    d1.getMonth() === d2.getMonth() &&
+    d1.getDate() === d2.getDate()
+  );
+}
+
+function isWithinInterval(d: Date, start: Date, end: Date): boolean {
+  const t = d.getTime();
+  const s = startOfDay(start).getTime();
+  const e = startOfDay(end).getTime();
+  return t >= s && t <= e;
+}
+
+function isBefore(d1: Date, d2: Date): boolean {
+  return startOfDay(d1).getTime() < startOfDay(d2).getTime();
+}
+
+function getMonthDays(month: Date): Date[] {
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
+  const startDayOfWeek = firstDay.getDay(); // 0 = Domingo
+  const startDate = new Date(month.getFullYear(), month.getMonth(), 1 - startDayOfWeek);
+
+  const days: Date[] = [];
+  for (let i = 0; i < 42; i++) {
+    days.push(new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + i));
+  }
+  return days;
+}
 
 interface Props {
   from?: string; // 'yyyy-MM-dd'
@@ -53,15 +104,14 @@ function MonthGrid({
   to: Date | null;
   onPick: (d: Date) => void;
 }) {
-  const gridStart = startOfWeek(startOfMonth(month), { weekStartsOn: 0 });
-  const gridEnd = endOfWeek(endOfMonth(month), { weekStartsOn: 0 });
-  const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
+  const days = getMonthDays(month);
   const weekDays = ["D", "S", "T", "Q", "Q", "S", "S"];
+  const monthName = month.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 
   return (
     <div className="w-full max-w-[280px] sm:w-56">
       <p className="text-center text-sm font-medium text-zinc-200 capitalize mb-2">
-        {format(month, "MMMM yyyy", { locale: ptBR })}
+        {monthName}
       </p>
       <div className="grid grid-cols-7 gap-0.5 mb-1">
         {weekDays.map((w, i) => (
@@ -74,14 +124,14 @@ function MonthGrid({
           const isFrom = from && isSameDay(d, from);
           const isTo = to && isSameDay(d, to);
           const inRange =
-            from && to && isWithinInterval(d, { start: from, end: to });
+            from && to && isWithinInterval(d, from, to);
           return (
             <button
               key={d.toISOString()}
               type="button"
               onClick={() => onPick(d)}
               className={[
-                "h-7 text-xs rounded-md transition-colors",
+                "h-7 text-xs rounded-md transition-colors cursor-pointer",
                 inMonth ? "text-zinc-200" : "text-zinc-600",
                 isFrom || isTo
                   ? "bg-indigo-500 text-white font-semibold"
@@ -90,7 +140,7 @@ function MonthGrid({
                   : "hover:bg-zinc-700",
               ].join(" ")}
             >
-              {format(d, "d")}
+              {d.getDate()}
             </button>
           );
         })}
@@ -155,7 +205,7 @@ export default function DateRangePicker({ from, to }: Props) {
 
   const label =
     from && to
-      ? `${format(parseISO(from), "dd/MM/yy")} — ${format(parseISO(to), "dd/MM/yy")}`
+      ? `${formatLabelDate(parseISO(from))} — ${formatLabelDate(parseISO(to))}`
       : "Selecionar período";
 
   return (
@@ -163,7 +213,7 @@ export default function DateRangePicker({ from, to }: Props) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 h-10 sm:h-auto text-sm text-zinc-200 hover:bg-zinc-700 transition-colors"
+        className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 h-10 sm:h-auto text-sm text-zinc-200 hover:bg-zinc-700 transition-colors cursor-pointer"
       >
         <CalendarIcon className="h-4 w-4 text-zinc-400" />
         {label}
@@ -184,7 +234,7 @@ export default function DateRangePicker({ from, to }: Props) {
                   key={p.label}
                   type="button"
                   onClick={() => applyPreset(p)}
-                  className="text-left text-sm text-zinc-300 rounded-md px-2 py-1.5 hover:bg-zinc-800 transition-colors"
+                  className="text-left text-sm text-zinc-300 rounded-md px-2 py-1.5 hover:bg-zinc-800 transition-colors cursor-pointer"
                 >
                   {p.label}
                 </button>
@@ -195,11 +245,11 @@ export default function DateRangePicker({ from, to }: Props) {
             <div className="p-3">
               <div className="flex items-center justify-between mb-2">
                 <button type="button" onClick={() => setLeftMonth((m) => addMonths(m, -1))}
-                  className="p-1 rounded hover:bg-zinc-800 text-zinc-400">
+                  className="p-1 rounded hover:bg-zinc-800 text-zinc-400 cursor-pointer">
                   <ChevronLeft className="h-4 w-4" />
                 </button>
                 <button type="button" onClick={() => setLeftMonth((m) => addMonths(m, 1))}
-                  className="p-1 rounded hover:bg-zinc-800 text-zinc-400">
+                  className="p-1 rounded hover:bg-zinc-800 text-zinc-400 cursor-pointer">
                   <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
@@ -211,14 +261,14 @@ export default function DateRangePicker({ from, to }: Props) {
               </div>
               <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-zinc-800">
                 <button type="button" onClick={() => setOpen(false)}
-                  className="text-sm text-zinc-400 px-3 py-1.5 rounded-lg hover:bg-zinc-800">
+                  className="text-sm text-zinc-400 px-3 py-1.5 rounded-lg hover:bg-zinc-800 cursor-pointer">
                   Cancelar
                 </button>
                 <button
                   type="button"
                   disabled={!selFrom || !selTo}
                   onClick={() => selFrom && selTo && apply(selFrom, selTo)}
-                  className="text-sm bg-indigo-500 text-white px-4 py-1.5 rounded-lg hover:bg-indigo-600 disabled:opacity-40"
+                  className="text-sm bg-indigo-500 text-white px-4 py-1.5 rounded-lg hover:bg-indigo-600 disabled:opacity-40 cursor-pointer font-medium"
                 >
                   Aplicar
                 </button>
