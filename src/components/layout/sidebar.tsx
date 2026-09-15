@@ -490,20 +490,6 @@ export function SidebarFooter({ isAdmin, collapsed = false }: SidebarProps & { c
       )}
 
       <div className="space-y-0.5">
-        {isAdmin && (
-          <Link
-            href="/empresas"
-            title="Painel de Todas as Empresas / Clientes"
-            className={cn(
-              'nav-item focus-ring flex items-center rounded-[var(--r-md)] text-[0.8125rem] font-medium text-[var(--st-atencao)] hover:bg-[var(--line-subtle)] transition-colors duration-150 ease-out cursor-pointer',
-              collapsed ? 'justify-center w-10 h-10 mx-auto' : 'gap-2.5 px-3 py-2 w-full'
-            )}
-          >
-            <Building2 size={16} className="shrink-0" />
-            {!collapsed && <span className="nav-label">🏢 Alternar Empresa</span>}
-          </Link>
-        )}
-        
         {!collapsed ? (
           <ThemeToggle />
         ) : (

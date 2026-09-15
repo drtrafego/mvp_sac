@@ -152,7 +152,7 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
               <UserPlus size={18} />
             </div>
             <div>
-              <DialogTitle className="text-h3 text-fg font-bold">Adicionar Lead Manualmente (1x1)</DialogTitle>
+              <DialogTitle className="text-h3 text-fg font-bold">Adicionar Lead</DialogTitle>
               <p className="text-micro text-fg-subtle mt-0.5">Cadastre um contato para atendimento, prospecção ou recuperação imediata.</p>
             </div>
           </div>
@@ -326,7 +326,7 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
               className="bg-brand-solid hover:bg-brand-solid/90 text-on-accent font-bold h-10 px-5 gap-1.5"
             >
               <UserPlus size={15} />
-              {saving ? "Salvando lead..." : "Salvar Lead (1x1)"}
+              {saving ? "Salvando lead..." : "Salvar Lead"}
             </Button>
           </div>
         </form>

@@ -236,7 +236,7 @@ export default function LeadsPage() {
             className="shrink-0 gap-1.5 bg-brand-solid hover:bg-brand-solid/90 text-on-accent font-bold text-micro shadow-sm"
           >
             <UserPlus size={15} />
-            + Adicionar Lead (1x1)
+            + Adicionar Lead
           </Button>
           <Button
             onClick={() => setImportModalOpen(true)}
