@@ -808,7 +808,31 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
 
             {form.messageType === 'text' && (
               <div className="space-y-1.5">
-                <label className="block text-label uppercase text-fg-subtle">Conteúdo</label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-label uppercase text-fg-subtle">Conteúdo</label>
+                  <span className="text-micro text-fg-faint">Clique abaixo para inserir variáveis</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 pb-1">
+                  {[
+                    { key: '{primeiro_nome}', label: 'Primeiro Nome' },
+                    { key: '{nome}', label: 'Nome' },
+                    { key: '{produto}', label: 'Produto' },
+                    { key: '{valor}', label: 'Valor' },
+                    { key: '{link_checkout}', label: 'Checkout' },
+                    { key: '{pix_codigo}', label: 'Pix' },
+                    { key: '{boleto_url}', label: 'Boleto' },
+                  ].map(v => (
+                    <button
+                      key={v.key}
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, content: (f.content || '') + ' ' + v.key }))}
+                      className="cursor-pointer rounded-[var(--r-sm)] border border-line-subtle bg-surface-inset px-2 py-0.5 text-micro text-brand-ink transition-colors hover:bg-surface-raised hover:text-fg"
+                      title={v.label}
+                    >
+                      +{v.key}
+                    </button>
+                  ))}
+                </div>
                 <Textarea
                   value={form.content}
                   onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
