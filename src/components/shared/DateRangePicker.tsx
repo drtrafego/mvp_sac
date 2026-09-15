@@ -61,12 +61,12 @@ function MonthGrid({
 
   return (
     <div className="w-full max-w-[280px] sm:w-56">
-      <p className="text-center text-sm font-medium text-zinc-200 capitalize mb-2">
+      <p className="text-center text-sm font-semibold text-fg capitalize mb-2">
         {format(month, "MMMM yyyy", { locale: ptBR })}
       </p>
       <div className="grid grid-cols-7 gap-0.5 mb-1">
         {weekDays.map((w, i) => (
-          <span key={i} className="text-center text-[10px] text-zinc-500">{w}</span>
+          <span key={i} className="text-center text-[10px] text-fg-subtle font-medium">{w}</span>
         ))}
       </div>
       <div className="grid grid-cols-7 gap-0.5">
@@ -83,12 +83,12 @@ function MonthGrid({
               onClick={() => onPick(d)}
               className={[
                 "h-7 text-xs rounded-md transition-colors cursor-pointer",
-                inMonth ? "text-zinc-200" : "text-zinc-600",
+                inMonth ? "text-fg" : "text-fg-faint opacity-40",
                 isFrom || isTo
-                  ? "bg-indigo-500 text-white font-semibold"
+                  ? "bg-brand-solid text-white font-bold"
                   : inRange
-                  ? "bg-indigo-500/20 text-indigo-200"
-                  : "hover:bg-zinc-700",
+                  ? "bg-brand-glow text-brand-ink font-medium"
+                  : "hover:bg-surface-raised",
               ].join(" ")}
             >
               {format(d, "d")}
@@ -169,10 +169,10 @@ export default function DateRangePicker({ from, to }: Props) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 h-10 sm:h-auto text-sm text-zinc-200 hover:bg-zinc-700 transition-colors cursor-pointer"
+        className="flex items-center gap-2 rounded-xl border border-line-subtle bg-surface-panel px-3 py-2 h-10 sm:h-auto text-sm text-fg hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
       >
-        <CalendarIcon className="h-4 w-4 text-zinc-400" />
-        {label}
+        <CalendarIcon className="h-4 w-4 text-fg-subtle" />
+        <span className="font-medium">{label}</span>
       </button>
 
       {mounted &&
@@ -184,15 +184,15 @@ export default function DateRangePicker({ from, to }: Props) {
               if (e.target === e.currentTarget) setOpen(false);
             }}
           >
-            <div className="flex flex-col sm:flex-row max-w-[92vw] rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex flex-col sm:flex-row max-w-[92vw] rounded-2xl border border-line-subtle bg-surface-overlay shadow-2xl animate-in fade-in zoom-in-95 duration-150">
               {/* Presets */}
-              <div className="flex flex-row sm:flex-col flex-wrap gap-1 border-b sm:border-b-0 sm:border-r border-zinc-800 p-3 sm:w-40">
+              <div className="flex flex-row sm:flex-col flex-wrap gap-1 border-b sm:border-b-0 sm:border-r border-line-subtle p-3 sm:w-40 bg-surface-panel">
                 {PRESETS.map((p) => (
                   <button
                     key={p.label}
                     type="button"
                     onClick={() => applyPreset(p)}
-                    className="text-left text-sm text-zinc-300 rounded-md px-2 py-1.5 hover:bg-zinc-800 transition-colors cursor-pointer"
+                    className="text-left text-sm text-fg-muted hover:text-fg rounded-lg px-2.5 py-1.5 hover:bg-surface-raised transition-colors cursor-pointer font-medium"
                   >
                     {p.label}
                   </button>
@@ -200,19 +200,19 @@ export default function DateRangePicker({ from, to }: Props) {
               </div>
 
               {/* Calendários */}
-              <div className="p-3">
-                <div className="flex items-center justify-between mb-2">
+              <div className="p-4 bg-surface-overlay">
+                <div className="flex items-center justify-between mb-3">
                   <button
                     type="button"
                     onClick={() => setLeftMonth((m) => addMonths(m, -1))}
-                    className="p-1 rounded hover:bg-zinc-800 text-zinc-400 cursor-pointer"
+                    className="p-1.5 rounded-lg hover:bg-surface-raised text-fg-subtle hover:text-fg transition-colors cursor-pointer"
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
                     onClick={() => setLeftMonth((m) => addMonths(m, 1))}
-                    className="p-1 rounded hover:bg-zinc-800 text-zinc-400 cursor-pointer"
+                    className="p-1.5 rounded-lg hover:bg-surface-raised text-fg-subtle hover:text-fg transition-colors cursor-pointer"
                   >
                     <ChevronRight className="h-4 w-4" />
                   </button>
@@ -228,11 +228,11 @@ export default function DateRangePicker({ from, to }: Props) {
                     />
                   </div>
                 </div>
-                <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-zinc-800">
+                <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-line-subtle">
                   <button
                     type="button"
                     onClick={() => setOpen(false)}
-                    className="text-sm text-zinc-400 px-3 py-1.5 rounded-lg hover:bg-zinc-800 cursor-pointer"
+                    className="text-sm text-fg-subtle hover:text-fg px-3 py-1.5 rounded-lg hover:bg-surface-raised transition-colors cursor-pointer font-medium"
                   >
                     Cancelar
                   </button>
@@ -240,7 +240,7 @@ export default function DateRangePicker({ from, to }: Props) {
                     type="button"
                     disabled={!selFrom || !selTo}
                     onClick={() => selFrom && selTo && apply(selFrom, selTo)}
-                    className="text-sm bg-indigo-500 text-white px-4 py-1.5 rounded-lg hover:bg-indigo-600 disabled:opacity-40 cursor-pointer font-medium"
+                    className="text-sm bg-brand-solid text-on-accent px-4 py-1.5 rounded-lg hover:bg-brand-solid/90 disabled:opacity-40 cursor-pointer font-bold shadow-xs transition-colors"
                   >
                     Aplicar
                   </button>

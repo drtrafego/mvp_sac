@@ -1,12 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield } from 'lucide-react'
+import { useTheme } from 'next-themes'
+import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import { cn } from '@/lib/utils'
 
 /*
   Os selects do Base UI mostram o valor cru no gatilho quando o Root não recebe
@@ -343,6 +345,146 @@ function EquipeSection() {
   )
 }
 
+function AparenciaSection() {
+  const [mounted, setMounted] = useState(false)
+  const { theme, resolvedTheme, setTheme } = useTheme()
+
+  useEffect(() => setMounted(true), [])
+
+  const options = [
+    {
+      id: 'light',
+      label: 'Tema Claro',
+      desc: 'Fundo branco e cinza claro com alto contraste, ideal para o dia a dia e ambientes iluminados.',
+      icon: Sun,
+      iconColor: 'text-amber-500 bg-amber-500/10 border-amber-500/20',
+      preview: (
+        <div className="w-full h-14 rounded-lg bg-white border border-neutral-200 p-2 flex flex-col justify-between shadow-xs">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-neutral-300" />
+            <div className="w-8 h-1.5 rounded bg-neutral-200" />
+          </div>
+          <div className="flex gap-1">
+            <div className="w-1/3 h-4 rounded bg-neutral-100 border border-neutral-200" />
+            <div className="w-2/3 h-4 rounded bg-emerald-100 border border-emerald-300" />
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'dark',
+      label: 'Tema Escuro',
+      desc: 'Fundo escuro profundo (#08090a), reduz a fadiga visual e economiza bateria.',
+      icon: Moon,
+      iconColor: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
+      preview: (
+        <div className="w-full h-14 rounded-lg bg-[#0c0e10] border border-white/10 p-2 flex flex-col justify-between shadow-xs">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-white/30" />
+            <div className="w-8 h-1.5 rounded bg-white/20" />
+          </div>
+          <div className="flex gap-1">
+            <div className="w-1/3 h-4 rounded bg-white/5 border border-white/10" />
+            <div className="w-2/3 h-4 rounded bg-emerald-500/20 border border-emerald-500/30" />
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'system',
+      label: 'Sistema (Automático)',
+      desc: 'Acompanha dinamicamente a preferência do seu computador ou smartphone.',
+      icon: Monitor,
+      iconColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+      preview: (
+        <div className="w-full h-14 rounded-lg border border-line-subtle overflow-hidden flex shadow-xs">
+          <div className="w-1/2 h-full bg-white p-2 flex flex-col justify-between border-r border-neutral-200">
+            <div className="w-4 h-1.5 rounded bg-neutral-300" />
+            <div className="w-full h-4 rounded bg-emerald-100" />
+          </div>
+          <div className="w-1/2 h-full bg-[#0c0e10] p-2 flex flex-col justify-between">
+            <div className="w-4 h-1.5 rounded bg-white/30" />
+            <div className="w-full h-4 rounded bg-emerald-500/20" />
+          </div>
+        </div>
+      ),
+    },
+  ]
+
+  const changeTheme = (newTheme: string) => {
+    const root = document.documentElement
+    root.style.transition = 'background-color 200ms ease, color 200ms ease'
+    setTheme(newTheme)
+    window.setTimeout(() => {
+      root.style.transition = ''
+    }, 250)
+  }
+
+  return (
+    <section className="panel space-y-4 p-[var(--space-card)]">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Palette size={16} className="text-brand-ink" />
+          <h2 className="text-h2 text-fg">Aparência & Tema</h2>
+        </div>
+        {mounted && (
+          <span className="text-micro text-fg-subtle font-medium">
+            Ativo no momento: <strong className="text-brand-ink capitalize">{theme === 'system' ? `Sistema (${resolvedTheme === 'dark' ? 'Escuro' : 'Claro'})` : theme === 'dark' ? 'Escuro' : 'Claro'}</strong>
+          </span>
+        )}
+      </div>
+      <Separator className="bg-line-subtle" />
+      <p className="text-body text-fg-muted">
+        Escolha o modo visual do sistema. A preferência é salva no seu navegador e aplicada instantaneamente em todas as telas.
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+        {options.map((opt) => {
+          const active = mounted && theme === opt.id
+          const Icon = opt.icon
+          return (
+            <div
+              key={opt.id}
+              onClick={() => changeTheme(opt.id)}
+              className={cn(
+                'group relative rounded-2xl border p-4 flex flex-col justify-between space-y-3 cursor-pointer transition-all duration-200',
+                active
+                  ? 'border-brand-solid bg-brand-glow/10 shadow-md ring-1 ring-brand-solid/50'
+                  : 'border-line-subtle bg-surface-inset hover:border-line-default hover:bg-surface-raised'
+              )}
+            >
+              <div className="space-y-3">
+                {/* Miniatura visual */}
+                {opt.preview}
+
+                {/* Cabeçalho do Card */}
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-2">
+                    <div className={cn('p-1.5 rounded-lg border', opt.iconColor)}>
+                      <Icon size={15} />
+                    </div>
+                    <span className="text-body font-bold text-fg">{opt.label}</span>
+                  </div>
+                  {active && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-on-accent bg-brand-solid px-2 py-0.5 rounded-full shadow-xs">
+                      <Check size={11} strokeWidth={3} />
+                      Ativo
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-micro text-fg-subtle leading-relaxed">
+                  {opt.desc}
+                </p>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 export default function ConfiguracoesPage() {
   const [form, setForm] = useState<SettingsData>(defaults)
   const [saving, setSaving] = useState(false)
@@ -420,9 +562,12 @@ export default function ConfiguracoesPage() {
       <div>
         <h1 className="text-h1 text-fg">Configurações</h1>
         <p className="text-body text-fg-muted mt-1">
-          Credenciais das plataformas de pagamento, do WhatsApp e da sua equipe.
+          Aparência do sistema, credenciais das plataformas de pagamento, do WhatsApp e da sua equipe.
         </p>
       </div>
+
+      {/* Aparência & Tema */}
+      <AparenciaSection />
 
       {/* Equipe */}
       <EquipeSection />
