@@ -6,6 +6,8 @@ import { Search, RefreshCw, Inbox, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
+import { ImportLeadsModal } from '@/components/leads/ImportLeadsModal'
+import { UploadCloud, Download } from 'lucide-react'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
@@ -145,6 +147,7 @@ export default function LeadsPage() {
   const [status, setStatus] = useState('all')
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
+  const [importModalOpen, setImportModalOpen] = useState(false)
   const searchParams = useSearchParams()
   const { from, to } = resolvePeriod({
     from: searchParams.get('from') ?? undefined,
@@ -179,6 +182,34 @@ export default function LeadsPage() {
     fetchLeads(next)
   }
 
+  
+  function exportCSV() {
+    if (filtered.length === 0) {
+      alert('Nenhum lead para exportar.');
+      return;
+    }
+    const headers = ['Nome', 'Telefone', 'Email', 'Produto', 'Valor (R$)', 'Evento', 'Status', 'Origem', 'Data'];
+    const rows = filtered.map(l => [
+      `"${(l.name || '').replace(/"/g, '""')}"`,
+      `"${l.phone}"`,
+      `"${(l.email || '').replace(/"/g, '""')}"`,
+      `"${(l.productName || '').replace(/"/g, '""')}"`,
+      `"${l.productValue ? (l.productValue / 100).toFixed(2) : '0.00'}"`,
+      `"${l.eventType}"`,
+      `"${l.status || ''}"`,
+      `"${(l as any).trackingSource || l.platform || 'organico'}"`,
+      `"${l.createdAt || ''}"`
+    ]);
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `leads_export_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   function clearFilters() {
     setEventType('all')
     setStatus('all')
@@ -209,7 +240,22 @@ export default function LeadsPage() {
           <h1 className="text-h1 text-fg">Leads</h1>
           <p className="text-body text-fg-muted mt-1">{subtitle}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            onClick={() => setImportModalOpen(true)}
+            className="shrink-0 gap-1.5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-micro"
+          >
+            <UploadCloud size={15} />
+            Importar Planilha / Mineração
+          </Button>
+          <Button
+            variant="outline"
+            onClick={exportCSV}
+            className="shrink-0 gap-1.5 text-micro border-line-subtle text-fg hover:bg-surface-raised"
+          >
+            <Download size={14} />
+            Exportar CSV
+          </Button>
           <PeriodBar from={from} to={to} />
           <Button
             variant="ghost"
