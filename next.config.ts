@@ -7,10 +7,6 @@ const nextConfig: NextConfig = {
         source: "/",
         destination: "/index.html",
       },
-      {
-        source: "/sac",
-        destination: "/sac/index.html",
-      },
     ];
   },
 };
