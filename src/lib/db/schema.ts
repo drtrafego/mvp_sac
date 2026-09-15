@@ -158,6 +158,13 @@ export const recoveryLeads = pgTable('recovery_leads', {
   priority: integer('priority').default(0),           // Fase 3.2: 3=cartao_recusado, 2=boleto, 1=carrinho, 0=aprovada
   convertedByJobId: integer('converted_by_job_id'),   // Fase 2: qual job desencadeou a conversão
   convertedFrom: text('converted_from'),               // Fase 2: "msg_N" para rastrear posição da mensagem
+
+  // Canal e controle de atendimento / bot de IA
+  channel: text('channel').default('whatsapp'),       // whatsapp | instagram | email | mineracao
+  botPaused: boolean('bot_paused').default(false),    // true se o atendente humano pausou o bot para assumir
+  botPausedAt: timestamp('bot_paused_at'),
+  botPausedBy: text('bot_paused_by'),
+
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => [
@@ -187,12 +194,13 @@ export const messageJobs = pgTable('message_jobs', {
   createdAt: timestamp('created_at').defaultNow(),
 })
 
-// ─── Histórico de mensagens WhatsApp ─────────────────────────────────────────
+// ─── Histórico de mensagens WhatsApp / Instagram / E-mail ────────────────────
 export const whatsappMessages = pgTable('whatsapp_messages', {
   id: serial('id').primaryKey(),
   companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
   leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'set null' }),
   phone: text('phone').notNull(),
+  channel: text('channel').default('whatsapp'), // 'whatsapp' | 'instagram' | 'email'
   direction: text('direction').notNull(), // 'inbound' | 'outbound'
   content: text('content'),
   messageType: text('message_type').default('text'),

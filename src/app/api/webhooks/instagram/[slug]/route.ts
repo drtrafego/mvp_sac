@@ -86,13 +86,46 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         const message = item.message as { mid?: string; text?: string } | undefined
         if (sender?.id && message?.text) {
           try {
+            const igPhone = `ig_${sender.id}`
+
+            // Busca ou cria o lead para a conversa aparecer no Inbox
+            let [lead] = await db
+              .select()
+              .from(recoveryLeads)
+              .where(eq(recoveryLeads.phone, igPhone))
+              .limit(1)
+
+            if (!lead) {
+              const [newLead] = await db
+                .insert(recoveryLeads)
+                .values({
+                  companyId: company.id,
+                  platform: 'instagram',
+                  channel: 'instagram',
+                  eventType: 'instagram_direct',
+                  phone: igPhone,
+                  name: `Instagram Direct (${sender.id.slice(-4)})`,
+                  status: 'in_conversation',
+                  trackingSource: 'instagram_direct',
+                })
+                .returning()
+              lead = newLead
+            } else {
+              await db
+                .update(recoveryLeads)
+                .set({ updatedAt: new Date(), channel: 'instagram' })
+                .where(eq(recoveryLeads.id, lead.id))
+            }
+
             await db.insert(whatsappMessages).values({
               companyId: company.id,
-              phone: `ig_${sender.id}`,
-              direction: "inbound",
+              leadId: lead?.id ?? null,
+              phone: igPhone,
+              channel: 'instagram',
+              direction: 'inbound',
               content: message.text,
-              messageType: "text",
-              sentBy: "human",
+              messageType: 'text',
+              sentBy: 'user',
               externalId: message.mid ?? null,
             })
           } catch (err) {

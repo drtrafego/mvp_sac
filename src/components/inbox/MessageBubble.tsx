@@ -1,24 +1,21 @@
 'use client'
 
+import React from 'react'
+import { User, Bot, UserCog, FileText, Image as ImageIcon, Volume2, CheckCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { cleanMessage } from '@/lib/clean-content'
+import { ChannelIcon } from './ChannelBadge'
 
 export interface InboxMessage {
   id: number
+  phone?: string
+  channel?: string | null
   direction: string
   content: string | null
-  messageType: string | null
-  mediaUrl: string | null
-  sentBy: string | null
+  messageType?: string | null
+  mediaUrl?: string | null
+  sentBy?: string | null
   createdAt: string | null
-}
-
-/*
-  Balão enviado: verde da marca diluído, em vez de verde sólido. Sobre o fundo
-  quase preto do chat o sólido brilhava demais e o texto branco vibrava.
-*/
-const SENT_BUBBLE_STYLE = {
-  background: 'color-mix(in oklch, var(--brand-solid) 18%, transparent)',
-  borderColor: 'color-mix(in oklch, var(--brand-solid) 30%, transparent)',
 }
 
 function formatTime(dateStr: string) {
@@ -52,70 +49,175 @@ function formatDateSeparator(dateStr: string) {
   })
 }
 
-function sentByLabel(sentBy: string | null) {
-  if (sentBy === 'human') return 'Você'
-  if (sentBy === 'bot') return 'Bot'
-  return 'Sistema'
-}
-
-export function MessageBubble({ message }: { message: InboxMessage }) {
+export function MessageBubble({
+  message,
+  contactName,
+}: {
+  message: InboxMessage
+  contactName?: string | null
+}) {
   const isInbound = message.direction === 'inbound'
+  const isBot = message.sentBy === 'bot' || message.sentBy === 'system'
+  const isHuman = message.sentBy === 'human'
+
+  // Limpa o conteúdo (transcrições de voz, payloads de e-mail e extrai mídias)
+  const { text, media } = cleanMessage(
+    message.content,
+    isInbound ? 'user' : 'assistant',
+    message.channel
+  )
+
+  const senderLabel = isInbound
+    ? contactName || 'Cliente'
+    : isBot
+      ? 'Bot IA'
+      : 'Atendente Humano'
 
   return (
-    <div className={cn('flex flex-col gap-1', isInbound ? 'items-start' : 'items-end')}>
-      {/*
-        Concatenação simples em vez de cn(): o tailwind-merge trata text-body
-        como classe de cor e a descartaria por causa do text-fg.
-      */}
+    <div
+      className={cn(
+        'flex items-end gap-2.5 my-1 group',
+        isInbound ? 'justify-start' : 'flex-row-reverse justify-start'
+      )}
+    >
+      {/* Avatar do emissor */}
       <div
-        className={`max-w-[560px] border px-4 py-2.5 text-body leading-relaxed text-fg rounded-[var(--r-lg)] ${
+        className={cn(
+          'grid size-7 shrink-0 place-items-center rounded-full text-xs font-bold select-none',
           isInbound
-            ? 'bg-surface-raised border-line-subtle rounded-bl-[var(--r-sm)]'
-            : 'rounded-br-[var(--r-sm)]'
-        }`}
-        style={isInbound ? undefined : SENT_BUBBLE_STYLE}
+            ? 'bg-surface-raised border border-line-subtle text-fg-muted'
+            : isHuman
+              ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+              : 'bg-brand-solid text-on-accent'
+        )}
+        title={senderLabel}
       >
-        {message.messageType === 'audio' && message.mediaUrl ? (
-          <audio controls preload="none" src={message.mediaUrl} className="h-8 w-52" />
-        ) : message.messageType === 'image' && message.mediaUrl ? (
-          <div className="space-y-1">
-            <img src={message.mediaUrl} alt="imagem" className="rounded-[var(--r-md)] max-w-[240px]" />
-            {message.content && <p className="text-micro">{message.content}</p>}
-          </div>
+        {isInbound ? (
+          <User className="size-3.5" />
+        ) : isHuman ? (
+          <UserCog className="size-3.5" />
         ) : (
-          <p className="whitespace-pre-wrap break-words">{message.content || '-'}</p>
+          <Bot className="size-3.5" />
         )}
       </div>
-      <div className="num flex items-center gap-1.5 px-1 text-micro text-fg-faint">
-        {!isInbound && <span>{sentByLabel(message.sentBy)}</span>}
-        {message.createdAt && <span>{formatTime(message.createdAt)}</span>}
+
+      {/* Bolha de mensagem */}
+      <div
+        className={cn(
+          'min-w-0 max-w-[85%] md:max-w-[70%] rounded-2xl px-4 py-2.5 text-body leading-relaxed shadow-xs transition-colors',
+          isInbound
+            ? 'rounded-bl-xs bg-surface-raised border border-line-subtle text-fg'
+            : isHuman
+              ? 'rounded-br-xs bg-emerald-500/10 dark:bg-emerald-950/40 border border-emerald-500/30 text-fg'
+              : 'rounded-br-xs bg-brand-solid/10 border border-brand-solid/30 text-fg'
+        )}
+      >
+        {/* Rótulo do emissor e canal */}
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <span
+            className={cn(
+              'text-[10px] uppercase font-bold tracking-wider',
+              isInbound
+                ? 'text-fg-subtle'
+                : isHuman
+                  ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                  : 'text-brand-ink font-semibold'
+            )}
+          >
+            {senderLabel}
+          </span>
+          <span className="flex items-center gap-1 text-[10px] text-fg-faint">
+            <ChannelIcon channel={message.channel} size={11} />
+            {message.createdAt && <span>{formatTime(message.createdAt)}</span>}
+          </span>
+        </div>
+
+        {/* Áudio / Mídia Nativa */}
+        {(message.messageType === 'audio' || media.some(m => m.kind === 'audio')) && (
+          <div className="my-2 bg-surface-base border border-line-subtle rounded-xl p-2 flex items-center gap-2">
+            <Volume2 className="size-4 text-brand-ink shrink-0" />
+            <audio
+              controls
+              preload="none"
+              src={message.mediaUrl || media.find(m => m.kind === 'audio')?.file}
+              className="h-7 w-52 max-w-full"
+            />
+          </div>
+        )}
+
+        {/* Imagem */}
+        {(message.messageType === 'image' || media.some(m => m.kind === 'image')) && (
+          <div className="my-1.5 space-y-1">
+            <img
+              src={message.mediaUrl || media.find(m => m.kind === 'image')?.file}
+              alt="Mídia da conversa"
+              className="rounded-xl border border-line-subtle max-w-[280px] max-h-[300px] object-cover"
+            />
+          </div>
+        )}
+
+        {/* Documento */}
+        {(message.messageType === 'document' || media.some(m => m.kind === 'document')) && (
+          <a
+            href={message.mediaUrl || media.find(m => m.kind === 'document')?.file}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="my-1.5 inline-flex items-center gap-2 rounded-xl border border-line-subtle bg-surface-base px-3 py-2 text-micro text-fg hover:border-brand-solid/50 transition-colors"
+          >
+            <FileText className="size-4 text-fg-subtle shrink-0" />
+            <span className="truncate max-w-[200px]">Documento Anexo</span>
+          </a>
+        )}
+
+        {/* Texto da Mensagem */}
+        {text ? (
+          <p className="whitespace-pre-wrap break-words text-[0.875rem] leading-relaxed select-text">
+            {text}
+          </p>
+        ) : !message.mediaUrl && media.length === 0 ? (
+          <p className="text-fg-faint italic text-micro">Mensagem sem conteúdo textual</p>
+        ) : null}
       </div>
     </div>
   )
 }
 
-export function MessageList({ messages }: { messages: InboxMessage[] }) {
+export function MessageList({
+  messages,
+  contactName,
+}: {
+  messages: InboxMessage[]
+  contactName?: string | null
+}) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       {messages.length === 0 && (
-        <p className="text-center text-body text-fg-subtle py-8">Nenhuma mensagem ainda</p>
+        <div className="flex flex-col items-center justify-center gap-2 py-16 text-fg-faint">
+          <p className="text-body font-medium">Nenhuma mensagem registrada nesta conversa.</p>
+          <p className="text-micro text-fg-subtle">
+            Envie uma mensagem abaixo para iniciar o atendimento pelo canal conectado.
+          </p>
+        </div>
       )}
       {messages.map((msg, index) => {
         const currentDay = msg.createdAt ? toDateKey(msg.createdAt) : ''
-        const prevDay = index > 0 && messages[index - 1].createdAt ? toDateKey(messages[index - 1].createdAt!) : null
+        const prevDay =
+          index > 0 && messages[index - 1].createdAt
+            ? toDateKey(messages[index - 1].createdAt!)
+            : null
         const showSeparator = currentDay !== prevDay
 
         return (
-          <div key={msg.id} className="flex flex-col gap-3">
+          <React.Fragment key={msg.id || index}>
             {showSeparator && msg.createdAt && (
-              <div className="flex items-center justify-center my-1">
-                <span className="badge border-line-subtle bg-surface-inset text-fg-subtle">
+              <div className="flex items-center justify-center my-3">
+                <span className="badge border-line-subtle bg-surface-inset text-fg-subtle text-[11px] font-semibold px-3 py-1">
                   {formatDateSeparator(msg.createdAt)}
                 </span>
               </div>
             )}
-            <MessageBubble message={msg} />
-          </div>
+            <MessageBubble message={msg} contactName={contactName} />
+          </React.Fragment>
         )
       })}
     </div>

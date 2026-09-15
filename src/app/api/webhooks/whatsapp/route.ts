@@ -207,6 +207,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       companyId,
       leadId: lead?.id ?? null,
       phone,
+      channel: 'whatsapp',
       direction: 'inbound',
       content,
       messageType,
