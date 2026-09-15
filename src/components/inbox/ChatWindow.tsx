@@ -22,6 +22,7 @@ import {
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
 import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill } from './ChannelBadge'
+import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { cn } from '@/lib/utils'
 
 export interface ChatLead {
@@ -41,6 +42,9 @@ export interface ChatLead {
   trackingSource: string | null
   utmCampaign: string | null
   createdAt: string | null
+  lastMessageAt?: string | null
+  lastInboundAt?: string | null
+  lastOutboundAt?: string | null
 }
 
 function formatBRL(centavos: number | null | undefined) {
@@ -262,6 +266,9 @@ export function ChatWindow({
           </div>
         </div>
 
+        {/* 1.1 Banner da Janela Oficial da Meta (24h / 72h) */}
+        <MetaWindowBanner lead={lead} />
+
         {/* 2. Área de Mensagens */}
         <div className="scroll-thin flex-1 overflow-y-auto bg-surface-base px-4 py-4">
           <MessageList messages={messages} contactName={lead.name} />
@@ -338,6 +345,54 @@ export function ChatWindow({
               </p>
             )}
           </div>
+
+          {/* Janela de Atendimento Meta Cloud API */}
+          {(() => {
+            const win = getMetaWindowInfo(lead)
+            return (
+              <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-micro font-bold uppercase text-fg-subtle">Janela Meta API:</span>
+                  <span
+                    className={cn(
+                      'text-[10px] font-bold px-2 py-0.5 rounded-full border',
+                      win.badgeClass
+                    )}
+                  >
+                    {win.typeLabel}
+                  </span>
+                </div>
+                <div className="text-micro space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-fg-faint">Status:</span>
+                    <span className="text-fg font-semibold">
+                      {win.status === 'active'
+                        ? `Aberta (${win.remainingHours}h ${win.remainingMinutes}m restantes)`
+                        : win.status === 'expiring_soon'
+                        ? `Expirando (${win.remainingHours}h ${win.remainingMinutes}m)`
+                        : win.status === 'expired'
+                        ? 'Expirada (Requer Template)'
+                        : 'Aguardando resposta'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-fg-faint">Regra da Janela:</span>
+                    <span className="text-fg-muted font-mono text-[10px]">
+                      {win.isAd ? '72h para Anúncios (CTWA)' : '24h Atendimento Padrão'}
+                    </span>
+                  </div>
+                  {lead.lastInboundAt && (
+                    <div className="flex justify-between">
+                      <span className="text-fg-faint">Última msg do lead:</span>
+                      <span className="text-fg-muted font-mono text-[10px]">
+                        {new Date(lead.lastInboundAt).toLocaleString('pt-BR')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Informações de Compra & Produto */}
           <div className="space-y-2">

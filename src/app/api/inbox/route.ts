@@ -34,27 +34,44 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       createdAt: recoveryLeads.createdAt,
       lastMessage: sql<string | null>`(
         SELECT wm.content FROM whatsapp_messages wm
-        WHERE wm.phone = ${recoveryLeads.phone} AND wm.company_id = ${company.id}
+        WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\D', '', 'g'), 9))
+          AND wm.company_id = ${company.id}
         ORDER BY wm.created_at DESC LIMIT 1
       )`,
       lastDirection: sql<string | null>`(
         SELECT wm.direction FROM whatsapp_messages wm
-        WHERE wm.phone = ${recoveryLeads.phone} AND wm.company_id = ${company.id}
+        WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\D', '', 'g'), 9))
+          AND wm.company_id = ${company.id}
         ORDER BY wm.created_at DESC LIMIT 1
       )`,
       lastMessageAt: sql<string | null>`(
         SELECT wm.created_at::text FROM whatsapp_messages wm
-        WHERE wm.phone = ${recoveryLeads.phone} AND wm.company_id = ${company.id}
+        WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\D', '', 'g'), 9))
+          AND wm.company_id = ${company.id}
+        ORDER BY wm.created_at DESC LIMIT 1
+      )`,
+      lastInboundAt: sql<string | null>`(
+        SELECT wm.created_at::text FROM whatsapp_messages wm
+        WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\D', '', 'g'), 9))
+          AND wm.company_id = ${company.id}
+          AND wm.direction = 'inbound'
+        ORDER BY wm.created_at DESC LIMIT 1
+      )`,
+      lastOutboundAt: sql<string | null>`(
+        SELECT wm.created_at::text FROM whatsapp_messages wm
+        WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\D', '', 'g'), 9))
+          AND wm.company_id = ${company.id}
+          AND wm.direction = 'outbound'
         ORDER BY wm.created_at DESC LIMIT 1
       )`,
       unread: sql<number>`(
         SELECT COUNT(*) FROM whatsapp_messages wm
-        WHERE wm.phone = ${recoveryLeads.phone}
+        WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\D', '', 'g'), 9))
           AND wm.company_id = ${company.id}
           AND wm.direction = 'inbound'
           AND wm.created_at > COALESCE((
             SELECT wm2.created_at FROM whatsapp_messages wm2
-            WHERE wm2.phone = ${recoveryLeads.phone}
+            WHERE (wm2.lead_id = ${recoveryLeads.id} OR wm2.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm2.phone, '\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\D', '', 'g'), 9))
               AND wm2.company_id = ${company.id}
               AND wm2.direction = 'outbound'
             ORDER BY wm2.created_at DESC LIMIT 1

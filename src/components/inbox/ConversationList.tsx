@@ -23,6 +23,7 @@ import {
   BotStatusPill,
   InstagramLogoIcon,
 } from './ChannelBadge'
+import { MetaWindowBadge } from './MetaWindowBadge'
 
 export interface ConversationSummary {
   id: number
@@ -43,18 +44,51 @@ export interface ConversationSummary {
   lastMessage: string | null
   lastDirection: string | null
   lastMessageAt: string | null
+  lastInboundAt?: string | null
+  lastOutboundAt?: string | null
   unread: number
 }
 
-function timeAgo(dateStr: string | null) {
-  if (!dateStr) return ''
-  const diff = Date.now() - new Date(dateStr).getTime()
-  const mins = Math.floor(diff / 60_000)
-  if (mins < 1) return 'agora'
-  if (mins < 60) return `${mins}min`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h`
-  return `${Math.floor(hrs / 24)}d`
+function formatMessageTimestamp(dateStr: string | null | undefined): { time: string; full: string; relative: string } {
+  if (!dateStr) return { time: '', full: '', relative: '' }
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return { time: '', full: '', relative: '' }
+
+  const now = new Date()
+  const isToday = d.toDateString() === now.toDateString()
+
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const isYesterday = d.toDateString() === yesterday.toDateString()
+
+  const hours = String(d.getHours()).padStart(2, '0')
+  const mins = String(d.getMinutes()).padStart(2, '0')
+  const timeOnly = `${hours}:${mins}`
+
+  const diffMs = now.getTime() - d.getTime()
+  const diffMins = Math.floor(diffMs / 60_000)
+  let relative = 'agora'
+  if (diffMins >= 1 && diffMins < 60) relative = `${diffMins}m`
+  else if (diffMins >= 60 && diffMins < 1440) relative = `${Math.floor(diffMins / 60)}h`
+  else if (diffMins >= 1440) relative = `${Math.floor(diffMins / 1440)}d`
+
+  let display = ''
+  if (isToday) {
+    display = timeOnly
+  } else if (isYesterday) {
+    display = `ontem ${timeOnly}`
+  } else if (diffMs < 7 * 24 * 3600 * 1000) {
+    const days = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb']
+    display = `${days[d.getDay()]} ${timeOnly}`
+  } else {
+    display = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${timeOnly}`
+  }
+
+  return {
+    time: display,
+    full: d.toLocaleString('pt-BR'),
+    relative,
+  }
 }
 
 type ChannelFilter = 'all' | 'whatsapp' | 'instagram' | 'email' | 'mineracao'
@@ -331,6 +365,7 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
             const isActive = String(conv.id) === activeId
             const displayName = conv.name || conv.phone
             const initials = displayName.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
+            const timeInfo = formatMessageTimestamp(conv.lastMessageAt)
 
             return (
               <Link key={conv.id} href={`/inbox/${conv.id}`} className="focus-ring block rounded-xl">
@@ -342,7 +377,7 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
                       : 'border-transparent hover:border-line-subtle hover:bg-surface-inset/70'
                   )}
                 >
-                  {/* Linha 1: Nome, Hora e Ícone do Canal */}
+                  {/* Linha 1: Nome, Hora do Último Envio e Ícone do Canal */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-inset border border-line-subtle text-[11px] font-bold text-fg-muted">
@@ -355,13 +390,18 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
 
                     <div className="flex items-center gap-1.5 shrink-0">
                       <ChannelIcon channel={conv.channel} size={13} />
-                      <span className="text-[10px] text-fg-faint font-mono">{timeAgo(conv.lastMessageAt)}</span>
+                      {timeInfo.time ? (
+                        <span className="text-[11px] text-fg-subtle font-mono font-medium" title={timeInfo.full}>
+                          {timeInfo.time}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
 
-                  {/* Linha 2: Badges de Origem, Plataforma e Status do Bot */}
+                  {/* Linha 2: Badges de Origem, Janela Meta (24h/72h) e Status do Bot */}
                   <div className="flex flex-wrap items-center gap-1">
                     <PlatformBadge platform={conv.platform || conv.trackingSource} eventType={conv.eventType} />
+                    <MetaWindowBadge lead={conv} />
                     {conv.botPaused && (
                       <BotStatusPill paused={true} compact />
                     )}
@@ -372,12 +412,19 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
                     )}
                   </div>
 
-                  {/* Linha 3: Última mensagem */}
-                  <div className="text-micro text-fg-subtle truncate flex items-center gap-1">
-                    {conv.lastDirection === 'outbound' && (
-                      <span className="text-fg-faint shrink-0 font-semibold">Você:</span>
+                  {/* Linha 3: Prévia da última mensagem e tempo relativo */}
+                  <div className="text-micro text-fg-subtle truncate flex items-center justify-between gap-2">
+                    <div className="truncate flex items-center gap-1 min-w-0">
+                      {conv.lastDirection === 'outbound' && (
+                        <span className="text-fg-faint shrink-0 font-semibold">Você:</span>
+                      )}
+                      <span className="truncate">{conv.lastMessage || 'Conversa iniciada'}</span>
+                    </div>
+                    {timeInfo.relative && timeInfo.relative !== 'agora' && (
+                      <span className="text-[10px] text-fg-faint shrink-0 font-mono">
+                        {timeInfo.relative}
+                      </span>
                     )}
-                    <span className="truncate">{conv.lastMessage || 'Conversa iniciada'}</span>
                   </div>
                 </div>
               </Link>

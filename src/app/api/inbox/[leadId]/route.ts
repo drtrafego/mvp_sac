@@ -3,11 +3,12 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { whatsappMessages, recoveryLeads } from '@/lib/db/schema'
-import { eq, asc, and } from 'drizzle-orm'
+import { eq, asc, and, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
 import { requireCompany } from '@/lib/auth'
+import { queryAgentsDb } from '@/lib/db/agents-db'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -25,12 +26,98 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
 
   if (!lead) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
 
-  const messages = await db
+  let messages = await db
     .select()
     .from(whatsappMessages)
-    .where(and(eq(whatsappMessages.phone, lead.phone), eq(whatsappMessages.companyId, company.id)))
+    .where(
+      and(
+        or(
+          eq(whatsappMessages.leadId, id),
+          eq(whatsappMessages.phone, lead.phone),
+          sql`right(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g'), 9) = right(regexp_replace(${lead.phone}, '\\D', '', 'g'), 9)`
+        ),
+        eq(whatsappMessages.companyId, company.id)
+      )
+    )
     .orderBy(asc(whatsappMessages.createdAt))
     .limit(300)
+
+  // Se não houver mensagens gravadas localmente, busca sob demanda no banco do Supabase/Agentes
+  if (messages.length === 0) {
+    try {
+      const cleanPhone = lead.phone.replace(/\D/g, '')
+
+      // 1. Busca em public.outreach_convos
+      const convos = await queryAgentsDb<{ id: string; channel: string | null }>(`
+        select id, channel from public.outreach_convos
+        where right(regexp_replace(lead_handle, '\\D', '', 'g'), 9) = right($1, 9)
+           or lead_handle = $2
+        limit 1
+      `, [cleanPhone, lead.phone])
+
+      if (convos && convos.length > 0) {
+        const convo = convos[0]
+        const outreachMsgs = await queryAgentsDb<{
+          id: string
+          direction: string | null
+          status: string | null
+          subject: string | null
+          body: string | null
+          sent_at: string | null
+        }>(`
+          select id, direction, status, subject, body, sent_at
+          from public.outreach_msgs
+          where convo_id = $1
+          order by sent_at asc
+        `, [convo.id])
+
+        if (outreachMsgs && outreachMsgs.length > 0) {
+          for (const m of outreachMsgs) {
+            const isUser = m.direction === 'inbound'
+            const direction = isUser ? 'inbound' : 'outbound'
+            const sentBy = isUser ? 'user' : 'bot'
+            const externalId = `outreach_${m.id}`
+
+            await db.insert(whatsappMessages).values({
+              companyId: company.id,
+              leadId: lead.id,
+              phone: lead.phone,
+              channel: lead.channel || convo.channel || 'whatsapp',
+              direction,
+              content: m.body || m.subject || '',
+              messageType: 'text',
+              sentBy,
+              externalId,
+              createdAt: m.sent_at ? new Date(m.sent_at) : new Date(),
+            }).onConflictDoNothing()
+          }
+        }
+      }
+
+      // Re-consulta mensagens após sync sob demanda
+      messages = await db
+        .select()
+        .from(whatsappMessages)
+        .where(
+          and(
+            or(
+              eq(whatsappMessages.leadId, id),
+              eq(whatsappMessages.phone, lead.phone),
+              sql`right(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g'), 9) = right(regexp_replace(${lead.phone}, '\\D', '', 'g'), 9)`
+            ),
+            eq(whatsappMessages.companyId, company.id)
+          )
+        )
+        .orderBy(asc(whatsappMessages.createdAt))
+        .limit(300)
+    } catch {
+      // Ignora erro de fallback silenciosamente
+    }
+  }
+
+  const lastInbound = [...messages].reverse().find(m => m.direction === 'inbound')
+  const lastOutbound = [...messages].reverse().find(m => m.direction === 'outbound')
+  const lastMsg = messages[messages.length - 1]
 
   return NextResponse.json({
     lead: {
@@ -50,6 +137,9 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
       trackingSource: lead.trackingSource,
       utmCampaign: lead.utmCampaign,
       createdAt: lead.createdAt,
+      lastMessageAt: lastMsg?.createdAt?.toISOString() ?? null,
+      lastInboundAt: lastInbound?.createdAt?.toISOString() ?? null,
+      lastOutboundAt: lastOutbound?.createdAt?.toISOString() ?? null,
     },
     messages: messages.map(m => ({
       id: m.id,
