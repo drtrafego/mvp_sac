@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useSearchParams } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard,
   Receipt,
@@ -17,7 +17,6 @@ import {
   Building2,
   BarChart3,
   Columns3,
-  Bot,
   Zap,
   Webhook,
   Radio,
@@ -26,7 +25,6 @@ import {
   FileCheck,
   Send,
   ListOrdered,
-  User,
   ShieldCheck,
 } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
@@ -35,17 +33,9 @@ import { cn } from '@/lib/utils'
 
 export const mainNav = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { label: 'Pipeline', href: '/pipeline', icon: Columns3 },
-  { label: 'Inbox', href: '/inbox', icon: MessageSquare },
-  { label: 'Leads', href: '/leads', icon: Users },
-]
-
-export const botsNav = [
-  { label: 'AutonomIA', href: '/?bot=autonomia', botId: 'autonomia', icon: Bot, badge: 'IA' },
-  { label: 'Bella', href: '/?bot=bella', botId: 'bella', icon: Bot, badge: 'IA' },
-  { label: 'Casal do Tráfego', href: '/?bot=casal-do-trafego', botId: 'casal-do-trafego', icon: Bot, badge: 'IA' },
-  { label: 'Gastão Matos', href: '/?bot=gastao-matos', botId: 'gastao-matos', icon: Bot, badge: 'IA' },
-  { label: 'Gerenciar Clientes', href: '/empresas', icon: Building2 },
+  { label: 'Pipeline Kanban', href: '/pipeline', icon: Columns3 },
+  { label: 'Inbox / Conversas', href: '/inbox', icon: MessageSquare },
+  { label: 'Leads Recentes', href: '/leads', icon: Users },
 ]
 
 export const analyticsNav = [
@@ -70,9 +60,9 @@ export const automationNav = [
 ]
 
 export const bottomNav = [
-  { label: 'Biblioteca', href: '/biblioteca', icon: BookOpen },
   { label: 'Webhooks Log', href: '/webhooks-log', icon: Webhook },
-  { label: 'Configurações', href: '/configuracoes', icon: Settings },
+  { label: 'Biblioteca', href: '/biblioteca', icon: BookOpen },
+  { label: 'Configurações & Contas', href: '/configuracoes', icon: Settings },
 ]
 
 interface SidebarProps {
@@ -97,7 +87,7 @@ export function NavItem({
       href={href}
       title={label}
       className={cn(
-        'nav-item focus-ring group relative flex items-center justify-between px-3 py-2.5 lg:py-[6px] rounded-[var(--r-md)]',
+        'nav-item focus-ring group relative flex items-center justify-between px-3 py-2.5 lg:py-[6.5px] rounded-[var(--r-md)]',
         'text-[0.8125rem] transition-colors duration-150 ease-out cursor-pointer',
         isActive
           ? 'bg-[var(--line-subtle)] text-fg font-medium'
@@ -129,26 +119,36 @@ export function NavItem({
 export function SidebarNavContent({
   hideMain = false,
   className,
+  isAdmin,
 }: {
   hideMain?: boolean
   className?: string
+  isAdmin?: boolean
 }) {
   const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const currentBot = searchParams.get('bot')
 
-  const isActive = (href: string, botId?: string) => {
-    if (botId) {
-      return pathname === '/' && currentBot === botId
-    }
-    if (href === '/') {
-      return pathname === '/' && !currentBot
-    }
-    return pathname.startsWith(href)
-  }
+  const isActive = (href: string) =>
+    href === '/' ? pathname === '/' : pathname.startsWith(href)
 
   return (
     <nav className={cn('scroll-thin min-h-0 overflow-y-auto px-2.5 py-3 space-y-4', className)}>
+      {/* Seção Super Admin (Gestão de Empresas SaaS) */}
+      {isAdmin && (
+        <div className="space-y-0.5">
+          <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-amber-400/90 flex items-center justify-between">
+            <span>Gestão SaaS (Super Admin)</span>
+            <span className="text-[9px] text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">Master</span>
+          </p>
+          <NavItem
+            label="Empresas & Clientes"
+            href="/empresas"
+            icon={Building2}
+            isActive={isActive('/empresas')}
+            badge="Admin"
+          />
+        </div>
+      )}
+
       {/* 1. Atendimento & Pipeline */}
       {!hideMain && (
         <div className="space-y-0.5">
@@ -161,18 +161,7 @@ export function SidebarNavContent({
         </div>
       )}
 
-      {/* 2. Clientes & Bots (SaaS Multi-tenant) */}
-      <div className="space-y-0.5">
-        <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint flex items-center justify-between">
-          <span>Clientes & Bots</span>
-          <span className="text-[9px] text-brand-ink font-semibold">SaaS</span>
-        </p>
-        {botsNav.map(({ label, href, icon, botId, badge }) => (
-          <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href, botId)} badge={badge} />
-        ))}
-      </div>
-
-      {/* 3. Análise & Métricas */}
+      {/* 2. Análise & Métricas */}
       <div className="space-y-0.5">
         <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
           <span>Análise & Métricas</span>
@@ -182,17 +171,17 @@ export function SidebarNavContent({
         ))}
       </div>
 
-      {/* 4. Recuperação de Vendas */}
+      {/* 3. Recuperação de Vendas */}
       <div className="space-y-0.5">
         <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-          <span>Recuperação</span>
+          <span>Recuperação de Vendas</span>
         </p>
         {recoveryNav.map(({ label, href, icon }) => (
           <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} />
         ))}
       </div>
 
-      {/* 5. API Oficial & Automação */}
+      {/* 4. API Oficial & Automação */}
       <div className="space-y-0.5">
         <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
           <span>API Oficial & Automação</span>
@@ -202,10 +191,10 @@ export function SidebarNavContent({
         ))}
       </div>
 
-      {/* 6. Sistema */}
+      {/* 5. Sistema */}
       <div className="space-y-0.5">
         <p className="nav-group-label px-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-fg-faint">
-          <span>Sistema</span>
+          <span>Sistema & Configurações</span>
         </p>
         {bottomNav.map(({ label, href, icon }) => (
           <NavItem key={href} label={label} href={href} icon={icon} isActive={isActive(href)} />
@@ -219,7 +208,7 @@ export function SidebarNavContent({
 export function SidebarFooter({ isAdmin }: SidebarProps) {
   const user = useUser()
 
-  const displayName = user?.displayName || user?.primaryEmail?.split('@')[0] || 'Operador'
+  const displayName = user?.displayName || user?.primaryEmail?.split('@')[0] || 'Usuário'
   const email = user?.primaryEmail || 'Autenticado via Stack Auth'
 
   return (
@@ -239,7 +228,7 @@ export function SidebarFooter({ isAdmin }: SidebarProps) {
               <span className="text-micro font-bold text-fg truncate">{displayName}</span>
               {isAdmin && (
                 <span className="text-[9px] uppercase font-bold text-amber-400 bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">
-                  Admin
+                  Super Admin
                 </span>
               )}
             </div>
@@ -249,14 +238,16 @@ export function SidebarFooter({ isAdmin }: SidebarProps) {
       )}
 
       <div className="space-y-0.5">
-        <Link
-          href="/empresas"
-          title="Painel de Empresas / Clientes"
-          className="nav-item focus-ring flex items-center gap-2.5 px-3 py-2 rounded-[var(--r-md)] text-[0.8125rem] font-medium text-[var(--st-atencao)] hover:bg-[var(--line-subtle)] transition-colors duration-150 ease-out w-full cursor-pointer"
-        >
-          <Building2 size={15} className="shrink-0" />
-          <span className="nav-label">🏢 Trocar Empresa</span>
-        </Link>
+        {isAdmin && (
+          <Link
+            href="/empresas"
+            title="Painel de Todas as Empresas / Clientes"
+            className="nav-item focus-ring flex items-center gap-2.5 px-3 py-2 rounded-[var(--r-md)] text-[0.8125rem] font-medium text-[var(--st-atencao)] hover:bg-[var(--line-subtle)] transition-colors duration-150 ease-out w-full cursor-pointer"
+          >
+            <Building2 size={15} className="shrink-0" />
+            <span className="nav-label">🏢 Alternar Empresa</span>
+          </Link>
+        )}
         <ThemeToggle />
         <button
           onClick={() => user?.signOut()}
@@ -298,10 +289,9 @@ export function Sidebar({ isAdmin }: SidebarProps) {
         <SidebarBrand />
       </div>
 
-      <SidebarNavContent />
+      <SidebarNavContent isAdmin={isAdmin} />
 
       <SidebarFooter isAdmin={isAdmin} />
     </aside>
   )
 }
-

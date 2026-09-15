@@ -72,7 +72,7 @@ export function MobileTabBar({ isAdmin }: MobileTabBarProps) {
       </nav>
 
       <Sheet open={open} onOpenChange={setOpen} side="right" title="Menu">
-        <SidebarNavContent hideMain />
+        <SidebarNavContent hideMain isAdmin={isAdmin} />
         <SidebarFooter isAdmin={isAdmin} />
       </Sheet>
     </>

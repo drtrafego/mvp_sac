@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic'
 import Link from 'next/link'
 import { db } from '@/lib/db'
 import { recoveryLeads, messageJobs } from '@/lib/db/schema'
-import { eq, count, and, desc, sql, gte, lte, lt } from 'drizzle-orm'
+import { eq, count, and, desc, sql, gte, lte } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import {
   Users,
@@ -19,19 +19,16 @@ import {
   ArrowUpRight,
   ArrowUp,
   ArrowDown,
-  Bot,
   Sparkles,
   Mail,
-  ShieldCheck,
   Columns3,
-  Layers,
   Clock,
   ThumbsUp,
   Activity,
   Globe,
   Radio,
-  BarChart2,
   ExternalLink,
+  Building2,
 } from 'lucide-react'
 import { Suspense } from 'react'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
@@ -103,13 +100,12 @@ function tint(cssVar: string, pct: number): string {
 }
 
 interface PageProps {
-  searchParams: Promise<{ period?: string; from?: string; to?: string; bot?: string }>
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>
 }
 
 export default async function DashboardPage({ searchParams }: PageProps) {
   const [company, params] = await Promise.all([requireCompany(), searchParams])
   const cid = company.id
-  const selectedBot = params.bot || 'all'
 
   const period = params.period ?? '30d'
   const now = new Date()
@@ -179,7 +175,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             and(
               eq(recoveryLeads.companyId, cid),
               gte(recoveryLeads.createdAt, prevFrom),
-              lt(recoveryLeads.createdAt, fromDate),
+              lte(recoveryLeads.createdAt, fromDate),
             ),
           )
       : Promise.resolve([{ recoveredValueCents: 0 }]),
@@ -190,7 +186,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const recoveryTotal = (leadStats?.boleto ?? 0) + (leadStats?.pix ?? 0) + (leadStats?.carrinho ?? 0) + (leadStats?.cartao ?? 0)
   const conversionRate = recoveryTotal > 0 ? ((recoveredCount / recoveryTotal) * 100).toFixed(1) : '0.0'
 
-  const kanbanLeads: KanbanLead[] = recentLeads.map((l, index) => {
+  const kanbanLeads: KanbanLead[] = recentLeads.map((l) => {
     let stage = 'novo_contato'
     if (l.status === 'converted' || l.eventType === 'compra_aprovada') {
       stage = 'fechado'
@@ -201,9 +197,6 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     } else if (l.priority && l.priority > 1) {
       stage = 'agendado'
     }
-
-    const agentList = ['AutonomIA', 'Bella', 'Casal do Tráfego', 'Gastão Matos']
-    const assignedAgent = agentList[index % agentList.length]
 
     return {
       id: l.id,
@@ -216,7 +209,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       platform: l.platform,
       status: l.status,
       stage,
-      agentName: assignedAgent,
+      agentName: 'AutonomIA',
       channel: ((l.rawPayload as any)?.channel as any) || 'whatsapp',
       updatedAt: l.updatedAt,
     }
@@ -257,74 +250,26 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
   // Indicadores de Eficiência Operacional do SAC Hermes
   const operationalSLA = [
-    { label: 'TMR (1ª Resposta)', value: '1.8 min', icon: Clock, note: 'Meta: < 2 min', tag: 'Excelente', isGood: true },
-    { label: 'TMT (Tratativa)', value: '14.2 min', icon: Activity, note: 'Tempo de resolução', tag: 'Ágil', isGood: true },
-    { label: 'FCR (1º Contato)', value: '78.4%', icon: ThumbsUp, note: 'Resolvido no 1º contato', tag: 'Alto', isGood: true },
-    { label: 'CSAT (Satisfação)', value: '94.2%', icon: Sparkles, note: '328 avaliações ★', tag: 'Excelente', isGood: true },
-  ]
-
-  // Bots como Clientes SaaS Multi-Tenant
-  const botsAsClients = [
-    {
-      id: 'autonomia',
-      name: 'AutonomIA',
-      role: 'Recuperador de Vendas & Checkout',
-      model: 'Gemini 2.5 Pro',
-      status: 'Online',
-      leadsCount: 412,
-      conversion: '34.2%',
-      channel: 'WhatsApp Meta API',
-      color: '#b8f35a',
-    },
-    {
-      id: 'bella',
-      name: 'Bella',
-      role: 'Atendimento Dúvidas & Cartão',
-      model: 'Claude 3.5 Sonnet',
-      status: 'Online',
-      leadsCount: 287,
-      conversion: '28.6%',
-      channel: 'WhatsApp & Instagram',
-      color: '#3987e5',
-    },
-    {
-      id: 'casal-do-trafego',
-      name: 'Casal do Tráfego',
-      role: 'Mentoria & Boas-Vindas VIP',
-      model: 'Gemini 2.5 Pro',
-      status: 'Online',
-      leadsCount: 194,
-      conversion: '41.8%',
-      channel: 'WhatsApp & Instagram',
-      color: '#eab308',
-    },
-    {
-      id: 'gastao-matos',
-      name: 'Gastão Matos',
-      role: 'Suporte Técnico & Pós-Venda',
-      model: 'GPT-4o',
-      status: 'Online',
-      leadsCount: 142,
-      conversion: '22.4%',
-      channel: 'WhatsApp & Brevo Email',
-      color: '#a855f7',
-    },
+    { label: 'TMR (1ª Resposta)', value: '1.8 min', icon: Clock, note: 'Meta: < 2 min', tag: 'Excelente' },
+    { label: 'TMT (Tratativa)', value: '14.2 min', icon: Activity, note: 'Tempo de resolução', tag: 'Ágil' },
+    { label: 'FCR (1º Contato)', value: '78.4%', icon: ThumbsUp, note: 'Resolvido no 1º contato', tag: 'Alto' },
+    { label: 'CSAT (Satisfação)', value: '94.2%', icon: Sparkles, note: '328 avaliações ★', tag: 'Excelente' },
   ]
 
   return (
     <div className="flex flex-col gap-[var(--space-section)]">
-      {/* 1. Cabeçalho Unificado SAC Multiagente & Seletor de Bot SaaS */}
+      {/* 1. Cabeçalho da Empresa Ativa & Filtro de Datas da Home */}
       <div className="rise rise-1 flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
-                <Sparkles size={12} />
-                SAC Hermes Multiagente SaaS
+                <Building2 size={12} />
+                Empresa: {company.name}
               </span>
               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                4 Bots Ativos Conectados
+                SaaS Ativo · /{company.slug}
               </span>
             </div>
             <h1 className="text-h1 text-fg">Central de Atendimento & Vendas</h1>
@@ -335,38 +280,6 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           <Suspense fallback={null}>
             <DashboardPeriodFilter />
           </Suspense>
-        </div>
-
-        {/* Barra de Filtro Rápido de Bots / Clientes SaaS */}
-        <div className="flex flex-wrap items-center gap-2 p-2 bg-surface-raised border border-line-subtle rounded-xl text-micro">
-          <span className="font-semibold text-fg flex items-center gap-1 mr-1">
-            <Bot size={13} className="text-brand-ink" />
-            Filtrar Cliente / Bot:
-          </span>
-          <Link
-            href="/"
-            className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
-              selectedBot === 'all'
-                ? 'bg-brand-solid text-black font-bold shadow-sm'
-                : 'text-fg-subtle hover:text-fg hover:bg-surface-overlay'
-            }`}
-          >
-            Todos os Bots (Visão Geral)
-          </Link>
-          {botsAsClients.map((b) => (
-            <Link
-              key={b.id}
-              href={`/?bot=${b.id}`}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-all ${
-                selectedBot === b.id
-                  ? 'bg-brand-solid text-black font-bold shadow-sm'
-                  : 'text-fg-subtle hover:text-fg hover:bg-surface-overlay'
-              }`}
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              {b.name}
-            </Link>
-          ))}
         </div>
 
         {/* Canais e Plataformas Conectadas */}
@@ -464,7 +377,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           </h3>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-[var(--space-gutter)]">
-          {operationalSLA.map(({ label, value, icon: Icon, note, tag, isGood }) => (
+          {operationalSLA.map(({ label, value, icon: Icon, note, tag }) => (
             <div
               key={label}
               className="card bg-surface-raised p-3.5 flex flex-col justify-between border border-line-subtle rounded-xl"
@@ -487,79 +400,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* 4. Clientes / Bots SaaS Multi-Tenant Overview */}
-      <div className="rise rise-3 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-h2 text-fg flex items-center gap-2">
-              <Bot size={18} className="text-brand-ink" />
-              Clientes & Agentes Conectados (SaaS Multi-Tenant)
-            </h2>
-            <p className="text-micro text-fg-subtle">
-              Cada bot atua como um cliente isolado com sua própria IA, canais e taxa de conversão.
-            </p>
-          </div>
-          <Link
-            href="/empresas"
-            className="text-micro font-semibold text-brand-ink hover:underline flex items-center gap-1"
-          >
-            Gerenciar Clientes <ArrowUpRight size={13} />
-          </Link>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-[var(--space-gutter)]">
-          {botsAsClients.map((bot) => (
-            <div
-              key={bot.id}
-              className="card bg-surface-raised border border-line-subtle p-4 rounded-xl flex flex-col justify-between space-y-3 hover:border-brand-ink/40 transition-colors"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-surface-inset border border-line-subtle flex items-center justify-center">
-                    <Bot size={16} className="text-brand-ink" />
-                  </div>
-                  <div>
-                    <h4 className="text-body font-bold text-fg">{bot.name}</h4>
-                    <p className="text-[11px] text-fg-subtle">{bot.model}</p>
-                  </div>
-                </div>
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  {bot.status}
-                </span>
-              </div>
-
-              <div className="space-y-1.5 text-micro pt-2 border-t border-line-subtle">
-                <div className="flex items-center justify-between">
-                  <span className="text-fg-subtle">Função:</span>
-                  <span className="text-fg font-medium truncate max-w-[130px]">{bot.role}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-fg-subtle">Atendimentos:</span>
-                  <span className="num font-bold text-fg">{bot.leadsCount}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-fg-subtle">Conversão:</span>
-                  <span className="num font-bold text-brand-ink">{bot.conversion}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-fg-subtle">Canal:</span>
-                  <span className="text-[11px] text-fg-muted">{bot.channel}</span>
-                </div>
-              </div>
-
-              <Link
-                href={`/?bot=${bot.id}`}
-                className="w-full text-center text-micro font-semibold py-1.5 rounded-lg bg-surface-inset hover:bg-brand-glow text-fg-subtle hover:text-black hover:bg-brand-solid transition-all"
-              >
-                Ver Dashboard de {bot.name}
-              </Link>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 5. Cards de eventos de checkout com links diretos */}
+      {/* 4. Cards de eventos de checkout com links diretos */}
       <div className="rise rise-3 flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <p className="text-label uppercase text-fg-subtle font-bold">Eventos de Checkout & Recuperação</p>
@@ -588,7 +429,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* 6. Gráficos de Canais & Origens de Tráfego do SAC */}
+      {/* 5. Gráficos de Canais & Origens de Tráfego do SAC */}
       <div className="rise rise-4 grid grid-cols-1 md:grid-cols-2 gap-[var(--space-gutter)]">
         {/* Distribuição por Canal de Atendimento */}
         <div className="card-section p-[var(--space-card)] flex flex-col justify-between">
@@ -706,7 +547,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* 7. Pipeline de Atendimento (Kanban Hermes Interativo com Edição de Modal) */}
+      {/* 6. Pipeline de Atendimento (Kanban Hermes Interativo com Edição de Modal) */}
       <div className="rise rise-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div>
@@ -715,7 +556,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               Pipeline de Atendimento (Kanban)
             </h2>
             <p className="text-micro text-fg-subtle">
-              Arraste os contatos entre as etapas ou clique em qualquer card para editar dados, agente responsável ou abrir WhatsApp.
+              Arraste os contatos entre as etapas ou clique em qualquer card para editar dados, notas ou abrir WhatsApp.
             </p>
           </div>
           <Link
@@ -728,7 +569,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         <KanbanBoard initialLeads={kanbanLeads} />
       </div>
 
-      {/* 8. Fila de mensagens em tempo real */}
+      {/* 7. Fila de mensagens em tempo real */}
       <div className="rise rise-5 card-section p-[var(--space-card)]">
         <div className="flex items-center gap-2">
           <p className="text-label uppercase text-fg-subtle">Fila de Mensagens Automáticas</p>
@@ -760,7 +601,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* 9. Conversão por mensagem da sequência */}
+      {/* 8. Conversão por mensagem da sequência */}
       {conversionByMsg.length > 0 && (
         <div className="rise rise-5 card-section p-[var(--space-card)]">
           <p className="text-label uppercase text-fg-subtle mb-4">
@@ -786,7 +627,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       )}
 
-      {/* 10. Leads recentes com disparo de WhatsApp */}
+      {/* 9. Leads recentes com disparo de WhatsApp */}
       <div className="rise rise-6 card-section overflow-hidden">
         <div className="flex items-center justify-between border-b border-line-subtle px-5 py-4">
           <div>
