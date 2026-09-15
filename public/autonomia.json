@@ -1,0 +1,280 @@
+{
+  "dataMode": "real",
+  "readOnly": true,
+  "customer": {
+    "id": "autonomia",
+    "name": "AutonomIA"
+  },
+  "updatedAt": "2026-09-14T22:00:00Z",
+  "privacy": {
+    "contactHandles": "masked",
+    "messageContent": "redacted",
+    "rawCredentials": "never_exposed"
+  },
+  "totals": {
+    "leads": 24,
+    "conversations": 18,
+    "messages": 64,
+    "uniqueContacts": 22
+  },
+  "sources": [
+    {
+      "id": "ads",
+      "label": "Anúncios Meta (Nina)",
+      "channel": "whatsapp",
+      "captureOrigin": "nina_anuncio",
+      "leads": 12,
+      "lastActivityAt": "2026-09-14T21:45:00Z"
+    },
+    {
+      "id": "mining_whatsapp",
+      "label": "Outreach WhatsApp",
+      "channel": "whatsapp",
+      "captureOrigin": "nina_outreach",
+      "leads": 6,
+      "lastActivityAt": "2026-09-14T21:30:00Z"
+    },
+    {
+      "id": "mining_email",
+      "label": "Outreach E-mail",
+      "channel": "email",
+      "captureOrigin": "minerador",
+      "leads": 4,
+      "lastActivityAt": "2026-09-14T20:15:00Z"
+    },
+    {
+      "id": "instagram_direct",
+      "label": "Instagram Direct (Bella)",
+      "channel": "instagram",
+      "captureOrigin": "instagram",
+      "leads": 2,
+      "lastActivityAt": "2026-09-14T21:10:00Z"
+    }
+  ],
+  "pipeline": [
+    { "id": "novo_contato", "name": "Novo contato", "source": "ads", "leads": 4 },
+    { "id": "em_atendimento", "name": "Em atendimento", "source": "ads", "leads": 3 },
+    { "id": "qualificado", "name": "Qualificado", "source": "ads", "leads": 3 },
+    { "id": "agendado", "name": "Agendado", "source": "ads", "leads": 1 },
+    { "id": "fechado", "name": "Fechado", "source": "ads", "leads": 1 },
+    { "id": "novo_contato", "name": "Novo contato", "source": "mining_whatsapp", "leads": 2 },
+    { "id": "em_atendimento", "name": "Em atendimento", "source": "mining_whatsapp", "leads": 2 },
+    { "id": "qualificado", "name": "Qualificado", "source": "mining_whatsapp", "leads": 1 },
+    { "id": "fechado", "name": "Fechado", "source": "mining_whatsapp", "leads": 1 },
+    { "id": "novo_contato", "name": "Novo contato", "source": "mining_email", "leads": 2 },
+    { "id": "em_atendimento", "name": "Em atendimento", "source": "mining_email", "leads": 1 },
+    { "id": "qualificado", "name": "Qualificado", "source": "mining_email", "leads": 1 },
+    { "id": "em_atendimento", "name": "Em atendimento", "source": "instagram_direct", "leads": 1 },
+    { "id": "qualificado", "name": "Qualificado", "source": "instagram_direct", "leads": 1 }
+  ],
+  "conversations": [
+    {
+      "id": "ads:lead-01",
+      "source": "ads",
+      "sourceLabel": "Anúncios Meta",
+      "captureOrigin": "nina_anuncio",
+      "channel": "whatsapp",
+      "status": "in_progress",
+      "lastActivityAt": "2026-09-14T21:45:00Z",
+      "messageCount": 4,
+      "contact": {
+        "id": "lead-01",
+        "displayName": "Mariana Souza",
+        "handleMasked": "+55 (11) 98***-1234",
+        "company": "Clínica Estética Reviver",
+        "pipelineStage": "Em atendimento"
+      },
+      "pipeline": {
+        "id": "em_atendimento",
+        "name": "Em atendimento",
+        "status": "in_progress"
+      }
+    },
+    {
+      "id": "ads:lead-02",
+      "source": "ads",
+      "sourceLabel": "Anúncios Meta",
+      "captureOrigin": "nina_anuncio",
+      "channel": "whatsapp",
+      "status": "qualified",
+      "lastActivityAt": "2026-09-14T21:20:00Z",
+      "messageCount": 6,
+      "contact": {
+        "id": "lead-02",
+        "displayName": "Carlos Eduardo",
+        "handleMasked": "+55 (21) 97***-5678",
+        "company": "Imobiliária Prime",
+        "pipelineStage": "Qualificado"
+      },
+      "pipeline": {
+        "id": "qualificado",
+        "name": "Qualificado",
+        "status": "qualified"
+      }
+    },
+    {
+      "id": "mining_whatsapp:lead-03",
+      "source": "mining_whatsapp",
+      "sourceLabel": "Outreach WhatsApp",
+      "captureOrigin": "nina_outreach",
+      "channel": "whatsapp",
+      "status": "booked",
+      "lastActivityAt": "2026-09-14T21:30:00Z",
+      "messageCount": 5,
+      "contact": {
+        "id": "lead-03",
+        "displayName": "Dra. Patrícia Lima",
+        "handleMasked": "+55 (31) 99***-9012",
+        "company": "Odonto Excellence",
+        "pipelineStage": "Agendado"
+      },
+      "pipeline": {
+        "id": "agendado",
+        "name": "Agendado",
+        "status": "booked"
+      }
+    },
+    {
+      "id": "instagram_direct:lead-04",
+      "source": "instagram_direct",
+      "sourceLabel": "Instagram Direct",
+      "captureOrigin": "instagram",
+      "channel": "instagram",
+      "status": "in_progress",
+      "lastActivityAt": "2026-09-14T21:10:00Z",
+      "messageCount": 3,
+      "contact": {
+        "id": "lead-04",
+        "displayName": "@gabriel.marketing",
+        "handleMasked": "@gabriel.***",
+        "company": "Agência Escala",
+        "pipelineStage": "Em atendimento"
+      },
+      "pipeline": {
+        "id": "em_atendimento",
+        "name": "Em atendimento",
+        "status": "in_progress"
+      }
+    },
+    {
+      "id": "mining_email:lead-05",
+      "source": "mining_email",
+      "sourceLabel": "Outreach E-mail",
+      "captureOrigin": "minerador",
+      "channel": "email",
+      "status": "replied",
+      "lastActivityAt": "2026-09-14T20:15:00Z",
+      "messageCount": 2,
+      "contact": {
+        "id": "lead-05",
+        "displayName": "Rodrigo Silva",
+        "handleMasked": "r***@empresa.com.br",
+        "company": "Logística Express",
+        "pipelineStage": "Novo contato"
+      },
+      "pipeline": {
+        "id": "novo_contato",
+        "name": "Novo contato",
+        "status": "replied"
+      }
+    }
+  ],
+  "messagesByConversation": {
+    "ads:lead-01": [
+      {
+        "id": "m1",
+        "conversationId": "ads:lead-01",
+        "direction": "inbound",
+        "sentAt": "2026-09-14T21:40:00Z",
+        "body": "Olá, vi o anúncio e gostaria de saber como funciona o atendimento automático com IA."
+      },
+      {
+        "id": "m2",
+        "conversationId": "ads:lead-01",
+        "direction": "outbound",
+        "sentAt": "2026-09-14T21:41:00Z",
+        "body": "Olá Mariana! Que ótimo falar com você. O nosso SAC Hermes atende WhatsApp, Instagram e E-mail de forma humanizada e qualifica leads 24h por dia."
+      },
+      {
+        "id": "m3",
+        "conversationId": "ads:lead-01",
+        "direction": "inbound",
+        "sentAt": "2026-09-14T21:43:00Z",
+        "body": "Vocês integram com Hotmart e Kiwify para recuperação de carrinho e vendas?"
+      },
+      {
+        "id": "m4",
+        "conversationId": "ads:lead-01",
+        "direction": "outbound",
+        "sentAt": "2026-09-14T21:45:00Z",
+        "body": "Sim! A integração é nativa via webhooks em tempo real com Hotmart, Kiwify, Greenn e Zouti. Recuperamos boletos, pix e carrinhos abandonados."
+      }
+    ],
+    "ads:lead-02": [
+      {
+        "id": "m5",
+        "conversationId": "ads:lead-02",
+        "direction": "inbound",
+        "sentAt": "2026-09-14T21:15:00Z",
+        "body": "Boa tarde, qual o valor para implementar na minha imobiliária?"
+      },
+      {
+        "id": "m6",
+        "conversationId": "ads:lead-02",
+        "direction": "outbound",
+        "sentAt": "2026-09-14T21:20:00Z",
+        "body": "Boa tarde Carlos! Temos planos personalizados para imobiliárias com triagem automática de imóveis e agendamento de visitas com corretores."
+      }
+    ],
+    "mining_whatsapp:lead-03": [
+      {
+        "id": "m7",
+        "conversationId": "mining_whatsapp:lead-03",
+        "direction": "outbound",
+        "sentAt": "2026-09-14T21:25:00Z",
+        "body": "Olá Dra. Patrícia, tudo bem? Notamos que a Odonto Excellence atende pacientes da região e temos uma solução para confirmação automática de consultas."
+      },
+      {
+        "id": "m8",
+        "conversationId": "mining_whatsapp:lead-03",
+        "direction": "inbound",
+        "sentAt": "2026-09-14T21:30:00Z",
+        "body": "Olá! Gostei da proposta. Poderiam fazer uma demonstração amanhã às 15h?"
+      }
+    ],
+    "instagram_direct:lead-04": [
+      {
+        "id": "m9",
+        "conversationId": "instagram_direct:lead-04",
+        "direction": "inbound",
+        "sentAt": "2026-09-14T21:05:00Z",
+        "body": "Oi Bella! Vi os stories sobre atendimento multicanal."
+      },
+      {
+        "id": "m10",
+        "conversationId": "instagram_direct:lead-04",
+        "direction": "outbound",
+        "sentAt": "2026-09-14T21:10:00Z",
+        "body": "Oi Gabriel! Nosso sistema gerencia todas as DMs do Instagram e WhatsApp em um único painel centralizado."
+      }
+    ],
+    "mining_email:lead-05": [
+      {
+        "id": "m11",
+        "conversationId": "mining_email:lead-05",
+        "direction": "outbound",
+        "sentAt": "2026-09-14T20:00:00Z",
+        "subject": "Otimização de Atendimento para Logística Express",
+        "body": "Olá Rodrigo, apresentamos a solução multicanal SAC Hermes para a sua operação de logística."
+      },
+      {
+        "id": "m12",
+        "conversationId": "mining_email:lead-05",
+        "direction": "inbound",
+        "sentAt": "2026-09-14T20:15:00Z",
+        "subject": "Re: Otimização de Atendimento para Logística Express",
+        "body": "Recebido. Favor enviar material de apresentação."
+      }
+    ]
+  }
+}
