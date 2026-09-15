@@ -16,6 +16,7 @@ import {
   BookOpen,
   Building2,
   BarChart3,
+  Columns3,
   Zap,
   Webhook,
 } from 'lucide-react'
@@ -25,6 +26,7 @@ import { cn } from '@/lib/utils'
 
 export const mainNav = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { label: 'Pipeline', href: '/pipeline', icon: Columns3 },
   { label: 'Inbox', href: '/inbox', icon: MessageSquare },
   { label: 'Leads', href: '/leads', icon: Users },
   { label: 'Analytics Vendas', href: '/analytics-vendas', icon: BarChart3 },

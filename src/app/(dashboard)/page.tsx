@@ -18,11 +18,19 @@ import {
   ArrowUpRight,
   ArrowUp,
   ArrowDown,
+  Bot,
+  Sparkles,
+  Instagram,
+  Mail,
+  ShieldCheck,
+  Columns3,
+  Layers,
 } from 'lucide-react'
 import { Suspense } from 'react'
 import { DashboardPeriodFilter } from './dashboard-period-filter'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
 import { getDateRange } from '@/lib/date-utils'
+import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
 
 const eventTypeLabels: Record<string, string> = {
   boleto: 'Boleto',
@@ -178,6 +186,35 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const recoveryTotal = (leadStats?.boleto ?? 0) + (leadStats?.pix ?? 0) + (leadStats?.carrinho ?? 0) + (leadStats?.cartao ?? 0)
   const conversionRate = recoveryTotal > 0 ? ((recoveredCount / recoveryTotal) * 100).toFixed(1) : '0.0'
 
+  const kanbanLeads: KanbanLead[] = recentLeads.map((l) => {
+    let stage = 'novo_contato'
+    if (l.status === 'converted' || l.eventType === 'compra_aprovada') {
+      stage = 'fechado'
+    } else if (l.status === 'in_progress') {
+      stage = 'em_atendimento'
+    } else if (l.eventType === 'pix' || l.eventType === 'boleto') {
+      stage = 'qualificado'
+    } else if (l.priority && l.priority > 1) {
+      stage = 'agendado'
+    }
+
+    return {
+      id: l.id,
+      name: l.name,
+      phone: l.phone,
+      email: l.email,
+      productName: l.productName,
+      productValue: l.productValue,
+      eventType: l.eventType,
+      platform: l.platform,
+      status: l.status,
+      stage,
+      agentName: 'AutonomIA',
+      channel: ((l.rawPayload as any)?.channel as any) || 'whatsapp',
+      updatedAt: l.updatedAt,
+    }
+  })
+
   const recoveredCents = Number(leadStats?.recoveredValueCents ?? 0)
   const prevCents = Number(prevStats?.recoveredValueCents ?? 0)
   const money = splitMoney(recoveredCents)
@@ -213,15 +250,49 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
   return (
     <div className="flex flex-col gap-[var(--space-section)]">
-      {/* Cabeçalho */}
-      <div className="rise rise-1 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-h1 text-fg">Dashboard</h1>
-          <p className="text-body text-fg-muted mt-1">Visão geral de recuperações e mensagens</p>
+      {/* Cabeçalho Unificado SAC Multiagente */}
+      <div className="rise rise-1 flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
+                <Sparkles size={12} />
+                SAC Hermes Multiagente
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Agentes: AutonomIA, Bella, Casal do Tráfego
+              </span>
+            </div>
+            <h1 className="text-h1 text-fg">Central de Atendimento & Vendas</h1>
+            <p className="text-body text-fg-muted mt-0.5">
+              Visão geral multicanal (WhatsApp Oficial, Instagram, E-mail) integrada com Hotmart, Kiwify, Greenn e Zouti.
+            </p>
+          </div>
+          <Suspense fallback={null}>
+            <DashboardPeriodFilter />
+          </Suspense>
         </div>
-        <Suspense fallback={null}>
-          <DashboardPeriodFilter />
-        </Suspense>
+
+        {/* Canais e Plataformas Conectadas */}
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line-subtle text-micro text-fg-subtle">
+          <span className="font-semibold text-fg">Canais:</span>
+          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
+            <MessageSquare size={12} className="text-emerald-400" /> WhatsApp Meta Cloud API
+          </span>
+          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
+            <Instagram size={12} className="text-pink-400" /> Instagram Direct
+          </span>
+          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
+            <Mail size={12} className="text-blue-400" /> Brevo E-mail
+          </span>
+          <span className="mx-2 text-fg-faint">•</span>
+          <span className="font-semibold text-fg">Plataformas:</span>
+          <span className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded">Hotmart</span>
+          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">Kiwify</span>
+          <span className="text-[10px] font-bold text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">Greenn</span>
+          <span className="text-[10px] font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded">Zouti</span>
+        </div>
       </div>
 
       {/* Herói de receita mais KPIs secundários */}
@@ -315,8 +386,24 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         ))}
       </div>
 
+      {/* Pipeline de Atendimento (Kanban Hermes) */}
+      <div className="rise rise-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-h2 text-fg flex items-center gap-2">
+              <Columns3 size={18} className="text-brand-ink" />
+              Pipeline de Atendimento (Kanban)
+            </h2>
+            <p className="text-micro text-fg-subtle">
+              Arraste os contatos entre as etapas do funil de atendimento e recuperação dos agentes.
+            </p>
+          </div>
+        </div>
+        <KanbanBoard initialLeads={kanbanLeads} />
+      </div>
+
       {/* Fila de mensagens: proporção numa barra só, no lugar de quatro blocos */}
-      <div className="rise rise-4 card-section p-[var(--space-card)]">
+      <div className="rise rise-5 card-section p-[var(--space-card)]">
         <div className="flex items-center gap-2">
           <p className="text-label uppercase text-fg-subtle">Fila de Mensagens</p>
           {(jobStats?.pending ?? 0) > 0 && (
