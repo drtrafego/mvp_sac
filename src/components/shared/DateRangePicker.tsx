@@ -2,80 +2,29 @@
 
 import { useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  startOfWeek,
+  endOfWeek,
+  eachDayOfInterval,
+  addMonths,
+  subDays,
+  startOfDay,
+  isSameMonth,
+  isSameDay,
+  isWithinInterval,
+  isBefore,
+} from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-function fmtISO(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function parseISO(s: string): Date {
+const fmtISO = (d: Date) => format(d, "yyyy-MM-dd");
+const parseISO = (s: string) => {
   const [y, m, d] = s.split("-").map(Number);
   return new Date(y!, m! - 1, d!);
-}
-
-function formatLabelDate(d: Date): string {
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${String(d.getFullYear()).slice(-2)}`;
-}
-
-function startOfMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
-}
-
-function endOfMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
-}
-
-function addMonths(d: Date, n: number): Date {
-  return new Date(d.getFullYear(), d.getMonth() + n, 1);
-}
-
-function subDays(d: Date, n: number): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - n);
-}
-
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
-function isSameMonth(d1: Date, d2: Date): boolean {
-  return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth();
-}
-
-function isSameDay(d1: Date | null, d2: Date | null): boolean {
-  if (!d1 || !d2) return false;
-  return (
-    d1.getFullYear() === d2.getFullYear() &&
-    d1.getMonth() === d2.getMonth() &&
-    d1.getDate() === d2.getDate()
-  );
-}
-
-function isWithinInterval(d: Date, start: Date, end: Date): boolean {
-  const t = d.getTime();
-  const s = startOfDay(start).getTime();
-  const e = startOfDay(end).getTime();
-  return t >= s && t <= e;
-}
-
-function isBefore(d1: Date, d2: Date): boolean {
-  return startOfDay(d1).getTime() < startOfDay(d2).getTime();
-}
-
-function getMonthDays(month: Date): Date[] {
-  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
-  const startDayOfWeek = firstDay.getDay(); // 0 = Domingo
-  const startDate = new Date(month.getFullYear(), month.getMonth(), 1 - startDayOfWeek);
-
-  const days: Date[] = [];
-  for (let i = 0; i < 42; i++) {
-    days.push(new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + i));
-  }
-  return days;
-}
+};
 
 interface Props {
   from?: string; // 'yyyy-MM-dd'
@@ -104,14 +53,15 @@ function MonthGrid({
   to: Date | null;
   onPick: (d: Date) => void;
 }) {
-  const days = getMonthDays(month);
+  const gridStart = startOfWeek(startOfMonth(month), { weekStartsOn: 0 });
+  const gridEnd = endOfWeek(endOfMonth(month), { weekStartsOn: 0 });
+  const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
   const weekDays = ["D", "S", "T", "Q", "Q", "S", "S"];
-  const monthName = month.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 
   return (
     <div className="w-full max-w-[280px] sm:w-56">
       <p className="text-center text-sm font-medium text-zinc-200 capitalize mb-2">
-        {monthName}
+        {format(month, "MMMM yyyy", { locale: ptBR })}
       </p>
       <div className="grid grid-cols-7 gap-0.5 mb-1">
         {weekDays.map((w, i) => (
@@ -124,7 +74,7 @@ function MonthGrid({
           const isFrom = from && isSameDay(d, from);
           const isTo = to && isSameDay(d, to);
           const inRange =
-            from && to && isWithinInterval(d, from, to);
+            from && to && isWithinInterval(d, { start: from, end: to });
           return (
             <button
               key={d.toISOString()}
@@ -140,7 +90,7 @@ function MonthGrid({
                   : "hover:bg-zinc-700",
               ].join(" ")}
             >
-              {d.getDate()}
+              {format(d, "d")}
             </button>
           );
         })}
@@ -205,7 +155,7 @@ export default function DateRangePicker({ from, to }: Props) {
 
   const label =
     from && to
-      ? `${formatLabelDate(parseISO(from))} — ${formatLabelDate(parseISO(to))}`
+      ? `${format(parseISO(from), "dd/MM/yy")} — ${format(parseISO(to), "dd/MM/yy")}`
       : "Selecionar período";
 
   return (
