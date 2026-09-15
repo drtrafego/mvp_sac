@@ -42,6 +42,9 @@ interface SettingsData {
   uazapiBaseUrl: string
   uazapiInstanceToken: string
   notificationPhone: string
+  brevoApiKey: string
+  brevoSenderEmail: string
+  brevoSenderName: string
 }
 
 interface Member {
@@ -79,6 +82,9 @@ const defaults: SettingsData = {
   uazapiBaseUrl: '',
   uazapiInstanceToken: '',
   notificationPhone: '',
+  brevoApiKey: '',
+  brevoSenderEmail: '',
+  brevoSenderName: '',
 }
 
 function SecretInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
@@ -371,6 +377,9 @@ export default function ConfiguracoesPage() {
         uazapiBaseUrl: data.uazapiBaseUrl ?? '',
         uazapiInstanceToken: data.uazapiInstanceToken ?? '',
         notificationPhone: data.notificationPhone ?? '',
+        brevoApiKey: data.brevoApiKey ?? '',
+        brevoSenderEmail: data.brevoSenderEmail ?? '',
+        brevoSenderName: data.brevoSenderName ?? '',
       }))
   }, [])
 
@@ -566,6 +575,55 @@ export default function ConfiguracoesPage() {
           />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
             Quando chegar uma nova venda ou lead, o sistema envia uma mensagem WhatsApp para este número com o resumo do evento. Formato: DDI + DDD + número (ex: 5511999998888).
+          </p>
+        </div>
+      </section>
+
+      {/* Brevo (E-mail Transacional & Automação) */}
+      <section className="panel space-y-4 p-[var(--space-card)]">
+        <div className="flex items-center gap-2">
+          <h2 className="text-h2 text-fg">Brevo (E-mail Transacional)</h2>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+            E-mail API
+          </span>
+        </div>
+        <Separator className="bg-line-subtle" />
+        <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+          Utilizado para envio de notificações por e-mail, entrega de boletos/Pix por e-mail e sequências de e-mail marketing transacional da sua empresa.
+        </p>
+        <div className="space-y-1.5">
+          <Label>Chave de API da Brevo (API Key v3)</Label>
+          <SecretInput
+            value={form.brevoApiKey}
+            onChange={v => set('brevoApiKey', v)}
+            placeholder="xkeysib-..."
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Obtenha no painel da Brevo em: Configurações &gt; Chaves de API &gt; Gerar nova chave.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label>E-mail do Remetente (Verificado na Brevo)</Label>
+          <Input
+            value={form.brevoSenderEmail}
+            onChange={e => set('brevoSenderEmail', e.target.value)}
+            placeholder="contato@suaempresa.com.br"
+            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            O endereço de e-mail precisa estar com domínio autenticado (SPF/DKIM) na Brevo.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Nome do Remetente</Label>
+          <Input
+            value={form.brevoSenderName}
+            onChange={e => set('brevoSenderName', e.target.value)}
+            placeholder="SAC Hermes - Suporte"
+            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Nome que aparecerá para o destinatário na caixa de entrada.
           </p>
         </div>
       </section>

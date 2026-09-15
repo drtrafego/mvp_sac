@@ -35,6 +35,10 @@ export const settings = pgTable('settings', {
   uazapiBaseUrl: text('uazapi_base_url'),
   uazapiInstanceToken: text('uazapi_instance_token'),
   notificationPhone: text('notification_phone'),
+  // Brevo (E-mail transacional e notificações)
+  brevoApiKey: text('brevo_api_key'),
+  brevoSenderEmail: text('brevo_sender_email'),
+  brevoSenderName: text('brevo_sender_name'),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
 

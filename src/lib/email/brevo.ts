@@ -1,9 +1,14 @@
+import { db } from '@/lib/db'
+import { settings } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
+
 export interface SendEmailOptions {
   to: { email: string; name?: string }[]
   subject: string
   htmlContent: string
   textContent?: string
   replyTo?: { email: string; name?: string }
+  companyId?: number
 }
 
 /**
@@ -15,15 +20,31 @@ export async function sendBrevoEmail({
   htmlContent,
   textContent,
   replyTo,
+  companyId,
 }: SendEmailOptions) {
-  const apiKey = process.env.BREVO_API_KEY
-  if (!apiKey) {
-    console.warn('[Brevo] BREVO_API_KEY não configurada nas variáveis de ambiente')
-    return { ok: false, error: 'BREVO_API_KEY_NOT_CONFIGURED' }
+  let apiKey = process.env.BREVO_API_KEY
+  let senderEmail = process.env.BREVO_FROM_EMAIL || 'contato@hermes.com.br'
+  let senderName = process.env.BREVO_FROM_NAME || 'SAC Hermes'
+
+  if (companyId) {
+    const [companySetting] = await db
+      .select({
+        brevoApiKey: settings.brevoApiKey,
+        brevoSenderEmail: settings.brevoSenderEmail,
+        brevoSenderName: settings.brevoSenderName,
+      })
+      .from(settings)
+      .where(eq(settings.companyId, companyId))
+
+    if (companySetting?.brevoApiKey) apiKey = companySetting.brevoApiKey
+    if (companySetting?.brevoSenderEmail) senderEmail = companySetting.brevoSenderEmail
+    if (companySetting?.brevoSenderName) senderName = companySetting.brevoSenderName
   }
 
-  const senderEmail = process.env.BREVO_FROM_EMAIL || 'contato@casaldotrafego.com'
-  const senderName = process.env.BREVO_FROM_NAME || 'SAC Casal do Tráfego'
+  if (!apiKey) {
+    console.warn('[Brevo] Chave de API da Brevo não configurada')
+    return { ok: false, error: 'BREVO_API_KEY_NOT_CONFIGURED' }
+  }
 
   try {
     const res = await fetch('https://api.brevo.com/v3/smtp/email', {

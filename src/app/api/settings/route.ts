@@ -58,6 +58,9 @@ export async function GET(): Promise<NextResponse> {
       uazapiBaseUrl: '',
       uazapiInstanceToken: '',
       notificationPhone: '',
+      brevoApiKey: '',
+      brevoSenderEmail: '',
+      brevoSenderName: '',
     })
   }
 
@@ -75,6 +78,9 @@ export async function GET(): Promise<NextResponse> {
     metaAccessToken: mask(row.metaAccessToken),
     metaWabaId: row.metaWabaId ?? '',
     uazapiInstanceToken: mask(row.uazapiInstanceToken),
+    brevoApiKey: mask(row.brevoApiKey),
+    brevoSenderEmail: row.brevoSenderEmail ?? '',
+    brevoSenderName: row.brevoSenderName ?? '',
   })
 }
 
@@ -104,6 +110,9 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
         uazapiBaseUrl: body.uazapiBaseUrl ?? existing.uazapiBaseUrl,
         uazapiInstanceToken: resolveSecret(body.uazapiInstanceToken, existing.uazapiInstanceToken),
         notificationPhone: body.notificationPhone ?? existing.notificationPhone,
+        brevoApiKey: resolveSecret(body.brevoApiKey, existing.brevoApiKey),
+        brevoSenderEmail: body.brevoSenderEmail ?? existing.brevoSenderEmail,
+        brevoSenderName: body.brevoSenderName ?? existing.brevoSenderName,
         updatedAt: new Date(),
       })
       .where(eq(settings.id, existing.id))
@@ -132,6 +141,9 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       uazapiBaseUrl: body.uazapiBaseUrl || null,
       uazapiInstanceToken: body.uazapiInstanceToken || null,
       notificationPhone: body.notificationPhone || null,
+      brevoApiKey: body.brevoApiKey || null,
+      brevoSenderEmail: body.brevoSenderEmail || null,
+      brevoSenderName: body.brevoSenderName || null,
       updatedAt: new Date(),
     })
     .returning()
