@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   format,
@@ -107,10 +108,15 @@ export default function DateRangePicker({ from, to }: Props) {
   const initialFrom = from ? parseISO(from) : subDays(startOfDay(new Date()), 29);
   const initialTo = to ? parseISO(to) : startOfDay(new Date());
 
+  const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   const [selFrom, setSelFrom] = useState<Date | null>(initialFrom);
   const [selTo, setSelTo] = useState<Date | null>(initialTo);
   const [leftMonth, setLeftMonth] = useState<Date>(startOfMonth(initialFrom));
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const pick = (d: Date) => {
     if (!selFrom || (selFrom && selTo)) {
@@ -169,64 +175,81 @@ export default function DateRangePicker({ from, to }: Props) {
         {label}
       </button>
 
-      {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-24 overflow-y-auto overflow-x-hidden"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setOpen(false);
-          }}
-        >
-          <div className="flex flex-col sm:flex-row max-w-[92vw] rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
-            {/* Presets */}
-            <div className="flex flex-row sm:flex-col flex-wrap gap-1 border-b sm:border-b-0 sm:border-r border-zinc-800 p-3 sm:w-40">
-              {PRESETS.map((p) => (
-                <button
-                  key={p.label}
-                  type="button"
-                  onClick={() => applyPreset(p)}
-                  className="text-left text-sm text-zinc-300 rounded-md px-2 py-1.5 hover:bg-zinc-800 transition-colors cursor-pointer"
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Calendários */}
-            <div className="p-3">
-              <div className="flex items-center justify-between mb-2">
-                <button type="button" onClick={() => setLeftMonth((m) => addMonths(m, -1))}
-                  className="p-1 rounded hover:bg-zinc-800 text-zinc-400 cursor-pointer">
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <button type="button" onClick={() => setLeftMonth((m) => addMonths(m, 1))}
-                  className="p-1 rounded hover:bg-zinc-800 text-zinc-400 cursor-pointer">
-                  <ChevronRight className="h-4 w-4" />
-                </button>
+      {mounted &&
+        open &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-start justify-center bg-black/75 backdrop-blur-xs p-4 pt-20 sm:pt-24 overflow-y-auto overflow-x-hidden"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setOpen(false);
+            }}
+          >
+            <div className="flex flex-col sm:flex-row max-w-[92vw] rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+              {/* Presets */}
+              <div className="flex flex-row sm:flex-col flex-wrap gap-1 border-b sm:border-b-0 sm:border-r border-zinc-800 p-3 sm:w-40">
+                {PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => applyPreset(p)}
+                    className="text-left text-sm text-zinc-300 rounded-md px-2 py-1.5 hover:bg-zinc-800 transition-colors cursor-pointer"
+                  >
+                    {p.label}
+                  </button>
+                ))}
               </div>
-              <div className="flex gap-4">
-                <MonthGrid month={leftMonth} from={selFrom} to={selTo} onPick={pick} />
-                <div className="hidden sm:block">
-                  <MonthGrid month={addMonths(leftMonth, 1)} from={selFrom} to={selTo} onPick={pick} />
+
+              {/* Calendários */}
+              <div className="p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setLeftMonth((m) => addMonths(m, -1))}
+                    className="p-1 rounded hover:bg-zinc-800 text-zinc-400 cursor-pointer"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeftMonth((m) => addMonths(m, 1))}
+                    className="p-1 rounded hover:bg-zinc-800 text-zinc-400 cursor-pointer"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="flex gap-4">
+                  <MonthGrid month={leftMonth} from={selFrom} to={selTo} onPick={pick} />
+                  <div className="hidden sm:block">
+                    <MonthGrid
+                      month={addMonths(leftMonth, 1)}
+                      from={selFrom}
+                      to={selTo}
+                      onPick={pick}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-zinc-800">
+                  <button
+                    type="button"
+                    onClick={() => setOpen(false)}
+                    className="text-sm text-zinc-400 px-3 py-1.5 rounded-lg hover:bg-zinc-800 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!selFrom || !selTo}
+                    onClick={() => selFrom && selTo && apply(selFrom, selTo)}
+                    className="text-sm bg-indigo-500 text-white px-4 py-1.5 rounded-lg hover:bg-indigo-600 disabled:opacity-40 cursor-pointer font-medium"
+                  >
+                    Aplicar
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-zinc-800">
-                <button type="button" onClick={() => setOpen(false)}
-                  className="text-sm text-zinc-400 px-3 py-1.5 rounded-lg hover:bg-zinc-800 cursor-pointer">
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  disabled={!selFrom || !selTo}
-                  onClick={() => selFrom && selTo && apply(selFrom, selTo)}
-                  className="text-sm bg-indigo-500 text-white px-4 py-1.5 rounded-lg hover:bg-indigo-600 disabled:opacity-40 cursor-pointer font-medium"
-                >
-                  Aplicar
-                </button>
-              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </>
   );
 }
