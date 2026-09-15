@@ -34,17 +34,19 @@ export default async function PipelinePage({ searchParams }: PageProps) {
     .orderBy(desc(recoveryLeads.createdAt))
     .limit(200)
 
-  // Mapear eventos e status para as 5 etapas do Pipeline
+  // Mapear eventos e status para as etapas do Pipeline
   const leads: KanbanLead[] = rawLeads.map((l) => {
-    let stage = 'novo_contato'
-    if (l.status === 'converted' || l.eventType === 'compra_aprovada') {
-      stage = 'fechado'
-    } else if (l.status === 'in_progress') {
-      stage = 'em_atendimento'
-    } else if (l.eventType === 'pix' || l.eventType === 'boleto') {
-      stage = 'qualificado'
-    } else if (l.priority && l.priority > 1) {
-      stage = 'agendado'
+    let stage = l.pipelineStage || 'novo_contato'
+    if (!l.pipelineStage) {
+      if (l.status === 'converted' || l.eventType === 'compra_aprovada') {
+        stage = 'fechado'
+      } else if (l.status === 'in_progress') {
+        stage = 'em_atendimento'
+      } else if (l.eventType === 'pix' || l.eventType === 'boleto') {
+        stage = 'qualificado'
+      } else if (l.priority && l.priority > 1) {
+        stage = 'agendado'
+      }
     }
 
     return {
@@ -58,26 +60,30 @@ export default async function PipelinePage({ searchParams }: PageProps) {
       platform: l.platform,
       status: l.status,
       stage,
-      agentName: 'AutonomIA',
-      channel: (l.rawPayload as any)?.channel || 'whatsapp',
+      channel: (l.rawPayload as any)?.channel || (l.channel as any) || 'whatsapp',
+      trackingSource: l.trackingSource,
+      utmCampaign: l.utmCampaign,
+      utmContent: l.utmContent,
+      followUpDate: l.followUpDate ? l.followUpDate.toISOString() : null,
+      followUpNote: l.followUpNote,
       updatedAt: l.updatedAt,
     }
   })
 
   return (
-    <div className="flex flex-col gap-[var(--space-section)]">
+    <div className="flex flex-col gap-3 h-[calc(100vh-140px)]">
       {/* Cabeçalho do Pipeline */}
-      <div className="rise rise-1 flex flex-wrap items-center justify-between gap-4">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
               <Columns3 size={12} />
-              Empresa: {company.name} · SAC Multiagente v2
+              Empresa: {company.name} · Funil de Vendas
             </span>
           </div>
           <h1 className="text-h1 text-fg">Pipeline de Atendimento & Vendas</h1>
           <p className="text-body text-fg-muted mt-0.5">
-            Quadro Kanban do funil de vendas, etapas de recuperação e atendimento dos agentes AutonomIA & Casal do Tráfego.
+            Quadro Kanban com etapas personalizadas, lembretes de follow-up e origem das campanhas.
           </p>
         </div>
         <Suspense fallback={null}>
@@ -85,9 +91,9 @@ export default async function PipelinePage({ searchParams }: PageProps) {
         </Suspense>
       </div>
 
-      {/* Kanban Board */}
-      <div className="rise rise-2">
-        <KanbanBoard initialLeads={leads} />
+      {/* Kanban Board Full Height */}
+      <div className="flex-1 min-h-0">
+        <KanbanBoard initialLeads={leads} companySlug={company.slug} />
       </div>
     </div>
   )

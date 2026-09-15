@@ -179,15 +179,17 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const conversionRate = recoveryTotal > 0 ? ((recoveredCount / recoveryTotal) * 100).toFixed(1) : '0.0'
 
   const kanbanLeads: KanbanLead[] = recentLeads.map((l) => {
-    let stage = 'novo_contato'
-    if (l.status === 'converted' || l.eventType === 'compra_aprovada') {
-      stage = 'fechado'
-    } else if (l.status === 'in_progress') {
-      stage = 'em_atendimento'
-    } else if (l.eventType === 'pix' || l.eventType === 'boleto') {
-      stage = 'qualificado'
-    } else if (l.priority && l.priority > 1) {
-      stage = 'agendado'
+    let stage = l.pipelineStage || 'novo_contato'
+    if (!l.pipelineStage) {
+      if (l.status === 'converted' || l.eventType === 'compra_aprovada') {
+        stage = 'fechado'
+      } else if (l.status === 'in_progress') {
+        stage = 'em_atendimento'
+      } else if (l.eventType === 'pix' || l.eventType === 'boleto') {
+        stage = 'qualificado'
+      } else if (l.priority && l.priority > 1) {
+        stage = 'agendado'
+      }
     }
 
     return {
@@ -201,8 +203,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       platform: l.platform,
       status: l.status,
       stage,
-      agentName: 'AutonomIA',
-      channel: ((l.rawPayload as any)?.channel as any) || 'whatsapp',
+      channel: (l.rawPayload as any)?.channel || (l.channel as any) || 'whatsapp',
+      trackingSource: l.trackingSource,
+      utmCampaign: l.utmCampaign,
+      utmContent: l.utmContent,
+      followUpDate: l.followUpDate ? l.followUpDate.toISOString() : null,
+      followUpNote: l.followUpNote,
       updatedAt: l.updatedAt,
     }
   })
@@ -421,7 +427,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </p>
           </div>
         </div>
-        <KanbanBoard initialLeads={kanbanLeads} />
+        <KanbanBoard initialLeads={kanbanLeads} companySlug={company.slug} />
       </div>
 
       {/* Fila de mensagens: proporção numa barra só, no lugar de quatro blocos */}

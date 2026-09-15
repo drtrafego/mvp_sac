@@ -20,6 +20,9 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS converted_by_job_id integer`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS converted_from text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS priority integer DEFAULT 0`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS follow_up_date timestamp`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS follow_up_note text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS pipeline_stage text`,
 
           // whatsapp_messages
           client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS channel text DEFAULT 'whatsapp'`,
@@ -54,6 +57,26 @@ function ensureSchema(client: any): Promise<void> {
           client`INSERT INTO companies (name, slug, plan) VALUES ('Dr. Lucas', 'drlucas', 'pro') ON CONFLICT (slug) DO NOTHING`,
           // Garante registro em settings para cada empresa
           client`INSERT INTO settings (company_id) SELECT id FROM companies ON CONFLICT (company_id) DO NOTHING`,
+
+          // Garante os proprietários como administradores ativos de todas as empresas
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'amandafelixgolden@gmail.com', 'Amanda Felix', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'amandafelixgolden@gmail.com'
+            )
+          `,
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'dr.trafego@gmail.com', 'Dr. Tráfego', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'dr.trafego@gmail.com'
+            )
+          `,
         ])
 
         // Dispara sincronização automática dos agentes do Supabase em segundo plano

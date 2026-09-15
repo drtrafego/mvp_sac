@@ -28,27 +28,44 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
         createdAt: recoveryLeads.createdAt,
         lastMessage: sql<string | null>`(
           SELECT wm.content FROM whatsapp_messages wm
-          WHERE wm.phone = ${recoveryLeads.phone} AND wm.company_id = ${companyId}
+          WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9))
+            AND wm.company_id = ${companyId}
           ORDER BY wm.created_at DESC LIMIT 1
         )`,
         lastDirection: sql<string | null>`(
           SELECT wm.direction FROM whatsapp_messages wm
-          WHERE wm.phone = ${recoveryLeads.phone} AND wm.company_id = ${companyId}
+          WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9))
+            AND wm.company_id = ${companyId}
           ORDER BY wm.created_at DESC LIMIT 1
         )`,
         lastMessageAt: sql<string | null>`(
           SELECT wm.created_at::text FROM whatsapp_messages wm
-          WHERE wm.phone = ${recoveryLeads.phone} AND wm.company_id = ${companyId}
+          WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9))
+            AND wm.company_id = ${companyId}
+          ORDER BY wm.created_at DESC LIMIT 1
+        )`,
+        lastInboundAt: sql<string | null>`(
+          SELECT wm.created_at::text FROM whatsapp_messages wm
+          WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9))
+            AND wm.company_id = ${companyId}
+            AND wm.direction = 'inbound'
+          ORDER BY wm.created_at DESC LIMIT 1
+        )`,
+        lastOutboundAt: sql<string | null>`(
+          SELECT wm.created_at::text FROM whatsapp_messages wm
+          WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9))
+            AND wm.company_id = ${companyId}
+            AND wm.direction = 'outbound'
           ORDER BY wm.created_at DESC LIMIT 1
         )`,
         unread: sql<number>`(
           SELECT COUNT(*) FROM whatsapp_messages wm
-          WHERE wm.phone = ${recoveryLeads.phone}
+          WHERE (wm.lead_id = ${recoveryLeads.id} OR wm.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9))
             AND wm.company_id = ${companyId}
             AND wm.direction = 'inbound'
             AND wm.created_at > COALESCE((
               SELECT wm2.created_at FROM whatsapp_messages wm2
-              WHERE wm2.phone = ${recoveryLeads.phone}
+              WHERE (wm2.lead_id = ${recoveryLeads.id} OR wm2.phone = ${recoveryLeads.phone} OR right(regexp_replace(wm2.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9))
                 AND wm2.company_id = ${companyId}
                 AND wm2.direction = 'outbound'
               ORDER BY wm2.created_at DESC LIMIT 1
@@ -58,15 +75,52 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
       .from(recoveryLeads)
       .where(eq(recoveryLeads.companyId, companyId))
       .orderBy(desc(recoveryLeads.updatedAt))
-      .limit(150)
+      .limit(200)
 
-    return leads.map(l => ({
+    const mapped = leads.map(l => ({
       ...l,
       botPaused: l.botPaused ?? false,
       botPausedAt: l.botPausedAt ? l.botPausedAt.toISOString() : null,
       createdAt: l.createdAt ? l.createdAt.toISOString() : null,
       channel: l.channel || 'whatsapp',
     }))
+
+    // Deduplicação e agrupamento consolidado por pessoa (telefone normalizado ou email)
+    const personMap = new Map<string, ConversationSummary>()
+    for (const c of mapped) {
+      const rawDigits = (c.phone || '').replace(/\D/g, '')
+      const key = rawDigits.length >= 9
+        ? `phone_${rawDigits.slice(-9)}`
+        : c.email
+        ? `email_${c.email.toLowerCase().trim()}`
+        : `raw_${c.phone}`
+
+      const existing = personMap.get(key)
+      if (!existing) {
+        personMap.set(key, { ...c })
+      } else {
+        const existingTime = existing.lastMessageAt ? new Date(existing.lastMessageAt).getTime() : 0
+        const currentTime = c.lastMessageAt ? new Date(c.lastMessageAt).getTime() : 0
+        const totalUnread = (existing.unread || 0) + (c.unread || 0)
+
+        if (currentTime > existingTime) {
+          personMap.set(key, {
+            ...c,
+            unread: totalUnread,
+            name: c.name || existing.name,
+          })
+        } else {
+          existing.unread = totalUnread
+          if (!existing.name && c.name) existing.name = c.name
+        }
+      }
+    }
+
+    return Array.from(personMap.values()).sort((a, b) => {
+      const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0)
+      const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0)
+      return timeB - timeA
+    })
   } catch {
     return []
   }

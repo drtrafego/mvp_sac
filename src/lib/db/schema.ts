@@ -167,6 +167,11 @@ export const recoveryLeads = pgTable('recovery_leads', {
   botPausedAt: timestamp('bot_paused_at'),
   botPausedBy: text('bot_paused_by'),
 
+  // Follow-up, Lembretes e Etapa do Pipeline
+  followUpDate: timestamp('follow_up_date'),
+  followUpNote: text('follow_up_note'),
+  pipelineStage: text('pipeline_stage'),
+
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => [

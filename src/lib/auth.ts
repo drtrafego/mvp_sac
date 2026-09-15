@@ -18,15 +18,15 @@ export function unauthorizedResponse() {
   return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
 }
 
-// Emails admin: env var ADMIN_EMAILS (vírgula separado) ou fallback hardcoded
 const ADMIN_EMAILS_DEFAULT = ['dr.trafego@gmail.com', 'amandafelixgolden@gmail.com']
 
 export function checkIsAdmin(email: string | null | undefined): boolean {
   if (!email) return false
-  const adminEmails = process.env.ADMIN_EMAILS
+  const envAdmins = process.env.ADMIN_EMAILS
     ? process.env.ADMIN_EMAILS.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-    : ADMIN_EMAILS_DEFAULT.map(e => e.toLowerCase())
-  return adminEmails.includes(email.toLowerCase())
+    : []
+  const allAdmins = Array.from(new Set([...ADMIN_EMAILS_DEFAULT.map(e => e.toLowerCase()), ...envAdmins]))
+  return allAdmins.includes(email.toLowerCase())
 }
 
 export async function getCurrentUser() {

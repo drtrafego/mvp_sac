@@ -46,6 +46,7 @@ export interface ConversationSummary {
   lastMessageAt: string | null
   lastInboundAt?: string | null
   lastOutboundAt?: string | null
+  createdAt?: string | null
   unread: number
 }
 

@@ -83,7 +83,38 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     .orderBy(desc(recoveryLeads.updatedAt))
     .limit(200)
 
-  let filtered = leads
+  // Deduplicação e agrupamento consolidado por pessoa
+  const personMap = new Map<string, typeof leads[0]>()
+  for (const c of leads) {
+    const rawDigits = (c.phone || '').replace(/\D/g, '')
+    const key = rawDigits.length >= 9
+      ? `phone_${rawDigits.slice(-9)}`
+      : c.email
+      ? `email_${c.email.toLowerCase().trim()}`
+      : `raw_${c.phone}`
+
+    const existing = personMap.get(key)
+    if (!existing) {
+      personMap.set(key, { ...c })
+    } else {
+      const existingTime = existing.lastMessageAt ? new Date(existing.lastMessageAt).getTime() : 0
+      const currentTime = c.lastMessageAt ? new Date(c.lastMessageAt).getTime() : 0
+      const totalUnread = (existing.unread || 0) + (c.unread || 0)
+
+      if (currentTime > existingTime) {
+        personMap.set(key, {
+          ...c,
+          unread: totalUnread,
+          name: c.name || existing.name,
+        })
+      } else {
+        existing.unread = totalUnread
+        if (!existing.name && c.name) existing.name = c.name
+      }
+    }
+  }
+
+  let filtered = Array.from(personMap.values())
 
   if (chFilter && chFilter !== 'all') {
     filtered = filtered.filter(l => {
