@@ -551,20 +551,41 @@ export function Sidebar({ isAdmin }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'sidebar-rail hidden lg:grid h-full shrink-0 border-r border-line-subtle bg-surface-panel transition-all duration-200 ease-in-out',
+        'sidebar-rail hidden lg:grid h-full shrink-0 border-r border-line-subtle bg-surface-panel transition-all duration-200 ease-in-out relative',
         collapsed ? 'w-[68px]' : 'w-[252px]',
         'grid-rows-[auto_1fr_auto]'
       )}
     >
-      <div className={cn('nav-brand h-16 flex items-center border-b border-line-subtle px-3', collapsed ? 'justify-center' : 'justify-between')}>
-        <SidebarBrand collapsed={collapsed} />
+      <div className={cn('nav-brand h-16 flex items-center border-b border-line-subtle px-3 relative', collapsed ? 'justify-center' : 'justify-between')}>
+        <div className={cn('flex items-center', collapsed ? 'justify-center w-full' : 'gap-3')}>
+          <div
+            onClick={collapsed ? toggleCollapsed : undefined}
+            className={cn(
+              'w-9 h-9 rounded-xl bg-[#CCFF00] flex items-center justify-center font-black text-black text-base shadow-sm shrink-0',
+              collapsed && 'cursor-pointer hover:opacity-90 transition-opacity'
+            )}
+            title={collapsed ? 'Clique para expandir o menu' : undefined}
+          >
+            H
+          </div>
+          {!collapsed && (
+            <div className="flex flex-col min-w-0">
+              <span className="font-bold text-fg text-sm tracking-tight leading-tight">SAC Hermes</span>
+              <span className="text-[9px] font-bold tracking-wider text-fg-subtle uppercase">CENTRAL MULTICANAL</span>
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={toggleCollapsed}
           title={collapsed ? 'Expandir Menu' : 'Recolher Menu'}
-          className="text-fg-faint hover:text-fg hover:bg-surface-raised p-1.5 rounded-lg transition-colors cursor-pointer"
+          className={cn(
+            'text-fg-faint hover:text-fg hover:bg-surface-raised p-1.5 rounded-lg transition-colors cursor-pointer shrink-0',
+            collapsed && 'absolute -right-3 top-5 bg-surface-panel border border-line-subtle rounded-full shadow-md z-30 p-1 text-fg hover:bg-surface-raised'
+          )}
         >
-          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          {collapsed ? <ChevronRight size={13} /> : <ChevronLeft size={16} />}
         </button>
       </div>
 

@@ -2,20 +2,37 @@ export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, and, gte, lte } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
-import { GitCommit, Bot, Sparkles } from 'lucide-react'
+import { GitCommit, Bot, Sparkles, Columns3 } from 'lucide-react'
+import PeriodBar from '@/components/shared/PeriodBar'
+import { resolvePeriod } from '@/lib/period'
+import { Suspense } from 'react'
 
-export default async function PipelinePage() {
-  const company = await requireCompany()
+interface PageProps {
+  searchParams: Promise<{ from?: string; to?: string; period?: string }>
+}
+
+export default async function PipelinePage({ searchParams }: PageProps) {
+  const [company, params] = await Promise.all([requireCompany(), searchParams])
+  
+  const { from, to } = resolvePeriod(params)
+  const fromDate = new Date(`${from}T00:00:00-03:00`)
+  const toDate = new Date(`${to}T23:59:59.999-03:00`)
 
   const rawLeads = await db
     .select()
     .from(recoveryLeads)
-    .where(eq(recoveryLeads.companyId, company.id))
+    .where(
+      and(
+        eq(recoveryLeads.companyId, company.id),
+        gte(recoveryLeads.createdAt, fromDate),
+        lte(recoveryLeads.createdAt, toDate),
+      )
+    )
     .orderBy(desc(recoveryLeads.createdAt))
-    .limit(100)
+    .limit(200)
 
   // Mapear eventos e status para as 5 etapas do Pipeline
   const leads: KanbanLead[] = rawLeads.map((l) => {
@@ -52,17 +69,20 @@ export default async function PipelinePage() {
       {/* Cabeçalho do Pipeline */}
       <div className="rise rise-1 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 text-micro uppercase font-bold text-brand-ink bg-brand-glow px-2 py-0.5 rounded-full border border-brand-solid/30">
-              <Sparkles size={12} />
-              SAC Multiagente v2
+          <div className="flex items-center gap-2 mb-1">
+            <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
+              <Columns3 size={12} />
+              Empresa: {company.name} · SAC Multiagente v2
             </span>
           </div>
-          <h1 className="text-h1 text-fg mt-1">Pipeline de Atendimento</h1>
-          <p className="text-body text-fg-muted">
-            Quadro Kanban do funil de vendas, etapas de recuperação e automação dos agentes Hermes.
+          <h1 className="text-h1 text-fg">Pipeline de Atendimento & Vendas</h1>
+          <p className="text-body text-fg-muted mt-0.5">
+            Quadro Kanban do funil de vendas, etapas de recuperação e atendimento dos agentes AutonomIA & Hermes.
           </p>
         </div>
+        <Suspense fallback={null}>
+          <PeriodBar from={from} to={to} />
+        </Suspense>
       </div>
 
       {/* Kanban Board */}
