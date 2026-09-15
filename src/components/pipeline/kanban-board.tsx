@@ -84,7 +84,6 @@ function getPlatformBadge(platform?: string | null) {
 export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] }) {
   const [leads, setLeads] = useState<KanbanLead[]>(() => {
     if (initialLeads.length > 0) return initialLeads
-    // Fallback com distribuição ilustrativa inicial se não houver leads ainda
     return [
       { id: 1, name: 'Lucas Andrade', phone: '5511987654321', productName: 'Mentoria Tráfego Pro', productValue: 199700, eventType: 'carrinho_abandonado', platform: 'Hotmart', stage: 'novo_contato', channel: 'whatsapp', agentName: 'AutonomIA' },
       { id: 2, name: 'Camila Rodrigues', phone: '5521998877665', productName: 'Curso Estratégia 10x', productValue: 49700, eventType: 'cartao_recusado', platform: 'Kiwify', stage: 'em_atendimento', channel: 'whatsapp', agentName: 'Bella' },
@@ -97,6 +96,11 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
   const [filterChannel, setFilterChannel] = useState<string>('all')
   const [filterAgent, setFilterAgent] = useState<string>('all')
   const [draggedId, setDraggedId] = useState<number | null>(null)
+  const [selectedLead, setSelectedLead] = useState<KanbanLead | null>(null)
+  const [modalStage, setModalStage] = useState<string>('novo_contato')
+  const [modalAgent, setModalAgent] = useState<string>('AutonomIA')
+  const [modalNotes, setModalNotes] = useState<string>('')
+  const [savedToast, setSavedToast] = useState<string | null>(null)
 
   const filteredLeads = leads.filter((item) => {
     if (filterChannel !== 'all' && item.channel !== filterChannel) return false
@@ -125,10 +129,41 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
     }
   }
 
-  const agentsList = Array.from(new Set(leads.map((l) => l.agentName || 'AutonomIA')))
+  function openEditModal(lead: KanbanLead) {
+    setSelectedLead(lead)
+    setModalStage(lead.stage)
+    setModalAgent(lead.agentName || 'AutonomIA')
+    setModalNotes('')
+  }
+
+  function handleSaveModal(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selectedLead) return
+    setLeads((prev) =>
+      prev.map((l) =>
+        l.id === selectedLead.id
+          ? { ...l, stage: modalStage, agentName: modalAgent }
+          : l
+      )
+    )
+    const name = selectedLead.name || 'Contato'
+    setSelectedLead(null)
+    setSavedToast(`Card de ${name} atualizado com sucesso!`)
+    setTimeout(() => setSavedToast(null), 3000)
+  }
+
+  const agentsList = ['AutonomIA', 'Bella', 'Casal do Tráfego', 'Gastão Matos', 'Operador Humano']
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 relative">
+      {/* Toast Notification */}
+      {savedToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#121d14] border border-[#2e4d28] text-[#86efac] px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-body font-medium animate-in fade-in slide-in-from-bottom-3">
+          <Sparkles size={16} />
+          {savedToast}
+        </div>
+      )}
+
       {/* Controles do Kanban: Filtros por Agente e Canal */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-surface-raised border border-line-subtle rounded-[var(--r-md)] p-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -147,7 +182,7 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
             >
               <option value="all">Todos os Agentes</option>
               {agentsList.map((agent) => (
-                <option key={agent} value={agent}>{agent}</option>
+                <option key={agent} value={agent} className="bg-surface-raised text-fg">{agent}</option>
               ))}
             </select>
           </div>
@@ -159,10 +194,10 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
               onChange={(e) => setFilterChannel(e.target.value)}
               className="bg-transparent text-fg text-micro font-medium focus:outline-none cursor-pointer px-1"
             >
-              <option value="all">Todos os Canais</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="instagram">Instagram</option>
-              <option value="email">E-mail</option>
+              <option value="all" className="bg-surface-raised text-fg">Todos os Canais</option>
+              <option value="whatsapp" className="bg-surface-raised text-fg">WhatsApp</option>
+              <option value="instagram" className="bg-surface-raised text-fg">Instagram</option>
+              <option value="email" className="bg-surface-raised text-fg">E-mail</option>
             </select>
           </div>
         </div>
@@ -218,7 +253,8 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
                       key={lead.id}
                       draggable
                       onDragStart={() => handleDragStart(lead.id)}
-                      className="card bg-surface-raised border border-line-subtle p-3 rounded-[var(--r-sm)] shadow-sm hover:border-brand-ink/40 transition-all cursor-grab active:cursor-grabbing space-y-2"
+                      onClick={() => openEditModal(lead)}
+                      className="card bg-surface-raised border border-line-subtle p-3 rounded-[var(--r-sm)] shadow-sm hover:border-brand-ink/60 hover:-translate-y-0.5 transition-all cursor-pointer space-y-2 group"
                     >
                       {/* Selos de Origem e Canal */}
                       <div className="flex items-center justify-between gap-1">
@@ -231,7 +267,7 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
 
                       {/* Dados do Contato */}
                       <div>
-                        <h4 className="text-body font-semibold text-fg truncate">
+                        <h4 className="text-body font-semibold text-fg truncate group-hover:text-brand-ink transition-colors">
                           {lead.name || 'Contato sem nome'}
                         </h4>
                         <p className="text-micro text-fg-subtle truncate">
@@ -251,7 +287,7 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
                       </div>
 
                       {/* Ações Rápidas */}
-                      <div className="flex items-center justify-between pt-1">
+                      <div className="flex items-center justify-between pt-1" onClick={(e) => e.stopPropagation()}>
                         {lead.phone && (
                           <a
                             href={`https://wa.me/${lead.phone.replace(/\D/g, '')}`}
@@ -264,21 +300,12 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
                           </a>
                         )}
 
-                        {/* Botão de Avançar Etapa */}
-                        <div className="flex items-center gap-0.5">
-                          {STAGES.indexOf(stage) < STAGES.length - 1 && (
-                            <button
-                              onClick={() => {
-                                const nextIndex = STAGES.indexOf(stage) + 1
-                                moveStage(lead.id, STAGES[nextIndex].id)
-                              }}
-                              title="Avançar Etapa"
-                              className="focus-ring p-1 rounded bg-surface-inset hover:bg-surface-overlay text-fg-subtle hover:text-fg transition-colors"
-                            >
-                              <ChevronRight size={13} />
-                            </button>
-                          )}
-                        </div>
+                        <button
+                          onClick={() => openEditModal(lead)}
+                          className="text-[10px] text-brand-ink bg-brand-glow px-2 py-0.5 rounded border border-brand-solid/20 hover:bg-brand-solid hover:text-black font-semibold transition-all"
+                        >
+                          ✏️ Editar
+                        </button>
                       </div>
                     </div>
                   ))
@@ -288,6 +315,116 @@ export function KanbanBoard({ initialLeads = [] }: { initialLeads: KanbanLead[] 
           )
         })}
       </div>
+
+      {/* MODAL DE EDIÇÃO DO CARD */}
+      {selectedLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-[#111518] border border-line-subtle rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-5 border-b border-line-subtle flex items-center justify-between">
+              <div>
+                <p className="text-[11px] uppercase tracking-wider text-fg-subtle font-bold">Editar Card do Pipeline</p>
+                <h3 className="text-h3 text-fg font-bold mt-0.5">{selectedLead.name || 'Contato'}</h3>
+              </div>
+              <button
+                onClick={() => setSelectedLead(null)}
+                className="text-fg-subtle hover:text-fg text-xl p-1 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveModal} className="p-5 space-y-4 overflow-y-auto">
+              <div className="grid grid-cols-2 gap-3 bg-surface-inset p-3 rounded-xl border border-line-subtle text-micro">
+                <div>
+                  <span className="text-fg-faint block uppercase">Telefone:</span>
+                  <span className="text-fg font-mono">{selectedLead.phone || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-fg-faint block uppercase">Produto:</span>
+                  <span className="text-fg font-semibold">{selectedLead.productName || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-fg-faint block uppercase">Valor:</span>
+                  <span className="text-brand-ink font-bold">{formatBRL(selectedLead.productValue)}</span>
+                </div>
+                <div>
+                  <span className="text-fg-faint block uppercase">Plataforma:</span>
+                  <span className="text-fg capitalize">{selectedLead.platform || 'SAC'}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] uppercase font-bold text-fg-subtle">Etapa do Funil</label>
+                  <select
+                    value={modalStage}
+                    onChange={(e) => setModalStage(e.target.value)}
+                    className="w-full bg-[#090c0e] border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:border-brand-ink outline-none"
+                  >
+                    {STAGES.map((s) => (
+                      <option key={s.id} value={s.id} className="bg-surface-raised">{s.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] uppercase font-bold text-fg-subtle">Agente / Bot Responsável</label>
+                  <select
+                    value={modalAgent}
+                    onChange={(e) => setModalAgent(e.target.value)}
+                    className="w-full bg-[#090c0e] border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:border-brand-ink outline-none"
+                  >
+                    {agentsList.map((ag) => (
+                      <option key={ag} value={ag} className="bg-surface-raised">{ag}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] uppercase font-bold text-fg-subtle">Notas Internas da Operação</label>
+                <textarea
+                  value={modalNotes}
+                  onChange={(e) => setModalNotes(e.target.value)}
+                  placeholder="Observações sobre o cliente, objeções de pagamento, propostas enviadas..."
+                  className="w-full bg-[#090c0e] border border-line-subtle rounded-xl p-3 text-body text-fg focus:border-brand-ink outline-none min-h-[85px] resize-y"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-line-subtle">
+                {selectedLead.phone ? (
+                  <a
+                    href={`https://wa.me/${selectedLead.phone.replace(/\D/g, '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-micro font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-xl hover:bg-emerald-500/20 transition-colors"
+                  >
+                    <MessageSquare size={13} />
+                    Abrir WhatsApp
+                  </a>
+                ) : <span />}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLead(null)}
+                    className="px-4 py-2 rounded-xl border border-line-subtle text-fg-subtle hover:text-fg hover:bg-surface-overlay text-body font-medium transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-brand-solid text-black font-bold text-body hover:bg-brand-glow transition-all"
+                  >
+                    Salvar Alterações
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
