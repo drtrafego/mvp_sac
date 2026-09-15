@@ -31,6 +31,13 @@ interface Lead {
 }
 
 const eventLabels: Record<string, string> = {
+  mentoria: 'Mentoria',
+  aulas: 'Aulas / Curso',
+  projeto_individual: 'Projeto Individual',
+  consultoria: 'Consultoria',
+  workshop: 'Workshop / Imersão',
+  assinatura: 'Assinatura',
+  prospeccao: 'Prospecção',
   boleto: 'Boleto',
   pix: 'Pix',
   carrinho_abandonado: 'Carrinho',
@@ -40,6 +47,13 @@ const eventLabels: Record<string, string> = {
 
 const EVENT_TYPE_OPTIONS: Record<string, string> = {
   all: 'Todos os tipos',
+  mentoria: '🎓 Mentoria',
+  aulas: '📚 Aulas / Cursos',
+  projeto_individual: '💼 Projeto Individual',
+  consultoria: '💡 Consultoria',
+  workshop: '🎟️ Workshop / Imersão',
+  assinatura: '⭐ Assinatura',
+  prospeccao: '🎯 Prospecção',
   boleto: 'Boleto',
   pix: 'Pix',
   carrinho_abandonado: 'Carrinho Abandonado',
@@ -57,6 +71,13 @@ const STATUS_OPTIONS: Record<string, string> = {
 }
 
 const eventDot: Record<string, string> = {
+  mentoria: 'text-purple-400',
+  aulas: 'text-sky-400',
+  projeto_individual: 'text-amber-400',
+  consultoria: 'text-indigo-400',
+  workshop: 'text-pink-400',
+  assinatura: 'text-emerald-400',
+  prospeccao: 'text-cyan-400',
   boleto: 'text-ev-boleto',
   pix: 'text-ev-pix',
   carrinho_abandonado: 'text-ev-carrinho',
