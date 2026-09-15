@@ -22,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Filter,
+  Bot,
 } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -167,6 +168,7 @@ export const mineracaoNav = [
 
 export const ajustesNav = [
   { label: 'Configuração', href: '/configuracoes', icon: Settings },
+  { label: 'API & Agentes', href: '/api-docs', icon: Bot },
   { label: 'Webhooks Log', href: '/webhooks-log', icon: Webhook },
   { label: 'Biblioteca', href: '/biblioteca', icon: BookOpen },
 ]

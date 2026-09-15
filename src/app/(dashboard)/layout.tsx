@@ -12,14 +12,14 @@ import { AdminBanner } from '@/components/layout/admin-banner'
 import { Suspense } from 'react'
 
 const MAIN_CLASS =
-  'scroll-thin flex-1 overflow-auto p-[var(--space-shell)] pb-[calc(var(--space-shell)+5rem)] lg:pb-[var(--space-shell)] bg-surface-base'
+  'flex-1 min-h-0 overflow-hidden flex flex-col bg-surface-base'
 
 const SIDEBAR_FALLBACK = (
   <div className="hidden lg:block shrink-0 w-16 xl:w-[248px] 2xl:w-[272px] border-r border-line-subtle bg-surface-panel" />
 )
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <div className="shell flex min-h-full flex-col">{children}</div>
+  return <div className="shell flex flex-1 min-h-0 h-full flex-col overflow-hidden">{children}</div>
 }
 
 async function getActiveConnections(companyId: number) {

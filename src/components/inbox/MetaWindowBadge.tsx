@@ -26,50 +26,61 @@ export function getMetaWindowInfo(lead: {
   lastMessageAt?: string | null
   lastDirection?: string | null
 }): MetaWindowInfo {
-  // 1. Detectar se a conversa veio de Anúncios (72 horas) ou Padrão/Template (24 horas)
-  const isAd =
-    (lead.trackingSource && /ad|anuncio|meta_ads|ctwa|facebook|instagram/i.test(lead.trackingSource)) ||
-    (lead.eventType && /ad|anuncio/i.test(lead.eventType)) ||
-    !!lead.utmCampaign
+  const windowHours = 24
+  const typeLabel = '24h Atendimento'
+  const windowDurationMs = 24 * 3600 * 1000
 
-  const windowHours = isAd ? 72 : 24
-  const typeLabel = isAd ? '72h Anúncios' : '24h Padrão'
-  const windowDurationMs = windowHours * 3600 * 1000
-
-  // 2. Se ainda não há mensagem inbound do cliente (apenas template ou prospecção enviada)
+  // 1. Se ainda não há mensagem enviada pelo cliente (apenas mensagens nossas outbound)
   if (!lead.lastInboundAt) {
     return {
-      type: isAd ? 'ad_72h' : 'standard_24h',
+      type: 'standard_24h',
       typeLabel,
       status: 'waiting_user',
       remainingMs: 0,
       remainingHours: 0,
       remainingMinutes: 0,
-      text: '📨 Template enviado · Aguardando',
+      text: '📨 Aguardando resposta do cliente',
       badgeClass: 'bg-surface-inset text-fg-subtle border-line-subtle',
       requiresTemplate: true,
-      isAd,
+      isAd: false,
       windowHours,
     }
   }
 
+  // 2. Cálculo estrito de 24 horas a partir da última mensagem recebida DA PESSOA (inbound)
   const inboundTime = new Date(lead.lastInboundAt).getTime()
+  if (isNaN(inboundTime)) {
+    return {
+      type: 'standard_24h',
+      typeLabel,
+      status: 'waiting_user',
+      remainingMs: 0,
+      remainingHours: 0,
+      remainingMinutes: 0,
+      text: '📨 Aguardando resposta do cliente',
+      badgeClass: 'bg-surface-inset text-fg-subtle border-line-subtle',
+      requiresTemplate: true,
+      isAd: false,
+      windowHours,
+    }
+  }
+
   const expiresAt = inboundTime + windowDurationMs
   const remainingMs = expiresAt - Date.now()
 
-  // 3. Janela Expirada
+  // 3. Janela Expirada (> 24h desde a última mensagem da pessoa)
   if (remainingMs <= 0) {
     return {
-      type: isAd ? 'ad_72h' : 'standard_24h',
+      type: 'standard_24h',
       typeLabel,
       status: 'expired',
       remainingMs,
       remainingHours: 0,
       remainingMinutes: 0,
-      text: `🔒 Janela ${windowHours}h expirada (Template)`,
-      badgeClass: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30',
+      text: '🔒 Janela 24h fechada (Exige Template)',
+      badgeClass: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 font-semibold',
       requiresTemplate: true,
-      isAd,
+      isAd: false,
       windowHours,
     }
   }
@@ -81,32 +92,32 @@ export function getMetaWindowInfo(lead: {
   // 4. Expirando em breve (< 4 horas restantes)
   if (hours < 4) {
     return {
-      type: isAd ? 'ad_72h' : 'standard_24h',
+      type: 'standard_24h',
       typeLabel,
       status: 'expiring_soon',
       remainingMs,
       remainingHours: hours,
       remainingMinutes: minutes,
-      text: `⚠️ Janela ${windowHours}h · ${hours}h ${minutes}m rest.`,
+      text: `⚠️ Janela 24h · ${hours}h ${minutes}m rest.`,
       badgeClass: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 font-bold animate-pulse',
       requiresTemplate: false,
-      isAd,
+      isAd: false,
       windowHours,
     }
   }
 
-  // 5. Janela Ativa (> 4 horas restantes)
+  // 5. Janela Ativa (Dentro das 24h da última mensagem do cliente)
   return {
-    type: isAd ? 'ad_72h' : 'standard_24h',
+    type: 'standard_24h',
     typeLabel,
     status: 'active',
     remainingMs,
     remainingHours: hours,
     remainingMinutes: minutes,
-    text: `⏱️ ${typeLabel} · ${hours}h rest.`,
+    text: `⏱️ Janela 24h · ${hours}h ${minutes}m rest.`,
     badgeClass: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-medium',
     requiresTemplate: false,
-    isAd,
+    isAd: false,
     windowHours,
   }
 }
@@ -195,7 +206,7 @@ export function MetaWindowBanner({
         <div className="flex items-center gap-2">
           <Lock size={14} className="shrink-0 text-rose-500" />
           <span>
-            <strong>Janela da Meta Fechada ({info.typeLabel}):</strong> Mais de {info.windowHours}h desde a última mensagem do cliente. A Meta bloqueia mensagens livres e exige um <strong>Template Aprovado</strong> para retomar.
+            <strong>Janela de 24h Fechada:</strong> Mais de 24 horas se passaram desde a última mensagem enviada pelo cliente. A Meta bloqueia mensagens normais e exige um <strong>Template Aprovado</strong> para retomar o contato.
           </span>
         </div>
         <a
@@ -214,7 +225,7 @@ export function MetaWindowBanner({
         <div className="flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0 text-amber-600" />
           <span>
-            <strong>Janela Expirando em Breve ({info.typeLabel}):</strong> Restam apenas <strong>{info.remainingHours}h {info.remainingMinutes}m</strong> para envio livre de mensagens sem custo de template.
+            <strong>Janela de 24h Expirando:</strong> Restam apenas <strong>{info.remainingHours}h {info.remainingMinutes}m</strong> desde a última mensagem do cliente para envio livre sem custo de template.
           </span>
         </div>
       </div>
@@ -227,10 +238,10 @@ export function MetaWindowBanner({
         <div className="flex items-center gap-2">
           <CheckCircle2 size={13} className="shrink-0 text-emerald-500" />
           <span>
-            <strong>Janela Meta Oficial Aberta ({info.typeLabel}):</strong> Restam <strong>{info.remainingHours}h {info.remainingMinutes}m</strong> para envio de mensagens livres.
+            <strong>Janela de 24h Aberta:</strong> Restam <strong>{info.remainingHours}h {info.remainingMinutes}m</strong> para envio de mensagens livres (contados a partir da última mensagem do cliente).
           </span>
         </div>
-        <span className="text-[10px] font-mono opacity-80 shrink-0">Regra Meta: {info.isAd ? '72h Anúncios (CTWA)' : '24h Atendimento'}</span>
+        <span className="text-[10px] font-mono opacity-80 shrink-0">Regra Oficial WhatsApp Meta: 24h</span>
       </div>
     )
   }
@@ -241,7 +252,7 @@ export function MetaWindowBanner({
       <div className="flex items-center gap-2">
         <MessageSquare size={13} className="shrink-0 text-fg-faint" />
         <span>
-          <strong>Aguardando Resposta do Lead:</strong> Quando o cliente responder, uma janela de <strong>{info.windowHours}h ({info.typeLabel})</strong> será iniciada automaticamente.
+          <strong>Aguardando Resposta do Cliente:</strong> Assim que a pessoa responder, uma janela oficial de <strong>24 horas</strong> será iniciada automaticamente.
         </span>
       </div>
     </div>

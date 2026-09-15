@@ -70,7 +70,7 @@ export function ChatWindow({
   const [pauseLoading, setPauseLoading] = useState(false)
   const [pauseToast, setPauseToast] = useState<string | null>(null)
 
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const refresh = useCallback(
@@ -95,7 +95,9 @@ export function ChatWindow({
   )
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+    }
   }, [messages])
 
   useEffect(() => {
@@ -270,9 +272,8 @@ export function ChatWindow({
         <MetaWindowBanner lead={lead} />
 
         {/* 2. Área de Mensagens */}
-        <div className="scroll-thin flex-1 overflow-y-auto bg-surface-base px-4 py-4">
+        <div ref={messagesContainerRef} className="scroll-thin flex-1 overflow-y-auto bg-surface-base px-4 py-4 min-h-0">
           <MessageList messages={messages} contactName={lead.name} />
-          <div ref={bottomRef} />
         </div>
 
         {/* 3. Área de Envio da Mensagem */}

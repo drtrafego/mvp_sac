@@ -47,6 +47,13 @@ export const settings = pgTable('settings', {
   instagramPageId: text('instagram_page_id'),
   // Supabase (Centralização dos Agentes IA)
   supabaseDatabaseUrl: text('supabase_database_url'),
+  // Credenciais & Segurança dos Agentes IA (Bia - Amanda & Luana - Gastão)
+  agentBiaApiKey: text('agent_bia_api_key'),
+  agentLuanaApiKey: text('agent_luana_api_key'),
+  agentRenatoApiKey: text('agent_renato_api_key'),
+  allowedIps: text('allowed_ips'),
+  // Configuração e personalização de colunas do Pipeline
+  pipelineColumns: jsonb('pipeline_columns'),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
 
@@ -172,6 +179,11 @@ export const recoveryLeads = pgTable('recovery_leads', {
   followUpNote: text('follow_up_note'),
   pipelineStage: text('pipeline_stage'),
 
+  // Rastreamento de Agente IA (Luana / Renato / Humano)
+  responsibleAgent: text('responsible_agent'),         // 'Luana' | 'Renato'
+  lastActionBy: text('last_action_by'),                 // 'Luana (Agente IA)' | 'Renato (Agente IA)'
+  lastActionAt: timestamp('last_action_at').defaultNow(),
+
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => [
@@ -213,7 +225,22 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
   messageType: text('message_type').default('text'),
   mediaUrl: text('media_url'),
   sentBy: text('sent_by').default('system'), // 'system' | 'human' | 'bot'
+  senderName: text('sender_name'),          // 'Luana' | 'Renato' | 'Amanda Felix'
+  agentId: text('agent_id'),                // 'luana' | 'renato'
   externalId: text('external_id'),
+  createdAt: timestamp('created_at').defaultNow(),
+})
+
+// ─── Log de atividades dos agentes IA (Luana e Renato) ─────────────────────────
+export const agentActivityLogs = pgTable('agent_activity_logs', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  agentName: text('agent_name').notNull(),  // 'Luana' | 'Renato' | 'Master' | 'Humano'
+  agentId: text('agent_id'),                // 'luana' | 'renato'
+  action: text('action').notNull(),         // 'create_lead' | 'update_stage' | 'schedule_followup' | 'send_message' | 'pause_bot'
+  entityType: text('entity_type').notNull(),// 'lead' | 'message' | 'settings' | 'company'
+  entityId: text('entity_id'),
+  details: jsonb('details'),
   createdAt: timestamp('created_at').defaultNow(),
 })
 

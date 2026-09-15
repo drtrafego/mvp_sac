@@ -23,9 +23,14 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS follow_up_date timestamp`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS follow_up_note text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS pipeline_stage text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS responsible_agent text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS last_action_by text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS last_action_at timestamp DEFAULT NOW()`,
 
           // whatsapp_messages
           client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS channel text DEFAULT 'whatsapp'`,
+          client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS sender_name text`,
+          client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS agent_id text`,
 
           // settings
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS brevo_api_key text`,
@@ -41,6 +46,26 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS uazapi_instance_token text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS whatsapp_provider text DEFAULT 'meta'`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS supabase_database_url text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_bia_api_key text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_luana_api_key text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_renato_api_key text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS allowed_ips text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS pipeline_columns jsonb`,
+
+          // agent_activity_logs
+          client`
+            CREATE TABLE IF NOT EXISTS agent_activity_logs (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+              agent_name TEXT NOT NULL,
+              agent_id TEXT,
+              action TEXT NOT NULL,
+              entity_type TEXT NOT NULL,
+              entity_id TEXT,
+              details JSONB,
+              created_at TIMESTAMP DEFAULT NOW()
+            )
+          `,
 
           // message_jobs
           client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS external_wamid text`,

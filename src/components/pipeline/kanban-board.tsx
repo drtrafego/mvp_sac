@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import {
   MessageSquare,
@@ -15,6 +15,18 @@ import {
   Clock,
   CheckCircle2,
   X,
+  ChevronLeft,
+  ChevronRight,
+  GripVertical,
+  Check,
+  Globe,
+  Share2,
+  DollarSign,
+  User,
+  Phone,
+  Tag,
+  ShoppingBag,
+  ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -24,14 +36,6 @@ function InstagramIcon({ size = 13, className = '' }: { size?: number; className
       <rect width="20" height="20" x="2" y="2" rx="5" ry="5"/>
       <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
       <line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>
-    </svg>
-  )
-}
-
-function MetaAdsIcon({ size = 13, className = '' }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
     </svg>
   )
 }
@@ -53,6 +57,9 @@ export interface KanbanLead {
   utmContent?: string | null
   followUpDate?: string | null
   followUpNote?: string | null
+  responsibleAgent?: string | null
+  lastActionBy?: string | null
+  lastActionAt?: string | Date | null
   updatedAt?: string | Date | null
 }
 
@@ -93,19 +100,29 @@ function getLeadOriginBadge(lead: KanbanLead) {
 
   // 1. Meta Ads / Tráfego Pago
   if (src.includes('meta') || src.includes('facebook') || lead.utmCampaign) {
-    const label = lead.utmCampaign ? lead.utmCampaign.slice(0, 20) : 'Meta Ads'
+    const label = lead.utmCampaign ? lead.utmCampaign.slice(0, 20) : lead.trackingSource || 'Meta Ads'
     return (
       <span
-        title={lead.utmCampaign || 'Meta Ads'}
+        title={lead.utmCampaign || lead.trackingSource || 'Meta Ads'}
         className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30"
       >
         <Megaphone size={11} className="text-blue-400" />
-        <span className="truncate max-w-[110px]">{label}</span>
+        <span className="truncate max-w-[120px]">{label}</span>
       </span>
     )
   }
 
-  // 2. Mineração / Prospecção Ativa
+  // 2. Google Ads / Pesquisa
+  if (src.includes('google')) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/30">
+        <Globe size={11} className="text-red-400" />
+        <span>Google</span>
+      </span>
+    )
+  }
+
+  // 3. Mineração (apenas se explicitamente marcado para AutonomIA)
   if (src.includes('mineracao') || ev.includes('prospeccao') || src.includes('prospeccao')) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
@@ -115,7 +132,7 @@ function getLeadOriginBadge(lead: KanbanLead) {
     )
   }
 
-  // 3. Plataformas de Checkout
+  // 4. Plataformas de Checkout
   if (plat.includes('hotmart')) {
     return <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">Hotmart</span>
   }
@@ -129,12 +146,21 @@ function getLeadOriginBadge(lead: KanbanLead) {
     return <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Zouti</span>
   }
 
-  // 4. Instagram / WhatsApp Direto
+  // 5. Presencial / Reserva
+  if (src.includes('presencial') || src.includes('porta')) {
+    return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">Presencial</span>
+  }
+  if (src.includes('reserva')) {
+    return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/30">Reserva</span>
+  }
+
+  // 6. Instagram / WhatsApp Direto
   if (lead.channel === 'instagram') {
     return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-500/15 text-pink-400 border border-pink-500/30">Instagram DM</span>
   }
 
-  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-inset text-fg-subtle border border-line-subtle">Direto</span>
+  const defaultLabel = lead.trackingSource || 'Direto'
+  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-inset text-fg-subtle border border-line-subtle truncate max-w-[120px]">{defaultLabel}</span>
 }
 
 export function KanbanBoard({
@@ -148,20 +174,32 @@ export function KanbanBoard({
   const [leads, setLeads] = useState<KanbanLead[]>(initialLeads)
   const [stages, setStages] = useState<KanbanStage[]>(DEFAULT_STAGES)
 
-  // Carregar etapas personalizadas do localStorage por empresa
+  // Carregar etapas da API ou localStorage
   useEffect(() => {
     setMounted(true)
-    try {
-      const saved = localStorage.getItem(`mvp_sac_pipeline_stages_${companySlug}`)
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setStages(parsed)
+    async function loadStages() {
+      try {
+        const res = await fetch('/api/pipeline/columns')
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.columns) && data.columns.length > 0) {
+            setStages(data.columns)
+            return
+          }
         }
-      }
-    } catch {
-      // Usa DEFAULT_STAGES
+      } catch {}
+
+      try {
+        const saved = localStorage.getItem(`mvp_sac_pipeline_stages_${companySlug}`)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setStages(parsed)
+          }
+        }
+      } catch {}
     }
+    loadStages()
   }, [companySlug])
 
   useEffect(() => {
@@ -170,31 +208,55 @@ export function KanbanBoard({
 
   const [filterChannel, setFilterChannel] = useState<string>('all')
   const [filterOrigin, setFilterOrigin] = useState<string>('all')
+  const [filterAgent, setFilterAgent] = useState<string>('all')
   const [draggedId, setDraggedId] = useState<number | null>(null)
   const [selectedLead, setSelectedLead] = useState<KanbanLead | null>(null)
 
-  // Estados do modal de edição do lead
+  // Estados 100% editáveis do modal do lead
+  const [modalName, setModalName] = useState<string>('')
+  const [modalPhone, setModalPhone] = useState<string>('')
+  const [modalEmail, setModalEmail] = useState<string>('')
+  const [modalProductName, setModalProductName] = useState<string>('')
+  const [modalProductValue, setModalProductValue] = useState<string>('')
+  const [modalTrackingSource, setModalTrackingSource] = useState<string>('Meta Ads')
   const [modalStage, setModalStage] = useState<string>('novo_contato')
   const [modalFollowUpDate, setModalFollowUpDate] = useState<string>('')
   const [modalFollowUpNote, setModalFollowUpNote] = useState<string>('')
-  const [modalNotes, setModalNotes] = useState<string>('')
+  const [modalResponsibleAgent, setModalResponsibleAgent] = useState<string>('')
   const [isSaving, setIsSaving] = useState(false)
   const [savedToast, setSavedToast] = useState<string | null>(null)
+
+  // Estados de Edição Inline de Coluna
+  const [inlineEditingStageId, setInlineEditingStageId] = useState<string | null>(null)
+  const [inlineEditingLabel, setInlineEditingLabel] = useState('')
 
   // Estados do modal de criação de nova etapa
   const [showAddStageModal, setShowAddStageModal] = useState(false)
   const [newStageLabel, setNewStageLabel] = useState('')
   const [newStageColor, setNewStageColor] = useState('#3987e5')
 
-  // Salvar etapas no localStorage
-  function persistStages(newStages: KanbanStage[]) {
+  // Estados do modal de edição de etapa existente
+  const [editingStage, setEditingStage] = useState<KanbanStage | null>(null)
+  const [editStageLabel, setEditStageLabel] = useState('')
+  const [editStageColor, setEditStageColor] = useState('#3987e5')
+
+  // Salvar etapas no banco e localStorage
+  const persistStages = useCallback(async (newStages: KanbanStage[]) => {
     setStages(newStages)
     try {
       localStorage.setItem(`mvp_sac_pipeline_stages_${companySlug}`, JSON.stringify(newStages))
-    } catch {
-      // Ignora erro de storage
+    } catch {}
+
+    try {
+      await fetch('/api/pipeline/columns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ columns: newStages }),
+      })
+    } catch (err) {
+      console.error('Erro ao persistir colunas na API:', err)
     }
-  }
+  }, [companySlug])
 
   function handleCreateStage(e: React.FormEvent) {
     e.preventDefault()
@@ -208,100 +270,204 @@ export function KanbanBoard({
     setTimeout(() => setSavedToast(null), 3000)
   }
 
-  function handleDeleteStage(stageId: string) {
-    if (stages.length <= 2) {
-      alert('O pipeline precisa de pelo menos 2 etapas.')
-      return
-    }
-    const hasLeads = leads.some(l => l.stage === stageId)
-    if (hasLeads) {
-      alert('Não é possível excluir uma etapa que ainda possui leads. Mova os leads antes.')
-      return
-    }
-    const filtered = stages.filter(s => s.id !== stageId)
-    persistStages(filtered)
+  function startInlineEdit(stage: KanbanStage) {
+    setInlineEditingStageId(stage.id)
+    setInlineEditingLabel(stage.label)
   }
 
-  // Filtragem dos cards
-  const filteredLeads = leads.filter((item) => {
-    if (filterChannel !== 'all' && item.channel !== filterChannel) return false
-    if (filterOrigin === 'meta' && !item.trackingSource?.includes('meta') && !item.utmCampaign) return false
-    if (filterOrigin === 'mineracao' && !item.trackingSource?.includes('mineracao') && item.eventType !== 'prospeccao') return false
-    if (filterOrigin === 'checkout' && !['hotmart', 'kiwify', 'greenn', 'zouti'].includes((item.platform || '').toLowerCase())) return false
-    return true
-  })
+  function saveInlineEdit(stageId: string) {
+    if (!inlineEditingLabel.trim()) {
+      setInlineEditingStageId(null)
+      return
+    }
+    const newStages = stages.map(s => s.id === stageId ? { ...s, label: inlineEditingLabel.trim() } : s)
+    persistStages(newStages)
+    setInlineEditingStageId(null)
+    setSavedToast(`Coluna renomeada para "${inlineEditingLabel.trim()}"`)
+    setTimeout(() => setSavedToast(null), 3000)
+  }
 
-  // Mover lead de etapa (drag & drop)
-  async function moveStage(leadId: number, targetStage: string) {
-    setLeads((prev) =>
-      prev.map((l) => (l.id === leadId ? { ...l, stage: targetStage } : l))
+  function openEditStage(stage: KanbanStage) {
+    setEditingStage(stage)
+    setEditStageLabel(stage.label)
+    setEditStageColor(stage.color)
+  }
+
+  function handleSaveEditStage(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editingStage || !editStageLabel.trim()) return
+
+    const newStages = stages.map(s =>
+      s.id === editingStage.id
+        ? { ...s, label: editStageLabel.trim(), color: editStageColor }
+        : s
+    )
+    persistStages(newStages)
+    const oldName = editingStage.label
+    setEditingStage(null)
+    setSavedToast(`Etapa "${oldName}" atualizada com sucesso!`)
+    setTimeout(() => setSavedToast(null), 3000)
+  }
+
+  function moveColumn(index: number, direction: 'left' | 'right') {
+    const targetIndex = direction === 'left' ? index - 1 : index + 1
+    if (targetIndex < 0 || targetIndex >= stages.length) return
+
+    const newStages = [...stages]
+    const [moved] = newStages.splice(index, 1)
+    newStages.splice(targetIndex, 0, moved)
+    persistStages(newStages)
+  }
+
+  function handleDeleteStage(stageId: string) {
+    if (stages.length <= 1) {
+      alert('Você precisa ter pelo menos uma etapa no pipeline.')
+      return
+    }
+    const stageToDelete = stages.find(s => s.id === stageId)
+    if (!confirm(`Tem certeza que deseja excluir a etapa "${stageToDelete?.label || stageId}"? Os leads nela serão movidos para a primeira coluna.`)) {
+      return
+    }
+
+    const fallbackStageId = stages.find(s => s.id !== stageId)?.id || 'novo_contato'
+
+    // Move leads da etapa excluída para a primeira disponível
+    setLeads(prev =>
+      prev.map(l => (l.stage === stageId ? { ...l, stage: fallbackStageId } : l))
     )
 
-    try {
-      await fetch(`/api/leads/${leadId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: targetStage }),
-      })
-    } catch (err) {
-      console.error('Erro ao persistir mudança de etapa:', err)
-    }
+    const newStages = stages.filter(s => s.id !== stageId)
+    persistStages(newStages)
+    setSavedToast(`Etapa excluída. Leads movidos para a coluna inicial.`)
+    setTimeout(() => setSavedToast(null), 3000)
   }
 
-  function handleDragStart(id: number) {
+  // Atalhos de Data de Retorno
+  const setFollowUpShortcut = (days: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() + days)
+    setModalFollowUpDate(d.toISOString().slice(0, 10))
+  }
+
+  // Filtragem dos leads
+  const filteredLeads = useMemo(() => {
+    return leads.filter((lead) => {
+      // Filtro de canal
+      if (filterChannel !== 'all' && lead.channel !== filterChannel) return false
+
+      // Filtro de origem
+      if (filterOrigin !== 'all') {
+        const src = (lead.trackingSource || '').toLowerCase()
+        const plat = (lead.platform || '').toLowerCase()
+
+        if (filterOrigin === 'meta' && !src.includes('meta') && !src.includes('facebook') && !lead.utmCampaign) return false
+        if (filterOrigin === 'google' && !src.includes('google')) return false
+        if (filterOrigin === 'checkout' && !plat.includes('hotmart') && !plat.includes('kiwify') && !plat.includes('greenn') && !plat.includes('zouti')) return false
+      }
+
+      // Filtro de Agente IA
+      if (filterAgent !== 'all') {
+        const agent = (lead.responsibleAgent || '').toLowerCase()
+        if (filterAgent === 'bia' && agent !== 'bia') return false
+        if (filterAgent === 'luana' && agent !== 'luana') return false
+        if (filterAgent === 'unassigned' && agent !== '') return false
+      }
+
+      return true
+    })
+  }, [leads, filterChannel, filterOrigin, filterAgent])
+
+  const handleDragStart = (id: number) => {
     setDraggedId(id)
   }
 
-  function handleDragOver(e: React.DragEvent) {
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
   }
 
-  function handleDrop(stageId: string) {
-    if (draggedId !== null) {
-      moveStage(draggedId, stageId)
+  const handleDrop = async (newStage: string) => {
+    if (draggedId === null) return
+
+    setLeads((prev) =>
+      prev.map((l) => (l.id === draggedId ? { ...l, stage: newStage } : l))
+    )
+
+    try {
+      await fetch(`/api/pipeline/${draggedId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage: newStage }),
+      })
+    } catch (err) {
+      console.error('Erro ao mover lead:', err)
+    } finally {
       setDraggedId(null)
     }
   }
 
-  function openEditModal(lead: KanbanLead) {
+  const openEditModal = (lead: KanbanLead) => {
     setSelectedLead(lead)
+    setModalName(lead.name || '')
+    setModalPhone(lead.phone || '')
+    setModalEmail(lead.email || '')
+    setModalProductName(lead.productName || '')
+    setModalProductValue(lead.productValue ? (lead.productValue / 100).toFixed(2).replace('.', ',') : '')
+    setModalTrackingSource(lead.trackingSource || 'Meta Ads')
     setModalStage(lead.stage || 'novo_contato')
-    setModalFollowUpDate(lead.followUpDate ? new Date(lead.followUpDate).toISOString().split('T')[0] : '')
+    setModalResponsibleAgent(lead.responsibleAgent || '')
+    if (lead.followUpDate) {
+      try {
+        const d = new Date(lead.followUpDate)
+        setModalFollowUpDate(d.toISOString().slice(0, 10))
+      } catch {
+        setModalFollowUpDate('')
+      }
+    } else {
+      setModalFollowUpDate('')
+    }
     setModalFollowUpNote(lead.followUpNote || '')
-    setModalNotes('')
   }
 
-  // Atalhos rápidos de data de follow-up
-  function setQuickFollowUp(days: number) {
-    const target = new Date()
-    target.setDate(target.getDate() + days)
-    setModalFollowUpDate(target.toISOString().split('T')[0])
-  }
-
-  async function handleSaveModal(e: React.FormEvent) {
+  const handleSaveModal = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedLead) return
 
     setIsSaving(true)
+    const valCentavos = modalProductValue
+      ? Math.round(parseFloat(modalProductValue.replace(/\./g, '').replace(',', '.')) * 100)
+      : null
+
     const updatedLead: KanbanLead = {
       ...selectedLead,
+      name: modalName.trim() || null,
+      phone: modalPhone.trim(),
+      email: modalEmail.trim() || null,
+      productName: modalProductName.trim() || null,
+      productValue: isNaN(valCentavos as any) ? null : valCentavos,
+      trackingSource: modalTrackingSource.trim() || null,
       stage: modalStage,
       followUpDate: modalFollowUpDate ? new Date(modalFollowUpDate + 'T12:00:00-03:00').toISOString() : null,
       followUpNote: modalFollowUpNote.trim() || null,
+      responsibleAgent: modalResponsibleAgent.trim() || null,
     }
 
-    setLeads((prev) =>
-      prev.map((l) => (l.id === selectedLead.id ? updatedLead : l))
-    )
+    setLeads((prev) => prev.map((l) => (l.id === selectedLead.id ? updatedLead : l)))
 
     try {
-      await fetch(`/api/leads/${selectedLead.id}`, {
+      await fetch(`/api/pipeline/${selectedLead.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          stage: modalStage,
-          followUpDate: modalFollowUpDate ? new Date(modalFollowUpDate + 'T12:00:00-03:00').toISOString() : null,
-          followUpNote: modalFollowUpNote.trim() || null,
+          name: updatedLead.name,
+          phone: updatedLead.phone,
+          email: updatedLead.email,
+          productName: updatedLead.productName,
+          productValue: updatedLead.productValue,
+          trackingSource: updatedLead.trackingSource,
+          stage: updatedLead.stage,
+          followUpDate: updatedLead.followUpDate,
+          followUpNote: updatedLead.followUpNote,
+          responsibleAgent: updatedLead.responsibleAgent,
         }),
       })
     } catch (err) {
@@ -310,7 +476,7 @@ export function KanbanBoard({
       setIsSaving(false)
     }
 
-    const name = selectedLead.name || 'Contato'
+    const name = updatedLead.name || 'Contato'
     setSelectedLead(null)
     setSavedToast(`Card de ${name} atualizado com sucesso!`)
     setTimeout(() => setSavedToast(null), 3000)
@@ -319,7 +485,7 @@ export function KanbanBoard({
   const PRESET_COLORS = ['#3987e5', '#199e70', '#d95926', '#9085e9', '#008300', '#e11d48', '#06b6d4', '#eab308']
 
   return (
-    <div className="flex flex-col h-[calc(100vh-170px)] min-h-[500px] w-full gap-3 relative">
+    <div className="flex flex-col h-full w-full gap-3 overflow-hidden">
       {/* Toast Notification */}
       {savedToast && (
         <div className="fixed bottom-6 right-6 z-[10000] bg-surface-panel border border-brand-solid/40 text-brand-ink px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-body font-medium animate-in fade-in slide-in-from-bottom-3">
@@ -345,7 +511,7 @@ export function KanbanBoard({
             >
               <option value="all" className="bg-surface-raised text-fg">Todas as Origens</option>
               <option value="meta" className="bg-surface-raised text-fg">Meta Ads</option>
-              <option value="mineracao" className="bg-surface-raised text-fg">Mineração</option>
+              <option value="google" className="bg-surface-raised text-fg">Google Ads</option>
               <option value="checkout" className="bg-surface-raised text-fg">Checkouts (Hotmart/Kiwify)</option>
             </select>
           </div>
@@ -363,6 +529,20 @@ export function KanbanBoard({
               <option value="email" className="bg-surface-raised text-fg">E-mail</option>
             </select>
           </div>
+
+          {/* Filtro por Agente IA */}
+          <div className="flex items-center gap-1 bg-surface-base border border-line-subtle rounded-[var(--r-sm)] p-1 text-micro">
+            <select
+              value={filterAgent}
+              onChange={(e) => setFilterAgent(e.target.value)}
+              className="bg-transparent text-fg text-micro font-medium focus:outline-none cursor-pointer px-1"
+            >
+              <option value="all" className="bg-surface-raised text-fg">Todos os Agentes</option>
+              <option value="bia" className="bg-surface-raised text-fg">✨ Bia (Amanda)</option>
+              <option value="luana" className="bg-surface-raised text-fg">✨ Luana (Gastão)</option>
+              <option value="unassigned" className="bg-surface-raised text-fg">Sem Agente Vinculado</option>
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -378,43 +558,116 @@ export function KanbanBoard({
 
       {/* Quadro de Colunas Kanban com Altura Total e Rolagem Suave */}
       <div className="flex-1 min-h-0 flex gap-3 overflow-x-auto pb-2 scroll-thin items-stretch">
-        {stages.map((stage) => {
+        {stages.map((stage, index) => {
           const stageLeads = filteredLeads.filter((l) => l.stage === stage.id)
           const stageTotalValue = stageLeads.reduce((acc, curr) => acc + (curr.productValue || 0), 0)
+          const isInlineEditing = inlineEditingStageId === stage.id
 
           return (
             <div
               key={stage.id}
               onDragOver={handleDragOver}
               onDrop={() => handleDrop(stage.id)}
-              className="flex flex-col rounded-[var(--r-md)] bg-surface-base border border-line-subtle min-w-[280px] max-w-[320px] shrink-0 h-full overflow-hidden"
+              className="flex flex-col rounded-[var(--r-md)] bg-surface-base border border-line-subtle min-w-[280px] max-w-[320px] shrink-0 h-full overflow-hidden shadow-xs"
             >
-              {/* Topo da Coluna */}
+              {/* Topo da Coluna com Controles de Reordenação e Edição */}
               <div
                 className="p-3 border-b border-line-subtle flex items-center justify-between shrink-0 bg-surface-raised/40"
                 style={{ borderTop: `3px solid ${stage.color}` }}
               >
-                <div className="min-w-0 pr-2">
-                  <h3 className="text-body font-bold text-fg truncate">
-                    {stage.label}
-                  </h3>
-                  <p className="text-micro font-medium text-brand-ink">
-                    {formatBRL(stageTotalValue)}
-                  </p>
+                <div className="min-w-0 pr-1 flex-1">
+                  {isInlineEditing ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={inlineEditingLabel}
+                        onChange={(e) => setInlineEditingLabel(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveInlineEdit(stage.id)
+                          if (e.key === 'Escape') setInlineEditingStageId(null)
+                        }}
+                        autoFocus
+                        className="w-full bg-surface-panel border border-brand-solid text-fg px-2 py-0.5 rounded text-body font-bold outline-none"
+                      />
+                      <button
+                        onClick={() => saveInlineEdit(stage.id)}
+                        className="p-1 text-emerald-400 hover:bg-emerald-500/20 rounded"
+                      >
+                        <Check size={14} />
+                      </button>
+                      <button
+                        onClick={() => setInlineEditingStageId(null)}
+                        className="p-1 text-rose-400 hover:bg-rose-500/20 rounded"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <h3
+                        onDoubleClick={() => startInlineEdit(stage)}
+                        onClick={() => openEditStage(stage)}
+                        title="Clique duplo para renomear ou clique para editar cor"
+                        className="text-body font-bold text-fg truncate cursor-pointer hover:text-brand-ink transition-colors flex items-center gap-1"
+                      >
+                        <span>{stage.label}</span>
+                        <Pencil size={11} className="opacity-0 hover:opacity-100 text-fg-faint" />
+                      </h3>
+                      <p className="text-micro font-medium text-brand-ink">
+                        {formatBRL(stageTotalValue)}
+                      </p>
+                    </>
+                  )}
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="num flex h-6 w-6 items-center justify-center rounded-full bg-surface-raised border border-line-subtle text-micro font-bold text-fg">
+
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <span className="num flex h-6 w-6 items-center justify-center rounded-full bg-surface-raised border border-line-subtle text-micro font-bold text-fg mr-1">
                     {stageLeads.length}
                   </span>
-                  {!DEFAULT_STAGES.some(ds => ds.id === stage.id) && stageLeads.length === 0 && (
+
+                  {/* Mover Coluna para Esquerda */}
+                  {index > 0 && (
                     <button
-                      onClick={() => handleDeleteStage(stage.id)}
-                      title="Excluir etapa vazia"
-                      className="p-1 text-fg-faint hover:text-red-400 transition-colors"
+                      type="button"
+                      onClick={() => moveColumn(index, 'left')}
+                      title="Mover coluna para a esquerda"
+                      className="p-1 text-fg-faint hover:text-fg hover:bg-surface-inset rounded transition-colors cursor-pointer"
                     >
-                      <Trash2 size={12} />
+                      <ChevronLeft size={13} />
                     </button>
                   )}
+
+                  {/* Mover Coluna para Direita */}
+                  {index < stages.length - 1 && (
+                    <button
+                      type="button"
+                      onClick={() => moveColumn(index, 'right')}
+                      title="Mover coluna para a direita"
+                      className="p-1 text-fg-faint hover:text-fg hover:bg-surface-inset rounded transition-colors cursor-pointer"
+                    >
+                      <ChevronRight size={13} />
+                    </button>
+                  )}
+
+                  {/* Editar Nome e Cor da Coluna */}
+                  <button
+                    type="button"
+                    onClick={() => openEditStage(stage)}
+                    title="Editar coluna"
+                    className="p-1 text-fg-faint hover:text-brand-ink hover:bg-surface-inset rounded transition-colors cursor-pointer"
+                  >
+                    <Pencil size={12} />
+                  </button>
+
+                  {/* Excluir Coluna */}
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteStage(stage.id)}
+                    title="Excluir coluna"
+                    className="p-1 text-fg-faint hover:text-red-400 hover:bg-surface-inset rounded transition-colors cursor-pointer"
+                  >
+                    <Trash2 size={12} />
+                  </button>
                 </div>
               </div>
 
@@ -431,12 +684,30 @@ export function KanbanBoard({
                       draggable
                       onDragStart={() => handleDragStart(lead.id)}
                       onClick={() => openEditModal(lead)}
-                      className="card bg-surface-raised border border-line-subtle p-3 rounded-[var(--r-sm)] shadow-sm hover:border-brand-ink/60 hover:-translate-y-0.5 transition-all cursor-pointer space-y-2 group"
+                      className="card bg-surface-raised border border-line-subtle p-3 rounded-[var(--r-sm)] shadow-xs hover:border-brand-ink/60 hover:-translate-y-0.5 transition-all cursor-pointer space-y-2 group select-none"
                     >
-                      {/* Selos de Origem e Canal */}
-                      <div className="flex items-center justify-between gap-1">
-                        {getLeadOriginBadge(lead)}
-                        <span className="flex items-center gap-1 text-[11px] text-fg-subtle">
+                      {/* Selos de Origem, Canal e Agente */}
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {getLeadOriginBadge(lead)}
+                          {lead.responsibleAgent && (
+                            <span
+                              title={`Agente: ${lead.responsibleAgent} (${lead.responsibleAgent === 'Bia' ? 'Amanda' : lead.responsibleAgent === 'Luana' ? 'Gastão' : 'Operação'})`}
+                              className={cn(
+                                "inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full border shadow-2xs",
+                                lead.responsibleAgent === 'Bia'
+                                  ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                                  : lead.responsibleAgent === 'Luana'
+                                  ? "bg-purple-500/15 text-purple-400 border-purple-500/30"
+                                  : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                              )}
+                            >
+                              <Sparkles size={10} className={lead.responsibleAgent === 'Bia' ? "text-rose-400" : "text-purple-400"} />
+                              {lead.responsibleAgent} {lead.responsibleAgent === 'Bia' ? '(Amanda)' : lead.responsibleAgent === 'Luana' ? '(Gastão)' : ''}
+                            </span>
+                          )}
+                        </div>
+                        <span className="flex items-center gap-1 text-[11px] text-fg-subtle shrink-0">
                           {getChannelIcon(lead.channel)}
                           <span className="capitalize">{lead.channel || 'WhatsApp'}</span>
                         </span>
@@ -447,9 +718,14 @@ export function KanbanBoard({
                         <h4 className="text-body font-semibold text-fg truncate group-hover:text-brand-ink transition-colors">
                           {lead.name || 'Contato sem nome'}
                         </h4>
-                        <p className="text-micro text-fg-subtle truncate">
-                          {lead.productName || 'Interesse Comercial'}
-                        </p>
+                        <div className="flex items-center justify-between gap-2 text-micro text-fg-subtle">
+                          <span className="truncate">{lead.productName || 'Interesse Comercial'}</span>
+                          {lead.lastActionBy && (
+                            <span title={lead.lastActionBy} className="text-[10px] text-fg-faint truncate shrink-0 max-w-[120px]">
+                              {lead.lastActionBy}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {/* Follow-up / Lembrete (se configurado) */}
@@ -506,7 +782,7 @@ export function KanbanBoard({
                           )}
                           <button
                             onClick={() => openEditModal(lead)}
-                            className="text-[10px] text-brand-ink bg-brand-glow px-2 py-0.5 rounded border border-brand-solid/20 hover:bg-brand-solid hover:text-black font-semibold transition-all"
+                            className="text-[10px] text-brand-ink bg-brand-glow px-2 py-0.5 rounded border border-brand-solid/20 hover:bg-brand-solid hover:text-black font-semibold transition-all cursor-pointer"
                           >
                             Editar
                           </button>
@@ -532,164 +808,272 @@ export function KanbanBoard({
         </div>
       </div>
 
-      {/* MODAL DE EDIÇÃO DO CARD (COM LEMBRETE FOLLOW-UP) */}
+      {/* MODAL DE EDIÇÃO 100% COMPLETO E EDITÁVEL DO LEAD */}
       {mounted &&
         selectedLead &&
         createPortal(
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-            <div className="bg-surface-panel border border-line-subtle rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-              <div className="p-5 border-b border-line-subtle flex items-center justify-between">
-                <div>
-                  <p className="text-[11px] uppercase tracking-wider text-fg-subtle font-bold">Editar Lead no Funil</p>
-                  <h3 className="text-h3 text-fg font-bold mt-0.5">{selectedLead.name || 'Contato'}</h3>
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-150">
+            <div className="bg-surface-panel border border-line-subtle rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+              {/* Topo do Modal */}
+              <div className="p-4 sm:p-5 border-b border-line-subtle flex items-center justify-between bg-surface-raised/50">
+                <div className="min-w-0 pr-2">
+                  <p className="text-[11px] uppercase tracking-wider text-brand-ink font-bold">Editar Lead no Funil</p>
+                  <h3 className="text-h3 text-fg font-bold truncate mt-0.5">{selectedLead.name || 'Contato'}</h3>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setSelectedLead(null)}
-                  className="text-fg-subtle hover:text-fg text-xl p-1 font-bold cursor-pointer"
+                  className="p-1.5 text-fg-subtle hover:text-fg hover:bg-surface-inset rounded-lg transition-colors cursor-pointer"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              <form onSubmit={handleSaveModal} className="p-5 space-y-4 overflow-y-auto">
-                <div className="grid grid-cols-2 gap-3 bg-surface-inset p-3 rounded-xl border border-line-subtle text-micro">
+              {/* Formulário com todos os campos 100% editáveis */}
+              <form onSubmit={handleSaveModal} className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 scroll-thin">
+                {/* Linha 1: Nome e Telefone */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <span className="text-fg-faint block uppercase">Telefone:</span>
-                    <span className="text-fg font-mono font-bold">{selectedLead.phone || '—'}</span>
+                    <label className="block text-micro font-bold text-fg mb-1 flex items-center gap-1">
+                      <User size={12} className="text-fg-subtle" />
+                      Nome do Contato
+                    </label>
+                    <input
+                      type="text"
+                      value={modalName}
+                      onChange={(e) => setModalName(e.target.value)}
+                      placeholder="Nome completo..."
+                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid"
+                    />
                   </div>
+
                   <div>
-                    <span className="text-fg-faint block uppercase">Origem / Campanha:</span>
-                    <div className="mt-0.5">{getLeadOriginBadge(selectedLead)}</div>
-                  </div>
-                  <div>
-                    <span className="text-fg-faint block uppercase">Valor:</span>
-                    <span className="text-brand-ink font-bold">{formatBRL(selectedLead.productValue)}</span>
-                  </div>
-                  <div>
-                    <span className="text-fg-faint block uppercase">Produto / Interesse:</span>
-                    <span className="text-fg font-semibold truncate block">{selectedLead.productName || 'Geral'}</span>
+                    <label className="block text-micro font-bold text-fg mb-1 flex items-center gap-1">
+                      <Phone size={12} className="text-fg-subtle" />
+                      Telefone / WhatsApp
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={modalPhone}
+                      onChange={(e) => setModalPhone(e.target.value)}
+                      placeholder="5575999999999"
+                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid font-mono text-[13px]"
+                    />
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-[11px] uppercase font-bold text-fg-subtle">Etapa do Pipeline</label>
-                  <select
-                    value={modalStage}
-                    onChange={(e) => setModalStage(e.target.value)}
-                    className="w-full bg-surface-base border border-line-subtle rounded-xl px-3 py-2.5 text-body text-fg focus:border-brand-ink outline-none"
-                  >
-                    {stages.map((s) => (
-                      <option key={s.id} value={s.id} className="bg-surface-raised">{s.label}</option>
-                    ))}
-                  </select>
+                {/* Linha 2: Origem e E-mail */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-micro font-bold text-fg mb-1 flex items-center gap-1">
+                      <Megaphone size={12} className="text-fg-subtle" />
+                      Origem / Campanha
+                    </label>
+                    <input
+                      type="text"
+                      value={modalTrackingSource}
+                      onChange={(e) => setModalTrackingSource(e.target.value)}
+                      placeholder="Ex: Meta Ads Dr. Lucas, Google, Instagram..."
+                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-micro font-bold text-fg mb-1 flex items-center gap-1">
+                      <Mail size={12} className="text-fg-subtle" />
+                      E-mail (opcional)
+                    </label>
+                    <input
+                      type="email"
+                      value={modalEmail}
+                      onChange={(e) => setModalEmail(e.target.value)}
+                      placeholder="contato@exemplo.com"
+                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid"
+                    />
+                  </div>
                 </div>
 
-                {/* BLOCO DE LEMBRETE / FOLLOW-UP */}
-                <div className="space-y-2.5 p-3.5 bg-blue-500/5 border border-blue-500/20 rounded-xl">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] uppercase font-bold text-blue-400 flex items-center gap-1.5">
+                {/* Linha 3: Valor e Produto/Interesse */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-micro font-bold text-fg mb-1 flex items-center gap-1">
+                      <DollarSign size={12} className="text-emerald-400" />
+                      Valor Previsto / Fechamento (R$)
+                    </label>
+                    <input
+                      type="text"
+                      value={modalProductValue}
+                      onChange={(e) => setModalProductValue(e.target.value)}
+                      placeholder="Ex: 450,00"
+                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid font-mono font-bold text-emerald-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-micro font-bold text-fg mb-1 flex items-center gap-1">
+                      <ShoppingBag size={12} className="text-fg-subtle" />
+                      Produto / Interesse
+                    </label>
+                    <input
+                      type="text"
+                      value={modalProductName}
+                      onChange={(e) => setModalProductName(e.target.value)}
+                      placeholder="Ex: Consulta Dermatológica..."
+                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid"
+                    />
+                  </div>
+                </div>
+
+                {/* Linha 4: Etapa do Pipeline & Agente IA */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-micro font-bold text-fg mb-1">
+                      Etapa do Pipeline
+                    </label>
+                    <select
+                      value={modalStage}
+                      onChange={(e) => setModalStage(e.target.value)}
+                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid cursor-pointer"
+                    >
+                      {stages.map((st) => (
+                        <option key={st.id} value={st.id} className="bg-surface-panel text-fg">
+                          {st.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-micro font-bold text-fg mb-1">
+                      Agente IA Responsável
+                    </label>
+                    <select
+                      value={modalResponsibleAgent}
+                      onChange={(e) => setModalResponsibleAgent(e.target.value)}
+                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid cursor-pointer"
+                    >
+                      <option value="" className="bg-surface-panel text-fg">Sem Agente Vinculado</option>
+                      <option value="Bia" className="bg-surface-panel text-fg">✨ Bia (Amanda)</option>
+                      <option value="Luana" className="bg-surface-panel text-fg">✨ Luana (Gastão)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Bloco de Follow-up / Lembrete de Retorno com Atalhos */}
+                <div className="p-3.5 bg-blue-500/5 border border-blue-500/20 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-micro font-bold text-blue-400 flex items-center gap-1.5 uppercase tracking-wider">
                       <Clock size={13} />
                       Lembrete de Retorno (Follow-up)
-                    </label>
+                    </span>
                     {modalFollowUpDate && (
                       <button
                         type="button"
-                        onClick={() => { setModalFollowUpDate(''); setModalFollowUpNote(''); }}
-                        className="text-[10px] text-red-400 hover:underline cursor-pointer"
+                        onClick={() => setModalFollowUpDate('')}
+                        className="text-[11px] text-red-400 hover:underline cursor-pointer"
                       >
-                        Limpar Lembrete
+                        Limpar lembrete
                       </button>
                     )}
                   </div>
 
                   {/* Atalhos Rápidos */}
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[10px] text-fg-faint">Atalhos:</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] text-fg-subtle">Atalhos:</span>
                     <button
                       type="button"
-                      onClick={() => setQuickFollowUp(0)}
-                      className="text-[10px] font-semibold px-2 py-0.5 rounded bg-surface-base border border-line-subtle hover:border-blue-400 text-fg transition-all"
+                      onClick={() => setFollowUpShortcut(0)}
+                      className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-surface-raised hover:bg-surface-inset border border-line-subtle text-fg cursor-pointer transition-colors"
                     >
                       Hoje
                     </button>
                     <button
                       type="button"
-                      onClick={() => setQuickFollowUp(1)}
-                      className="text-[10px] font-semibold px-2 py-0.5 rounded bg-surface-base border border-line-subtle hover:border-blue-400 text-fg transition-all"
+                      onClick={() => setFollowUpShortcut(1)}
+                      className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-surface-raised hover:bg-surface-inset border border-line-subtle text-fg cursor-pointer transition-colors"
                     >
                       Amanhã
                     </button>
                     <button
                       type="button"
-                      onClick={() => setQuickFollowUp(3)}
-                      className="text-[10px] font-semibold px-2 py-0.5 rounded bg-surface-base border border-line-subtle hover:border-blue-400 text-fg transition-all"
+                      onClick={() => setFollowUpShortcut(3)}
+                      className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-surface-raised hover:bg-surface-inset border border-line-subtle text-fg cursor-pointer transition-colors"
                     >
                       Em 3 dias
                     </button>
                     <button
                       type="button"
-                      onClick={() => setQuickFollowUp(7)}
-                      className="text-[10px] font-semibold px-2 py-0.5 rounded bg-surface-base border border-line-subtle hover:border-blue-400 text-fg transition-all"
+                      onClick={() => setFollowUpShortcut(7)}
+                      className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-surface-raised hover:bg-surface-inset border border-line-subtle text-fg cursor-pointer transition-colors"
                     >
                       Próxima semana
                     </button>
                     <button
                       type="button"
-                      onClick={() => setQuickFollowUp(15)}
-                      className="text-[10px] font-semibold px-2 py-0.5 rounded bg-surface-base border border-line-subtle hover:border-blue-400 text-fg transition-all"
+                      onClick={() => setFollowUpShortcut(15)}
+                      className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-surface-raised hover:bg-surface-inset border border-line-subtle text-fg cursor-pointer transition-colors"
                     >
                       Em 15 dias
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="text-[10px] text-fg-subtle block mb-1">Data agendada:</label>
+                      <label className="block text-[11px] font-bold text-fg mb-1">
+                        Data agendada:
+                      </label>
                       <input
                         type="date"
                         value={modalFollowUpDate}
                         onChange={(e) => setModalFollowUpDate(e.target.value)}
-                        className="w-full bg-surface-base border border-line-subtle rounded-lg px-2.5 py-1.5 text-body text-fg focus:border-blue-400 outline-none"
+                        className="w-full bg-surface-base border border-line-subtle rounded-xl px-3 py-1.5 text-body text-fg focus:outline-none focus:border-brand-solid"
                       />
                     </div>
+
                     <div>
-                      <label className="text-[10px] text-fg-subtle block mb-1">Motivo do retorno:</label>
+                      <label className="block text-[11px] font-bold text-fg mb-1">
+                        Motivo do retorno:
+                      </label>
                       <input
                         type="text"
                         value={modalFollowUpNote}
                         onChange={(e) => setModalFollowUpNote(e.target.value)}
-                        placeholder="Ex: Ligar para fechar proposta"
-                        className="w-full bg-surface-base border border-line-subtle rounded-lg px-2.5 py-1.5 text-body text-fg focus:border-blue-400 outline-none"
+                        placeholder="Ex: Ligar para confirmar procedimento..."
+                        className="w-full bg-surface-base border border-line-subtle rounded-xl px-3 py-1.5 text-body text-fg focus:outline-none focus:border-brand-solid placeholder:text-fg-faint"
                       />
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-3 border-t border-line-subtle">
-                  {selectedLead.phone ? (
-                    <a
-                      href={`https://wa.me/${selectedLead.phone.replace(/\D/g, '')}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-micro font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-xl hover:bg-emerald-500/20 transition-colors"
-                    >
-                      <MessageSquare size={13} />
-                      Abrir WhatsApp
-                    </a>
-                  ) : <span />}
+                {/* Rodapé com Ações: Abrir WhatsApp, Cancelar, Salvar */}
+                <div className="pt-3 border-t border-line-subtle flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    {modalPhone && (
+                      <a
+                        href={`https://wa.me/${modalPhone.replace(/\D/g, '')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-[12px] text-emerald-400 hover:text-emerald-300 font-bold px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 transition-colors"
+                      >
+                        <MessageSquare size={14} />
+                        Abrir WhatsApp
+                      </a>
+                    )}
+                  </div>
 
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setSelectedLead(null)}
-                      className="px-4 py-2 rounded-xl border border-line-subtle text-fg-subtle hover:text-fg hover:bg-surface-overlay text-body font-medium transition-colors cursor-pointer"
+                      className="px-4 py-2 rounded-xl text-body font-medium text-fg-subtle hover:bg-surface-inset transition-colors cursor-pointer"
                     >
                       Cancelar
                     </button>
                     <button
                       type="submit"
                       disabled={isSaving}
-                      className="px-4 py-2 rounded-xl bg-brand-solid text-black font-bold text-body hover:bg-brand-glow transition-all cursor-pointer disabled:opacity-50"
+                      className="px-5 py-2 rounded-xl text-body font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50 cursor-pointer shadow-md"
                     >
                       {isSaving ? 'Salvando...' : 'Salvar Alterações'}
                     </button>
@@ -701,7 +1085,7 @@ export function KanbanBoard({
           document.body
         )}
 
-      {/* MODAL PARA CRIAR NOVA ETAPA DO FUNIL */}
+      {/* MODAL DE CRIAÇÃO DE NOVA ETAPA */}
       {mounted &&
         showAddStageModal &&
         createPortal(
@@ -709,61 +1093,145 @@ export function KanbanBoard({
             <div className="bg-surface-panel border border-line-subtle rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col">
               <div className="p-5 border-b border-line-subtle flex items-center justify-between">
                 <div>
-                  <h3 className="text-h3 text-fg font-bold">Nova Etapa do Funil</h3>
-                  <p className="text-micro text-fg-subtle mt-0.5">Adicione uma coluna personalizada ao Pipeline</p>
+                  <p className="text-[11px] uppercase tracking-wider text-brand-ink font-bold">Personalização do Funil</p>
+                  <h3 className="text-h3 text-fg font-bold mt-0.5">Criar Nova Coluna</h3>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setShowAddStageModal(false)}
-                  className="text-fg-subtle hover:text-fg p-1 font-bold cursor-pointer"
+                  className="p-1.5 text-fg-subtle hover:text-fg hover:bg-surface-inset rounded-lg transition-colors cursor-pointer"
                 >
                   <X size={18} />
                 </button>
               </div>
 
               <form onSubmit={handleCreateStage} className="p-5 space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] uppercase font-bold text-fg-subtle">Nome da Etapa</label>
+                <div>
+                  <label className="block text-micro font-bold text-fg mb-1.5">
+                    Nome da Nova Coluna / Etapa
+                  </label>
                   <input
                     type="text"
                     required
+                    placeholder="Ex: Proposta Enviada, Visita Agendada..."
                     value={newStageLabel}
                     onChange={(e) => setNewStageLabel(e.target.value)}
-                    placeholder="Ex: Proposta Enviada, Visita Agendada, Em Negociação..."
-                    className="w-full bg-surface-base border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:border-brand-ink outline-none"
+                    className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid placeholder:text-fg-faint"
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-[11px] uppercase font-bold text-fg-subtle">Cor da Coluna</label>
-                  <div className="flex items-center gap-2 pt-1">
-                    {PRESET_COLORS.map((c) => (
+                <div>
+                  <label className="block text-micro font-bold text-fg mb-1.5">
+                    Cor Indicadora da Coluna
+                  </label>
+                  <div className="flex items-center gap-2 flex-wrap mb-2">
+                    {PRESET_COLORS.map((col) => (
                       <button
-                        key={c}
+                        key={col}
                         type="button"
-                        onClick={() => setNewStageColor(c)}
-                        style={{ backgroundColor: c }}
+                        onClick={() => setNewStageColor(col)}
+                        style={{ backgroundColor: col }}
                         className={cn(
-                          "w-6 h-6 rounded-full border-2 transition-transform cursor-pointer",
-                          newStageColor === c ? "scale-125 border-white shadow-lg" : "border-transparent hover:scale-110"
+                          "w-7 h-7 rounded-full transition-transform cursor-pointer flex items-center justify-center",
+                          newStageColor === col ? "scale-125 ring-2 ring-white" : "hover:scale-110"
                         )}
-                      />
+                      >
+                        {newStageColor === col && <CheckCircle2 size={14} className="text-white" />}
+                      </button>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-2 pt-3 border-t border-line-subtle">
+                <div className="pt-3 border-t border-line-subtle flex items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => setShowAddStageModal(false)}
-                    className="px-4 py-2 rounded-xl border border-line-subtle text-fg-subtle hover:text-fg hover:bg-surface-overlay text-body font-medium transition-colors cursor-pointer"
+                    className="px-4 py-2 rounded-xl text-body font-medium text-fg-subtle hover:bg-surface-inset transition-colors cursor-pointer"
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 rounded-xl bg-brand-solid text-black font-bold text-body hover:bg-brand-glow transition-all cursor-pointer"
+                    className="px-5 py-2 rounded-xl text-body font-bold bg-brand-solid text-on-accent hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
                   >
-                    Adicionar Coluna
+                    Criar Coluna
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* MODAL DE EDIÇÃO DE ETAPA EXISTENTE */}
+      {mounted &&
+        editingStage &&
+        createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+            <div className="bg-surface-panel border border-line-subtle rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-5 border-b border-line-subtle flex items-center justify-between">
+                <div>
+                  <p className="text-[11px] uppercase tracking-wider text-fg-subtle font-bold">Editar Coluna</p>
+                  <h3 className="text-h3 text-fg font-bold mt-0.5">{editingStage.label}</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingStage(null)}
+                  className="p-1.5 text-fg-subtle hover:text-fg hover:bg-surface-inset rounded-lg transition-colors cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveEditStage} className="p-5 space-y-4">
+                <div>
+                  <label className="block text-micro font-bold text-fg mb-1.5">
+                    Nome da Etapa
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editStageLabel}
+                    onChange={(e) => setEditStageLabel(e.target.value)}
+                    className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-micro font-bold text-fg mb-1.5">
+                    Cor Indicadora
+                  </label>
+                  <div className="flex items-center gap-2 flex-wrap mb-2">
+                    {PRESET_COLORS.map((col) => (
+                      <button
+                        key={col}
+                        type="button"
+                        onClick={() => setEditStageColor(col)}
+                        style={{ backgroundColor: col }}
+                        className={cn(
+                          "w-7 h-7 rounded-full transition-transform cursor-pointer flex items-center justify-center",
+                          editStageColor === col ? "scale-125 ring-2 ring-white" : "hover:scale-110"
+                        )}
+                      >
+                        {editStageColor === col && <CheckCircle2 size={14} className="text-white" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-line-subtle flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingStage(null)}
+                    className="px-4 py-2 rounded-xl text-body font-medium text-fg-subtle hover:bg-surface-inset transition-colors cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl text-body font-bold bg-brand-solid text-on-accent hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
+                  >
+                    Salvar Etapa
                   </button>
                 </div>
               </form>

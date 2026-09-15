@@ -34,8 +34,8 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         or(
           eq(whatsappMessages.leadId, id),
           eq(whatsappMessages.phone, lead.phone),
-          cleanPhone.length >= 9
-            ? sql`right(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g'), 9) = right(${cleanPhone}, 9)`
+          cleanPhone.length >= 8
+            ? sql`length(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g')) >= 8 AND right(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g'), 8) = right(${cleanPhone}, 8)`
             : undefined
         )
       )

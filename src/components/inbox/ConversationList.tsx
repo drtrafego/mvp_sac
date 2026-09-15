@@ -55,16 +55,31 @@ function formatMessageTimestamp(dateStr: string | null | undefined): { time: str
   const d = new Date(dateStr)
   if (isNaN(d.getTime())) return { time: '', full: '', relative: '' }
 
+  const timeOnly = d.toLocaleTimeString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
+  const dateBR = d.toLocaleDateString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+  })
+
   const now = new Date()
-  const isToday = d.toDateString() === now.toDateString()
+  const todayBR = now.toLocaleDateString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+  })
 
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  const isYesterday = d.toDateString() === yesterday.toDateString()
-
-  const hours = String(d.getHours()).padStart(2, '0')
-  const mins = String(d.getMinutes()).padStart(2, '0')
-  const timeOnly = `${hours}:${mins}`
+  const yesterday = new Date(now.getTime() - 86_400_000)
+  const yesterdayBR = yesterday.toLocaleDateString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+  })
 
   const diffMs = now.getTime() - d.getTime()
   const diffMins = Math.floor(diffMs / 60_000)
@@ -74,20 +89,17 @@ function formatMessageTimestamp(dateStr: string | null | undefined): { time: str
   else if (diffMins >= 1440) relative = `${Math.floor(diffMins / 1440)}d`
 
   let display = ''
-  if (isToday) {
+  if (dateBR === todayBR) {
     display = timeOnly
-  } else if (isYesterday) {
+  } else if (dateBR === yesterdayBR) {
     display = `ontem ${timeOnly}`
-  } else if (diffMs < 7 * 24 * 3600 * 1000) {
-    const days = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb']
-    display = `${days[d.getDay()]} ${timeOnly}`
   } else {
-    display = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${timeOnly}`
+    display = `${dateBR} ${timeOnly}`
   }
 
   return {
     time: display,
-    full: d.toLocaleString('pt-BR'),
+    full: d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
     relative,
   }
 }
@@ -191,7 +203,7 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
   return (
     <aside
       className={cn(
-        'w-full shrink-0 md:w-[330px] xl:w-[380px] flex-col border-r border-line-subtle bg-surface-panel',
+        'w-full shrink-0 md:w-[330px] xl:w-[380px] flex flex-col border-r border-line-subtle bg-surface-panel h-full min-h-0 overflow-hidden',
         activeId ? 'hidden md:flex' : 'flex'
       )}
     >
@@ -366,10 +378,10 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
             const isActive = String(conv.id) === activeId
             const displayName = conv.name || conv.phone
             const initials = displayName.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
-            const timeInfo = formatMessageTimestamp(conv.lastMessageAt)
+            const timeInfo = formatMessageTimestamp(conv.lastMessageAt || conv.createdAt)
 
             return (
-              <Link key={conv.id} href={`/inbox/${conv.id}`} className="focus-ring block rounded-xl">
+              <Link key={conv.id} href={`/inbox/${conv.id}`} scroll={false} className="focus-ring block rounded-xl">
                 <div
                   className={cn(
                     'relative flex flex-col gap-1.5 rounded-xl p-2.5 transition-all cursor-pointer border',
