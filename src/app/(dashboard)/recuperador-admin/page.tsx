@@ -249,7 +249,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             <div className="flex items-center gap-2 mb-1">
               <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
                 <Sparkles size={12} />
-                SAC Hermes Multiagente
+                SAC Casal do Tráfego Multiagente
               </span>
               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -408,7 +408,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         ))}
       </div>
 
-      {/* Pipeline de Atendimento (Kanban Hermes) */}
+      {/* Pipeline de Atendimento (Kanban Casal do Tráfego) */}
       <div className="rise rise-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div>

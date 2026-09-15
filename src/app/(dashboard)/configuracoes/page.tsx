@@ -780,7 +780,7 @@ export default function ConfiguracoesPage() {
           <Input
             value={form.brevoSenderName}
             onChange={e => set('brevoSenderName', e.target.value)}
-            placeholder="SAC Hermes - Suporte"
+            placeholder="SAC Casal do Tráfego - Suporte"
             className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
           />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">

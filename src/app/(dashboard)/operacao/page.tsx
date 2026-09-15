@@ -151,7 +151,7 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
       statValue: `${totalLeads} contatos`,
     },
     {
-      name: 'Nina (Atendimento & SAC Hermes)',
+      name: 'Nina (Atendimento & SAC Casal do Tráfego)',
       role: 'Agente de Atendimento & Dúvidas Rápidas',
       channel: 'WhatsApp Multicanal',
       status: 'Ativo',
@@ -274,7 +274,7 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Bot size={18} className="text-brand-ink" />
-            <h2 className="text-h2 text-fg">Agentes IA Hermes & AutonomIA ({company.name})</h2>
+            <h2 className="text-h2 text-fg">Agentes IA Casal do Tráfego & AutonomIA ({company.name})</h2>
           </div>
           <span className="text-micro text-emerald-400 font-semibold flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />

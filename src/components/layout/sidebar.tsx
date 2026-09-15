@@ -179,12 +179,12 @@ export interface SidebarProps {
 export function SidebarBrand({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <div className={cn('flex items-center', collapsed ? 'justify-center w-full' : 'gap-3')}>
-      <div className="w-9 h-9 rounded-xl bg-brand-solid flex items-center justify-center font-black text-on-accent text-base shadow-sm shrink-0">
-        H
+      <div className="w-9 h-9 rounded-xl bg-brand-solid flex items-center justify-center font-black text-on-accent text-xs shadow-sm shrink-0">
+        CT
       </div>
       {!collapsed && (
         <div className="flex flex-col min-w-0">
-          <span className="font-bold text-fg text-sm tracking-tight leading-tight">SAC Hermes</span>
+          <span className="font-bold text-fg text-sm tracking-tight leading-tight">SAC Casal do Tráfego</span>
           <span className="text-[9px] font-bold tracking-wider text-fg-subtle uppercase">CENTRAL MULTICANAL</span>
         </div>
       )}
@@ -920,11 +920,11 @@ export function Sidebar({ isAdmin, activeConnections }: SidebarProps) {
             )}
             title={collapsed ? 'Clique para expandir o menu' : undefined}
           >
-            H
+            CT
           </div>
           {!collapsed && (
             <div className="flex flex-col min-w-0">
-              <span className="font-bold text-fg text-sm tracking-tight leading-tight">SAC Hermes</span>
+              <span className="font-bold text-fg text-sm tracking-tight leading-tight">SAC Casal do Tráfego</span>
               <span className="text-[9px] font-bold tracking-wider text-fg-subtle uppercase">CENTRAL MULTICANAL</span>
             </div>
           )}

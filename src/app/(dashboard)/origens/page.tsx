@@ -644,7 +644,7 @@ export default async function OrigensPage({ searchParams }: PageProps) {
           <h3 className="text-h3 text-fg font-bold">Como Configurar UTMs para Rastrear Subcategorias</h3>
         </div>
         <p className="text-micro text-fg-muted">
-          Para que o SAC Hermes e o bot AutonomIA identifiquem a origem e a subcategoria de abordagem automaticamente, inclua os parâmetros UTM nas suas URLs de destino ou nos payloads de importação/webhook:
+          Para que o SAC Casal do Tráfego e o bot AutonomIA identifiquem a origem e a subcategoria de abordagem automaticamente, inclua os parâmetros UTM nas suas URLs de destino ou nos payloads de importação/webhook:
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-micro font-mono pt-1">
           <div className="p-3 rounded-[var(--r-md)] bg-surface-panel border border-line-subtle">

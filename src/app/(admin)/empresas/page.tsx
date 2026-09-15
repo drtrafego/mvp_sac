@@ -45,6 +45,8 @@ export default function EmpresasPage() {
   const [entering, setEntering] = useState<number | null>(null)
   // Uma chave por botão de cópia: convite e as quatro URLs de webhook
   const [copied, setCopied] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const router = useRouter()
 
   async function loadCompanies() {
@@ -53,6 +55,25 @@ export default function EmpresasPage() {
     const data = await res.json()
     setCompanies(data)
     setLoading(false)
+  }
+
+  async function handleSyncAgents() {
+    setSyncing(true)
+    setSyncMsg(null)
+    try {
+      const res = await fetch('/api/admin/sync-agents', { method: 'POST' })
+      const data = await res.json()
+      if (data.ok) {
+        setSyncMsg(data.message || 'Agentes e empresas sincronizados com sucesso!')
+        loadCompanies()
+      } else {
+        setSyncMsg(`Erro: ${data.message || data.error || 'Falha ao sincronizar'}`)
+      }
+    } catch (err) {
+      setSyncMsg('Erro de conexão ao sincronizar agentes.')
+    } finally {
+      setSyncing(false)
+    }
   }
 
   useEffect(() => { loadCompanies() }, [])
@@ -91,13 +112,31 @@ export default function EmpresasPage() {
       <div className="flex items-start justify-between gap-4 rise rise-1">
         <div>
           <h1 className="text-h1 text-fg">Empresas</h1>
-          <p className="text-body text-fg-muted mt-1">Gerencie todas as empresas do sistema</p>
+          <p className="text-body text-fg-muted mt-1">Gerencie todas as empresas do sistema ou sincronize do Supabase</p>
         </div>
-        <button onClick={() => setShowCreate(true)} className={PRIMARY_BUTTON}>
-          <Plus size={16} />
-          Nova empresa
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleSyncAgents}
+            disabled={syncing}
+            className="focus-ring inline-flex h-[var(--control-lg)] items-center gap-2 rounded-[var(--r-sm)] border border-brand-solid/40 bg-surface-raised px-3.5 text-body font-medium text-brand-ink transition-colors hover:bg-surface-inset disabled:opacity-50 cursor-pointer lg:h-[var(--control-md)]"
+          >
+            <RefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
+            <span>{syncing ? 'Sincronizando...' : 'Sincronizar Agentes (Supabase)'}</span>
+          </button>
+          <button onClick={() => setShowCreate(true)} className={PRIMARY_BUTTON}>
+            <Plus size={16} />
+            Nova empresa
+          </button>
+        </div>
       </div>
+
+      {syncMsg && (
+        <div className="rounded-xl border border-brand-solid/30 bg-surface-panel p-3.5 text-micro font-medium text-fg flex items-center justify-between shadow-xs">
+          <span>{syncMsg}</span>
+          <button onClick={() => setSyncMsg(null)} className="text-fg-subtle hover:text-fg text-xs font-bold">✕</button>
+        </div>
+      )}
 
       {showCreate && (
         <CreateCompanyForm

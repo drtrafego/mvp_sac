@@ -23,8 +23,8 @@ export async function sendBrevoEmail({
   companyId,
 }: SendEmailOptions) {
   let apiKey = process.env.BREVO_API_KEY
-  let senderEmail = process.env.BREVO_FROM_EMAIL || 'contato@hermes.com.br'
-  let senderName = process.env.BREVO_FROM_NAME || 'SAC Hermes'
+  let senderEmail = process.env.BREVO_FROM_EMAIL || 'contato@casaldotrafego.com.br'
+  let senderName = process.env.BREVO_FROM_NAME || 'SAC Casal do Tráfego'
 
   if (companyId) {
     const [companySetting] = await db

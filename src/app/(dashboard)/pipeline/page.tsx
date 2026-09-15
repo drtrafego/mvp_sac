@@ -77,7 +77,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
           </div>
           <h1 className="text-h1 text-fg">Pipeline de Atendimento & Vendas</h1>
           <p className="text-body text-fg-muted mt-0.5">
-            Quadro Kanban do funil de vendas, etapas de recuperação e atendimento dos agentes AutonomIA & Hermes.
+            Quadro Kanban do funil de vendas, etapas de recuperação e atendimento dos agentes AutonomIA & Casal do Tráfego.
           </p>
         </div>
         <Suspense fallback={null}>

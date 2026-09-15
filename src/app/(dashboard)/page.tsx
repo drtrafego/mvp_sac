@@ -556,7 +556,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* 6. Pipeline de Atendimento (Kanban Hermes Interativo com Edição de Modal) */}
+      {/* 6. Pipeline de Atendimento (Kanban Casal do Tráfego Interativo com Edição de Modal) */}
       <div className="rise rise-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <div>
