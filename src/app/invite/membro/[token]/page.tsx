@@ -72,7 +72,7 @@ export default async function InviteMembroPage({ params }: { params: Promise<{ t
           </div>
           <h1 className="text-h1 text-fg">Você foi convidado</h1>
           <p className="text-body text-fg-muted">
-            Para administrar a empresa <span className="text-fg font-medium">{company?.name ?? 'RecuperaVendas'}</span> como <span className="text-fg font-medium">{membership.role === 'admin' ? 'Administrador' : 'Membro'}</span>.
+            Para administrar a empresa <span className="text-fg font-medium">{company?.name ?? 'SAC'}</span> como <span className="text-fg font-medium">{membership.role === 'admin' ? 'Administrador' : 'Membro'}</span>.
           </p>
         </div>
         <div className="space-y-3">

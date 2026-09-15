@@ -50,13 +50,59 @@ export async function getCurrentCompany() {
   if (isAdmin) {
     const cookieStore = await cookies()
     const viewingId = cookieStore.get('admin_viewing')?.value
-    if (!viewingId) return null
+    if (viewingId) {
+      const [company] = await db
+        .select()
+        .from(companies)
+        .where(eq(companies.id, parseInt(viewingId)))
+      if (company) return company
+    }
 
-    const [company] = await db
+    // Se o admin não selecionou uma empresa específica via admin_viewing cookie,
+    // busca a empresa vinculada ao próprio user ID
+    const [ownCompany] = await db
       .select()
       .from(companies)
-      .where(eq(companies.id, parseInt(viewingId)))
-    return company ?? null
+      .where(eq(companies.stackAuthUserId, user.id))
+
+    if (ownCompany) return ownCompany
+
+    // Se não tiver empresa vinculada ao ID, busca por email de membro
+    if (user.primaryEmail) {
+      const [pendingByEmail] = await db
+        .select()
+        .from(companyMembers)
+        .where(eq(companyMembers.email, user.primaryEmail.toLowerCase()))
+
+      if (pendingByEmail) {
+        const [memberCompany] = await db
+          .select()
+          .from(companies)
+          .where(eq(companies.id, pendingByEmail.companyId))
+        if (memberCompany) return memberCompany
+      }
+    }
+
+    // Fallback: primeira empresa cadastrada no sistema
+    const [firstCompany] = await db
+      .select()
+      .from(companies)
+      .limit(1)
+
+    if (firstCompany) return firstCompany
+
+    // Auto-cria a empresa se nenhuma existir
+    const baseName = user.displayName || user.primaryEmail?.split('@')[0] || 'admin'
+    const baseSlug = baseName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    const slug = `${baseSlug}-${Math.random().toString(36).slice(2, 7)}`
+
+    const [created] = await db
+      .insert(companies)
+      .values({ stackAuthUserId: user.id, name: baseName, slug })
+      .onConflictDoNothing({ target: companies.stackAuthUserId })
+      .returning()
+
+    return created ?? null
   }
 
   // Fluxo normal: empresa vinculada ao user (proprietário)
