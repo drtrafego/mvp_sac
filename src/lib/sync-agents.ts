@@ -155,6 +155,30 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
   details.push(`Encontrados ${agents.length} agentes ativos no catálogo Supabase/Neon.`)
 
+  // Pre-carrega em memória os telefones e externalIds existentes para evitar N+1 queries
+  const existingLeadsRows = await db
+    .select({ id: recoveryLeads.id, companyId: recoveryLeads.companyId, phone: recoveryLeads.phone, email: recoveryLeads.email })
+    .from(recoveryLeads)
+
+  const leadMap = new Map<string, number>()
+  for (const row of existingLeadsRows) {
+    if (row.phone) {
+      const clean = row.phone.replace(/\D/g, '') || row.phone
+      leadMap.set(`${row.companyId}_${clean}`, row.id)
+      if (clean.length >= 9) leadMap.set(`${row.companyId}_${clean.slice(-9)}`, row.id)
+    }
+    if (row.email) {
+      leadMap.set(`${row.companyId}_${row.email.trim().toLowerCase()}`, row.id)
+    }
+  }
+
+  const existingMsgsRows = await db
+    .select({ externalId: whatsappMessages.externalId })
+    .from(whatsappMessages)
+    .where(sql`${whatsappMessages.externalId} IS NOT NULL`)
+
+  const existingMsgIds = new Set<string>(existingMsgsRows.map(m => m.externalId!).filter(Boolean))
+
   for (const agent of agents) {
     const rawSlug = (agent.slug || agent.org_slug || agent.name.toLowerCase().replace(/\s+/g, '-')).toLowerCase()
     const rawName = agent.name || agent.org_name || 'Agente IA'
@@ -188,7 +212,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       companyMap.set(companySlug, company)
     }
 
-    // 3. Sincroniza Conversas e Mensagens do schema do agente ("<schema>".conversations e messages)
+    // 3. Sincroniza Conversas e Mensagens recentes do schema do agente em BATCH
     const schema = agent.schema_name
     if (schema) {
       try {
@@ -196,30 +220,34 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           select session_id, chat_id, channel, title, started_at, ended_at, message_count
           from "${schema}".conversations
           order by coalesce(ended_at, started_at) desc
-          limit 5000
+          limit 300
         `)
 
         if (convs && convs.length > 0) {
+          const sessionIds = convs.map(c => c.session_id).filter(Boolean)
+
+          const msgs = sessionIds.length > 0 ? await queryAgentsDb<MessageDbRow>(`
+            select id, session_id, role, content, ts, platform_message_id
+            from "${schema}".messages
+            where session_id = ANY($1)
+            order by ts asc
+          `, [sessionIds]) : []
+
+          const msgsBySession = new Map<string, MessageDbRow[]>()
+          if (msgs) {
+            for (const m of msgs) {
+              if (!msgsBySession.has(m.session_id)) msgsBySession.set(m.session_id, [])
+              msgsBySession.get(m.session_id)!.push(m)
+            }
+          }
+
           for (const cv of convs) {
             const rawPhone = cv.chat_id || cv.session_id
             if (!rawPhone) continue
             const cleanPhone = normalizeDigits(rawPhone) || rawPhone
+            const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
 
-            // Encontra ou cria lead
-            let [lead] = await db
-              .select()
-              .from(recoveryLeads)
-              .where(
-                and(
-                  eq(recoveryLeads.companyId, company.id),
-                  or(
-                    eq(recoveryLeads.phone, cleanPhone),
-                    sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${cleanPhone}, 9)`
-                  )
-                )
-              )
-              .limit(1)
-
+            let leadId = leadMap.get(`${company.id}_${cleanPhone}`) || leadMap.get(`${company.id}_${last9}`)
             const channelType = cv.channel?.includes('email')
               ? 'email'
               : cv.channel?.includes('insta')
@@ -229,7 +257,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             let leadDate = cv.ended_at ? new Date(cv.ended_at) : (cv.started_at ? new Date(cv.started_at) : new Date())
             if (isNaN(leadDate.getTime())) leadDate = new Date()
 
-            if (!lead) {
+            if (!leadId) {
               const [newLead] = await db
                 .insert(recoveryLeads)
                 .values({
@@ -246,77 +274,41 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                   lastActionAt: leadDate,
                 })
                 .returning()
-              lead = newLead
+
+              leadId = newLead.id
+              leadMap.set(`${company.id}_${cleanPhone}`, leadId)
+              if (cleanPhone.length >= 9) leadMap.set(`${company.id}_${last9}`, leadId)
               leadsCreated++
-            } else {
-              // Atualiza o lead com a data mais recente da conversa
-              await db
-                .update(recoveryLeads)
-                .set({
-                  updatedAt: sql`GREATEST(${recoveryLeads.updatedAt}, ${leadDate})`,
-                  lastActionAt: leadDate,
-                  name: cv.title && cv.title !== 'Novo Atendimento' ? cv.title : recoveryLeads.name,
-                })
-                .where(eq(recoveryLeads.id, lead.id))
             }
 
-            // Sincroniza mensagens desta conversa usando a coluna correta "ts"
-            const msgs = await queryAgentsDb<MessageDbRow>(`
-              select id, session_id, role, content, ts, platform_message_id
-              from "${schema}".messages
-              where session_id = $1
-              order by ts asc
-            `, [cv.session_id])
+            const convMsgs = msgsBySession.get(cv.session_id) || []
+            const msgsToInsert: (typeof whatsappMessages.$inferInsert)[] = []
 
-            if (msgs && msgs.length > 0) {
-              let latestMsgTs: Date | null = null
+            for (const m of convMsgs) {
+              const externalId = `agent_${schema}_${m.id || m.platform_message_id || cv.session_id + '_' + m.ts}`
+              if (existingMsgIds.has(externalId)) continue
 
-              for (const m of msgs) {
-                const isUser = m.role === 'user'
-                const direction = isUser ? 'inbound' : 'outbound'
-                const sentBy = isUser ? 'user' : 'bot'
-                const msgDate = m.ts ? new Date(m.ts) : new Date()
-                if (!latestMsgTs || msgDate > latestMsgTs) latestMsgTs = msgDate
+              const isUser = m.role === 'user'
+              const msgDate = m.ts ? new Date(m.ts) : new Date()
 
-                const externalId = `agent_${schema}_${m.id || m.platform_message_id || cv.session_id + '_' + m.ts}`
+              msgsToInsert.push({
+                companyId: company.id,
+                leadId: leadId,
+                phone: cleanPhone,
+                channel: channelType,
+                direction: isUser ? 'inbound' : 'outbound',
+                content: m.content || '',
+                messageType: 'text',
+                sentBy: isUser ? 'user' : 'bot',
+                externalId,
+                createdAt: msgDate,
+              })
+              existingMsgIds.add(externalId)
+            }
 
-                const [existingMsg] = await db
-                  .select({ id: whatsappMessages.id })
-                  .from(whatsappMessages)
-                  .where(
-                    and(
-                      eq(whatsappMessages.companyId, company.id),
-                      eq(whatsappMessages.externalId, externalId)
-                    )
-                  )
-                  .limit(1)
-
-                if (!existingMsg) {
-                  await db.insert(whatsappMessages).values({
-                    companyId: company.id,
-                    leadId: lead.id,
-                    phone: lead.phone,
-                    channel: channelType,
-                    direction,
-                    content: m.content || '',
-                    messageType: 'text',
-                    sentBy,
-                    externalId,
-                    createdAt: msgDate,
-                  })
-                  messagesImported++
-                }
-              }
-
-              if (latestMsgTs) {
-                await db
-                  .update(recoveryLeads)
-                  .set({
-                    updatedAt: sql`GREATEST(${recoveryLeads.updatedAt}, ${latestMsgTs})`,
-                    lastActionAt: latestMsgTs,
-                  })
-                  .where(eq(recoveryLeads.id, lead.id))
-              }
+            if (msgsToInsert.length > 0) {
+              await db.insert(whatsappMessages).values(msgsToInsert)
+              messagesImported += msgsToInsert.length
             }
           }
         }
@@ -326,18 +318,32 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     }
   }
 
-  // 4. Sincroniza Leads e Mensagens de Mineração / Prospecção (public.outreach_convos e public.outreach_msgs)
+  // 4. Sincroniza Leads e Mensagens de Mineração / Prospecção em BATCH
   try {
     const outreachConvos = await queryAgentsDb<OutreachConvoDbRow>(`
       select id, agent_slug, channel, source, lead_name, lead_handle, lead_company, status, last_at, msg_count
       from public.outreach_convos
       where agent_slug not ilike '%lucas%'
       order by last_at desc
-      limit 5000
+      limit 300
     `)
 
     if (outreachConvos && outreachConvos.length > 0) {
-      details.push(`Encontradas ${outreachConvos.length} conversas de prospecção/mineração.`)
+      const convoIds = outreachConvos.map(c => c.id).filter(Boolean)
+      const outreachMsgs = convoIds.length > 0 ? await queryAgentsDb<OutreachMsgDbRow>(`
+        select id, convo_id, direction, status, subject, body, sent_at
+        from public.outreach_msgs
+        where convo_id = ANY($1)
+        order by sent_at asc
+      `, [convoIds]) : []
+
+      const msgsByConvo = new Map<string, OutreachMsgDbRow[]>()
+      if (outreachMsgs) {
+        for (const m of outreachMsgs) {
+          if (!msgsByConvo.has(m.convo_id)) msgsByConvo.set(m.convo_id, [])
+          msgsByConvo.get(m.convo_id)!.push(m)
+        }
+      }
 
       for (const oc of outreachConvos) {
         const agentSlug = (oc.agent_slug || '').toLowerCase()
@@ -356,22 +362,13 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
         const ch = oc.channel || (isEmail ? 'email' : 'whatsapp')
         const ocDate = oc.last_at ? new Date(oc.last_at) : new Date()
+        const last9 = !isEmail && phone.length >= 9 ? phone.slice(-9) : phone
 
-        let [lead] = await db
-          .select()
-          .from(recoveryLeads)
-          .where(
-            and(
-              eq(recoveryLeads.companyId, comp.id),
-              or(
-                eq(recoveryLeads.phone, phone),
-                isEmail ? eq(recoveryLeads.email, phone) : sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${phone}, 9)`
-              )
-            )
-          )
-          .limit(1)
+        let leadId = isEmail
+          ? leadMap.get(`${comp.id}_${rawHandle.toLowerCase()}`)
+          : (leadMap.get(`${comp.id}_${phone}`) || leadMap.get(`${comp.id}_${last9}`))
 
-        if (!lead) {
+        if (!leadId) {
           const [newLead] = await db
             .insert(recoveryLeads)
             .values({
@@ -390,60 +387,43 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               lastActionAt: ocDate,
             })
             .returning()
-          lead = newLead
+
+          leadId = newLead.id
+          if (isEmail) {
+            leadMap.set(`${comp.id}_${rawHandle.toLowerCase()}`, leadId)
+          } else {
+            leadMap.set(`${comp.id}_${phone}`, leadId)
+            if (phone.length >= 9) leadMap.set(`${comp.id}_${last9}`, leadId)
+          }
           leadsCreated++
-        } else {
-          await db
-            .update(recoveryLeads)
-            .set({
-              updatedAt: sql`GREATEST(${recoveryLeads.updatedAt}, ${ocDate})`,
-              lastActionAt: ocDate,
-            })
-            .where(eq(recoveryLeads.id, lead.id))
         }
 
-        // Importa mensagens de public.outreach_msgs
-        const msgs = await queryAgentsDb<OutreachMsgDbRow>(`
-          select id, convo_id, direction, status, subject, body, sent_at
-          from public.outreach_msgs
-          where convo_id = $1
-          order by sent_at asc
-        `, [oc.id])
+        const convoMsgs = msgsByConvo.get(oc.id) || []
+        const msgsToInsert: (typeof whatsappMessages.$inferInsert)[] = []
 
-        if (msgs && msgs.length > 0) {
-          for (const m of msgs) {
-            const isUser = m.direction === 'inbound'
-            const direction = isUser ? 'inbound' : 'outbound'
-            const sentBy = isUser ? 'user' : 'bot'
-            const externalId = `outreach_${m.id}`
+        for (const m of convoMsgs) {
+          const externalId = `outreach_${m.id}`
+          if (existingMsgIds.has(externalId)) continue
 
-            const [existingMsg] = await db
-              .select({ id: whatsappMessages.id })
-              .from(whatsappMessages)
-              .where(
-                and(
-                  eq(whatsappMessages.companyId, comp.id),
-                  eq(whatsappMessages.externalId, externalId)
-                )
-              )
-              .limit(1)
+          const isUser = m.direction === 'inbound'
+          msgsToInsert.push({
+            companyId: comp.id,
+            leadId: leadId,
+            phone: phone,
+            channel: ch,
+            direction: isUser ? 'inbound' : 'outbound',
+            content: m.body || m.subject || '',
+            messageType: 'text',
+            sentBy: isUser ? 'user' : 'bot',
+            externalId,
+            createdAt: m.sent_at ? new Date(m.sent_at) : (oc.last_at ? new Date(oc.last_at) : new Date()),
+          })
+          existingMsgIds.add(externalId)
+        }
 
-            if (!existingMsg) {
-              await db.insert(whatsappMessages).values({
-                companyId: comp.id,
-                leadId: lead.id,
-                phone: lead.phone,
-                channel: ch,
-                direction,
-                content: m.body || m.subject || '',
-                messageType: 'text',
-                sentBy,
-                externalId,
-                createdAt: m.sent_at ? new Date(m.sent_at) : (oc.last_at ? new Date(oc.last_at) : new Date()),
-              })
-              messagesImported++
-            }
-          }
+        if (msgsToInsert.length > 0) {
+          await db.insert(whatsappMessages).values(msgsToInsert)
+          messagesImported += msgsToInsert.length
         }
       }
     }
@@ -451,7 +431,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     details.push(`Aviso ao sincronizar prospecção: ${String(outreachErr)}`)
   }
 
-  // 5. Sincroniza Leads do CRM (public.leads da organização Agente24horas / Casal do Tráfego / AutonomIA)
+  // 5. Sincroniza novos Leads do CRM em BATCH
   try {
     const crmLeads = await queryAgentsDb<any>(`
       select id, organization_id, whatsapp, email, name, company, notes, value, status,
@@ -459,13 +439,13 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
              utm_campaign, utm_content, utm_term, ai_agent, created_at, first_contact_at
       from public.leads
       order by created_at desc
-      limit 5000
+      limit 300
     `)
 
     if (crmLeads && crmLeads.length > 0) {
       const targetComp = companyMap.get('autonomia') || companyMap.values().next().value
       if (targetComp) {
-        let crmImported = 0
+        const leadsToInsert: (typeof recoveryLeads.$inferInsert)[] = []
 
         for (const l of crmLeads) {
           const rawPhone = (l.whatsapp || '').trim()
@@ -473,29 +453,17 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           const email = l.email ? l.email.trim().toLowerCase() : null
           if (!cleanPhone && !email) continue
 
-          const [existingLead] = await db
-            .select({ id: recoveryLeads.id })
-            .from(recoveryLeads)
-            .where(
-              and(
-                eq(recoveryLeads.companyId, targetComp.id),
-                or(
-                  cleanPhone ? eq(recoveryLeads.phone, cleanPhone) : sql`false`,
-                  cleanPhone && cleanPhone.length >= 9
-                    ? sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${cleanPhone}, 9)`
-                    : sql`false`,
-                  email ? eq(recoveryLeads.email, email) : sql`false`
-                )
-              )
-            )
-            .limit(1)
+          const last9 = cleanPhone && cleanPhone.length >= 9 ? cleanPhone.slice(-9) : null
+          const existingId = (cleanPhone && leadMap.get(`${targetComp.id}_${cleanPhone}`)) ||
+                             (last9 && leadMap.get(`${targetComp.id}_${last9}`)) ||
+                             (email && leadMap.get(`${targetComp.id}_${email}`))
 
-          if (!existingLead) {
+          if (!existingId) {
             const leadDate = l.created_at ? new Date(l.created_at) : (l.first_contact_at ? new Date(l.first_contact_at) : new Date())
             const prodVal = l.value ? Math.round(Number(l.value) * 100) : null
             const stage = l.status === 'converted' ? 'fechado' : (l.follow_up_date ? 'agendado' : 'qualificado')
 
-            await db.insert(recoveryLeads).values({
+            leadsToInsert.push({
               companyId: targetComp.id,
               phone: cleanPhone || email || '',
               email: email || undefined,
@@ -519,12 +487,17 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               updatedAt: leadDate,
               lastActionAt: leadDate,
             })
-            crmImported++
+
+            if (cleanPhone) leadMap.set(`${targetComp.id}_${cleanPhone}`, -1)
+            if (last9) leadMap.set(`${targetComp.id}_${last9}`, -1)
+            if (email) leadMap.set(`${targetComp.id}_${email}`, -1)
             leadsCreated++
           }
         }
-        if (crmImported > 0) {
-          details.push(`${crmImported} novos leads importados da base central de CRM.`)
+
+        if (leadsToInsert.length > 0) {
+          await db.insert(recoveryLeads).values(leadsToInsert)
+          details.push(`${leadsToInsert.length} novos leads importados da base de CRM.`)
         }
       }
     }
@@ -532,12 +505,14 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     details.push(`Aviso ao sincronizar CRM leads: ${String(crmErr)}`)
   }
 
-  // 6. Sincroniza Referrals de Anúncios Click-to-WhatsApp (CTWA) para Janela de 72 Horas
+  // 6. Sincroniza Referrals de Anúncios Click-to-WhatsApp (CTWA)
   try {
     const ctwaRows = await queryAgentsDb<CtwaReferralDbRow>(`
       select phone_norm, campaign_name, ad_name
       from public.ctwa_referrals
       where phone_norm is not null and length(phone_norm) >= 8
+      order by created_at desc
+      limit 200
     `)
 
     if (ctwaRows && ctwaRows.length > 0) {
@@ -546,7 +521,6 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const norm = normalizeDigits(r.phone_norm)
         if (!norm) continue
 
-        // Atualiza leads correspondentes marcando tracking_source = 'meta_ads' (Janela 72h)
         const updated = await db
           .update(recoveryLeads)
           .set({
@@ -559,7 +533,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
         if (updated.length > 0) ctwaCount++
       }
-      details.push(`${ctwaCount} leads identificados como Anúncios Meta (Janela de 72h).`)
+      if (ctwaCount > 0) {
+        details.push(`${ctwaCount} leads identificados como Anúncios Meta (Janela de 72h).`)
+      }
     }
   } catch (ctwaErr) {
     // Tabela opcional

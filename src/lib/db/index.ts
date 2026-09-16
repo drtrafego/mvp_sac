@@ -112,11 +112,6 @@ function ensureSchema(client: any): Promise<void> {
             )
           `,
         ])
-
-        // Dispara sincronização automática dos agentes do Supabase em segundo plano
-        setTimeout(() => {
-          import('@/lib/sync-agents').then(m => m.syncAgentsAndCompanies()).catch(() => {})
-        }, 500)
       } catch (err: any) {
         console.error('[DB Schema Sync Error]', err?.message || err)
       }
