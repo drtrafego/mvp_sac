@@ -163,10 +163,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     let companySlug = rawSlug
     let companyName = rawName
 
-    if (rawSlug.includes('casal') || rawSlug.includes('trafego')) {
-      companySlug = 'casaldotrafego'
-      companyName = 'Casal do Tráfego'
-    } else if (rawSlug.includes('gastao') || rawSlug.includes('24horas') || rawName.toLowerCase().includes('gast')) {
+    if (rawSlug.includes('gastao') || rawSlug.includes('24horas') || rawSlug.includes('casal') || rawSlug.includes('trafego') || rawName.toLowerCase().includes('gast') || rawName.toLowerCase().includes('casal')) {
       companySlug = 'gastao-matos'
       companyName = 'Gastão Matos'
     } else if (rawSlug.includes('gramado') || rawSlug.includes('plaza')) {
@@ -345,14 +342,12 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
       for (const oc of outreachConvos) {
         const agentSlug = (oc.agent_slug || '').toLowerCase()
-        let companySlug = 'casaldotrafego'
-        if (agentSlug.includes('gastao') || agentSlug.includes('24')) {
-          companySlug = 'gastao-matos'
-        } else if (agentSlug.includes('gramado')) {
+        let companySlug = 'gastao-matos'
+        if (agentSlug.includes('gramado') || agentSlug.includes('plaza')) {
           companySlug = 'gramado-plaza'
         }
 
-        const comp = companyMap.get(companySlug) || companyMap.get('casaldotrafego')
+        const comp = companyMap.get(companySlug) || companyMap.get('gastao-matos')
         if (!comp) continue
 
         const rawHandle = (oc.lead_handle || '').trim()
