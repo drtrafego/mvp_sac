@@ -124,6 +124,22 @@ function ensureSchema(client: any): Promise<void> {
               WHERE cm.company_id = c.id AND cm.email = 'dr.trafego@gmail.com'
             )
           `,
+
+          // Garante chaves de API individuais por agente para cada empresa
+          client`
+            UPDATE settings s
+            SET 
+              agent_bia_api_key = COALESCE(s.agent_bia_api_key, 'sac_bia_' || c.slug || '_' || md5(c.id::text || '_bia')),
+              agent_luana_api_key = COALESCE(s.agent_luana_api_key, 'sac_luana_' || c.slug || '_' || md5(c.id::text || '_luana')),
+              agent_renato_api_key = COALESCE(s.agent_renato_api_key, 'sac_renato_' || c.slug || '_' || md5(c.id::text || '_renato'))
+            FROM companies c
+            WHERE s.company_id = c.id
+          `,
+          client`
+            UPDATE companies
+            SET invite_token = COALESCE(invite_token, 'sac_company_' || slug || '_' || md5(id::text || '_token'))
+            WHERE invite_token IS NULL
+          `,
         ])
       } catch (err: any) {
         console.error('[DB Schema Sync Error]', err?.message || err)
