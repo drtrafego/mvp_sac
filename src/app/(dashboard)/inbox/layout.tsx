@@ -151,23 +151,44 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
         ? `email_${c.email.toLowerCase().trim()}`
         : `id_${c.id}`
 
+      const currentSources = [c.trackingSource, c.platform].filter(Boolean) as string[]
+      const currentEvents = [c.eventType].filter(Boolean) as string[]
+
       const existing = personMap.get(key)
       if (!existing) {
-        personMap.set(key, { ...c })
+        personMap.set(key, {
+          ...c,
+          allOrigins: Array.from(new Set(currentSources)),
+          allEventTypes: Array.from(new Set(currentEvents)),
+        })
       } else {
         const existingTime = existing.lastMessageAt ? new Date(existing.lastMessageAt).getTime() : 0
         const currentTime = c.lastMessageAt ? new Date(c.lastMessageAt).getTime() : 0
         const totalUnread = (existing.unread || 0) + (c.unread || 0)
+
+        const mergedSources = Array.from(new Set([
+          ...(existing.allOrigins || [existing.trackingSource, existing.platform].filter(Boolean) as string[]),
+          ...currentSources,
+        ]))
+
+        const mergedEvents = Array.from(new Set([
+          ...(existing.allEventTypes || [existing.eventType].filter(Boolean) as string[]),
+          ...currentEvents,
+        ]))
 
         if (currentTime > existingTime) {
           personMap.set(key, {
             ...c,
             unread: totalUnread,
             name: c.name || existing.name,
+            allOrigins: mergedSources,
+            allEventTypes: mergedEvents,
           })
         } else {
           existing.unread = totalUnread
           if (!existing.name && c.name) existing.name = c.name
+          existing.allOrigins = mergedSources
+          existing.allEventTypes = mergedEvents
         }
       }
     }

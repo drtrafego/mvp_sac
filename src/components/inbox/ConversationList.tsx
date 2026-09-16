@@ -41,6 +41,8 @@ export interface ConversationSummary {
   botPausedBy?: string | null
   trackingSource?: string | null
   utmCampaign?: string | null
+  allOrigins?: string[]
+  allEventTypes?: string[]
   lastMessage: string | null
   lastDirection: string | null
   lastMessageAt: string | null
@@ -413,7 +415,12 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
 
                   {/* Linha 2: Badges de Origem, Janela Meta (24h/72h) e Status do Bot */}
                   <div className="flex flex-wrap items-center gap-1">
-                    <PlatformBadge platform={conv.platform || conv.trackingSource} eventType={conv.eventType} />
+                    <PlatformBadge
+                      origins={conv.allOrigins}
+                      platform={conv.platform}
+                      trackingSource={conv.trackingSource}
+                      eventType={conv.eventType}
+                    />
                     <MetaWindowBadge lead={conv} />
                     {conv.botPaused && (
                       <BotStatusPill paused={true} compact />

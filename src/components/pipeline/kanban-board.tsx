@@ -94,73 +94,97 @@ function getChannelIcon(channel?: string) {
 }
 
 function getLeadOriginBadge(lead: KanbanLead) {
+  const badges: React.ReactNode[] = []
+  const seenKeys = new Set<string>()
+
   const src = (lead.trackingSource || '').toLowerCase()
   const plat = (lead.platform || '').toLowerCase()
   const ev = (lead.eventType || '').toLowerCase()
+  const ch = (lead.channel || '').toLowerCase()
 
-  // 1. Meta Ads / Tráfego Pago
-  if (src.includes('meta') || src.includes('facebook') || lead.utmCampaign) {
-    const label = lead.utmCampaign ? lead.utmCampaign.slice(0, 20) : lead.trackingSource || 'Meta Ads'
-    return (
-      <span
-        title={lead.utmCampaign || lead.trackingSource || 'Meta Ads'}
-        className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30"
-      >
-        <Megaphone size={11} className="text-blue-400" />
-        <span className="truncate max-w-[120px]">{label}</span>
-      </span>
-    )
-  }
-
-  // 2. Google Ads / Pesquisa
-  if (src.includes('google')) {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/30">
-        <Globe size={11} className="text-red-400" />
-        <span>Google</span>
-      </span>
-    )
-  }
-
-  // 3. Mineração (apenas se explicitamente marcado para AutonomIA)
-  if (src.includes('mineracao') || ev.includes('prospeccao') || src.includes('prospeccao')) {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
+  // 1. Mineração (AutonomIA)
+  if (src.includes('miner') || ev.includes('prospeccao') || src.includes('prospeccao')) {
+    seenKeys.add('mineracao')
+    badges.push(
+      <span key="min" className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
         <span>⛏️</span>
         <span>Mineração</span>
       </span>
     )
   }
 
-  // 4. Plataformas de Checkout
-  if (plat.includes('hotmart')) {
-    return <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">Hotmart</span>
-  }
-  if (plat.includes('kiwify')) {
-    return <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Kiwify</span>
-  }
-  if (plat.includes('greenn')) {
-    return <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">Greenn</span>
-  }
-  if (plat.includes('zouti')) {
-    return <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Zouti</span>
-  }
-
-  // 5. Presencial / Reserva
-  if (src.includes('presencial') || src.includes('porta')) {
-    return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">Presencial</span>
-  }
-  if (src.includes('reserva')) {
-    return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/30">Reserva</span>
+  // 2. Meta Ads / Tráfego Pago
+  if ((src.includes('meta') || src.includes('facebook') || src.includes('ads') || lead.utmCampaign) && !seenKeys.has('meta')) {
+    seenKeys.add('meta')
+    const label = lead.utmCampaign ? lead.utmCampaign.slice(0, 18) : (lead.trackingSource || 'Meta Ads')
+    badges.push(
+      <span
+        key="meta"
+        title={lead.utmCampaign || lead.trackingSource || 'Meta Ads'}
+        className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30"
+      >
+        <Megaphone size={11} className="text-blue-400" />
+        <span className="truncate max-w-[130px]">{label}</span>
+      </span>
+    )
   }
 
-  // 6. Instagram / WhatsApp Direto
-  if (lead.channel === 'instagram') {
-    return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-500/15 text-pink-400 border border-pink-500/30">Instagram DM</span>
+  // 3. Google Ads
+  if (src.includes('google') && !seenKeys.has('google')) {
+    seenKeys.add('google')
+    badges.push(
+      <span key="google" className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/30">
+        <Globe size={11} className="text-red-400" />
+        <span>Google Ads</span>
+      </span>
+    )
   }
 
-  const defaultLabel = lead.trackingSource || 'Direto'
-  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-inset text-fg-subtle border border-line-subtle truncate max-w-[120px]">{defaultLabel}</span>
+  // 4. Plataformas de Checkout (Hotmart / Kiwify / Greenn / Zouti)
+  if (plat.includes('hotmart') && !seenKeys.has('hotmart')) {
+    seenKeys.add('hotmart')
+    badges.push(<span key="hot" className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">Hotmart</span>)
+  }
+  if (plat.includes('kiwify') && !seenKeys.has('kiwify')) {
+    seenKeys.add('kiwify')
+    badges.push(<span key="kiw" className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Kiwify</span>)
+  }
+  if (plat.includes('greenn') && !seenKeys.has('greenn')) {
+    seenKeys.add('greenn')
+    badges.push(<span key="grn" className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">Greenn</span>)
+  }
+  if (plat.includes('zouti') && !seenKeys.has('zouti')) {
+    seenKeys.add('zouti')
+    badges.push(<span key="zou" className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">Zouti</span>)
+  }
+
+  // 5. Instagram Direct
+  if ((ch === 'instagram' || src.includes('instagram')) && !seenKeys.has('instagram')) {
+    seenKeys.add('instagram')
+    badges.push(
+      <span key="ig" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-500/15 text-pink-400 border border-pink-500/30">
+        Instagram DM
+      </span>
+    )
+  }
+
+  // 6. WhatsApp Reserva / Presencial
+  if (src.includes('reserva') && !seenKeys.has('reserva')) {
+    seenKeys.add('reserva')
+    badges.push(<span key="res" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/30">Reserva</span>)
+  }
+
+  // Se não teve nenhuma identificada, usa trackingSource ou Direto
+  if (badges.length === 0) {
+    const defaultLabel = lead.trackingSource || 'Direto'
+    badges.push(
+      <span key="def" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-inset text-fg-subtle border border-line-subtle truncate max-w-[120px]">
+        {defaultLabel}
+      </span>
+    )
+  }
+
+  return <div className="flex flex-wrap items-center gap-1">{badges}</div>
 }
 
 export function KanbanBoard({

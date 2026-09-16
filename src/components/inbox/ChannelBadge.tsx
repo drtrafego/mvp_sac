@@ -146,62 +146,200 @@ export function ChannelBadge({
   )
 }
 
+export interface OriginItem {
+  key: string
+  label: string
+  color: string
+  icon?: React.ReactNode
+}
+
+export function parseOriginItem(raw: string | null | undefined): OriginItem | null {
+  if (!raw) return null
+  const norm = raw.toLowerCase().trim()
+  if (!norm || norm === 'null' || norm === 'undefined') return null
+
+  // 1. Mineração
+  if (norm.includes('miner') || norm.includes('mining') || norm.includes('outreach') || norm.includes('prospeccao') || norm.includes('places')) {
+    return {
+      key: 'mineracao',
+      label: 'Mineração',
+      color: 'border-amber-500/30 bg-amber-500/10 text-amber-500 dark:text-amber-400',
+      icon: <Pickaxe size={10} className="shrink-0 text-amber-400" />,
+    }
+  }
+
+  // 2. Meta Ads
+  if (norm.includes('meta') || norm.includes('facebook') || norm.includes('fb') || (norm.includes('ads') && !norm.includes('google'))) {
+    const label = norm.includes('lucas') ? 'Meta Ads Dr. Lucas' : norm.includes('insta') ? 'Instagram Ads' : 'Meta Ads'
+    return {
+      key: 'meta_ads',
+      label,
+      color: 'border-blue-500/30 bg-blue-500/10 text-blue-500 dark:text-blue-400',
+      icon: <MetaInfinityIcon size={10} className="shrink-0 text-blue-400" />,
+    }
+  }
+
+  // 3. Instagram Direct / Orgânico
+  if (norm.includes('instagram') || norm.includes('direct') || norm.includes('ig')) {
+    return {
+      key: 'instagram',
+      label: 'Instagram',
+      color: 'border-pink-500/30 bg-pink-500/10 text-pink-500 dark:text-pink-400',
+      icon: <InstagramLogoIcon size={10} className="shrink-0 text-pink-400" />,
+    }
+  }
+
+  // 4. WhatsApp
+  if (norm.includes('whats') || norm.includes('zap') || norm.includes('wpp')) {
+    return {
+      key: 'whatsapp',
+      label: norm.includes('reserva') ? 'WhatsApp Reserva' : 'WhatsApp',
+      color: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400',
+      icon: <MessageCircle size={10} className="shrink-0 text-emerald-400" />,
+    }
+  }
+
+  // 5. E-mail
+  if (norm.includes('email') || norm.includes('mail') || norm.includes('brevo')) {
+    return {
+      key: 'email',
+      label: 'E-mail',
+      color: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-500 dark:text-indigo-400',
+      icon: <Mail size={10} className="shrink-0 text-indigo-400" />,
+    }
+  }
+
+  // 6. Checkouts
+  if (norm === 'hotmart' || norm.includes('hotmart')) {
+    return {
+      key: 'hotmart',
+      label: 'Hotmart',
+      color: 'border-orange-500/30 bg-orange-500/10 text-orange-500 dark:text-orange-400',
+    }
+  }
+  if (norm === 'kiwify' || norm.includes('kiwify')) {
+    return {
+      key: 'kiwify',
+      label: 'Kiwify',
+      color: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-500 dark:text-cyan-400',
+    }
+  }
+  if (norm === 'greenn' || norm.includes('greenn')) {
+    return {
+      key: 'greenn',
+      label: 'Greenn',
+      color: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400',
+    }
+  }
+  if (norm === 'zouti' || norm.includes('zouti')) {
+    return {
+      key: 'zouti',
+      label: 'Zouti',
+      color: 'border-purple-500/30 bg-purple-500/10 text-purple-500 dark:text-purple-400',
+    }
+  }
+
+  // 7. Event types / Produtos
+  if (norm === 'consulta_medica' || norm.includes('consulta')) {
+    return {
+      key: 'consulta',
+      label: 'Consulta Médica',
+      color: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400',
+    }
+  }
+  if (norm === 'reserva_restaurante' || norm.includes('reserva')) {
+    return {
+      key: 'reserva',
+      label: 'Reserva Restaurante',
+      color: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
+    }
+  }
+  if (norm === 'boleto') {
+    return { key: 'boleto', label: 'Boleto', color: 'border-amber-500/30 bg-amber-500/10 text-amber-400' }
+  }
+  if (norm === 'pix') {
+    return { key: 'pix', label: 'Pix', color: 'border-teal-500/30 bg-teal-500/10 text-teal-400' }
+  }
+  if (norm === 'carrinho_abandonado' || norm === 'carrinho') {
+    return { key: 'carrinho', label: 'Carrinho', color: 'border-rose-500/30 bg-rose-500/10 text-rose-400' }
+  }
+  if (norm === 'cartao_recusado' || norm === 'cartao') {
+    return { key: 'cartao', label: 'Cartão', color: 'border-red-500/30 bg-red-500/10 text-red-400' }
+  }
+  if (norm === 'compra_aprovada' || norm === 'aprovada') {
+    return { key: 'aprovada', label: 'Aprovada', color: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' }
+  }
+
+  // Genérico formatado
+  const cleaned = raw.replace(/[_-]/g, ' ').trim()
+  return {
+    key: norm,
+    label: cleaned.charAt(0).toUpperCase() + cleaned.slice(1),
+    color: 'border-line-subtle bg-surface-raised text-fg-subtle',
+  }
+}
+
 export function PlatformBadge({
   platform,
   eventType,
+  trackingSource,
+  origins,
   className,
 }: {
-  platform: string | null | undefined
+  platform?: string | null | undefined
   eventType?: string | null | undefined
+  trackingSource?: string | null | undefined
+  origins?: string[] | null | undefined
   className?: string
 }) {
-  const norm = (platform || '').toLowerCase()
-
-  const eventLabelMap: Record<string, string> = {
-    boleto: 'Boleto',
-    pix: 'Pix',
-    carrinho_abandonado: 'Carrinho',
-    cartao_recusado: 'Cartão',
-    compra_aprovada: 'Aprovada',
-    instagram_direct: 'Direct',
+  // Coleta todas as origens possíveis sem repetição
+  const rawList: string[] = []
+  if (origins && Array.isArray(origins)) {
+    rawList.push(...origins)
+  }
+  if (trackingSource) rawList.push(trackingSource)
+  if (platform) rawList.push(platform)
+  if (eventType && !['whatsapp', 'chat', 'direct'].includes(eventType.toLowerCase())) {
+    rawList.push(eventType)
   }
 
-  const evLabel = eventType ? eventLabelMap[eventType] || eventType : null
+  const itemsMap = new Map<string, OriginItem>()
+  for (const raw of rawList) {
+    const parsed = parseOriginItem(raw)
+    if (parsed && !itemsMap.has(parsed.key)) {
+      itemsMap.set(parsed.key, parsed)
+    }
+  }
 
-  let badgeColor = 'border-line-subtle bg-surface-raised text-fg-subtle'
-  let label = norm || 'SAC'
-
-  if (norm === 'hotmart') {
-    badgeColor = 'border-orange-500/20 bg-orange-500/10 text-orange-600 dark:text-orange-400'
-    label = 'Hotmart'
-  } else if (norm === 'kiwify') {
-    badgeColor = 'border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
-    label = 'Kiwify'
-  } else if (norm === 'greenn') {
-    badgeColor = 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-    label = 'Greenn'
-  } else if (norm === 'zouti') {
-    badgeColor = 'border-purple-500/20 bg-purple-500/10 text-purple-600 dark:text-purple-400'
-    label = 'Zouti'
-  } else if (norm === 'instagram') {
-    badgeColor = 'border-pink-500/20 bg-pink-500/10 text-pink-600 dark:text-pink-400'
-    label = 'Instagram'
-  } else if (norm === 'mineracao' || norm === 'prospeccao') {
-    badgeColor = 'border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400'
-    label = 'Mineração'
+  const badges = Array.from(itemsMap.values())
+  if (badges.length === 0) {
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border border-line-subtle bg-surface-raised text-fg-subtle uppercase tracking-wider',
+          className
+        )}
+      >
+        <span>SAC</span>
+      </span>
+    )
   }
 
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border uppercase tracking-wider',
-        badgeColor,
-        className
-      )}
-    >
-      <span>{label}</span>
-      {evLabel && <span className="opacity-75 font-normal">· {evLabel}</span>}
-    </span>
+    <div className={cn('flex flex-wrap items-center gap-1', className)}>
+      {badges.map((b) => (
+        <span
+          key={b.key}
+          className={cn(
+            'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border uppercase tracking-wider shrink-0 transition-colors',
+            b.color
+          )}
+        >
+          {b.icon}
+          <span>{b.label}</span>
+        </span>
+      ))}
+    </div>
   )
 }
 
