@@ -32,7 +32,6 @@ export default async function PipelinePage({ searchParams }: PageProps) {
       )
     )
     .orderBy(desc(recoveryLeads.createdAt))
-    .limit(200)
 
   // Mapear eventos e status para as etapas do Pipeline
   const leads: KanbanLead[] = rawLeads.map((l) => {

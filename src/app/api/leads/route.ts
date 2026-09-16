@@ -32,7 +32,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const eventType = searchParams.get('event_type')
   const status = searchParams.get('status')
   const product = searchParams.get('product')
-  const limit = Math.min(parseInt(searchParams.get('limit') ?? '50'), 500)
+  const limitParam = searchParams.get('limit')
+  const limit = limitParam === 'all' || limitParam === '0' || limitParam === '-1'
+    ? undefined
+    : parseInt(limitParam ?? '5000')
   const offset = parseInt(searchParams.get('offset') ?? '0')
   const period = searchParams.get('period') ?? '30d'
   const fromStr = searchParams.get('from') ?? undefined
@@ -47,7 +50,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       .from(recoveryLeads)
       .where(and(...conditions, sql`${recoveryLeads.productName} is not null`))
       .orderBy(recoveryLeads.productName)
-      .limit(50)
+      .limit(200)
     return NextResponse.json(rows.map(r => r.productName).filter(Boolean))
   }
 
@@ -60,13 +63,22 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (fromDate) conditions.push(gte(recoveryLeads.createdAt, fromDate))
   conditions.push(lte(recoveryLeads.createdAt, toDate))
 
-  const leads = await db
+  let query = db
     .select()
     .from(recoveryLeads)
     .where(and(...conditions))
     .orderBy(desc(recoveryLeads.createdAt))
-    .limit(limit)
-    .offset(offset)
+
+  if (limit !== undefined) {
+    // @ts-ignore
+    query = query.limit(limit)
+  }
+  if (offset > 0) {
+    // @ts-ignore
+    query = query.offset(offset)
+  }
+
+  const leads = await query
 
   return NextResponse.json(leads)
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, unauthorizedResponse } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { companies } from '@/lib/db/schema'
+import { companies, settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { randomBytes } from 'crypto'
 function genToken() { return randomBytes(24).toString('hex') }
@@ -29,6 +29,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .set(update)
     .where(eq(companies.id, companyId))
     .returning()
+
+  if ('sidebarConfig' in body) {
+    const existing = await db.select().from(settings).where(eq(settings.companyId, companyId)).limit(1)
+    if (existing.length > 0) {
+      await db.update(settings).set({ sidebarConfig: body.sidebarConfig, updatedAt: new Date() }).where(eq(settings.companyId, companyId))
+    } else {
+      await db.insert(settings).values({ companyId, sidebarConfig: body.sidebarConfig })
+    }
+  }
 
   return NextResponse.json(updated)
 }

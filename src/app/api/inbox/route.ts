@@ -150,7 +150,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         ), ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`
       )
     )
-    .limit(3000)
 
   // Deduplicação e agrupamento consolidado por pessoa
   const personMap = new Map<string, any>()

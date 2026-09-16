@@ -22,8 +22,10 @@ export async function GET() {
       stackAuthUserId: companies.stackAuthUserId,
       inviteToken: companies.inviteToken,
       createdAt: companies.createdAt,
+      sidebarConfig: settings.sidebarConfig,
     })
     .from(companies)
+    .leftJoin(settings, eq(companies.id, settings.companyId))
     .orderBy(companies.createdAt)
 
   return NextResponse.json(rows)

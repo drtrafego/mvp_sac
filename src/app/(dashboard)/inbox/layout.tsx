@@ -144,7 +144,6 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
           ), ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`
         )
       )
-      .limit(3000)
 
     const mapped = leads.map(l => ({
       ...l,

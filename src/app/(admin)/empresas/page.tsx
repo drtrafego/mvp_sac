@@ -13,6 +13,7 @@ interface Company {
   stackAuthUserId: string | null
   inviteToken: string | null
   createdAt: string
+  sidebarConfig?: any
 }
 
 const WEBHOOKS = [
@@ -450,8 +451,56 @@ function EditCompanyForm({
 }) {
   const [name, setName] = useState(company.name)
   const [plan, setPlan] = useState(company.plan)
+  const [sidebarConfig, setSidebarConfig] = useState<Record<string, boolean>>(company.sidebarConfig || {})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  function applyPreset(preset: 'simplified' | 'full') {
+    if (preset === 'simplified') {
+      setSidebarConfig({
+        showVisaoGeral: true,
+        showConversas: true,
+        showPipeline: true,
+        showLeads: true,
+        showAnalise: false,
+        showRecuperador: false,
+        showMineracao: false,
+        showHotmart: false,
+        showKiwify: false,
+        showGreenn: false,
+        showZouti: false,
+        showInstagram: false,
+        showWebhooksLog: false,
+        showBiblioteca: false,
+        showConfiguracoes: true,
+      })
+    } else {
+      setSidebarConfig({
+        showVisaoGeral: true,
+        showConversas: true,
+        showPipeline: true,
+        showLeads: true,
+        showAnalise: true,
+        showRecuperador: true,
+        showMineracao: true,
+        showHotmart: true,
+        showKiwify: true,
+        showGreenn: true,
+        showZouti: true,
+        showInstagram: true,
+        showWebhooksLog: true,
+        showBiblioteca: true,
+        showConfiguracoes: true,
+      })
+    }
+  }
+
+  function toggleMenu(key: string) {
+    setSidebarConfig(prev => ({
+      ...prev,
+      [key]: prev[key] === false ? true : false,
+    }))
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -460,7 +509,7 @@ function EditCompanyForm({
     const res = await fetch(`/api/admin/companies/${company.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, plan }),
+      body: JSON.stringify({ name, plan, sidebarConfig }),
     })
     const data = await res.json()
     setLoading(false)
@@ -471,10 +520,49 @@ function EditCompanyForm({
     onSaved()
   }
 
+  const menuGroups = [
+    {
+      title: '💬 Atendimento & Vendas',
+      items: [
+        { key: 'showVisaoGeral', label: 'Visão Geral' },
+        { key: 'showConversas', label: 'Conversas (Inbox)' },
+        { key: 'showPipeline', label: 'Pipeline (Funil)' },
+        { key: 'showLeads', label: 'Todos os Leads' },
+      ],
+    },
+    {
+      title: '🔌 Plataformas & Webhooks',
+      items: [
+        { key: 'showHotmart', label: 'Hotmart' },
+        { key: 'showKiwify', label: 'Kiwify' },
+        { key: 'showGreenn', label: 'Greenn' },
+        { key: 'showZouti', label: 'Zouti' },
+        { key: 'showInstagram', label: 'Instagram Direct' },
+      ],
+    },
+    {
+      title: '⚡ Ferramentas & Análise',
+      items: [
+        { key: 'showMineracao', label: 'Mineração & Outbound' },
+        { key: 'showRecuperador', label: 'Recuperador Pro' },
+        { key: 'showAnalise', label: 'Analytics de Vendas' },
+      ],
+    },
+    {
+      title: '⚙️ Sistema',
+      items: [
+        { key: 'showWebhooksLog', label: 'Logs de Webhooks' },
+        { key: 'showBiblioteca', label: 'Biblioteca de Mídia' },
+        { key: 'showConfiguracoes', label: 'Configurações' },
+      ],
+    },
+  ]
+
   return (
     <form onSubmit={handleSubmit} className="card p-5 space-y-4 rounded-2xl border border-line-subtle">
-      <h2 className="text-h2 text-fg font-bold">Editar Empresa</h2>
+      <h2 className="text-h2 text-fg font-bold">Editar Empresa & Personalizar Menus</h2>
       {error && <p className="text-micro text-st-negativo">{error}</p>}
+      
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className={FIELD_LABEL}>Nome</label>
@@ -489,10 +577,72 @@ function EditCompanyForm({
           </select>
         </div>
       </div>
-      <div className="flex justify-end gap-2 pt-1">
+
+      {/* Menus da Sidebar */}
+      <div className="pt-2 border-t border-line-subtle space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-body font-semibold text-fg">Menus Visíveis na Sidebar</h3>
+            <p className="text-micro text-fg-subtle">
+              Oculte menus desnecessários para entregar uma visão simplificada e limpa para o cliente.
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => applyPreset('simplified')}
+              className="px-2.5 py-1 text-micro rounded-lg border border-brand-solid/40 bg-brand-solid/10 text-brand-solid hover:bg-brand-solid/20 font-medium transition-colors cursor-pointer"
+            >
+              ✨ Perfil Simplificado
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset('full')}
+              className="px-2.5 py-1 text-micro rounded-lg border border-line-default bg-surface-inset text-fg-muted hover:text-fg font-medium transition-colors cursor-pointer"
+            >
+              🌟 Perfil Completo
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+          {menuGroups.map((group) => (
+            <div key={group.title} className="p-3 rounded-xl bg-surface-inset/60 border border-line-subtle space-y-2">
+              <span className="text-micro font-bold text-fg-muted uppercase tracking-wider">{group.title}</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                {group.items.map((item) => {
+                  const isChecked = sidebarConfig[item.key] !== false
+                  return (
+                    <label
+                      key={item.key}
+                      onClick={() => toggleMenu(item.key)}
+                      className={cn(
+                        'flex items-center gap-2 p-2 rounded-lg border text-micro font-medium cursor-pointer transition-colors select-none',
+                        isChecked
+                          ? 'border-brand-solid/30 bg-brand-solid/10 text-fg'
+                          : 'border-line-subtle bg-surface-base text-fg-subtle opacity-60'
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {}}
+                        className="rounded border-line-default text-brand-solid focus:ring-0 cursor-pointer"
+                      />
+                      <span className="truncate">{item.label}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2 pt-2 border-t border-line-subtle">
         <button type="button" onClick={onCancel} className={GHOST_BUTTON}>Cancelar</button>
         <button type="submit" disabled={loading} className={PRIMARY_BUTTON}>
-          {loading ? 'Salvando...' : 'Salvar'}
+          {loading ? 'Salvando...' : 'Salvar Alterações'}
         </button>
       </div>
     </form>
