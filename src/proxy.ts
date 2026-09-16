@@ -5,6 +5,8 @@ import { isIpAllowed, getClientIp } from '@/lib/ip-auth'
 const PUBLIC_PATHS = [
   '/handler',
   '/api/webhooks',
+  '/api/v1',
+  '/api/agent',
   '/_next',
   '/favicon.ico',
   '/public',

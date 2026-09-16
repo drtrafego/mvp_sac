@@ -198,15 +198,47 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     if (!companyId) return NextResponse.json({ ok: true, skipped: true })
 
-    const [lead] = await db
+    let [lead] = await db
       .select()
       .from(recoveryLeads)
       .where(and(eq(recoveryLeads.phone, phone), eq(recoveryLeads.companyId, companyId)))
       .limit(1)
 
+    let leadId = lead?.id
+
+    if (!leadId) {
+      const now = new Date()
+      const [newLead] = await db
+        .insert(recoveryLeads)
+        .values({
+          companyId,
+          phone,
+          name: name || `WhatsApp ${phone.slice(-4)}`,
+          platform: 'sac',
+          channel: 'whatsapp',
+          eventType: 'atendimento',
+          status: 'in_conversation',
+          trackingSource: 'whatsapp_direto',
+          createdAt: now,
+          updatedAt: now,
+          lastActionAt: now,
+        })
+        .returning()
+      lead = newLead
+      leadId = newLead.id
+    } else {
+      const updateData: Record<string, any> = {
+        updatedAt: new Date(),
+        lastActionAt: new Date(),
+        status: 'in_conversation',
+      }
+      if (name && !lead.name) updateData.name = name
+      await db.update(recoveryLeads).set(updateData).where(eq(recoveryLeads.id, lead.id))
+    }
+
     await db.insert(whatsappMessages).values({
       companyId,
-      leadId: lead?.id ?? null,
+      leadId,
       phone,
       channel: 'whatsapp',
       direction: 'inbound',
@@ -216,10 +248,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       sentBy: 'user',
       externalId: externalId ?? null,
     })
-
-    if (lead && name && !lead.name) {
-      await db.update(recoveryLeads).set({ name }).where(eq(recoveryLeads.id, lead.id))
-    }
 
     return NextResponse.json({ ok: true })
   } catch (err) {
