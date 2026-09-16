@@ -130,8 +130,21 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
       })
       .from(recoveryLeads)
       .where(eq(recoveryLeads.companyId, companyId))
-      .orderBy(desc(recoveryLeads.updatedAt))
-      .limit(200)
+      .orderBy(
+        desc(
+          sql`COALESCE((
+            SELECT MAX(wm.created_at) FROM whatsapp_messages wm 
+            WHERE wm.lead_id = recovery_leads.id 
+               OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
+               OR (
+                 length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
+                 AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
+                 AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
+               )
+          ), ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`
+        )
+      )
+      .limit(3000)
 
     const mapped = leads.map(l => ({
       ...l,

@@ -54,6 +54,8 @@ export const settings = pgTable('settings', {
   allowedIps: text('allowed_ips'),
   // Configuração e personalização de colunas do Pipeline
   pipelineColumns: jsonb('pipeline_columns'),
+  // Configuração personalizada de menus da barra lateral (visibilidade por cliente/empresa)
+  sidebarConfig: jsonb('sidebar_config'),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
 

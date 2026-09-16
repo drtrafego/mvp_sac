@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useTheme } from 'next-themes'
-import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette } from 'lucide-react'
+import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette, Columns3 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -52,6 +52,23 @@ interface SettingsData {
   instagramAccessToken: string
   instagramVerifyToken: string
   instagramPageId: string
+  sidebarConfig?: {
+    showVisaoGeral?: boolean
+    showConversas?: boolean
+    showPipeline?: boolean
+    showLeads?: boolean
+    showAnalise?: boolean
+    showApiOficial?: boolean
+    showHotmart?: boolean
+    showKiwify?: boolean
+    showGreenn?: boolean
+    showZouti?: boolean
+    showInstagram?: boolean
+    showMineracao?: boolean
+    showConfiguracoes?: boolean
+    showWebhooksLog?: boolean
+    showBiblioteca?: boolean
+  } | null
 }
 
 interface Member {
@@ -538,6 +555,7 @@ export default function ConfiguracoesPage() {
         instagramAccessToken: data.instagramAccessToken ?? '',
         instagramVerifyToken: data.instagramVerifyToken ?? '',
         instagramPageId: data.instagramPageId ?? '',
+        sidebarConfig: data.sidebarConfig ?? null,
       }))
   }, [])
 
@@ -571,6 +589,224 @@ export default function ConfiguracoesPage() {
 
       {/* Equipe */}
       <EquipeSection />
+
+      {/* Personalização dos Menus da Barra Lateral (Simplificação por Cliente) */}
+      <section className="panel space-y-4 p-[var(--space-card)]">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-h2 text-fg flex items-center gap-2">
+              <Columns3 size={18} className="text-brand-ink" />
+              Menus da Barra Lateral (Sidebar)
+            </h2>
+            <p className="text-body text-fg-muted mt-0.5">
+              Escolha exatamente quais menus e ferramentas ficam visíveis para esta empresa. Ideal para simplificar o acesso de clientes que não precisam de recursos técnicos.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setForm(f => ({
+                  ...f,
+                  sidebarConfig: {
+                    showVisaoGeral: true,
+                    showConversas: true,
+                    showPipeline: true,
+                    showLeads: true,
+                    showAnalise: false,
+                    showApiOficial: false,
+                    showHotmart: true,
+                    showKiwify: false,
+                    showGreenn: false,
+                    showZouti: false,
+                    showInstagram: false,
+                    showMineracao: false,
+                    showConfiguracoes: true,
+                    showWebhooksLog: false,
+                    showBiblioteca: false,
+                  },
+                }))
+              }}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-surface-inset border border-line-subtle text-fg-subtle hover:text-fg hover:bg-surface-raised transition-colors cursor-pointer"
+            >
+              ✨ Perfil Simplificado
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setForm(f => ({
+                  ...f,
+                  sidebarConfig: {
+                    showVisaoGeral: true,
+                    showConversas: true,
+                    showPipeline: true,
+                    showLeads: true,
+                    showAnalise: true,
+                    showApiOficial: true,
+                    showHotmart: true,
+                    showKiwify: true,
+                    showGreenn: true,
+                    showZouti: true,
+                    showInstagram: true,
+                    showMineracao: true,
+                    showConfiguracoes: true,
+                    showWebhooksLog: true,
+                    showBiblioteca: true,
+                  },
+                }))
+              }}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-surface-inset border border-line-subtle text-fg-subtle hover:text-fg hover:bg-surface-raised transition-colors cursor-pointer"
+            >
+              🌟 Perfil Completo
+            </button>
+          </div>
+        </div>
+
+        <Separator className="bg-line-subtle" />
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Coluna 1: Atendimento & Análise */}
+          <div className="space-y-4">
+            <div className="rounded-xl bg-surface-inset border border-line-subtle p-3.5 space-y-3">
+              <span className="text-label uppercase text-fg-subtle font-bold tracking-wider text-[10px]">
+                1. Módulos de Atendimento
+              </span>
+              <div className="space-y-2">
+                {[
+                  { key: 'showVisaoGeral', label: 'Visão Geral (Dashboard)' },
+                  { key: 'showConversas', label: 'Conversas (Inbox / WhatsApp Direct)' },
+                  { key: 'showPipeline', label: 'Pipeline (Kanban de Vendas)' },
+                  { key: 'showLeads', label: 'Leads Recentes (Tabela & Filtros)' },
+                ].map(({ key, label }) => {
+                  const cfg = form.sidebarConfig ?? {}
+                  const checked = (cfg as any)[key] !== false
+                  return (
+                    <label key={key} className="flex items-center justify-between p-2 rounded-lg bg-surface-base/60 border border-line-subtle/50 hover:border-line-subtle cursor-pointer transition-colors">
+                      <span className="text-body text-fg text-xs font-medium">{label}</span>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          const nextVal = e.target.checked
+                          setForm(f => ({
+                            ...f,
+                            sidebarConfig: { ...(f.sidebarConfig ?? {}), [key]: nextVal },
+                          }))
+                        }}
+                        className="h-4 w-4 rounded border-line-default text-brand-solid focus:ring-brand-solid"
+                      />
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-surface-inset border border-line-subtle p-3.5 space-y-3">
+              <span className="text-label uppercase text-fg-subtle font-bold tracking-wider text-[10px]">
+                2. Métricas & Gestão Comercial
+              </span>
+              <div className="space-y-2">
+                {[
+                  { key: 'showAnalise', label: 'Seção de Análise (Analytics, Canais, Origens, SLA)' },
+                  { key: 'showApiOficial', label: 'Meta API Oficial (Modelos, Campanhas, Follow-up)' },
+                ].map(({ key, label }) => {
+                  const cfg = form.sidebarConfig ?? {}
+                  const checked = (cfg as any)[key] === true
+                  return (
+                    <label key={key} className="flex items-center justify-between p-2 rounded-lg bg-surface-base/60 border border-line-subtle/50 hover:border-line-subtle cursor-pointer transition-colors">
+                      <span className="text-body text-fg text-xs font-medium">{label}</span>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          const nextVal = e.target.checked
+                          setForm(f => ({
+                            ...f,
+                            sidebarConfig: { ...(f.sidebarConfig ?? {}), [key]: nextVal },
+                          }))
+                        }}
+                        className="h-4 w-4 rounded border-line-default text-brand-solid focus:ring-brand-solid"
+                      />
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Coluna 2: Plataformas & Sistema */}
+          <div className="space-y-4">
+            <div className="rounded-xl bg-surface-inset border border-line-subtle p-3.5 space-y-3">
+              <span className="text-label uppercase text-fg-subtle font-bold tracking-wider text-[10px]">
+                3. Plataformas & Canais de Venda
+              </span>
+              <div className="space-y-2">
+                {[
+                  { key: 'showHotmart', label: 'Hotmart (Carrinho, Boleto, Pix, Cartão)' },
+                  { key: 'showKiwify', label: 'Kiwify (Checkouts e Recuperação)' },
+                  { key: 'showGreenn', label: 'Greenn (Eventos e Vendas)' },
+                  { key: 'showZouti', label: 'Zouti (Checkouts e Pedidos)' },
+                  { key: 'showInstagram', label: 'Instagram Direct' },
+                  { key: 'showMineracao', label: 'Mineração & Prospecção B2B' },
+                ].map(({ key, label }) => {
+                  const cfg = form.sidebarConfig ?? {}
+                  const checked = (cfg as any)[key] === true || (cfg as any)[key] === undefined
+                  return (
+                    <label key={key} className="flex items-center justify-between p-2 rounded-lg bg-surface-base/60 border border-line-subtle/50 hover:border-line-subtle cursor-pointer transition-colors">
+                      <span className="text-body text-fg text-xs font-medium">{label}</span>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          const nextVal = e.target.checked
+                          setForm(f => ({
+                            ...f,
+                            sidebarConfig: { ...(f.sidebarConfig ?? {}), [key]: nextVal },
+                          }))
+                        }}
+                        className="h-4 w-4 rounded border-line-default text-brand-solid focus:ring-brand-solid"
+                      />
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-surface-inset border border-line-subtle p-3.5 space-y-3">
+              <span className="text-label uppercase text-fg-subtle font-bold tracking-wider text-[10px]">
+                4. Ferramentas & Sistema
+              </span>
+              <div className="space-y-2">
+                {[
+                  { key: 'showConfiguracoes', label: 'Configurações' },
+                  { key: 'showBiblioteca', label: 'Biblioteca de Modelos & Prompts' },
+                  { key: 'showWebhooksLog', label: 'Webhooks Log (Técnico)' },
+                ].map(({ key, label }) => {
+                  const cfg = form.sidebarConfig ?? {}
+                  const checked = (cfg as any)[key] !== false
+                  return (
+                    <label key={key} className="flex items-center justify-between p-2 rounded-lg bg-surface-base/60 border border-line-subtle/50 hover:border-line-subtle cursor-pointer transition-colors">
+                      <span className="text-body text-fg text-xs font-medium">{label}</span>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          const nextVal = e.target.checked
+                          setForm(f => ({
+                            ...f,
+                            sidebarConfig: { ...(f.sidebarConfig ?? {}), [key]: nextVal },
+                          }))
+                        }}
+                        className="h-4 w-4 rounded border-line-default text-brand-solid focus:ring-brand-solid"
+                      />
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Hotmart */}
       <section className="panel space-y-4 p-[var(--space-card)]">

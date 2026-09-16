@@ -167,14 +167,47 @@ export const mineracaoNav = [
 ]
 
 export const ajustesNav = [
-  { label: 'Configuração', href: '/configuracoes', icon: Settings },
-  { label: 'Webhooks Log', href: '/webhooks-log', icon: Webhook },
-  { label: 'Biblioteca', href: '/biblioteca', icon: BookOpen },
+  { label: 'Configuração', href: '/configuracoes', icon: Settings, key: 'configuracoes' },
+  { label: 'Webhooks Log', href: '/webhooks-log', icon: Webhook, key: 'webhooks' },
+  { label: 'Biblioteca', href: '/biblioteca', icon: BookOpen, key: 'biblioteca' },
 ]
+
+export interface SidebarMenuConfig {
+  // Atendimento
+  showVisaoGeral?: boolean
+  showConversas?: boolean
+  showPipeline?: boolean
+  showLeads?: boolean
+
+  // Análise
+  showAnalise?: boolean
+  showAnalyticsVendas?: boolean
+  showCanais?: boolean
+  showOrigens?: boolean
+  showOperacao?: boolean
+  showRecuperadorAdmin?: boolean
+
+  // API Oficial
+  showApiOficial?: boolean
+
+  // Integrações / Plataformas
+  showHotmart?: boolean
+  showKiwify?: boolean
+  showGreenn?: boolean
+  showZouti?: boolean
+  showInstagram?: boolean
+  showMineracao?: boolean
+
+  // Ajustes
+  showConfiguracoes?: boolean
+  showWebhooksLog?: boolean
+  showBiblioteca?: boolean
+}
 
 export interface SidebarProps {
   isAdmin?: boolean
   activeConnections?: ActiveConnections
+  sidebarConfig?: SidebarMenuConfig | null
 }
 
 export function SidebarBrand({ collapsed = false }: { collapsed?: boolean }) {
@@ -199,12 +232,14 @@ export function SidebarNavContent({
   isAdmin,
   collapsed = false,
   activeConnections,
+  sidebarConfig,
 }: {
   hideMain?: boolean
   className?: string
   isAdmin?: boolean
   collapsed?: boolean
   activeConnections?: ActiveConnections
+  sidebarConfig?: SidebarMenuConfig | null
 }) {
   const pathname = usePathname()
 
@@ -245,13 +280,21 @@ export function SidebarNavContent({
     setSectionsOpen(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
-  // Se nenhuma conexão foi explicitamente configurada, o fallback exibe Hotmart
-  const showHotmart = activeConnections?.hotmart ?? true
-  const showKiwify = !!activeConnections?.kiwify
-  const showGreenn = !!activeConnections?.greenn
-  const showZouti = !!activeConnections?.zouti
-  const showInstagram = !!activeConnections?.instagram
-  const showMineracao = !!activeConnections?.mineracao
+  // Filtragem de seções baseada em sidebarConfig ou conexões ativas
+  const showSectionAtendimento = sidebarConfig?.showVisaoGeral !== false || sidebarConfig?.showConversas !== false || sidebarConfig?.showPipeline !== false || sidebarConfig?.showLeads !== false
+  const showSectionAnalise = sidebarConfig ? (sidebarConfig.showAnalise ?? false) : true
+  const showSectionApiOficial = sidebarConfig ? (sidebarConfig.showApiOficial ?? true) : true
+
+  const showHotmart = sidebarConfig?.showHotmart !== undefined ? sidebarConfig.showHotmart : (activeConnections?.hotmart ?? true)
+  const showKiwify = sidebarConfig?.showKiwify !== undefined ? sidebarConfig.showKiwify : !!activeConnections?.kiwify
+  const showGreenn = sidebarConfig?.showGreenn !== undefined ? sidebarConfig.showGreenn : !!activeConnections?.greenn
+  const showZouti = sidebarConfig?.showZouti !== undefined ? sidebarConfig.showZouti : !!activeConnections?.zouti
+  const showInstagram = sidebarConfig?.showInstagram !== undefined ? sidebarConfig.showInstagram : !!activeConnections?.instagram
+  const showMineracao = sidebarConfig?.showMineracao !== undefined ? sidebarConfig.showMineracao : !!activeConnections?.mineracao
+
+  const showWebhooksLog = sidebarConfig?.showWebhooksLog !== undefined ? sidebarConfig.showWebhooksLog : true
+  const showBiblioteca = sidebarConfig?.showBiblioteca !== undefined ? sidebarConfig.showBiblioteca : true
+  const showConfiguracoes = sidebarConfig?.showConfiguracoes !== undefined ? sidebarConfig.showConfiguracoes : true
 
   return (
     <nav className={cn('scroll-thin min-h-0 overflow-y-auto px-2 py-3 space-y-3', className)}>
@@ -883,7 +926,7 @@ export function SidebarFooter({ isAdmin, collapsed = false }: SidebarProps & { c
   )
 }
 
-export function Sidebar({ isAdmin, activeConnections }: SidebarProps) {
+export function Sidebar({ isAdmin, activeConnections, sidebarConfig }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [mounted, setMounted] = useState(false)
 
@@ -944,7 +987,12 @@ export function Sidebar({ isAdmin, activeConnections }: SidebarProps) {
         </button>
       </div>
 
-      <SidebarNavContent isAdmin={isAdmin} collapsed={collapsed} activeConnections={activeConnections} />
+      <SidebarNavContent
+        isAdmin={isAdmin}
+        collapsed={collapsed}
+        activeConnections={activeConnections}
+        sidebarConfig={sidebarConfig}
+      />
 
       <SidebarFooter isAdmin={isAdmin} collapsed={collapsed} />
     </aside>

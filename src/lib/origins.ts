@@ -39,11 +39,39 @@ export function normalizeOrigin(
   const ev = (eventType || '').toLowerCase().trim()
   const combined = `${s} ${m} ${p} ${ev}`
 
-  // 1. Mineração (AutonomIA)
+  // Regra prioritária de proteção médica / Dr. Lucas: NUNCA é Mineração
+  const isDrLucas = combined.includes('lucas') || combined.includes('clara') || combined.includes('fernandes') || combined.includes('clinica') || combined.includes('consultorio')
+  if (isDrLucas) {
+    if (combined.includes('meta') || combined.includes('fb') || combined.includes('ad') || combined.includes('anuncio')) {
+      return {
+        key: 'meta_ads_lucas',
+        label: 'Meta Ads Dr. Lucas',
+        shortLabel: 'Meta Ads Dr. Lucas',
+        category: 'meta_ads',
+        subcategory: 'dr_lucas',
+        color: 'bg-blue-500',
+        badgeColor: 'border-blue-500/30 bg-blue-500/10 text-blue-400',
+        textColor: 'text-blue-400',
+        iconName: 'meta',
+      }
+    }
+    return {
+      key: 'whatsapp_sac_lucas',
+      label: 'WhatsApp (Consultório Dr. Lucas)',
+      shortLabel: 'WhatsApp SAC',
+      category: 'organico',
+      subcategory: 'sac',
+      color: 'bg-emerald-500',
+      badgeColor: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+      textColor: 'text-emerald-400',
+      iconName: 'whatsapp',
+    }
+  }
+
+  // 1. Mineração (AutonomIA) - Apenas para empresas de prospecção fria real
   if (
     combined.includes('miner') ||
     combined.includes('mining') ||
-    combined.includes('outreach') ||
     combined.includes('prospeccao') ||
     combined.includes('places')
   ) {

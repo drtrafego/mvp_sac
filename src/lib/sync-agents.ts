@@ -199,8 +199,8 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const convs = await queryAgentsDb<ConversationDbRow>(`
           select session_id, chat_id, channel, title, started_at, ended_at, message_count
           from "${schema}".conversations
-          order by started_at desc
-          limit 250
+          order by coalesce(ended_at, started_at) desc
+          limit 5000
         `)
 
         if (convs && convs.length > 0) {
@@ -230,6 +230,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               ? 'instagram'
               : 'whatsapp'
 
+            let leadDate = cv.ended_at ? new Date(cv.ended_at) : (cv.started_at ? new Date(cv.started_at) : new Date())
+            if (isNaN(leadDate.getTime())) leadDate = new Date()
+
             if (!lead) {
               const [newLead] = await db
                 .insert(recoveryLeads)
@@ -241,13 +244,24 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                   channel: channelType,
                   eventType: 'atendimento_ia',
                   status: 'in_conversation',
-                  trackingSource: 'agente_ia',
+                  trackingSource: companySlug === 'drlucas' ? 'whatsapp_sac' : 'agente_ia',
                   createdAt: cv.started_at ? new Date(cv.started_at) : new Date(),
-                  updatedAt: cv.ended_at ? new Date(cv.ended_at) : new Date(),
+                  updatedAt: leadDate,
+                  lastActionAt: leadDate,
                 })
                 .returning()
               lead = newLead
               leadsCreated++
+            } else {
+              // Atualiza o lead com a data mais recente da conversa
+              await db
+                .update(recoveryLeads)
+                .set({
+                  updatedAt: sql`GREATEST(${recoveryLeads.updatedAt}, ${leadDate})`,
+                  lastActionAt: leadDate,
+                  name: cv.title && cv.title !== 'Novo Atendimento' ? cv.title : recoveryLeads.name,
+                })
+                .where(eq(recoveryLeads.id, lead.id))
             }
 
             // Sincroniza mensagens desta conversa usando a coluna correta "ts"
@@ -259,10 +273,15 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             `, [cv.session_id])
 
             if (msgs && msgs.length > 0) {
+              let latestMsgTs: Date | null = null
+
               for (const m of msgs) {
                 const isUser = m.role === 'user'
                 const direction = isUser ? 'inbound' : 'outbound'
                 const sentBy = isUser ? 'user' : 'bot'
+                const msgDate = m.ts ? new Date(m.ts) : new Date()
+                if (!latestMsgTs || msgDate > latestMsgTs) latestMsgTs = msgDate
+
                 const externalId = `agent_${schema}_${m.id || m.platform_message_id || cv.session_id + '_' + m.ts}`
 
                 const [existingMsg] = await db
@@ -287,10 +306,20 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                     messageType: 'text',
                     sentBy,
                     externalId,
-                    createdAt: m.ts ? new Date(m.ts) : new Date(),
+                    createdAt: msgDate,
                   })
                   messagesImported++
                 }
+              }
+
+              if (latestMsgTs) {
+                await db
+                  .update(recoveryLeads)
+                  .set({
+                    updatedAt: sql`GREATEST(${recoveryLeads.updatedAt}, ${latestMsgTs})`,
+                    lastActionAt: latestMsgTs,
+                  })
+                  .where(eq(recoveryLeads.id, lead.id))
               }
             }
           }
@@ -306,8 +335,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     const outreachConvos = await queryAgentsDb<OutreachConvoDbRow>(`
       select id, agent_slug, channel, source, lead_name, lead_handle, lead_company, status, last_at, msg_count
       from public.outreach_convos
+      where agent_slug not ilike '%lucas%'
       order by last_at desc
-      limit 1000
+      limit 5000
     `)
 
     if (outreachConvos && outreachConvos.length > 0) {
@@ -318,8 +348,6 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         let companySlug = 'casaldotrafego'
         if (agentSlug.includes('gastao') || agentSlug.includes('24')) {
           companySlug = 'gastao-matos'
-        } else if (agentSlug.includes('lucas')) {
-          companySlug = 'drlucas'
         } else if (agentSlug.includes('gramado')) {
           companySlug = 'gramado-plaza'
         }
@@ -333,6 +361,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         if (!phone) continue
 
         const ch = oc.channel || (isEmail ? 'email' : 'whatsapp')
+        const ocDate = oc.last_at ? new Date(oc.last_at) : new Date()
 
         let [lead] = await db
           .select()
@@ -362,12 +391,21 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               eventType: oc.source || 'prospeccao',
               status: oc.status === 'active' ? 'in_conversation' : 'pending',
               trackingSource: 'mineracao_prospeccao',
-              createdAt: oc.last_at ? new Date(oc.last_at) : new Date(),
-              updatedAt: oc.last_at ? new Date(oc.last_at) : new Date(),
+              createdAt: ocDate,
+              updatedAt: ocDate,
+              lastActionAt: ocDate,
             })
             .returning()
           lead = newLead
           leadsCreated++
+        } else {
+          await db
+            .update(recoveryLeads)
+            .set({
+              updatedAt: sql`GREATEST(${recoveryLeads.updatedAt}, ${ocDate})`,
+              lastActionAt: ocDate,
+            })
+            .where(eq(recoveryLeads.id, lead.id))
         }
 
         // Importa mensagens de public.outreach_msgs

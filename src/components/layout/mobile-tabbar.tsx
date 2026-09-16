@@ -18,9 +18,10 @@ const tabs = [
 interface MobileTabBarProps {
   isAdmin?: boolean
   activeConnections?: ActiveConnections
+  sidebarConfig?: any
 }
 
-export function MobileTabBar({ isAdmin, activeConnections }: MobileTabBarProps) {
+export function MobileTabBar({ isAdmin, activeConnections, sidebarConfig }: MobileTabBarProps) {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
 
@@ -73,7 +74,11 @@ export function MobileTabBar({ isAdmin, activeConnections }: MobileTabBarProps) 
       </nav>
 
       <Sheet open={open} onOpenChange={setOpen} side="right" title="Menu">
-        <SidebarNavContent isAdmin={isAdmin} activeConnections={activeConnections} />
+        <SidebarNavContent
+          isAdmin={isAdmin}
+          activeConnections={activeConnections}
+          sidebarConfig={sidebarConfig}
+        />
         <SidebarFooter isAdmin={isAdmin} />
       </Sheet>
     </>

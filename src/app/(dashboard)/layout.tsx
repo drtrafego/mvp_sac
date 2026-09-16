@@ -22,7 +22,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return <div className="shell flex flex-1 min-h-0 flex-col">{children}</div>
 }
 
-async function getActiveConnections(companyId: number) {
+async function getCompanySidebarData(companyId: number) {
   try {
     const [settingsRow] = await db
       .select()
@@ -53,21 +53,27 @@ async function getActiveConnections(companyId: number) {
     const noneConfigured = !hasHotmart && !hasKiwify && !hasGreenn && !hasZouti && !hasInstagram && !hasMineracao
 
     return {
-      hotmart: hasHotmart || noneConfigured,
-      kiwify: hasKiwify,
-      greenn: hasGreenn,
-      zouti: hasZouti,
-      instagram: hasInstagram,
-      mineracao: hasMineracao,
+      activeConnections: {
+        hotmart: hasHotmart || noneConfigured,
+        kiwify: hasKiwify,
+        greenn: hasGreenn,
+        zouti: hasZouti,
+        instagram: hasInstagram,
+        mineracao: hasMineracao,
+      },
+      sidebarConfig: (settingsRow?.sidebarConfig as any) || null,
     }
   } catch {
     return {
-      hotmart: true,
-      kiwify: false,
-      greenn: false,
-      zouti: false,
-      instagram: false,
-      mineracao: false,
+      activeConnections: {
+        hotmart: true,
+        kiwify: false,
+        greenn: false,
+        zouti: false,
+        instagram: false,
+        mineracao: false,
+      },
+      sidebarConfig: null,
     }
   }
 }
@@ -81,14 +87,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
     // Admin sem empresa selecionada → vai para painel admin
     if (!company) redirect('/empresas')
 
-    const activeConnections = await getActiveConnections(company.id)
+    const { activeConnections, sidebarConfig } = await getCompanySidebarData(company.id)
 
     return (
       <div className="flex flex-col h-screen bg-surface-base">
         <AdminBanner companyName={company.name} companyId={company.id} />
         <div className="flex flex-1 overflow-hidden">
           <Suspense fallback={SIDEBAR_FALLBACK}>
-            <Sidebar isAdmin activeConnections={activeConnections} />
+            <Sidebar isAdmin activeConnections={activeConnections} sidebarConfig={sidebarConfig} />
           </Suspense>
           <div className="flex flex-1 min-w-0 flex-col overflow-hidden">
             <MobileTopbar />
@@ -106,12 +112,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const company = await getCurrentCompany()
   if (!company) redirect('/handler/sign-in')
 
-  const activeConnections = await getActiveConnections(company.id)
+  const { activeConnections, sidebarConfig } = await getCompanySidebarData(company.id)
 
   return (
     <div className="flex h-screen bg-surface-base">
       <Suspense fallback={SIDEBAR_FALLBACK}>
-        <Sidebar activeConnections={activeConnections} />
+        <Sidebar activeConnections={activeConnections} sidebarConfig={sidebarConfig} />
       </Suspense>
       <div className="flex flex-1 min-w-0 flex-col overflow-hidden">
         <MobileTopbar />

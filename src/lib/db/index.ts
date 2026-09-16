@@ -51,6 +51,7 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_renato_api_key text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS allowed_ips text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS pipeline_columns jsonb`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sidebar_config jsonb`,
 
           // agent_activity_logs
           client`
@@ -71,6 +72,14 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS external_wamid text`,
           client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS delivery_status text`,
           client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS message_order integer`,
+
+          // Limpeza e correção definitiva de origens do Dr. Lucas (NUNCA é mineração)
+          client`
+            UPDATE recovery_leads 
+            SET tracking_source = 'whatsapp_sac', event_type = 'atendimento' 
+            WHERE (tracking_source ILIKE '%miner%' OR event_type ILIKE '%prospec%')
+              AND company_id IN (SELECT id FROM companies WHERE slug ILIKE '%lucas%' OR name ILIKE '%lucas%')
+          `,
 
           // Centralização das empresas dos Agentes:
           // 1. Gastão Matos (vincula a empresa 1 que já possui todos os dados e histórico da AutonomIA)
@@ -107,7 +116,7 @@ function ensureSchema(client: any): Promise<void> {
         // Dispara sincronização automática dos agentes do Supabase em segundo plano
         setTimeout(() => {
           import('@/lib/sync-agents').then(m => m.syncAgentsAndCompanies()).catch(() => {})
-        }, 1000)
+        }, 500)
       } catch (err: any) {
         console.error('[DB Schema Sync Error]', err?.message || err)
       }
