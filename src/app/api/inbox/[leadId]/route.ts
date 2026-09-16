@@ -33,8 +33,12 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
       and(
         or(
           eq(whatsappMessages.leadId, id),
-          eq(whatsappMessages.phone, lead.phone),
-          sql`right(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g'), 9) = right(regexp_replace(${lead.phone}, '\\D', '', 'g'), 9)`
+          lead.phone ? eq(whatsappMessages.phone, lead.phone) : sql`1=0`,
+          sql`(
+            length(regexp_replace(COALESCE(${whatsappMessages.phone}, ''), '\\D', '', 'g')) >= 8
+            AND length(regexp_replace(COALESCE(${lead.phone}, ''), '\\D', '', 'g')) >= 8
+            AND right(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g'), 8) = right(regexp_replace(${lead.phone}, '\\D', '', 'g'), 8)
+          )`
         ),
         eq(whatsappMessages.companyId, company.id)
       )
@@ -102,8 +106,12 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
           and(
             or(
               eq(whatsappMessages.leadId, id),
-              eq(whatsappMessages.phone, lead.phone),
-              sql`right(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g'), 9) = right(regexp_replace(${lead.phone}, '\\D', '', 'g'), 9)`
+              lead.phone ? eq(whatsappMessages.phone, lead.phone) : sql`1=0`,
+              sql`(
+                length(regexp_replace(COALESCE(${whatsappMessages.phone}, ''), '\\D', '', 'g')) >= 8
+                AND length(regexp_replace(COALESCE(${lead.phone}, ''), '\\D', '', 'g')) >= 8
+                AND right(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g'), 8) = right(regexp_replace(${lead.phone}, '\\D', '', 'g'), 8)
+              )`
             ),
             eq(whatsappMessages.companyId, company.id)
           )
