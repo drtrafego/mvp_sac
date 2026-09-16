@@ -264,7 +264,9 @@ function EquipeSection() {
         )}
 
         {/* Membros convidados */}
-        {data?.members.map(member => {
+        {data?.members
+          .filter(m => !data.owner?.email || m.email.toLowerCase() !== data.owner.email.toLowerCase())
+          .map(member => {
           const inviteUrl = member.inviteToken ? `${origin}/invite/membro/${member.inviteToken}` : null
           return (
             <div key={member.id} className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">

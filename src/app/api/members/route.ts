@@ -22,13 +22,18 @@ export async function GET() {
       .from(companies)
       .where(eq(companies.id, company.id))
 
+    // Filtrar para não listar o próprio proprietário duas vezes se ele já estiver na lista de membros
+    const filteredMembers = members.filter(
+      m => !user?.primaryEmail || m.email.toLowerCase() !== user.primaryEmail.toLowerCase()
+    )
+
     return NextResponse.json({
       owner: {
         email: user?.primaryEmail ?? null,
         name: user?.displayName ?? null,
-        stackAuthUserId: ownerCompany.stackAuthUserId,
+        stackAuthUserId: ownerCompany?.stackAuthUserId ?? null,
       },
-      members,
+      members: filteredMembers,
     })
   } catch {
     return unauthorizedResponse()
@@ -47,6 +52,11 @@ export async function POST(req: Request) {
     const validRoles = ['admin', 'membro']
     if (!validRoles.includes(role)) {
       return NextResponse.json({ error: 'Cargo inválido' }, { status: 400 })
+    }
+
+    const user = await getCurrentUser()
+    if (user?.primaryEmail && email.toLowerCase().trim() === user.primaryEmail.toLowerCase().trim()) {
+      return NextResponse.json({ error: 'Você já é o proprietário desta empresa.' }, { status: 400 })
     }
 
     // Verificar se já existe convite para este email nesta empresa
