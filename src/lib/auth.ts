@@ -59,7 +59,16 @@ export async function getCurrentCompany() {
     }
 
     // Se o admin não selecionou uma empresa específica via admin_viewing cookie,
-    // busca a empresa vinculada ao próprio user ID
+    // prioriza a empresa central AutonomIA
+    const [autonomiaCompany] = await db
+      .select()
+      .from(companies)
+      .where(eq(companies.slug, 'autonomia'))
+      .limit(1)
+
+    if (autonomiaCompany) return autonomiaCompany
+
+    // Busca a empresa vinculada ao próprio user ID
     const [ownCompany] = await db
       .select()
       .from(companies)
