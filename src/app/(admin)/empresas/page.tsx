@@ -56,7 +56,7 @@ export default function EmpresasPage() {
   async function loadCompanies() {
     setLoading(true)
     try {
-      const res = await fetch('/api/admin/companies')
+      const res = await fetch('/api/admin/companies', { cache: 'no-store' })
       const data = await res.json()
       if (Array.isArray(data)) setCompanies(data)
     } finally {

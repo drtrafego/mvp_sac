@@ -4,6 +4,10 @@ import { db } from '@/lib/db'
 import { companies, settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { randomBytes } from 'crypto'
+
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 function genToken() { return randomBytes(24).toString('hex') }
 
 export async function GET() {
