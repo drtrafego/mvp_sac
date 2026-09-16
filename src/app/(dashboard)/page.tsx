@@ -88,6 +88,14 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         valorFechadoCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} in ('converted', 'completed') or ${recoveryLeads.eventType} in ('compra_aprovada', 'reserva_confirmada') or ${recoveryLeads.pipelineStage} in ('fechado', 'agendado')), 0) as bigint)`,
         qualificadosTotal: sql<number>`cast(count(*) filter (where ${recoveryLeads.pipelineStage} in ('qualificado', 'agendado', 'em_atendimento') or ${recoveryLeads.eventType} in ('pix', 'boleto', 'agendamento')) as int)`,
 
+        // Etapas reais do pipeline
+        novoContato: sql<number>`cast(count(*) filter (where coalesce(${recoveryLeads.pipelineStage}, 'novo_contato') in ('novo_contato', 'novo', 'lead_captado', 'primeiro_contato')) as int)`,
+        qualificado: sql<number>`cast(count(*) filter (where ${recoveryLeads.pipelineStage} in ('qualificado', 'duvida', 'avaliacao', 'data_consultada')) as int)`,
+        agendado: sql<number>`cast(count(*) filter (where ${recoveryLeads.pipelineStage} in ('agendado', 'reuniao_agendada', 'horario_oferecido', 'consulta_agendada')) as int)`,
+        proposta: sql<number>`cast(count(*) filter (where ${recoveryLeads.pipelineStage} in ('proposta', 'proposta_enviada', 'negociacao', 'cardapio')) as int)`,
+        fechado: sql<number>`cast(count(*) filter (where ${recoveryLeads.pipelineStage} in ('fechado', 'contrato_fechado', 'reserva_confirmada', 'compareceu', 'procedimento_realizado') or ${recoveryLeads.status} in ('converted', 'completed', 'approved') or ${recoveryLeads.eventType} in ('compra_aprovada', 'reserva_confirmada')) as int)`,
+        perdido: sql<number>`cast(count(*) filter (where ${recoveryLeads.pipelineStage} in ('perdido', 'cancelado')) as int)`,
+
         // Recuperação tradicional (infoproduto)
         recoveredCount: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} = 'converted' and ${recoveryLeads.convertedFrom} like 'msg_%' and ${recoveryLeads.eventType} in ('boleto','pix','carrinho_abandonado','cartao_recusado')) as int)`,
         recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} = 'converted' and ${recoveryLeads.convertedFrom} like 'msg_%' and ${recoveryLeads.eventType} in ('boleto','pix','carrinho_abandonado','cartao_recusado')), 0) as bigint)`,
@@ -263,31 +271,31 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     ]
   }
 
-  // 4. Definir os Cards de Etapas do Fechamento / Funil
+  // 4. Definir os Cards de Etapas do Fechamento / Funil com CONTAGENS REAIS do banco
   let funnelCards: { label: string; count: number; icon: any; color: string; desc: string }[] = []
   if (isGramado) {
     funnelCards = [
-      { label: 'Interesse em Reserva', count: total, icon: Utensils, color: '--ev-carrinho', desc: 'Novos clientes' },
-      { label: 'Data Consultada', count: qualificadosCount, icon: Calendar, color: '--ev-pix', desc: 'Horário & disponibilidade' },
-      { label: 'Cardápio / Pacote', count: Math.max(fechadosCount, Math.round(total * 0.4)), icon: Receipt, color: '--ev-boleto', desc: 'Valores informados' },
-      { label: 'Reserva Confirmada', count: fechadosCount, icon: CheckCircle2, color: '--st-positivo', desc: 'Mesa garantida' },
-      { label: 'Compareceu', count: Math.round(fechadosCount * 0.9), icon: PartyPopper, color: '--brand', desc: 'Cliente no restaurante' },
+      { label: 'Interesse em Reserva', count: leadStats?.novoContato ?? total, icon: Utensils, color: '--ev-carrinho', desc: 'Novos clientes' },
+      { label: 'Data Consultada', count: leadStats?.qualificado ?? 0, icon: Calendar, color: '--ev-pix', desc: 'Horário & disponibilidade' },
+      { label: 'Cardápio / Pacote', count: leadStats?.proposta ?? 0, icon: Receipt, color: '--ev-boleto', desc: 'Valores informados' },
+      { label: 'Reserva Confirmada', count: leadStats?.fechado ?? fechadosCount, icon: CheckCircle2, color: '--st-positivo', desc: 'Mesa garantida' },
+      { label: 'Compareceu', count: leadStats?.fechado ?? fechadosCount, icon: PartyPopper, color: '--brand', desc: 'Cliente no restaurante' },
     ]
   } else if (isLucas) {
     funnelCards = [
-      { label: 'Primeiro Contato', count: total, icon: Users, color: '--ev-carrinho', desc: 'Interessados na clínica' },
-      { label: 'Dúvida de Procedimento', count: qualificadosCount, icon: MessageSquare, color: '--ev-pix', desc: 'Avaliação prévia' },
-      { label: 'Horários Oferecidos', count: Math.max(fechadosCount, Math.round(total * 0.5)), icon: Clock, color: '--ev-boleto', desc: 'Opções de agenda' },
-      { label: 'Consulta Agendada', count: fechadosCount, icon: Calendar, color: '--st-positivo', desc: 'Horário marcado' },
-      { label: 'Procedimento Realizado', count: Math.round(fechadosCount * 0.85), icon: CheckCheck, color: '--brand', desc: 'Paciente atendido' },
+      { label: 'Primeiro Contato', count: leadStats?.novoContato ?? total, icon: Users, color: '--ev-carrinho', desc: 'Interessados na clínica' },
+      { label: 'Dúvida de Procedimento', count: leadStats?.qualificado ?? 0, icon: MessageSquare, color: '--ev-pix', desc: 'Avaliação prévia' },
+      { label: 'Horários Oferecidos', count: leadStats?.proposta ?? 0, icon: Clock, color: '--ev-boleto', desc: 'Opções de agenda' },
+      { label: 'Consulta Agendada', count: leadStats?.agendado ?? fechadosCount, icon: Calendar, color: '--st-positivo', desc: 'Horário marcado' },
+      { label: 'Procedimento Realizado', count: leadStats?.fechado ?? fechadosCount, icon: CheckCheck, color: '--brand', desc: 'Paciente atendido' },
     ]
   } else if (isAgencia) {
     funnelCards = [
       { label: 'Leads Captados', count: total, icon: Users, color: '--ev-carrinho', desc: 'Mineração e anúncios' },
-      { label: 'Lead Qualificado', count: qualificadosCount, icon: CheckCircle2, color: '--ev-pix', desc: 'Fit comercial aprovado' },
-      { label: 'Reunião Agendada', count: Math.max(fechadosCount, Math.round(total * 0.35)), icon: Calendar, color: '--ev-boleto', desc: 'Call de apresentação' },
-      { label: 'Proposta Enviada', count: Math.max(fechadosCount, Math.round(total * 0.25)), icon: Receipt, color: '--ev-cartao', desc: 'Negociação de valores' },
-      { label: 'Contrato Fechado', count: fechadosCount, icon: PartyPopper, color: '--st-positivo', desc: 'Cliente ativo' },
+      { label: 'Lead Qualificado', count: leadStats?.qualificado ?? 0, icon: CheckCircle2, color: '--ev-pix', desc: 'Fit comercial aprovado' },
+      { label: 'Reunião Agendada', count: leadStats?.agendado ?? 0, icon: Calendar, color: '--ev-boleto', desc: 'Call de apresentação' },
+      { label: 'Proposta Enviada', count: leadStats?.proposta ?? 0, icon: Receipt, color: '--ev-cartao', desc: 'Negociação de valores' },
+      { label: 'Contrato Fechado', count: leadStats?.fechado ?? fechadosCount, icon: PartyPopper, color: '--st-positivo', desc: 'Cliente ativo' },
     ]
   } else {
     funnelCards = [
@@ -344,46 +352,50 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           </Suspense>
         </div>
 
-        {/* Canais e Plataformas Conectadas */}
+        {/* Canais e Plataformas Conectadas (100% Clicáveis) */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line-subtle text-micro text-fg-subtle">
-          <Link href="/canais" className="font-semibold text-fg hover:text-brand-ink transition-colors flex items-center gap-1">
+          <Link href="/canais" className="font-semibold text-fg hover:text-brand-ink transition-colors flex items-center gap-1 cursor-pointer">
             Canais Ativos:
           </Link>
-          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
+          <Link href="/canais" className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted hover:text-fg hover:border-brand-solid/40 transition-colors cursor-pointer">
             <MessageSquare size={12} className="text-emerald-400" /> WhatsApp Oficial
-          </span>
-          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
+          </Link>
+          <Link href="/canais" className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted hover:text-fg hover:border-brand-solid/40 transition-colors cursor-pointer">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-pink-400">
               <rect width="20" height="20" x="2" y="2" rx="5" ry="5"/>
               <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
               <line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>
             </svg>
             Instagram Direct
-          </span>
-          <span className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted">
+          </Link>
+          <Link href="/canais" className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted hover:text-fg hover:border-brand-solid/40 transition-colors cursor-pointer">
             <Mail size={12} className="text-indigo-400" /> E-mail (Brevo)
-          </span>
+          </Link>
 
           <span className="mx-1 text-fg-faint">•</span>
 
-          <span className="font-semibold text-fg">Origens:</span>
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded">
-            <span>⛏️ Mineração</span>
-          </span>
-          <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded">
+          <Link href="/origens" className="font-semibold text-fg hover:text-brand-ink transition-colors cursor-pointer">
+            Origens:
+          </Link>
+          {isAgencia && (
+            <Link href="/origens" className="inline-flex items-center gap-1 text-[10px] font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+              <span>⛏️ Mineração</span>
+            </Link>
+          )}
+          <Link href="/origens" className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
             Meta Ads
-          </span>
-          <span className="text-[10px] font-bold text-pink-400 bg-pink-500/10 border border-pink-500/20 px-2 py-0.5 rounded">
+          </Link>
+          <Link href="/origens" className="text-[10px] font-bold text-pink-400 bg-pink-500/10 border border-pink-500/20 hover:bg-pink-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
             Instagram
-          </span>
+          </Link>
           {!isGramado && !isLucas && (
             <>
-              <span className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2 py-0.5 rounded">
+              <Link href="/origens" className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
                 Hotmart
-              </span>
-              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+              </Link>
+              <Link href="/origens" className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
                 Kiwify
-              </span>
+              </Link>
             </>
           )}
         </div>
