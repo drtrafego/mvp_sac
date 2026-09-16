@@ -82,14 +82,27 @@ function ensureSchema(client: any): Promise<void> {
           `,
 
           // Centralização das empresas dos Agentes:
-          // 1. AutonomIA (vincula a empresa principal que possui todos os dados e histórico da AutonomIA / Casal / 24h)
-          client`UPDATE companies SET name = 'AutonomIA', slug = 'autonomia' WHERE slug = 'gastao-matos' OR slug = 'casaldotrafego'`,
+          // 1. Garante que AutonomIA existe
           client`INSERT INTO companies (name, slug, plan) VALUES ('AutonomIA', 'autonomia', 'pro') ON CONFLICT (slug) DO NOTHING`,
-          // 2. Gramado Plaza
+          // 2. Transfere todos os leads e mensagens de Gastão Matos e Casal do Tráfego para AutonomIA
+          client`
+            UPDATE recovery_leads 
+            SET company_id = (SELECT id FROM companies WHERE slug = 'autonomia' LIMIT 1) 
+            WHERE company_id IN (SELECT id FROM companies WHERE slug = 'gastao-matos' OR slug = 'casaldotrafego')
+          `,
+          client`
+            UPDATE whatsapp_messages 
+            SET company_id = (SELECT id FROM companies WHERE slug = 'autonomia' LIMIT 1) 
+            WHERE company_id IN (SELECT id FROM companies WHERE slug = 'gastao-matos' OR slug = 'casaldotrafego')
+          `,
+          // 3. Remove dependências e apaga definitivamente Gastão Matos e Casal do Tráfego
+          client`DELETE FROM company_members WHERE company_id IN (SELECT id FROM companies WHERE slug = 'gastao-matos' OR slug = 'casaldotrafego')`,
+          client`DELETE FROM settings WHERE company_id IN (SELECT id FROM companies WHERE slug = 'gastao-matos' OR slug = 'casaldotrafego')`,
+          client`DELETE FROM companies WHERE slug = 'gastao-matos' OR slug = 'casaldotrafego'`,
+          // 4. Garante Gramado Plaza e Dr. Lucas
           client`INSERT INTO companies (name, slug, plan) VALUES ('Gramado Plaza', 'gramado-plaza', 'pro') ON CONFLICT (slug) DO NOTHING`,
-          // 3. Dr. Lucas
           client`INSERT INTO companies (name, slug, plan) VALUES ('Dr. Lucas', 'drlucas', 'pro') ON CONFLICT (slug) DO NOTHING`,
-          // Garante registro em settings para cada empresa
+          // 5. Garante registro em settings para cada empresa
           client`INSERT INTO settings (company_id) SELECT id FROM companies ON CONFLICT (company_id) DO NOTHING`,
 
           // Garante os proprietários como administradores ativos de todas as empresas
