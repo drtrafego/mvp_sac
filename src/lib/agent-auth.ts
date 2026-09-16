@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { companies, settings, agentActivityLogs } from '@/lib/db/schema'
-import { eq, or, sql } from 'drizzle-orm'
-import { getCurrentCompany, checkIsAdmin } from '@/lib/auth'
+import { eq, or } from 'drizzle-orm'
+import { getCurrentCompany, getCurrentUser } from '@/lib/auth'
 
 export type AgentIdentifier = 'bia' | 'luana' | 'renato' | 'master' | 'admin' | 'humano'
 export type AgentDisplayName = 'Bia' | 'Luana' | 'Renato' | 'Master' | 'Administrador' | 'Humano'
@@ -19,15 +19,10 @@ export interface AgentAuthContext {
 export function getAgentManager(agent: string | null | undefined): 'Amanda' | 'Gastão' | null {
   if (!agent) return null
   const lower = agent.toLowerCase()
-  if (lower.includes('bia')) return 'Amanda'
-  if (lower.includes('luana')) return 'Gastão'
+  if (lower === 'bia') return 'Amanda'
+  if (lower === 'luana') return 'Gastão'
   return null
 }
-
-const DEFAULT_MASTER_KEY = process.env.SAC_API_KEY || 'sac_master_api_key_2026'
-const DEFAULT_BIA_KEY = process.env.SAC_AGENT_BIA_KEY || 'sac_agent_bia_live_2026'
-const DEFAULT_LUANA_KEY = process.env.SAC_AGENT_LUANA_KEY || 'sac_agent_luana_live_2026'
-const DEFAULT_RENATO_KEY = process.env.SAC_AGENT_RENATO_KEY || 'sac_agent_renato_live_2026'
 
 /**
  * Registra uma atividade no log de auditoria
@@ -57,8 +52,8 @@ export async function logAgentActivity(params: {
 }
 
 /**
- * Autentica uma requisição de Agente IA (Bearer token ou x-api-key),
- * identifica se é Bia (Amanda) ou Luana (Gastão), e valida a Allowlist de IPs se configurada.
+ * Autentica uma requisição de Agente IA (Bearer token ou x-api-key)
+ * com validação estrita de credenciais, isolamento multi-tenant e verificação de IP.
  */
 export async function authenticateAgentRequest(
   req: NextRequest,
@@ -67,7 +62,7 @@ export async function authenticateAgentRequest(
   const authHeader = req.headers.get('authorization')
   const apiKeyHeader = req.headers.get('x-api-key')
   const companyHeader = req.headers.get('x-company-slug') || req.headers.get('x-company-id')
-  const agentHeader = req.headers.get('x-agent-id') || req.headers.get('x-agent-name')
+  const agentHeader = (req.headers.get('x-agent-id') || req.headers.get('x-agent-name') || '').toLowerCase().trim()
 
   let providedKey: string | null = null
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -77,56 +72,54 @@ export async function authenticateAgentRequest(
   }
 
   let isAgentApiKey = false
+  let isMasterKey = false
   let isAdmin = false
-  let agentId: AgentIdentifier = 'master'
-  let agentName: AgentDisplayName = 'Master'
+  let agentId: AgentIdentifier = 'humano'
+  let agentName: AgentDisplayName = 'Humano'
+  let matchedCompany: typeof companies.$inferSelect | null = null
 
-  // 1. Identificação de Bia ou Luana pela Chave de API ou Header
+  // 1. Validação Criptográfica / Estrita da Chave de API
   if (providedKey) {
     isAgentApiKey = true
 
-    if (
-      providedKey === DEFAULT_BIA_KEY ||
-      providedKey.toLowerCase().includes('bia') ||
-      agentHeader?.toLowerCase().includes('bia')
-    ) {
-      agentId = 'bia'
-      agentName = 'Bia'
+    const envMasterKey = process.env.SAC_API_KEY?.trim()
+    const envBiaKey = process.env.SAC_AGENT_BIA_KEY?.trim()
+    const envLuanaKey = process.env.SAC_AGENT_LUANA_KEY?.trim()
+    const envRenatoKey = process.env.SAC_AGENT_RENATO_KEY?.trim()
+
+    // 1.1 Chave Mestra Global via Variável de Ambiente
+    if (envMasterKey && providedKey === envMasterKey) {
+      isMasterKey = true
       isAdmin = true
-    } else if (
-      providedKey === DEFAULT_LUANA_KEY ||
-      providedKey.toLowerCase().includes('luana') ||
-      agentHeader?.toLowerCase().includes('luana')
-    ) {
-      agentId = 'luana'
-      agentName = 'Luana'
-      isAdmin = true
-    } else if (
-      providedKey === DEFAULT_RENATO_KEY ||
-      providedKey.toLowerCase().includes('renato') ||
-      agentHeader?.toLowerCase().includes('renato')
-    ) {
-      agentId = 'bia'
-      agentName = 'Bia'
-      isAdmin = true
-    } else if (
-      providedKey === DEFAULT_MASTER_KEY ||
-      (process.env.SAC_API_KEY && providedKey === process.env.SAC_API_KEY)
-    ) {
-      isAdmin = true
-      // Verifica se enviou header especificando Bia ou Luana
-      if (agentHeader?.toLowerCase().includes('bia')) {
+      agentId = 'master'
+      agentName = 'Master'
+      if (agentHeader === 'bia') {
         agentId = 'bia'
         agentName = 'Bia'
-      } else if (agentHeader?.toLowerCase().includes('luana')) {
+      } else if (agentHeader === 'luana') {
         agentId = 'luana'
         agentName = 'Luana'
-      } else {
-        agentId = 'master'
-        agentName = 'Master'
+      } else if (agentHeader === 'renato') {
+        agentId = 'renato'
+        agentName = 'Renato'
       }
-    } else {
-      // Verifica no banco se é a chave de Bia ou Luana de alguma empresa ou inviteToken
+    }
+    // 1.2 Chaves de Agentes Globais via Variável de Ambiente
+    else if (envBiaKey && providedKey === envBiaKey) {
+      isAdmin = true
+      agentId = 'bia'
+      agentName = 'Bia'
+    } else if (envLuanaKey && providedKey === envLuanaKey) {
+      isAdmin = true
+      agentId = 'luana'
+      agentName = 'Luana'
+    } else if (envRenatoKey && providedKey === envRenatoKey) {
+      isAdmin = true
+      agentId = 'renato'
+      agentName = 'Renato'
+    }
+    // 1.3 Chaves de API por Empresa no Banco de Dados (multi-tenant)
+    else {
       const [compSettings] = await db
         .select({
           company: companies,
@@ -145,6 +138,9 @@ export async function authenticateAgentRequest(
         .limit(1)
 
       if (compSettings) {
+        matchedCompany = compSettings.company
+        isAdmin = true
+
         if (compSettings.settings?.agentBiaApiKey === providedKey) {
           agentId = 'bia'
           agentName = 'Bia'
@@ -152,34 +148,28 @@ export async function authenticateAgentRequest(
           agentId = 'luana'
           agentName = 'Luana'
         } else if (compSettings.settings?.agentRenatoApiKey === providedKey) {
-          agentId = 'bia'
-          agentName = 'Bia'
+          agentId = 'renato'
+          agentName = 'Renato'
+        } else {
+          agentId = 'admin'
+          agentName = 'Administrador'
         }
+      } else {
+        // Chave inválida - rejeição imediata
         return {
-          context: {
-            company: compSettings.company,
-            isAdmin: true,
-            isAgentApiKey: true,
-            agentId,
-            agentName,
-            managerName: getAgentManager(agentName),
-          },
+          error: NextResponse.json(
+            {
+              error: 'Chave de API inválida ou não autorizada.',
+              code: 'INVALID_API_KEY',
+            },
+            { status: 401 }
+          ),
         }
-      }
-
-      return {
-        error: NextResponse.json(
-          {
-            error: 'Chave de API inválida ou não autorizada para o agente.',
-            code: 'INVALID_API_KEY',
-          },
-          { status: 401 }
-        ),
       }
     }
   }
 
-  // 2. Resolução da Empresa
+  // 2. Resolução da Empresa Alvo (Tenant Target)
   const target = companyIdOrSlug || companyHeader
   let targetCompany: typeof companies.$inferSelect | null = null
 
@@ -192,39 +182,85 @@ export async function authenticateAgentRequest(
       .limit(1)
 
     targetCompany = found ?? null
-  }
 
-  // 3. Se for sessão de navegador e não tiver API Key, usa a empresa da sessão
-  if (!targetCompany && !isAgentApiKey) {
-    try {
-      targetCompany = await getCurrentCompany()
-      agentId = 'admin'
-      agentName = 'Administrador'
-    } catch {
-      // Ignora
-    }
-  }
-
-  // Fallback: se for Master Key e nenhuma empresa foi especificada, pega a primeira ativa
-  if (!targetCompany && isAgentApiKey) {
-    const [first] = await db.select().from(companies).limit(1)
-    targetCompany = first ?? null
-  }
-
-  if (!targetCompany) {
-    if (isAgentApiKey) {
+    if (!targetCompany) {
       return {
         error: NextResponse.json(
-          { error: `Empresa "${target || 'padrão'}" não encontrada`, code: 'COMPANY_NOT_FOUND' },
+          { error: `Empresa "${target}" não encontrada.`, code: 'COMPANY_NOT_FOUND' },
           { status: 404 }
         ),
       }
     }
+  }
+
+  // 3. Validação de Isolamento Multi-tenant
+  let finalCompany: typeof companies.$inferSelect | null = null
+
+  if (matchedCompany) {
+    // Se a chave é atrelada a uma empresa específica:
+    if (targetCompany && targetCompany.id !== matchedCompany.id) {
+      return {
+        error: NextResponse.json(
+          {
+            error: 'Acesso negado: a chave de API fornecida pertence a outra empresa.',
+            code: 'FORBIDDEN_CROSS_TENANT',
+          },
+          { status: 403 }
+        ),
+      }
+    }
+    finalCompany = matchedCompany
+  } else if (isMasterKey || (providedKey && isAdmin)) {
+    // Se for Master Key Global ou Agent Global do env:
+    if (!targetCompany) {
+      return {
+        error: NextResponse.json(
+          {
+            error: 'Empresa não especificada. Informe a empresa na URL (/api/v1/companies/:idOrSlug) ou via header "x-company-slug".',
+            code: 'MISSING_COMPANY',
+          },
+          { status: 400 }
+        ),
+      }
+    }
+    finalCompany = targetCompany
+  } else {
+    // 4. Sem API Key: tenta sessão autenticada do navegador
+    try {
+      const user = await getCurrentUser()
+      if (!user) {
+        return {
+          error: NextResponse.json(
+            {
+              error: 'Autenticação necessária. Envie Authorization: Bearer <API_KEY> ou faça login no painel.',
+              code: 'UNAUTHORIZED',
+            },
+            { status: 401 }
+          ),
+        }
+      }
+      finalCompany = await getCurrentCompany()
+      isAdmin = !!user.isAdmin
+      agentId = isAdmin ? 'admin' : 'humano'
+      agentName = isAdmin ? 'Administrador' : 'Humano'
+    } catch {
+      return {
+        error: NextResponse.json(
+          {
+            error: 'Autenticação necessária. Envie Authorization: Bearer <API_KEY> ou faça login no painel.',
+            code: 'UNAUTHORIZED',
+          },
+          { status: 401 }
+        ),
+      }
+    }
+  }
+
+  if (!finalCompany) {
     return {
       error: NextResponse.json(
         {
-          error:
-            'Autenticação necessária. Envie Authorization: Bearer <SAC_API_KEY> ou faça login.',
+          error: 'Empresa não encontrada ou não autorizada.',
           code: 'UNAUTHORIZED',
         },
         { status: 401 }
@@ -232,12 +268,12 @@ export async function authenticateAgentRequest(
     }
   }
 
-  // 4. Verificação de Allowlist de IPs (se configurada na empresa)
+  // 5. Validação de Allowlist de IPs (se configurada para a empresa)
   if (isAgentApiKey) {
     const [compSet] = await db
-      .select()
+      .select({ allowedIps: settings.allowedIps })
       .from(settings)
-      .where(eq(settings.companyId, targetCompany.id))
+      .where(eq(settings.companyId, finalCompany.id))
       .limit(1)
 
     if (compSet?.allowedIps && compSet.allowedIps.trim().length > 0) {
@@ -273,12 +309,12 @@ export async function authenticateAgentRequest(
 
   return {
     context: {
-      company: targetCompany,
+      company: finalCompany,
       isAdmin,
       isAgentApiKey,
       agentId,
       agentName,
+      managerName: getAgentManager(agentName),
     },
   }
 }
-

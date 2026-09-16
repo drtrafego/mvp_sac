@@ -9,6 +9,10 @@ compose.homologacao.yaml
 
 # Dado real de cliente (sanitizado, mas real)
 painel/autonomia.json
+public/*.json
+public/sac/
+*.json.bak
+*.bak
 
 # Provas e artefatos pesados
 provas/
