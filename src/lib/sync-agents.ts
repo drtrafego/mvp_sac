@@ -451,7 +451,88 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     details.push(`Aviso ao sincronizar prospecção: ${String(outreachErr)}`)
   }
 
-  // 5. Sincroniza Referrals de Anúncios Click-to-WhatsApp (CTWA) para Janela de 72 Horas
+  // 5. Sincroniza Leads do CRM (public.leads da organização Agente24horas / Casal do Tráfego / AutonomIA)
+  try {
+    const crmLeads = await queryAgentsDb<any>(`
+      select id, organization_id, whatsapp, email, name, company, notes, value, status,
+             follow_up_date, follow_up_note, campaign_source, utm_source, utm_medium,
+             utm_campaign, utm_content, utm_term, ai_agent, created_at, first_contact_at
+      from public.leads
+      order by created_at desc
+      limit 5000
+    `)
+
+    if (crmLeads && crmLeads.length > 0) {
+      const targetComp = companyMap.get('autonomia') || companyMap.values().next().value
+      if (targetComp) {
+        let crmImported = 0
+
+        for (const l of crmLeads) {
+          const rawPhone = (l.whatsapp || '').trim()
+          const cleanPhone = normalizeDigits(rawPhone) || rawPhone
+          const email = l.email ? l.email.trim().toLowerCase() : null
+          if (!cleanPhone && !email) continue
+
+          const [existingLead] = await db
+            .select({ id: recoveryLeads.id })
+            .from(recoveryLeads)
+            .where(
+              and(
+                eq(recoveryLeads.companyId, targetComp.id),
+                or(
+                  cleanPhone ? eq(recoveryLeads.phone, cleanPhone) : sql`false`,
+                  cleanPhone && cleanPhone.length >= 9
+                    ? sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${cleanPhone}, 9)`
+                    : sql`false`,
+                  email ? eq(recoveryLeads.email, email) : sql`false`
+                )
+              )
+            )
+            .limit(1)
+
+          if (!existingLead) {
+            const leadDate = l.created_at ? new Date(l.created_at) : (l.first_contact_at ? new Date(l.first_contact_at) : new Date())
+            const prodVal = l.value ? Math.round(Number(l.value) * 100) : null
+            const stage = l.status === 'converted' ? 'fechado' : (l.follow_up_date ? 'agendado' : 'qualificado')
+
+            await db.insert(recoveryLeads).values({
+              companyId: targetComp.id,
+              phone: cleanPhone || email || '',
+              email: email || undefined,
+              name: l.name || l.company || ('Contato ' + (cleanPhone ? cleanPhone.slice(-4) : '')),
+              productName: l.company || l.notes || 'Agente 24h / CRM',
+              productValue: prodVal,
+              platform: 'sac',
+              channel: 'whatsapp',
+              eventType: l.campaign_source || 'prospeccao',
+              status: l.status === 'converted' ? 'converted' : 'in_conversation',
+              pipelineStage: stage,
+              trackingSource: l.campaign_source || l.utm_source || 'mineracao_prospeccao',
+              utmMedium: l.utm_medium,
+              utmCampaign: l.utm_campaign,
+              utmContent: l.utm_content,
+              utmTerm: l.utm_term,
+              responsibleAgent: l.ai_agent || 'Nina',
+              followUpDate: l.follow_up_date ? new Date(l.follow_up_date) : undefined,
+              followUpNote: l.follow_up_note,
+              createdAt: leadDate,
+              updatedAt: leadDate,
+              lastActionAt: leadDate,
+            })
+            crmImported++
+            leadsCreated++
+          }
+        }
+        if (crmImported > 0) {
+          details.push(`${crmImported} novos leads importados da base central de CRM.`)
+        }
+      }
+    }
+  } catch (crmErr) {
+    details.push(`Aviso ao sincronizar CRM leads: ${String(crmErr)}`)
+  }
+
+  // 6. Sincroniza Referrals de Anúncios Click-to-WhatsApp (CTWA) para Janela de 72 Horas
   try {
     const ctwaRows = await queryAgentsDb<CtwaReferralDbRow>(`
       select phone_norm, campaign_name, ad_name

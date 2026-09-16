@@ -14,6 +14,7 @@ let _sqlInstance: ReturnType<typeof postgres> | null = null
 let _lastUrl: string | null = null
 
 export async function getAgentsDbUrl(): Promise<string | null> {
+  if (process.env.CRM_DATABASE_URL) return process.env.CRM_DATABASE_URL
   if (process.env.SUPABASE_DATABASE_URL) return process.env.SUPABASE_DATABASE_URL
   if (process.env.AGENTS_DATABASE_URL) return process.env.AGENTS_DATABASE_URL
 
@@ -29,7 +30,8 @@ export async function getAgentsDbUrl(): Promise<string | null> {
     // Silently continue to fallback
   }
 
-  return process.env.DATABASE_URL || null
+  // Fallback padrão para o banco central dos agentes e CRM (2.800+ leads)
+  return 'postgresql://neondb_owner:npg_1bLg0vyUfPxC@ep-red-water-ahtndd0s-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require'
 }
 
 /**
