@@ -553,6 +553,7 @@ function EditCompanyForm({
       items: [
         { key: 'showWebhooksLog', label: 'Logs de Webhooks' },
         { key: 'showBiblioteca', label: 'Biblioteca de Mídia' },
+        { key: 'showApiDocs', label: 'Documentação da API' },
         { key: 'showConfiguracoes', label: 'Configurações' },
       ],
     },

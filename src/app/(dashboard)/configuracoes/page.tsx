@@ -66,6 +66,7 @@ interface SettingsData {
     showInstagram?: boolean
     showMineracao?: boolean
     showConfiguracoes?: boolean
+    showApiDocs?: boolean
     showWebhooksLog?: boolean
     showBiblioteca?: boolean
   } | null
@@ -779,6 +780,7 @@ export default function ConfiguracoesPage() {
               <div className="space-y-2">
                 {[
                   { key: 'showConfiguracoes', label: 'Configurações' },
+                  { key: 'showApiDocs', label: 'Documentação da API do SAC' },
                   { key: 'showBiblioteca', label: 'Biblioteca de Modelos & Prompts' },
                   { key: 'showWebhooksLog', label: 'Webhooks Log (Técnico)' },
                 ].map(({ key, label }) => {

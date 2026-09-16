@@ -23,6 +23,7 @@ import {
   ChevronRight,
   Filter,
   Bot,
+  Code2,
 } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -168,6 +169,7 @@ export const mineracaoNav = [
 
 export const ajustesNav = [
   { label: 'Configuração', href: '/configuracoes', icon: Settings, key: 'configuracoes' },
+  { label: 'Documentação API', href: '/api-docs', icon: Code2, key: 'apiDocs' },
   { label: 'Webhooks Log', href: '/webhooks-log', icon: Webhook, key: 'webhooks' },
   { label: 'Biblioteca', href: '/biblioteca', icon: BookOpen, key: 'biblioteca' },
 ]
@@ -189,6 +191,7 @@ export interface SidebarMenuConfig {
 
   // API Oficial
   showApiOficial?: boolean
+  showApiDocs?: boolean
 
   // Integrações / Plataformas
   showHotmart?: boolean
@@ -295,6 +298,7 @@ export function SidebarNavContent({
   const showWebhooksLog = sidebarConfig?.showWebhooksLog !== undefined ? sidebarConfig.showWebhooksLog : true
   const showBiblioteca = sidebarConfig?.showBiblioteca !== undefined ? sidebarConfig.showBiblioteca : true
   const showConfiguracoes = sidebarConfig?.showConfiguracoes !== undefined ? sidebarConfig.showConfiguracoes : true
+  const showApiDocs = sidebarConfig?.showApiDocs !== undefined ? sidebarConfig.showApiDocs : true
 
   return (
     <nav className={cn('scroll-thin min-h-0 overflow-y-auto px-2 py-3 space-y-3', className)}>
@@ -814,7 +818,15 @@ export function SidebarNavContent({
 
         {(collapsed || sectionsOpen.ajustes) && (
           <div className="space-y-0.5">
-            {ajustesNav.map(({ label, href, icon: Icon }) => {
+            {ajustesNav
+              .filter(item => {
+                if (item.key === 'configuracoes') return showConfiguracoes
+                if (item.key === 'apiDocs') return showApiDocs
+                if (item.key === 'webhooks') return showWebhooksLog
+                if (item.key === 'biblioteca') return showBiblioteca
+                return true
+              })
+              .map(({ label, href, icon: Icon }) => {
               const active = isActive(href)
               return (
                 <Link
