@@ -142,7 +142,7 @@ export default function EmpresasPage() {
         <div>
           <h1 className="text-h1 text-fg">Central de Agentes & Empresas</h1>
           <p className="text-body text-fg-muted mt-1">
-            Gerencie os workspaces dos 3 agentes (Gastão Matos, Gramado Plaza, Dr. Lucas) ou conecte via Supabase.
+            Gerencie os workspaces dos agentes (AutonomIA, Gramado Plaza, Dr. Lucas) ou conecte via Supabase.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -173,7 +173,7 @@ export default function EmpresasPage() {
                 </span>
               </div>
               <p className="text-micro text-fg-subtle mt-0.5">
-                Importa automaticamente os 3 bots (Gastão Matos, Gramado Plaza, Dr. Lucas), seus leads de CRM e conversas.
+                Importa automaticamente os bots (AutonomIA, Gramado Plaza, Dr. Lucas), seus leads de CRM e conversas.
               </p>
             </div>
           </div>

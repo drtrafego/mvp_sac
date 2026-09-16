@@ -102,9 +102,6 @@
                 <select id="kb-modal-responsavel" class="rec-select">
                   <option value="">Sem responsável (Fila Geral)</option>
                   <option value="AutonomIA">AutonomIA (Bot)</option>
-                  <option value="Bella">Bella (Bot)</option>
-                  <option value="Casal do Tráfego">Casal do Tráfego (Bot)</option>
-                  <option value="Gastão Matos">Gastão Matos (Bot)</option>
                   <option value="Operador Humano">Operador Humano</option>
                 </select>
               </label>

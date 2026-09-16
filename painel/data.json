@@ -12,33 +12,12 @@
     {
       "id": "snapshot:autonomia",
       "label": "AutonomIA",
-      "agent": "Bot IA Atendimento Geral",
+      "agent": "Bot IA Atendimento & Prospecção (Unificado)",
       "endpoint": "autonomia.json",
       "accent": "#b8f35a"
-    },
-    {
-      "id": "snapshot:bella",
-      "label": "Bella",
-      "agent": "Bot IA Instagram & Moda",
-      "endpoint": "autonomia.json",
-      "accent": "#ff8fba"
-    },
-    {
-      "id": "snapshot:casaldotrafego",
-      "label": "Casal do Tráfego",
-      "agent": "Bot IA Vendas & Infoprodutos",
-      "endpoint": "autonomia.json",
-      "accent": "#6ed0ff"
-    },
-    {
-      "id": "snapshot:gastaomatos",
-      "label": "Gastão Matos",
-      "agent": "Bot IA Qualificação & Imóveis",
-      "endpoint": "autonomia.json",
-      "accent": "#ffab76"
     }
   ],
-  "accents": ["#b8f35a", "#ff8fba", "#6ed0ff", "#ffab76", "#d39cff"],
+  "accents": ["#b8f35a", "#6ed0ff", "#d39cff"],
   "stageLabels": {
     "novo_contato": "Novo contato",
     "em_atendimento": "Em atendimento",
