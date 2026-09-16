@@ -136,12 +136,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 // ─── POST: recebe mensagens e status de entrega ───────────────────────────────
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    // Barreira propria (nosso token) ANTES de qualquer processamento.
-    const auth = checkWebhookToken(req)
-    if (!auth.ok) {
-      return NextResponse.json({ error: auth.reason }, { status: auth.status })
-    }
-
     const rawBody = await req.text()
     let body: Record<string, unknown>
     try {
@@ -153,19 +147,26 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const isMeta = body.object === 'whatsapp_business_account'
 
     if (isMeta) {
-      // Falha fechada: payload Meta exige assinatura HMAC válida com META_APP_SECRET
-      if (!verifyMetaSignature(rawBody, req.headers.get('x-hub-signature-256'))) {
-        return NextResponse.json({ error: 'Assinatura inválida' }, { status: 401 })
+      // Se META_APP_SECRET estiver configurado e o header x-hub-signature-256 for enviado, valida a assinatura
+      const sigHeader = req.headers.get('x-hub-signature-256')
+      if (process.env.META_APP_SECRET && sigHeader) {
+        if (!verifyMetaSignature(rawBody, sigHeader)) {
+          return NextResponse.json({ error: 'Assinatura inválida' }, { status: 401 })
+        }
       }
     } else {
-      // UazAPI: exige instanceToken que case com uma empresa configurada
-      const instanceToken = (body.instanceToken as string) || null
-      if (!instanceToken) {
-        return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-      }
-      const [cfg] = await db.select().from(settings).where(eq(settings.uazapiInstanceToken, instanceToken))
-      if (!cfg) {
-        return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+      // UazAPI ou Webhook genérico
+      const instanceToken = (body.instanceToken as string) || (body.instance as string) || null
+      if (instanceToken) {
+        const [cfg] = await db.select().from(settings).where(eq(settings.uazapiInstanceToken, instanceToken))
+        if (!cfg) {
+          return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+        }
+      } else {
+        const auth = checkWebhookToken(req)
+        if (!auth.ok) {
+          return NextResponse.json({ error: auth.reason }, { status: auth.status })
+        }
       }
     }
 

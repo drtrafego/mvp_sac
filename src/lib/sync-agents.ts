@@ -100,8 +100,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
   // 1. Garante imediatamente as empresas principais no banco de dados local
   const defaultCompanies = [
-    { name: 'Casal do Tráfego', slug: 'casaldotrafego' },
-    { name: 'Gastão Matos', slug: 'gastao-matos' },
+    { name: 'AutonomIA', slug: 'autonomia' },
     { name: 'Gramado Plaza', slug: 'gramado-plaza' },
     { name: 'Dr. Lucas', slug: 'drlucas' },
   ]
@@ -163,9 +162,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     let companySlug = rawSlug
     let companyName = rawName
 
-    if (rawSlug.includes('gastao') || rawSlug.includes('24horas') || rawSlug.includes('casal') || rawSlug.includes('trafego') || rawName.toLowerCase().includes('gast') || rawName.toLowerCase().includes('casal')) {
-      companySlug = 'gastao-matos'
-      companyName = 'Gastão Matos'
+    if (rawSlug.includes('autonomia') || rawSlug.includes('gastao') || rawSlug.includes('24horas') || rawSlug.includes('casal') || rawSlug.includes('trafego') || rawName.toLowerCase().includes('gast') || rawName.toLowerCase().includes('casal') || rawName.toLowerCase().includes('autonomia')) {
+      companySlug = 'autonomia'
+      companyName = 'AutonomIA'
     } else if (rawSlug.includes('gramado') || rawSlug.includes('plaza')) {
       companySlug = 'gramado-plaza'
       companyName = 'Gramado Plaza'
@@ -342,12 +341,12 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
       for (const oc of outreachConvos) {
         const agentSlug = (oc.agent_slug || '').toLowerCase()
-        let companySlug = 'gastao-matos'
+        let companySlug = 'autonomia'
         if (agentSlug.includes('gramado') || agentSlug.includes('plaza')) {
           companySlug = 'gramado-plaza'
         }
 
-        const comp = companyMap.get(companySlug) || companyMap.get('gastao-matos')
+        const comp = companyMap.get(companySlug) || companyMap.get('autonomia')
         if (!comp) continue
 
         const rawHandle = (oc.lead_handle || '').trim()

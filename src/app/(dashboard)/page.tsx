@@ -76,7 +76,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   // 1. Identificar modelo de negócio da empresa
   const isGramado = company.slug.includes('gramado')
   const isLucas = company.slug.includes('lucas')
-  const isAgencia = company.slug.includes('casal') || company.slug.includes('gastao')
+  const isAgencia = company.slug.includes('autonomia') || company.slug.includes('casal') || company.slug.includes('gastao')
   const isInfoproduto = !isGramado && !isLucas && !isAgencia
 
   const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown] = await Promise.all([

@@ -82,9 +82,9 @@ function ensureSchema(client: any): Promise<void> {
           `,
 
           // Centralização das empresas dos Agentes:
-          // 1. Gastão Matos (vincula a empresa 1 que já possui todos os dados e histórico da AutonomIA)
-          client`UPDATE companies SET name = 'Gastão Matos', slug = 'gastao-matos' WHERE id = 1`,
-          client`INSERT INTO companies (name, slug, plan) VALUES ('Gastão Matos', 'gastao-matos', 'pro') ON CONFLICT (slug) DO NOTHING`,
+          // 1. AutonomIA (vincula a empresa principal que possui todos os dados e histórico da AutonomIA / Casal / 24h)
+          client`UPDATE companies SET name = 'AutonomIA', slug = 'autonomia' WHERE slug = 'gastao-matos' OR slug = 'casaldotrafego'`,
+          client`INSERT INTO companies (name, slug, plan) VALUES ('AutonomIA', 'autonomia', 'pro') ON CONFLICT (slug) DO NOTHING`,
           // 2. Gramado Plaza
           client`INSERT INTO companies (name, slug, plan) VALUES ('Gramado Plaza', 'gramado-plaza', 'pro') ON CONFLICT (slug) DO NOTHING`,
           // 3. Dr. Lucas

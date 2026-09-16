@@ -29,7 +29,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
 
   const isGramado = context.company.slug.includes('gramado')
   const isLucas = context.company.slug.includes('lucas')
-  const isAgencia = context.company.slug.includes('casal') || context.company.slug.includes('gastao')
+  const isAgencia = context.company.slug.includes('autonomia') || context.company.slug.includes('casal') || context.company.slug.includes('gastao')
 
   const [[leadStats], [jobStats]] = await Promise.all([
     db
