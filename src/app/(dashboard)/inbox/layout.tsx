@@ -29,12 +29,12 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
         lastMessage: sql<string | null>`(
           SELECT wm.content FROM whatsapp_messages wm
           WHERE (
-            wm.lead_id = ${recoveryLeads.id} 
-            OR (wm.phone = ${recoveryLeads.phone} AND ${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != '')
+            wm.lead_id = recovery_leads.id 
+            OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
             OR (
               length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
-              AND length(regexp_replace(COALESCE(${recoveryLeads.phone}, ''), '\\D', '', 'g')) >= 8 
-              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 8)
+              AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
+              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
             )
           )
           AND wm.company_id = ${companyId}
@@ -43,12 +43,12 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
         lastDirection: sql<string | null>`(
           SELECT wm.direction FROM whatsapp_messages wm
           WHERE (
-            wm.lead_id = ${recoveryLeads.id} 
-            OR (wm.phone = ${recoveryLeads.phone} AND ${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != '')
+            wm.lead_id = recovery_leads.id 
+            OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
             OR (
               length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
-              AND length(regexp_replace(COALESCE(${recoveryLeads.phone}, ''), '\\D', '', 'g')) >= 8 
-              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 8)
+              AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
+              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
             )
           )
           AND wm.company_id = ${companyId}
@@ -57,12 +57,12 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
         lastMessageAt: sql<string | null>`(
           SELECT wm.created_at::text FROM whatsapp_messages wm
           WHERE (
-            wm.lead_id = ${recoveryLeads.id} 
-            OR (wm.phone = ${recoveryLeads.phone} AND ${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != '')
+            wm.lead_id = recovery_leads.id 
+            OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
             OR (
               length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
-              AND length(regexp_replace(COALESCE(${recoveryLeads.phone}, ''), '\\D', '', 'g')) >= 8 
-              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 8)
+              AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
+              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
             )
           )
           AND wm.company_id = ${companyId}
@@ -71,12 +71,12 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
         lastInboundAt: sql<string | null>`(
           SELECT wm.created_at::text FROM whatsapp_messages wm
           WHERE (
-            wm.lead_id = ${recoveryLeads.id} 
-            OR (wm.phone = ${recoveryLeads.phone} AND ${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != '')
+            wm.lead_id = recovery_leads.id 
+            OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
             OR (
               length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
-              AND length(regexp_replace(COALESCE(${recoveryLeads.phone}, ''), '\\D', '', 'g')) >= 8 
-              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 8)
+              AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
+              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
             )
           )
           AND wm.company_id = ${companyId}
@@ -86,12 +86,12 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
         lastOutboundAt: sql<string | null>`(
           SELECT wm.created_at::text FROM whatsapp_messages wm
           WHERE (
-            wm.lead_id = ${recoveryLeads.id} 
-            OR (wm.phone = ${recoveryLeads.phone} AND ${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != '')
+            wm.lead_id = recovery_leads.id 
+            OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
             OR (
               length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
-              AND length(regexp_replace(COALESCE(${recoveryLeads.phone}, ''), '\\D', '', 'g')) >= 8 
-              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 8)
+              AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
+              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
             )
           )
           AND wm.company_id = ${companyId}
@@ -101,12 +101,12 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
         unread: sql<number>`(
           SELECT COUNT(*) FROM whatsapp_messages wm
           WHERE (
-            wm.lead_id = ${recoveryLeads.id} 
-            OR (wm.phone = ${recoveryLeads.phone} AND ${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != '')
+            wm.lead_id = recovery_leads.id 
+            OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
             OR (
               length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
-              AND length(regexp_replace(COALESCE(${recoveryLeads.phone}, ''), '\\D', '', 'g')) >= 8 
-              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 8)
+              AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
+              AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
             )
           )
           AND wm.company_id = ${companyId}
@@ -114,12 +114,12 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
           AND wm.created_at > COALESCE((
             SELECT wm2.created_at FROM whatsapp_messages wm2
             WHERE (
-              wm2.lead_id = ${recoveryLeads.id} 
-              OR (wm2.phone = ${recoveryLeads.phone} AND ${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != '')
+              wm2.lead_id = recovery_leads.id 
+              OR (wm2.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
               OR (
                 length(regexp_replace(COALESCE(wm2.phone, ''), '\\D', '', 'g')) >= 8 
-                AND length(regexp_replace(COALESCE(${recoveryLeads.phone}, ''), '\\D', '', 'g')) >= 8 
-                AND right(regexp_replace(wm2.phone, '\\D', '', 'g'), 8) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 8)
+                AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
+                AND right(regexp_replace(wm2.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
               )
             )
             AND wm2.company_id = ${companyId}

@@ -584,27 +584,6 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
-      {/* 5. Pipeline de Atendimento (Kanban Integrado) */}
-      <div className="rise rise-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-h2 text-fg flex items-center gap-2">
-              <Columns3 size={18} className="text-brand-ink" />
-              Pipeline de Atendimento (Kanban)
-            </h2>
-            <p className="text-micro text-fg-subtle">
-              Arraste os contatos entre as etapas ou clique em qualquer card para registrar lembretes de retorno e editar dados.
-            </p>
-          </div>
-          <Link
-            href="/pipeline"
-            className="text-micro font-semibold text-brand-ink hover:underline flex items-center gap-1"
-          >
-            Quadro Completo <ExternalLink size={13} />
-          </Link>
-        </div>
-        <KanbanBoard initialLeads={kanbanLeads} companySlug={company.slug} />
-      </div>
 
       {/* 6. Gráficos de Canais & Origens de Tráfego */}
       <div className="rise rise-5 grid grid-cols-1 md:grid-cols-2 gap-[var(--space-gutter)]">

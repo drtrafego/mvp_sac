@@ -71,7 +71,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
   })
 
   return (
-    <div className="flex flex-col gap-3 h-[calc(100vh-140px)]">
+    <div className="flex flex-col gap-3 flex-1 min-h-[calc(100vh-5.5rem)] h-[calc(100vh-5rem)] pb-1">
       {/* Cabeçalho do Pipeline */}
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -91,8 +91,8 @@ export default async function PipelinePage({ searchParams }: PageProps) {
         </Suspense>
       </div>
 
-      {/* Kanban Board Full Height */}
-      <div className="flex-1 min-h-0">
+      {/* Kanban Board Full Height Adaptativo */}
+      <div className="flex-1 min-h-0 h-full flex flex-col">
         <KanbanBoard initialLeads={leads} companySlug={company.slug} />
       </div>
     </div>
