@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
-import { eq, desc, and, sql } from 'drizzle-orm'
+import { eq, desc, and, or, inArray } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -48,6 +48,10 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
 
   // Uma única query em lote, indexada por company_id, em vez de 3 subqueries
   // correlacionadas por lead (com regexp nos dois lados, não indexável).
+  // Usa inArray (gera "IN (...)"), não ANY(${array}): o sql`` do drizzle
+  // expande um array interpolado em "(p1, p2, ...)" — um ANY() em volta disso
+  // vira "ANY((1, 2, 3))", que o Postgres rejeita com "op ANY/ALL (array)
+  // requires array on right side". IN (...) aceita essa mesma expansão.
   const messages = leads.length === 0 ? [] : await db
     .select({
       id: whatsappMessages.id,
@@ -61,7 +65,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     .where(
       and(
         eq(whatsappMessages.companyId, companyId),
-        sql`(${whatsappMessages.leadId} = ANY(${leadIds}) OR ${whatsappMessages.phone} = ANY(${phones}))`
+        or(inArray(whatsappMessages.leadId, leadIds), inArray(whatsappMessages.phone, phones))
       )
     )
     .orderBy(desc(whatsappMessages.createdAt))

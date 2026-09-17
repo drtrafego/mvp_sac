@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
-import { desc, eq, sql, and, or, ilike } from 'drizzle-orm'
+import { desc, eq, sql, and, or, ilike, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -45,6 +45,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const leadIds = leads.map(l => l.id)
   const phones = leads.map(l => l.phone).filter(Boolean)
 
+  // inArray (IN (...)), não ANY(${array}): o sql`` do drizzle expande um array
+  // interpolado em "(p1, p2, ...)", e ANY() em volta disso vira "ANY((1,2,3))",
+  // que o Postgres rejeita ("op ANY/ALL (array) requires array on right side").
   const messages = await db
     .select({
       id: whatsappMessages.id,
@@ -58,7 +61,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     .where(
       and(
         eq(whatsappMessages.companyId, company.id),
-        sql`(${whatsappMessages.leadId} = ANY(${leadIds}) OR ${whatsappMessages.phone} = ANY(${phones}))`
+        or(inArray(whatsappMessages.leadId, leadIds), inArray(whatsappMessages.phone, phones))
       )
     )
     .orderBy(desc(whatsappMessages.createdAt))
