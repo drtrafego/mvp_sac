@@ -16,8 +16,35 @@ export async function GET(req: NextRequest) {
   }
 
   const allCompanies = await db.select().from(companies).orderBy(companies.id)
+  let allSettings = await db.select().from(settings).orderBy(settings.id)
+
+  // Auto-heal: garante settings e chaves para qualquer empresa que estiver sem
+  for (const comp of allCompanies) {
+    const s = allSettings.find(set => set.companyId === comp.id)
+    if (!s) {
+      await db
+        .insert(settings)
+        .values({
+          companyId: comp.id,
+          agentBiaApiKey: `sac_bia_${comp.slug}_${comp.id}bia`,
+          agentLuanaApiKey: `sac_luana_${comp.slug}_${comp.id}luana`,
+          agentRenatoApiKey: `sac_renato_${comp.slug}_${comp.id}renato`,
+        })
+        .onConflictDoNothing()
+    } else if (!s.agentBiaApiKey || !s.agentLuanaApiKey || !s.agentRenatoApiKey) {
+      await db
+        .update(settings)
+        .set({
+          agentBiaApiKey: s.agentBiaApiKey || `sac_bia_${comp.slug}_${comp.id}bia`,
+          agentLuanaApiKey: s.agentLuanaApiKey || `sac_luana_${comp.slug}_${comp.id}luana`,
+          agentRenatoApiKey: s.agentRenatoApiKey || `sac_renato_${comp.slug}_${comp.id}renato`,
+        })
+        .where(eq(settings.companyId, comp.id))
+    }
+  }
+
+  allSettings = await db.select().from(settings).orderBy(settings.id)
   const allMembers = await db.select().from(companyMembers).orderBy(companyMembers.id)
-  const allSettings = await db.select().from(settings).orderBy(settings.id)
 
   const report = allCompanies.map(comp => {
     const compMembers = allMembers.filter(m => m.companyId === comp.id)
