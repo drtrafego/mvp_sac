@@ -4,9 +4,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
-import { eq, desc, sql } from 'drizzle-orm'
+import { eq, desc, and, sql } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
+
+function last8(phone: string | null | undefined): string {
+  const digits = (phone || '').replace(/\D/g, '')
+  return digits.length >= 8 ? digits.slice(-8) : digits
+}
 
 export async function GET(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { idOrSlug } = await params
@@ -32,57 +37,76 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       trackingSource: recoveryLeads.trackingSource,
       utmCampaign: recoveryLeads.utmCampaign,
       createdAt: recoveryLeads.createdAt,
-      lastMessage: sql<string | null>`(
-        SELECT wm.content FROM whatsapp_messages wm
-        WHERE (
-          wm.lead_id = recovery_leads.id 
-          OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
-          OR (
-            length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
-            AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
-            AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
-          )
-        )
-        AND wm.company_id = ${companyId}
-        ORDER BY wm.created_at DESC LIMIT 1
-      )`,
-      lastMessageAt: sql<string | null>`(
-        SELECT wm.created_at::text FROM whatsapp_messages wm
-        WHERE (
-          wm.lead_id = recovery_leads.id 
-          OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
-          OR (
-            length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
-            AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
-            AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
-          )
-        )
-        AND wm.company_id = ${companyId}
-        ORDER BY wm.created_at DESC LIMIT 1
-      )`,
-      unread: sql<number>`(
-        SELECT COUNT(*) FROM whatsapp_messages wm
-        WHERE (
-          wm.lead_id = recovery_leads.id 
-          OR (wm.phone = recovery_leads.phone AND recovery_leads.phone IS NOT NULL AND recovery_leads.phone != '')
-          OR (
-            length(regexp_replace(COALESCE(wm.phone, ''), '\\D', '', 'g')) >= 8 
-            AND length(regexp_replace(COALESCE(recovery_leads.phone, ''), '\\D', '', 'g')) >= 8 
-            AND right(regexp_replace(wm.phone, '\\D', '', 'g'), 8) = right(regexp_replace(recovery_leads.phone, '\\D', '', 'g'), 8)
-          )
-        )
-        AND wm.company_id = ${companyId}
-        AND wm.direction = 'inbound'
-      )`,
     })
     .from(recoveryLeads)
     .where(eq(recoveryLeads.companyId, companyId))
     .orderBy(desc(recoveryLeads.updatedAt))
     .limit(250)
 
+  const leadIds = leads.map(l => l.id)
+  const phones = leads.map(l => l.phone).filter(Boolean)
+
+  // Uma única query em lote, indexada por company_id, em vez de 3 subqueries
+  // correlacionadas por lead (com regexp nos dois lados, não indexável).
+  const messages = leads.length === 0 ? [] : await db
+    .select({
+      id: whatsappMessages.id,
+      leadId: whatsappMessages.leadId,
+      phone: whatsappMessages.phone,
+      direction: whatsappMessages.direction,
+      content: whatsappMessages.content,
+      createdAt: whatsappMessages.createdAt,
+    })
+    .from(whatsappMessages)
+    .where(
+      and(
+        eq(whatsappMessages.companyId, companyId),
+        sql`(${whatsappMessages.leadId} = ANY(${leadIds}) OR ${whatsappMessages.phone} = ANY(${phones}))`
+      )
+    )
+    .orderBy(desc(whatsappMessages.createdAt))
+    .limit(1000)
+
+  // Join em memória: por lead_id exato, por telefone exato e por fallback
+  // dos últimos 8 dígitos (cobre diferença de DDI/formatação entre origens).
+  const byLeadId = new Map<number, typeof messages>()
+  const byPhone = new Map<string, typeof messages>()
+  const byLast8 = new Map<string, typeof messages>()
+  for (const m of messages) {
+    if (m.leadId) {
+      if (!byLeadId.has(m.leadId)) byLeadId.set(m.leadId, [])
+      byLeadId.get(m.leadId)!.push(m)
+    }
+    if (m.phone) {
+      if (!byPhone.has(m.phone)) byPhone.set(m.phone, [])
+      byPhone.get(m.phone)!.push(m)
+      const l8 = last8(m.phone)
+      if (l8) {
+        if (!byLast8.has(l8)) byLast8.set(l8, [])
+        byLast8.get(l8)!.push(m)
+      }
+    }
+  }
+
+  const withMessages = leads.map(l => {
+    const candidates =
+      (l.id ? byLeadId.get(l.id) : undefined) ||
+      (l.phone ? byPhone.get(l.phone) : undefined) ||
+      (l.phone ? byLast8.get(last8(l.phone)) : undefined) ||
+      []
+    const lastMsg = candidates[0] ?? null // já vem ordenado desc por created_at
+    const unread = candidates.filter(m => m.direction === 'inbound').length
+    return {
+      ...l,
+      lastMessage: lastMsg?.content ?? null,
+      lastMessageAt: lastMsg?.createdAt ? lastMsg.createdAt.toISOString() : null,
+      unread,
+    }
+  })
+
   // Deduplicação e consolidação por pessoa
   const personMap = new Map<string, any>()
-  for (const c of leads) {
+  for (const c of withMessages) {
     const rawDigits = (c.phone || '').replace(/\D/g, '')
     const key = rawDigits.length >= 9
       ? `phone_${rawDigits.slice(-9)}`
