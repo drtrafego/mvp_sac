@@ -5,6 +5,7 @@ import { companies, companyMembers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
+import { verifyAgentSessionCookie } from '@/lib/agent-session'
 
 export class AuthError extends Error {
   readonly status = 401
@@ -34,16 +35,18 @@ export async function getCurrentUser() {
     const cookieStore = await cookies()
     const agentSession = cookieStore.get('agent_auth_session')?.value
     if (agentSession) {
-      const parsed = JSON.parse(agentSession)
-      return {
-        id: parsed.id || 'agent-ia-casal-admin-id',
-        primaryEmail: parsed.primaryEmail || 'agente.ia@casaldotrafego.com',
-        displayName: parsed.displayName || 'Agente IA (Admin)',
-        isAdmin: true,
+      const verified = await verifyAgentSessionCookie(agentSession)
+      if (verified) {
+        return {
+          id: verified.id,
+          primaryEmail: verified.primaryEmail,
+          displayName: verified.displayName,
+          isAdmin: verified.isAdmin,
+        }
       }
     }
   } catch {
-    // ignorar erro de parse e seguir para o Stack Auth
+    // cookie ausente/corrompido: segue para o Stack Auth
   }
 
   if (!stackServerApp) return null

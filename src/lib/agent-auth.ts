@@ -87,15 +87,10 @@ export async function authenticateAgentRequest(
     const envLuanaKey = process.env.SAC_AGENT_LUANA_KEY?.trim()
     const envRenatoKey = process.env.SAC_AGENT_RENATO_KEY?.trim()
 
-    const STATIC_MASTER_KEYS = [
-      'sac_master_2026',
-      'sac_live_drtrafego_2026',
-      'sac_agent_master_key',
-      'sac_company_autonomia_10bad3da5dc423fcacc5d3166aa2adbb',
-    ]
-
-    // 1.1 Chave Mestra Global
-    if (STATIC_MASTER_KEYS.includes(providedKey) || (envMasterKey && providedKey === envMasterKey)) {
+    // 1.1 Chave Mestra Global (só via variável de ambiente — a lista fixa de
+    // chaves hardcoded que existia aqui foi removida: eram segredos previsíveis
+    // e ficaram expostas no repositório público)
+    if (envMasterKey && providedKey === envMasterKey) {
       isMasterKey = true
       isAdmin = true
       agentId = (agentHeader as AgentIdentifier) || 'master'

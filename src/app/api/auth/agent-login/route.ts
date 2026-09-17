@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { companyMembers, companies } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
+import { createAgentSessionCookie } from '@/lib/agent-session'
 
-const MASTER_AGENT_TOKEN = 'adm_agent_56027377818c36cb6c192cb5dc7fba0622d8'
+// Token mestre só existe via variável de ambiente. Sem ela configurada, a
+// comparação abaixo nunca bate e este caminho de login fica desabilitado
+// (falha fechada), em vez de usar um valor fixo no código-fonte.
+const MASTER_AGENT_TOKEN = process.env.MASTER_AGENT_TOKEN
+
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000 // 12h
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl
@@ -14,9 +20,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Token de acesso não fornecido.' }, { status: 400 })
   }
 
-  let isValid = token === MASTER_AGENT_TOKEN
+  const isMasterToken = Boolean(MASTER_AGENT_TOKEN) && token === MASTER_AGENT_TOKEN
+
+  let isValid = isMasterToken
   let userEmail = 'agente.ia@casaldotrafego.com'
   let targetCompanyId = 14 // AutonomIA
+  // Só o token mestre concede admin do sistema inteiro. Convite de empresa
+  // ou de membro autentica apenas naquela empresa (nunca isAdmin global).
+  const grantAdmin = isMasterToken
 
   if (!isValid) {
     try {
@@ -51,23 +62,26 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Token de acesso inválido ou expirado.' }, { status: 401 })
   }
 
-  const sessionData = {
-    id: 'agent-ia-casal-admin-id',
-    primaryEmail: userEmail,
-    displayName: 'Agente IA (Admin)',
-    isAdmin: true,
-    companyId: targetCompanyId,
-  }
-
   const destination = redirectTo.startsWith('/') ? redirectTo : '/'
   const response = NextResponse.redirect(new URL(destination, request.url))
 
-  response.cookies.set('agent_auth_session', JSON.stringify(sessionData), {
+  const sessionCookie = await createAgentSessionCookie(
+    {
+      id: 'agent-ia-casal-admin-id',
+      primaryEmail: userEmail,
+      displayName: 'Agente IA (Admin)',
+      isAdmin: grantAdmin,
+      companyId: targetCompanyId,
+    },
+    SESSION_TTL_MS
+  )
+
+  response.cookies.set('agent_auth_session', sessionCookie, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_TTL_MS / 1000,
   })
 
   response.cookies.set('admin_viewing', String(targetCompanyId), {
@@ -75,7 +89,7 @@ export async function GET(request: NextRequest) {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: SESSION_TTL_MS / 1000,
   })
 
   return response

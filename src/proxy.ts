@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { stackMiddlewareApp } from '@/stack.middleware'
 import { isIpAllowed, getClientIp } from '@/lib/ip-auth'
+import { verifyAgentSessionCookie } from '@/lib/agent-session'
 
 const PUBLIC_PATHS = [
   '/handler',
@@ -38,9 +39,9 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Se o usuário possui cookie de sessão do agente, permite acesso direto ao painel
+  // Se o usuário possui cookie de sessão de agente válido (assinado e não expirado), permite acesso direto ao painel
   const agentSession = request.cookies.get('agent_auth_session')?.value
-  if (agentSession) {
+  if (agentSession && (await verifyAgentSessionCookie(agentSession))) {
     return NextResponse.next()
   }
 
