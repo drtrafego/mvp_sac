@@ -13,13 +13,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const { error } = await authenticateAgentRequest(req)
   if (error) return error
 
+  // inviteToken NÃO entra aqui: funciona como credencial mestra da empresa
+  // (mesmo formato aceito como chave nas rotas /companies/:slug/...), e esta
+  // lista devolve TODAS as empresas para qualquer chave autenticada válida,
+  // não só a da empresa dona da chave. Vazava a credencial mestra de todos
+  // os clientes pra qualquer cliente autenticado. Também não faz parte do
+  // contrato documentado em API_DOCS.md (id, name, slug, plan, createdAt).
   const rows = await db
     .select({
       id: companies.id,
       name: companies.name,
       slug: companies.slug,
       plan: companies.plan,
-      inviteToken: companies.inviteToken,
       createdAt: companies.createdAt,
       totalLeads: sql<number>`COALESCE((SELECT COUNT(*)::int FROM recovery_leads WHERE recovery_leads.company_id = "companies"."id"), 0)`,
       totalMessages: sql<number>`COALESCE((SELECT COUNT(*)::int FROM whatsapp_messages WHERE whatsapp_messages.company_id = "companies"."id"), 0)`,

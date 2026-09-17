@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'node:crypto'
 import { createAgentSessionCookie } from '@/lib/agent-session'
 
-const MASTER_AGENT_TOKEN = process.env.MASTER_AGENT_TOKEN || 'adm_agent_56027377818c36cb6c192cb5dc7fba0622d8'
+// Sem fallback hardcoded: a mesma chave hardcoded que existia aqui era a
+// mesma string exposta em api/admin/audit-clients (removida dali por ser
+// segredo previsível e versionado). Falha fechada se a env não existir.
+const MASTER_AGENT_TOKEN = process.env.MASTER_AGENT_TOKEN?.trim()
+
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a)
+  const bufB = Buffer.from(b)
+  if (bufA.length !== bufB.length) return false
+  return timingSafeEqual(bufA, bufB)
+}
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000 // 12h
 const DEFAULT_COMPANY_ID = 14 // AutonomIA
@@ -16,11 +27,15 @@ export async function GET(request: NextRequest) {
   const token = searchParams.get('token')
   const redirectTo = searchParams.get('redirect') || searchParams.get('next') || '/'
 
+  if (!MASTER_AGENT_TOKEN) {
+    return NextResponse.json({ error: 'Login de agente desativado: MASTER_AGENT_TOKEN não configurado.' }, { status: 503 })
+  }
+
   if (!token) {
     return NextResponse.json({ error: 'Token de acesso não fornecido.' }, { status: 400 })
   }
 
-  const isValid = Boolean(MASTER_AGENT_TOKEN) && token === MASTER_AGENT_TOKEN
+  const isValid = safeEqual(token, MASTER_AGENT_TOKEN)
   if (!isValid) {
     return NextResponse.json({ error: 'Token de acesso inválido ou expirado.' }, { status: 401 })
   }
