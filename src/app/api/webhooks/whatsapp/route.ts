@@ -147,11 +147,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const isMeta = body.object === 'whatsapp_business_account'
 
     if (isMeta) {
-      // Se META_APP_SECRET estiver configurado e o header x-hub-signature-256 for enviado, valida a assinatura
-      const sigHeader = req.headers.get('x-hub-signature-256')
-      if (process.env.META_APP_SECRET && sigHeader) {
-        if (!verifyMetaSignature(rawBody, sigHeader)) {
-          return NextResponse.json({ error: 'Assinatura inválida' }, { status: 401 })
+      // Valida assinatura da Meta: obrigatória e estrita se META_APP_SECRET estiver configurado
+      const secret = process.env.META_APP_SECRET
+      if (secret) {
+        const sigHeader = req.headers.get('x-hub-signature-256')
+        if (!sigHeader || !verifyMetaSignature(rawBody, sigHeader)) {
+          return NextResponse.json({ error: 'Assinatura inválida ou ausente' }, { status: 401 })
         }
       }
     } else {

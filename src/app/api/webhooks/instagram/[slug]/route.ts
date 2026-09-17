@@ -67,12 +67,12 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "Payload JSON inválido" }, { status: 400 })
   }
 
-  // Validação da assinatura x-hub-signature-256 da Meta
-  const sigHeader = req.headers.get("x-hub-signature-256")
+  // Validação da assinatura x-hub-signature-256 da Meta: obrigatória e estrita se secret estiver configurado
   const secret = process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
-  if (secret && sigHeader) {
-    if (!verifyMetaSignature(rawBodyText, sigHeader, secret)) {
-      return NextResponse.json({ error: "Assinatura inválida" }, { status: 401 })
+  if (secret) {
+    const sigHeader = req.headers.get("x-hub-signature-256")
+    if (!sigHeader || !verifyMetaSignature(rawBodyText, sigHeader, secret)) {
+      return NextResponse.json({ error: "Assinatura inválida ou ausente" }, { status: 401 })
     }
   }
 
