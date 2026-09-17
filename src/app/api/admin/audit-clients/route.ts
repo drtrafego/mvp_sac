@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
       slug: comp.slug,
       plan: comp.plan,
       inviteToken: comp.inviteToken,
-      inviteUrl: comp.inviteToken ? https://sac.casaldotrafego.com/invite/\ : null,
+      inviteUrl: comp.inviteToken ? `https://sac.casaldotrafego.com/invite/${comp.inviteToken}` : null,
       members: compMembers.map(m => ({
         id: m.id,
         email: m.email,
