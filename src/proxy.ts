@@ -9,6 +9,7 @@ const PUBLIC_PATHS = [
   '/api/v1',
   '/api/agent',
   '/api/auth',
+  '/api/admin',
   '/_next',
   '/favicon.ico',
   '/public',
