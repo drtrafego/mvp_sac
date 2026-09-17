@@ -3,11 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
-<<<<<<< HEAD
-import { desc, eq, sql, and, or, ilike, inArray } from 'drizzle-orm'
-=======
 import { desc, eq, sql, and, or, inArray, ilike } from 'drizzle-orm'
->>>>>>> 23a6d8c (feat(punchlist): resolve Instagram webhook HMAC, fix companies count, inbox inArray query, seed Amanda company and audit routes)
 import { requireCompany } from '@/lib/auth'
 
 export async function GET(req: NextRequest): Promise<NextResponse> {

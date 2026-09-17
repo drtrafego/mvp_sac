@@ -8,7 +8,7 @@ export function verifyMetaSignature(rawBody: string, signatureHeader: string | n
   if (!secret || !signatureHeader) return false
 
   try {
-    const expected = 'sha256=' + createImac('sha256', secret).update(rawBody).digest('hex')
+    const expected = 'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex')
     const a = Buffer.from(expected)
     const b = Buffer.from(signatureHeader)
     if (a.length !== b.length) return false
