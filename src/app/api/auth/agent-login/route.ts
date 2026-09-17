@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { companyMembers, companies } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
 import { createAgentSessionCookie } from '@/lib/agent-session'
 
 // Token mestre só existe via variável de ambiente. Sem ela configurada, a
@@ -10,7 +7,13 @@ import { createAgentSessionCookie } from '@/lib/agent-session'
 const MASTER_AGENT_TOKEN = process.env.MASTER_AGENT_TOKEN
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000 // 12h
+const DEFAULT_COMPANY_ID = 14 // AutonomIA
 
+// Login só pelo token mestre de agente. O fallback que também aceitava
+// invite_token de empresa/membro foi removido: não é usado em nenhum lugar
+// do app (convite real passa por /invite/[token] e /invite/membro/[token],
+// com Stack Auth de verdade) e permitia que um invite token comum, feito
+// pra convidar UM cliente, virasse admin do sistema inteiro.
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl
   const token = searchParams.get('token')
@@ -20,58 +23,22 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Token de acesso não fornecido.' }, { status: 400 })
   }
 
-  const isMasterToken = Boolean(MASTER_AGENT_TOKEN) && token === MASTER_AGENT_TOKEN
-
-  let isValid = isMasterToken
-  let userEmail = 'agente.ia@casaldotrafego.com'
-  let targetCompanyId = 14 // AutonomIA
-  // Só o token mestre concede admin do sistema inteiro. Convite de empresa
-  // ou de membro autentica apenas naquela empresa (nunca isAdmin global).
-  const grantAdmin = isMasterToken
-
-  if (!isValid) {
-    try {
-      const [member] = await db
-        .select()
-        .from(companyMembers)
-        .where(eq(companyMembers.inviteToken, token))
-        .limit(1)
-
-      if (member) {
-        isValid = true
-        userEmail = member.email
-        targetCompanyId = member.companyId
-      } else {
-        const [comp] = await db
-          .select()
-          .from(companies)
-          .where(eq(companies.inviteToken, token))
-          .limit(1)
-
-        if (comp) {
-          isValid = true
-          targetCompanyId = comp.id
-        }
-      }
-    } catch (err) {
-      console.error('Erro ao validar token de login:', err)
-    }
-  }
-
+  const isValid = Boolean(MASTER_AGENT_TOKEN) && token === MASTER_AGENT_TOKEN
   if (!isValid) {
     return NextResponse.json({ error: 'Token de acesso inválido ou expirado.' }, { status: 401 })
   }
 
-  const destination = redirectTo.startsWith('/') ? redirectTo : '/'
+  // Evita open redirect via "//evil.com" (começa com "/" mas é protocol-relative)
+  const destination = redirectTo.startsWith('/') && !redirectTo.startsWith('//') ? redirectTo : '/'
   const response = NextResponse.redirect(new URL(destination, request.url))
 
   const sessionCookie = await createAgentSessionCookie(
     {
       id: 'agent-ia-casal-admin-id',
-      primaryEmail: userEmail,
+      primaryEmail: 'agente.ia@casaldotrafego.com',
       displayName: 'Agente IA (Admin)',
-      isAdmin: grantAdmin,
-      companyId: targetCompanyId,
+      isAdmin: true,
+      companyId: DEFAULT_COMPANY_ID,
     },
     SESSION_TTL_MS
   )
@@ -84,7 +51,7 @@ export async function GET(request: NextRequest) {
     maxAge: SESSION_TTL_MS / 1000,
   })
 
-  response.cookies.set('admin_viewing', String(targetCompanyId), {
+  response.cookies.set('admin_viewing', String(DEFAULT_COMPANY_ID), {
     httpOnly: false,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
