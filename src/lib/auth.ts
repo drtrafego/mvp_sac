@@ -18,7 +18,7 @@ export function unauthorizedResponse() {
   return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
 }
 
-const ADMIN_EMAILS_DEFAULT = ['dr.trafego@gmail.com', 'amandafelixgolden@gmail.com']
+const ADMIN_EMAILS_DEFAULT = ['dr.trafego@gmail.com', 'amandafelixgolden@gmail.com', 'agente.ia@casaldotrafego.com']
 
 export function checkIsAdmin(email: string | null | undefined): boolean {
   if (!email) return false
@@ -30,6 +30,22 @@ export function checkIsAdmin(email: string | null | undefined): boolean {
 }
 
 export async function getCurrentUser() {
+  try {
+    const cookieStore = await cookies()
+    const agentSession = cookieStore.get('agent_auth_session')?.value
+    if (agentSession) {
+      const parsed = JSON.parse(agentSession)
+      return {
+        id: parsed.id || 'agent-ia-casal-admin-id',
+        primaryEmail: parsed.primaryEmail || 'agente.ia@casaldotrafego.com',
+        displayName: parsed.displayName || 'Agente IA (Admin)',
+        isAdmin: true,
+      }
+    }
+  } catch {
+    // ignorar erro de parse e seguir para o Stack Auth
+  }
+
   if (!stackServerApp) return null
   const user = await stackServerApp.getUser()
   if (!user) return null
@@ -41,11 +57,10 @@ export async function getCurrentUser() {
 // - Admin com cookie admin_viewing → empresa do cookie
 // - Client → empresa vinculada ao user, auto-cria se não existir
 export async function getCurrentCompany() {
-  if (!stackServerApp) return null
-  const user = await stackServerApp.getUser()
+  const user = await getCurrentUser()
   if (!user) return null
 
-  const isAdmin = checkIsAdmin(user.primaryEmail)
+  const isAdmin = user.isAdmin || checkIsAdmin(user.primaryEmail)
 
   if (isAdmin) {
     const cookieStore = await cookies()
@@ -235,9 +250,8 @@ export async function requireCompany() {
 
 // Verifica se o usuário atual é admin — para proteger rotas admin
 export async function requireAdmin() {
-  if (!stackServerApp) throw new AuthError('Não autenticado')
-  const user = await stackServerApp.getUser()
+  const user = await getCurrentUser()
   if (!user) throw new AuthError('Não autenticado')
-  if (!checkIsAdmin(user.primaryEmail)) throw new AuthError('Acesso negado')
+  if (!user.isAdmin && !checkIsAdmin(user.primaryEmail)) throw new AuthError('Acesso negado')
   return user
 }

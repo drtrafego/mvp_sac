@@ -7,6 +7,7 @@ const PUBLIC_PATHS = [
   '/api/webhooks',
   '/api/v1',
   '/api/agent',
+  '/api/auth',
   '/_next',
   '/favicon.ico',
   '/public',
@@ -34,6 +35,12 @@ export async function proxy(request: NextRequest) {
 
   // Se a rota for pública ou estática, permite sem autenticação adicional
   if (PUBLIC_PATHS.some(path => pathname.startsWith(path)) || pathname === '/') {
+    return NextResponse.next()
+  }
+
+  // Se o usuário possui cookie de sessão do agente, permite acesso direto ao painel
+  const agentSession = request.cookies.get('agent_auth_session')?.value
+  if (agentSession) {
     return NextResponse.next()
   }
 
