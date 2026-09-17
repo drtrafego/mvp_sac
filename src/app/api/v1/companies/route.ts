@@ -21,8 +21,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       plan: companies.plan,
       inviteToken: companies.inviteToken,
       createdAt: companies.createdAt,
-      totalLeads: sql<number>`cast((select count(*) from recovery_leads where recovery_leads.company_id = ${companies.id}) as int)`,
-      totalMessages: sql<number>`cast((select count(*) from whatsapp_messages where whatsapp_messages.company_id = ${companies.id}) as int)`,
+      totalLeads: sql<number>`COALESCE((SELECT COUNT(*)::int FROM recovery_leads WHERE recovery_leads.company_id = "companies"."id"), 0)`,
+      totalMessages: sql<number>`COALESCE((SELECT COUNT(*)::int FROM whatsapp_messages WHERE whatsapp_messages.company_id = "companies"."id"), 0)`,
     })
     .from(companies)
     .orderBy(companies.id)

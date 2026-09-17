@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import { companies, settings, whatsappMessages, webhookReceived, recoveryLeads } from "@/lib/db/schema"
 import { eq } from "drizzle-orm"
+import { verifyMetaSignature } from "@/lib/meta-signature"
 
 /**
  * GET - Global Meta Instagram Webhook verification handshake
@@ -37,11 +38,22 @@ export async function GET(req: NextRequest) {
  * POST - Global Instagram message receiver
  */
 export async function POST(req: NextRequest) {
+  let rawBodyText = ""
   let rawBody: Record<string, unknown> = {}
   try {
-    rawBody = await req.json()
+    rawBodyText = await req.text()
+    rawBody = JSON.parse(rawBodyText) as Record<string, unknown>
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
+  }
+
+  // Validação da assinatura x-hub-signature-256 da Meta
+  const sigHeader = req.headers.get("x-hub-signature-256")
+  const secret = process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
+  if (secret && sigHeader) {
+    if (!verifyMetaSignature(rawBodyText, sigHeader, secret)) {
+      return NextResponse.json({ error: "Assinatura inválida" }, { status: 401 })
+    }
   }
 
   try {

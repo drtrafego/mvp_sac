@@ -4,6 +4,7 @@ import { companies, settings, whatsappMessages, recoveryLeads, webhookReceived }
 import { eq } from "drizzle-orm"
 import { checkWebhookToken } from "@/lib/webhook-auth"
 import { maskedHeaders } from "@/lib/webhook-headers"
+import { verifyMetaSignature } from "@/lib/meta-signature"
 
 interface RouteContext {
   params: Promise<{ slug: string }>
@@ -57,11 +58,22 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
   }
 
   const headersObj = maskedHeaders(req)
+  let rawBodyText = ""
   let rawBody: Record<string, unknown> = {}
   try {
-    rawBody = await req.json()
+    rawBodyText = await req.text()
+    rawBody = JSON.parse(rawBodyText) as Record<string, unknown>
   } catch {
     return NextResponse.json({ error: "Payload JSON inválido" }, { status: 400 })
+  }
+
+  // Validação da assinatura x-hub-signature-256 da Meta
+  const sigHeader = req.headers.get("x-hub-signature-256")
+  const secret = process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
+  if (secret && sigHeader) {
+    if (!verifyMetaSignature(rawBodyText, sigHeader, secret)) {
+      return NextResponse.json({ error: "Assinatura inválida" }, { status: 401 })
+    }
   }
 
   try {

@@ -3,7 +3,11 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
+<<<<<<< HEAD
 import { desc, eq, sql, and, or, ilike, inArray } from 'drizzle-orm'
+=======
+import { desc, eq, sql, and, or, inArray, ilike } from 'drizzle-orm'
+>>>>>>> 23a6d8c (feat(punchlist): resolve Instagram webhook HMAC, fix companies count, inbox inArray query, seed Amanda company and audit routes)
 import { requireCompany } from '@/lib/auth'
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -43,7 +47,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (leads.length === 0) return NextResponse.json([])
 
   const leadIds = leads.map(l => l.id)
-  const phones = leads.map(l => l.phone).filter(Boolean)
+  const phones = leads.map(l => l.phone).filter((p): p is string => Boolean(p && p.trim()))
+
+  const whereConditions = [eq(whatsappMessages.companyId, company.id)]
+  if (phones.length > 0) {
+    whereConditions.push(or(inArray(whatsappMessages.leadId, leadIds), inArray(whatsappMessages.phone, phones))!)
+  } else {
+    whereConditions.push(inArray(whatsappMessages.leadId, leadIds))
+  }
 
   // inArray (IN (...)), não ANY(${array}): o sql`` do drizzle expande um array
   // interpolado em "(p1, p2, ...)", e ANY() em volta disso vira "ANY((1,2,3))",
@@ -58,12 +69,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       createdAt: whatsappMessages.createdAt,
     })
     .from(whatsappMessages)
-    .where(
-      and(
-        eq(whatsappMessages.companyId, company.id),
-        or(inArray(whatsappMessages.leadId, leadIds), inArray(whatsappMessages.phone, phones))
-      )
-    )
+    .where(and(...whereConditions))
     .orderBy(desc(whatsappMessages.createdAt))
     .limit(500)
 

@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
-import { desc, eq, and, sql } from 'drizzle-orm'
+import { desc, eq, and, or, inArray, sql } from 'drizzle-orm'
 import { ConversationList, type ConversationSummary } from '@/components/inbox/ConversationList'
 import { requireCompany } from '@/lib/auth'
 
@@ -37,7 +37,14 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
     if (leads.length === 0) return []
 
     const leadIds = leads.map(l => l.id)
-    const phones = leads.map(l => l.phone).filter(Boolean)
+    const phones = leads.map(l => l.phone).filter((p): p is string => Boolean(p && p.trim()))
+
+    const whereConditions = [eq(whatsappMessages.companyId, companyId)]
+    if (phones.length > 0) {
+      whereConditions.push(or(inArray(whatsappMessages.leadId, leadIds), inArray(whatsappMessages.phone, phones))!)
+    } else {
+      whereConditions.push(inArray(whatsappMessages.leadId, leadIds))
+    }
 
     // Busca as mensagens mais recentes desses leads em UMA ÚNICA consulta indexada
     const messages = await db
@@ -50,12 +57,7 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
         createdAt: whatsappMessages.createdAt,
       })
       .from(whatsappMessages)
-      .where(
-        and(
-          eq(whatsappMessages.companyId, companyId),
-          sql`(${whatsappMessages.leadId} = ANY(${leadIds}) OR ${whatsappMessages.phone} = ANY(${phones}))`
-        )
-      )
+      .where(and(...whereConditions))
       .orderBy(desc(whatsappMessages.createdAt))
       .limit(500)
 
