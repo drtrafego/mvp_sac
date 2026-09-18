@@ -56,7 +56,7 @@ function tint(cssVar: string, pct: number): string {
 }
 
 interface PageProps {
-  searchParams: Promise<{ period?: string; from?: string; to?: string }>
+  searchParams: Promise<{ period?: string; from?: string; to?: string; source?: string }>
 }
 
 export default async function DashboardPage({ searchParams }: PageProps) {
@@ -67,8 +67,11 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const fromDate = new Date(`${from}T00:00:00-03:00`)
   const toDate = new Date(`${to}T23:59:59.999-03:00`)
 
+  const currentSource = params.source?.trim() || null
+  const sourceFilter = currentSource ? sql`(${recoveryLeads.trackingSource} ILIKE ${'%' + currentSource + '%'} OR ${recoveryLeads.platform} ILIKE ${'%' + currentSource + '%'})` : undefined
+
   const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
-  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
+  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter, sourceFilter)
 
   // Decisão de negócio: lead só conta no número principal depois de ser
   // ABORDADO de verdade (mensagem real trocada). Sem isso ele existe no banco
@@ -86,10 +89,21 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const isAgencia = company.slug.includes('autonomia') || company.slug.includes('casal') || company.slug.includes('gastao')
   const isInfoproduto = !isGramado && !isLucas && !isAgencia
 
+  function getSourceHref(src: string) {
+    const q = new URLSearchParams()
+    if (params.from) q.set('from', params.from)
+    if (params.to) q.set('to', params.to)
+    if (params.period) q.set('period', params.period)
+    if (currentSource !== src) q.set('source', src)
+    const s = q.toString()
+    return s ? `/?${s}` : '/'
+  }
+
   const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats]] = await Promise.all([
     db
       .select({
         total: count(),
+        aguardandoAbordagem: sql<number>`cast(count(*) filter (where (${recoveryLeads.status} in ('pending', 'new', 'aguardando') or ${recoveryLeads.status} is null)) as int)`,
         // Fechados gerais (status = converted ou compra_aprovada ou pipeline_stage = fechado)
         fechadosTotal: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} in ('converted', 'completed') or ${recoveryLeads.eventType} in ('compra_aprovada', 'reserva_confirmada', 'agendado') or ${recoveryLeads.pipelineStage} in ('fechado', 'agendado')) as int)`,
         valorFechadoCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} in ('converted', 'completed') or ${recoveryLeads.eventType} in ('compra_aprovada', 'reserva_confirmada') or ${recoveryLeads.pipelineStage} in ('fechado', 'agendado')), 0) as bigint)`,
@@ -266,7 +280,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     const convRate = total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'
     kpis = [
       { label: 'Consultas Agendadas', value: String(fechadosCount), icon: Calendar, hint: 'procedimentos marcados' },
-      { label: 'Novos Pacientes', value: String(total), icon: Users, hint: 'contatos que buscaram clínica' },
+      { label: 'Aguardando Contato', value: String(leadStats?.aguardandoAbordagem ?? 0), icon: Clock, hint: 'fila de primeiro contato' },
       { label: 'Taxa de Agendamento', value: `${convRate}%`, icon: TrendingUp, hint: 'conversão de agendamentos' },
       { label: 'Atendimentos IA', value: String(jobStats?.sent || total), icon: MessageSquare, hint: 'mensagens da IA médica' },
     ]
@@ -274,7 +288,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     const convRate = total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'
     kpis = [
       { label: 'Contratos Fechados', value: String(fechadosCount), icon: CheckCircle2, hint: 'clientes convertidos' },
-      { label: 'Propostas em Andamento', value: String(qualificadosCount), icon: Briefcase, hint: 'funil de negociação' },
+      { label: 'Aguardando Abordagem', value: String(leadStats?.aguardandoAbordagem ?? 0), icon: Clock, hint: 'leads minerados/novos' },
       { label: 'Taxa Comercial', value: `${convRate}%`, icon: TrendingUp, hint: 'conversão do funil' },
       { label: 'Leads Captados', value: String(total), icon: Users, hint: 'mineração + tráfego' },
     ]
@@ -394,22 +408,62 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             Origens:
           </Link>
           {isAgencia && (
-            <Link href={`/origens?source=mineracao&from=${from}&to=${to}`} className="inline-flex items-center gap-1 text-[10px] font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+            <Link
+              href={getSourceHref('mineracao')}
+              className={cn(
+                'inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
+                currentSource === 'mineracao'
+                  ? 'bg-cyan-500 text-white border-cyan-400 shadow-xs'
+                  : 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20 hover:bg-cyan-500/20'
+              )}
+            >
               <span>⛏️ Mineração</span>
             </Link>
           )}
-          <Link href={`/origens?source=meta_ads&from=${from}&to=${to}`} className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+          <Link
+            href={getSourceHref('meta_ads')}
+            className={cn(
+              'text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
+              currentSource === 'meta_ads'
+                ? 'bg-blue-500 text-white border-blue-400 shadow-xs'
+                : 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/20'
+            )}
+          >
             Meta Ads
           </Link>
-          <Link href={`/origens?source=instagram&from=${from}&to=${to}`} className="text-[10px] font-bold text-pink-400 bg-pink-500/10 border border-pink-500/20 hover:bg-pink-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+          <Link
+            href={getSourceHref('instagram')}
+            className={cn(
+              'text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
+              currentSource === 'instagram'
+                ? 'bg-pink-500 text-white border-pink-400 shadow-xs'
+                : 'text-pink-400 bg-pink-500/10 border-pink-500/20 hover:bg-pink-500/20'
+            )}
+          >
             Instagram
           </Link>
           {!isGramado && !isLucas && (
             <>
-              <Link href={`/origens?source=hotmart&from=${from}&to=${to}`} className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+              <Link
+                href={getSourceHref('hotmart')}
+                className={cn(
+                  'text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
+                  currentSource === 'hotmart'
+                    ? 'bg-orange-500 text-white border-orange-400 shadow-xs'
+                    : 'text-orange-400 bg-orange-500/10 border-orange-500/20 hover:bg-orange-500/20'
+                )}
+              >
                 Hotmart
               </Link>
-              <Link href={`/origens?source=kiwify&from=${from}&to=${to}`} className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+              <Link
+                href={getSourceHref('kiwify')}
+                className={cn(
+                  'text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
+                  currentSource === 'kiwify'
+                    ? 'bg-emerald-500 text-white border-emerald-400 shadow-xs'
+                    : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/20'
+                )}
+              >
                 Kiwify
               </Link>
             </>

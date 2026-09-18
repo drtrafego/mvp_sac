@@ -175,7 +175,21 @@ export function MessageBubble({
             {text}
           </p>
         ) : !message.mediaUrl && media.length === 0 ? (
-          <p className="text-fg-faint italic text-micro">Mensagem sem conteúdo textual</p>
+          <p className="text-fg-faint italic text-micro flex items-center gap-1">
+            {message.messageType === 'sticker'
+              ? '🏷️ [Figurinha]'
+              : message.messageType === 'audio'
+              ? '🎵 [Áudio recebido]'
+              : message.messageType === 'image'
+              ? '🖼️ [Imagem recebida]'
+              : message.messageType === 'document'
+              ? '📄 [Documento recebido]'
+              : message.messageType === 'location'
+              ? '📍 [Localização compartilhada]'
+              : message.messageType === 'reaction'
+              ? '👍 [Reação]'
+              : '💬 [Mensagem sem texto]'}
+          </p>
         ) : null}
       </div>
     </div>

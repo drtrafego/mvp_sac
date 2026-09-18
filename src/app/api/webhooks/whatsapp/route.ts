@@ -1,24 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createHmac, timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
 import { whatsappMessages, recoveryLeads, settings, messageJobs } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { markLeadContacted } from '@/lib/leads'
+import { verifyMetaSignature } from '@/lib/meta-signature'
 
 function normalizePhone(raw: string): string {
   return raw.replace(/[@+\s\-().]/g, '').replace(/@.*$/, '').replace(/^0+/, '')
-}
-
-// Valida a assinatura x-hub-signature-256 da Meta sobre o raw body usando META_APP_SECRET
-function verifyMetaSignature(rawBody: string, header: string | null): boolean {
-  const secret = process.env.META_APP_SECRET
-  if (!secret || !header) return false
-  const expected = 'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex')
-  const a = Buffer.from(expected)
-  const b = Buffer.from(header)
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
 }
 
 // ─── Meta Cloud API ───────────────────────────────────────────────────────────
@@ -148,13 +137,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const isMeta = body.object === 'whatsapp_business_account'
 
     if (isMeta) {
-      // Valida assinatura da Meta: obrigatória e estrita se META_APP_SECRET estiver configurado
-      const secret = process.env.META_APP_SECRET
-      if (secret) {
-        const sigHeader = req.headers.get('x-hub-signature-256')
-        if (!sigHeader || !verifyMetaSignature(rawBody, sigHeader)) {
-          return NextResponse.json({ error: 'Assinatura inválida ou ausente' }, { status: 401 })
-        }
+      // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem
+      const secret = process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET
+      if (!secret) {
+        console.error('[WhatsApp Webhook] META_APP_SECRET não configurado, recusando requisição')
+        return NextResponse.json({ error: 'meta_app_secret_not_configured' }, { status: 503 })
+      }
+      const sigHeader = req.headers.get('x-hub-signature-256')
+      if (!sigHeader || !verifyMetaSignature(rawBody, sigHeader, secret)) {
+        return NextResponse.json({ error: 'Assinatura inválida ou ausente' }, { status: 401 })
       }
     } else {
       // UazAPI ou Webhook genérico

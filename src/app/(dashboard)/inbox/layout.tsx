@@ -6,7 +6,7 @@ import { desc, eq, and, or, inArray, sql } from 'drizzle-orm'
 import { ConversationList, type ConversationSummary } from '@/components/inbox/ConversationList'
 import { requireCompany } from '@/lib/auth'
 
-async function getConversations(companyId: number): Promise<ConversationSummary[]> {
+async function getConversations(companyId: number): Promise<{ conversations: ConversationSummary[]; error: string | null }> {
   try {
     const leads = await db
       .select({
@@ -34,7 +34,7 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
       .orderBy(desc(sql`COALESCE(${recoveryLeads.lastActionAt}, ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`))
       .limit(200)
 
-    if (leads.length === 0) return []
+    if (leads.length === 0) return { conversations: [], error: null }
 
     const leadIds = leads.map(l => l.id)
     const phones = leads.map(l => l.phone).filter((p): p is string => Boolean(p && p.trim()))
@@ -106,20 +106,20 @@ async function getConversations(companyId: number): Promise<ConversationSummary[
       }
     })
 
-    return mapped
-  } catch (err) {
+    return { conversations: mapped, error: null }
+  } catch (err: any) {
     console.error('[Inbox layout getConversations error]:', err)
-    return []
+    return { conversations: [], error: 'Falha ao carregar as conversas do banco de dados.' }
   }
 }
 
 export default async function InboxLayout({ children }: { children: React.ReactNode }) {
   const company = await requireCompany()
-  const conversations = await getConversations(company.id)
+  const { conversations, error } = await getConversations(company.id)
 
   return (
     <div className="flex flex-1 min-h-0 h-full w-full overflow-hidden bg-surface-base">
-      <ConversationList initial={conversations} />
+      <ConversationList initial={conversations} initialError={error} />
       <div className="flex-1 min-w-0 overflow-hidden flex flex-col h-full bg-surface-base">{children}</div>
     </div>
   )

@@ -14,6 +14,7 @@ import {
   MessageCircle,
   Mail,
   Pickaxe,
+  AlertCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -101,7 +102,7 @@ function formatMessageTimestamp(dateStr: string | null | undefined): { time: str
 
   return {
     time: display,
-    full: d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+    full: `${dateBR} às ${timeOnly}`,
     relative,
   }
 }
@@ -109,8 +110,9 @@ function formatMessageTimestamp(dateStr: string | null | undefined): { time: str
 type ChannelFilter = 'all' | 'whatsapp' | 'instagram' | 'email' | 'mineracao'
 type StatusFilter = 'all' | 'paused' | 'active' | 'unread'
 
-export function ConversationList({ initial }: { initial: ConversationSummary[] }) {
+export function ConversationList({ initial, initialError = null }: { initial: ConversationSummary[]; initialError?: string | null }) {
   const [convs, setConvs] = useState<ConversationSummary[]>(initial)
+  const [error, setError] = useState<string | null>(initialError)
   const [search, setSearch] = useState('')
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -124,9 +126,12 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
       if (res.ok) {
         const data = await res.json()
         setConvs(data)
+        setError(null)
+      } else {
+        setError('Erro ao sincronizar conversas com o servidor.')
       }
     } catch {
-      /* silencioso */
+      setError('Falha de rede ao buscar conversas.')
     } finally {
       if (!silent) setRefreshing(false)
     }
@@ -363,6 +368,23 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
         </div>
       </div>
 
+      {/* Banner de Erro de Conexão com o Banco de Dados */}
+      {error && (
+        <div className="mx-2 mb-2 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center justify-between">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <AlertCircle size={14} className="shrink-0" />
+            <span className="truncate">{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => refresh(false)}
+            className="text-micro font-bold underline shrink-0 hover:text-rose-300 cursor-pointer ml-2"
+          >
+            Tentar de novo
+          </button>
+        </div>
+      )}
+
       {/* Lista de Conversas com Scroll */}
       <div className="scroll-thin flex-1 overflow-y-auto p-2 space-y-1 pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-2">
         {filtered.length === 0 ? (
@@ -406,7 +428,7 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
                     <div className="flex items-center gap-1.5 shrink-0">
                       <ChannelIcon channel={conv.channel} size={13} />
                       {timeInfo.time ? (
-                        <span className="text-[11px] text-fg-subtle font-mono font-medium" title={timeInfo.full}>
+                        <span suppressHydrationWarning className="text-[11px] text-fg-subtle font-mono font-medium" title={timeInfo.full}>
                           {timeInfo.time}
                         </span>
                       ) : null}
@@ -441,7 +463,7 @@ export function ConversationList({ initial }: { initial: ConversationSummary[] }
                       <span className="truncate">{conv.lastMessage || 'Conversa iniciada'}</span>
                     </div>
                     {timeInfo.relative && timeInfo.relative !== 'agora' && (
-                      <span className="text-[10px] text-fg-faint shrink-0 font-mono">
+                      <span suppressHydrationWarning className="text-[10px] text-fg-faint shrink-0 font-mono">
                         {timeInfo.relative}
                       </span>
                     )}

@@ -63,10 +63,11 @@ const EVENT_TYPE_OPTIONS: Record<string, string> = {
 
 const STATUS_OPTIONS: Record<string, string> = {
   all: 'Todos os status',
+  awaiting_contact: '⏳ Aguardando Abordagem',
   pending: 'Aguardando',
-  in_progress: 'Em recuperação',
+  in_progress: 'Em atendimento',
+  converted: 'Convertido / Fechado',
   completed: 'Sem conversão',
-  converted: 'Convertido',
   failed: 'Falhou',
 }
 
@@ -155,12 +156,14 @@ export default function LeadsPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [eventType, setEventType] = useState('all')
-  const [status, setStatus] = useState('all')
+  const searchParams = useSearchParams()
+  const initialStatus = searchParams.get('status') || 'all'
+  const sourceParam = searchParams.get('source') || ''
+  const [status, setStatus] = useState(initialStatus)
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [addLeadModalOpen, setAddLeadModalOpen] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
-  const searchParams = useSearchParams()
   const { from, to } = resolvePeriod({
     from: searchParams.get('from') ?? undefined,
     to: searchParams.get('to') ?? undefined,
@@ -176,12 +179,13 @@ export default function LeadsPage() {
     })
     if (eventType !== 'all') params.set('event_type', eventType)
     if (status !== 'all') params.set('status', status)
+    if (sourceParam) params.set('source', sourceParam)
     const data = await fetch(`/api/leads?${params}`).then(r => r.json())
     const rows: Lead[] = Array.isArray(data) ? data : []
     setHasMore(rows.length > PAGE_SIZE)
     setLeads(rows.slice(0, PAGE_SIZE))
     setLoading(false)
-  }, [eventType, status, from, to])
+  }, [eventType, status, sourceParam, from, to])
 
   useEffect(() => {
     setPage(0)

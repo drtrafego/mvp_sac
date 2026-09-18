@@ -32,6 +32,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const eventType = searchParams.get('event_type')
   const status = searchParams.get('status')
   const product = searchParams.get('product')
+  const source = searchParams.get('source')
   const limitParam = searchParams.get('limit')
   const limit = limitParam === 'all' || limitParam === '0' || limitParam === '-1'
     ? undefined
@@ -58,7 +59,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const conditions = [eq(recoveryLeads.companyId, company.id)]
   if (eventType) conditions.push(eq(recoveryLeads.eventType, eventType))
-  if (status) conditions.push(eq(recoveryLeads.status, status))
+  if (status) {
+    if (status === 'awaiting_contact') {
+      conditions.push(sql`(${recoveryLeads.status} IN ('pending', 'new', 'aguardando') OR ${recoveryLeads.status} IS NULL)`)
+    } else {
+      conditions.push(eq(recoveryLeads.status, status))
+    }
+  }
+  if (source) {
+    conditions.push(sql`${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'}`)
+  }
   if (product) conditions.push(eq(recoveryLeads.productName, product))
   if (fromDate) conditions.push(gte(recoveryLeads.createdAt, fromDate))
   conditions.push(lte(recoveryLeads.createdAt, toDate))
