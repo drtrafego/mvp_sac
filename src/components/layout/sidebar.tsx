@@ -26,7 +26,6 @@ import {
   Code2,
 } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
-import { ThemeToggle } from '@/components/theme-toggle'
 import { cn } from '@/lib/utils'
 
 export interface ActiveConnections {
@@ -869,25 +868,8 @@ export function SidebarFooter({ isAdmin, collapsed = false }: SidebarProps & { c
   const email = user?.primaryEmail || 'Sessão Ativa'
 
   return (
-    <div className={cn('py-3 border-t border-line-subtle space-y-2.5 shrink-0 bg-surface-panel', collapsed ? 'px-1.5' : 'px-2.5')}>
-      {/* Card de Cliente / Status de Envio */}
-      {!collapsed && (
-        <div className="space-y-1.5 px-1">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-fg-subtle">Cliente</p>
-          <p className="text-[11px] text-fg-faint">Sessão da empresa ativa conectada.</p>
-          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-2.5 space-y-1">
-            <div className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse shrink-0" />
-              <span className="text-[11px] font-bold text-fg">Central Multicanal Ativa</span>
-            </div>
-            <p className="text-[10px] text-fg-muted leading-tight">
-              Mensagens de recuperação e SAC prontas para envio oficial via WhatsApp.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Cartão de Perfil do Stack Auth */}
+    <div className={cn('py-3 border-t border-line-subtle space-y-2 shrink-0 bg-surface-panel', collapsed ? 'px-1.5' : 'px-2.5')}>
+      {/* Cartão de Perfil do Usuário */}
       {user && (
         <div className={cn('flex items-center rounded-xl bg-surface-base border border-line-subtle', collapsed ? 'justify-center p-1.5' : 'gap-2.5 p-2')}>
           <div className="w-8 h-8 rounded-full bg-brand-glow border border-brand-solid/30 flex items-center justify-center text-brand-ink font-bold text-micro shrink-0 overflow-hidden" title={`${displayName} (${email})`}>
@@ -913,15 +895,7 @@ export function SidebarFooter({ isAdmin, collapsed = false }: SidebarProps & { c
         </div>
       )}
 
-      <div className="space-y-0.5">
-        {!collapsed ? (
-          <ThemeToggle />
-        ) : (
-          <div className="flex justify-center py-1">
-            <ThemeToggle />
-          </div>
-        )}
-
+      <div>
         <button
           onClick={() => user?.signOut()}
           title="Sair da Conta"
