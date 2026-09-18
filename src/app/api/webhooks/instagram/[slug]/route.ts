@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import { companies, settings, whatsappMessages, recoveryLeads, webhookReceived } from "@/lib/db/schema"
 import { eq } from "drizzle-orm"
-import { checkWebhookToken } from "@/lib/webhook-auth"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
 
@@ -46,11 +45,6 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
  * POST - Recebimento de eventos e mensagens diretas do Instagram via Meta Graph API
  */
 export async function POST(req: NextRequest, { params }: RouteContext) {
-  const auth = checkWebhookToken(req)
-  if (!auth.ok) {
-    return NextResponse.json({ error: auth.reason }, { status: auth.status })
-  }
-
   const { slug } = await params
   const [company] = await db.select().from(companies).where(eq(companies.slug, slug))
   if (!company) {
@@ -67,13 +61,15 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "Payload JSON inválido" }, { status: 400 })
   }
 
-  // Validação da assinatura x-hub-signature-256 da Meta: obrigatória e estrita se secret estiver configurado
+  // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem
   const secret = process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
-  if (secret) {
-    const sigHeader = req.headers.get("x-hub-signature-256")
-    if (!sigHeader || !verifyMetaSignature(rawBodyText, sigHeader, secret)) {
-      return NextResponse.json({ error: "Assinatura inválida ou ausente" }, { status: 401 })
-    }
+  if (!secret) {
+    console.error("[Instagram Webhook] META_APP_SECRET/INSTAGRAM_APP_SECRET não configurado, recusando requisição")
+    return NextResponse.json({ error: "meta_app_secret_not_configured" }, { status: 503 })
+  }
+  const sigHeader = req.headers.get("x-hub-signature-256")
+  if (!sigHeader || !verifyMetaSignature(rawBodyText, sigHeader, secret)) {
+    return NextResponse.json({ error: "invalid_signature" }, { status: 401 })
   }
 
   try {
