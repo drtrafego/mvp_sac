@@ -378,22 +378,22 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             Origens:
           </Link>
           {isAgencia && (
-            <Link href="/origens" className="inline-flex items-center gap-1 text-[10px] font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+            <Link href={`/origens?source=mineracao&from=${from}&to=${to}`} className="inline-flex items-center gap-1 text-[10px] font-bold text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
               <span>⛏️ Mineração</span>
             </Link>
           )}
-          <Link href="/origens" className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+          <Link href={`/origens?source=meta_ads&from=${from}&to=${to}`} className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
             Meta Ads
           </Link>
-          <Link href="/origens" className="text-[10px] font-bold text-pink-400 bg-pink-500/10 border border-pink-500/20 hover:bg-pink-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+          <Link href={`/origens?source=instagram&from=${from}&to=${to}`} className="text-[10px] font-bold text-pink-400 bg-pink-500/10 border border-pink-500/20 hover:bg-pink-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
             Instagram
           </Link>
           {!isGramado && !isLucas && (
             <>
-              <Link href="/origens" className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+              <Link href={`/origens?source=hotmart&from=${from}&to=${to}`} className="text-[10px] font-bold text-orange-400 bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
                 Hotmart
               </Link>
-              <Link href="/origens" className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
+              <Link href={`/origens?source=kiwify&from=${from}&to=${to}`} className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 px-2 py-0.5 rounded transition-colors cursor-pointer">
                 Kiwify
               </Link>
             </>

@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
-import { eq, and, gte, lte, sql, desc, count } from 'drizzle-orm'
+import { eq, and, gte, lte, sql, desc } from 'drizzle-orm'
 import { resolvePeriod } from '@/lib/period'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { Suspense } from 'react'
@@ -27,9 +27,10 @@ import {
   Mail,
 } from 'lucide-react'
 import Link from 'next/link'
+import { normalizeOrigin, type OriginCategory } from '@/lib/origins'
 
 interface PageProps {
-  searchParams: Promise<{ from?: string; to?: string; period?: string }>
+  searchParams: Promise<{ from?: string; to?: string; period?: string; source?: string }>
 }
 
 function formatBRL(cents: number): string {
@@ -47,172 +48,28 @@ function InstagramIcon({ size = 14, className = '' }: { size?: number; className
   )
 }
 
-interface SourceMeta {
-  name: string
-  category: string
-  subcategory: string
-  color: string
-  badgeColor: string
-  iconName: 'whatsapp' | 'email' | 'instagram' | 'meta' | 'google' | 'hotmart' | 'kiwify' | 'greenn' | 'zouti' | 'direct'
+// Origens que são identificadas por subcategoria (não têm categoria própria no lib/origins.ts):
+// hotmart/kiwify/greenn/zouti são todos category='checkout', diferenciados só pelo subcategory.
+const SUBCATEGORY_FILTERS = new Set(['hotmart', 'kiwify', 'greenn', 'zouti'])
+
+function matchesSourceFilter(meta: { category: OriginCategory; subcategory?: string }, source: string): boolean {
+  if (SUBCATEGORY_FILTERS.has(source)) {
+    return meta.category === 'checkout' && meta.subcategory === source
+  }
+  return meta.category === source
 }
 
-function normalizeSource(rawSource: string | null, rawMedium: string | null = null): SourceMeta {
-  const s = (rawSource || '').toLowerCase().trim()
-  const m = (rawMedium || '').toLowerCase().trim()
-  const combined = `${s} ${m}`
-
-  // 1. Mineração & Outreach com Subcategorias
-  if (combined.includes('miner') || combined.includes('mining') || combined.includes('outreach') || combined.includes('fria') || combined.includes('prospeccao') || combined.includes('places')) {
-    if (combined.includes('email') || combined.includes('mail') || combined.includes('brevo')) {
-      return {
-        name: 'Mineração — E-mail Frio (Brevo)',
-        category: 'mineracao',
-        subcategory: 'email',
-        color: 'bg-indigo-500',
-        badgeColor: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
-        iconName: 'email',
-      }
-    }
-    if (combined.includes('ig') || combined.includes('instagram') || combined.includes('direct')) {
-      return {
-        name: 'Mineração — Instagram Direct',
-        category: 'mineracao',
-        subcategory: 'instagram',
-        color: 'bg-pink-500',
-        badgeColor: 'text-pink-400 bg-pink-500/10 border-pink-500/20',
-        iconName: 'instagram',
-      }
-    }
-    // Padrão Mineração: WhatsApp Outreach
-    return {
-      name: 'Mineração — WhatsApp Outreach',
-      category: 'mineracao',
-      subcategory: 'whatsapp',
-      color: 'bg-cyan-500',
-      badgeColor: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20',
-      iconName: 'whatsapp',
-    }
-  }
-
-  // 2. Anúncios Meta Ads (Instagram Ads vs Facebook Ads)
-  if (combined.includes('fb') || combined.includes('meta') || combined.includes('facebook') || combined.includes('anuncio') || (combined.includes('ig') && combined.includes('ads'))) {
-    if (combined.includes('instagram') || combined.includes('ig') || combined.includes('stories') || combined.includes('reels')) {
-      return {
-        name: 'Meta Ads — Instagram (Feed & Stories)',
-        category: 'meta_ads',
-        subcategory: 'instagram_ads',
-        color: 'bg-pink-500',
-        badgeColor: 'text-pink-400 bg-pink-500/10 border-pink-500/20',
-        iconName: 'instagram',
-      }
-    }
-    return {
-      name: 'Meta Ads — Facebook & Instagram Ads',
-      category: 'meta_ads',
-      subcategory: 'meta_geral',
-      color: 'bg-blue-500',
-      badgeColor: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
-      iconName: 'meta',
-    }
-  }
-
-  // 3. Instagram Direct / Orgânico
-  if (combined.includes('instagram') || combined.includes('direct') || combined.includes('ig_direct')) {
-    return {
-      name: 'Instagram Direct & DMs Orgânicas',
-      category: 'instagram',
-      subcategory: 'direct',
-      color: 'bg-pink-500',
-      badgeColor: 'text-pink-400 bg-pink-500/10 border-pink-500/20',
-      iconName: 'instagram',
-    }
-  }
-
-  // 4. Google Ads & YouTube
-  if (combined.includes('google') || combined.includes('gads') || combined.includes('youtube') || combined.includes('yt') || combined.includes('search')) {
-    return {
-      name: 'Google Ads & YouTube Search',
-      category: 'google_ads',
-      subcategory: 'search',
-      color: 'bg-amber-500',
-      badgeColor: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-      iconName: 'google',
-    }
-  }
-
-  // 5. E-mail Marketing / Campanhas
-  if (combined.includes('email') || combined.includes('mail') || combined.includes('newsletter') || combined.includes('brevo')) {
-    return {
-      name: 'E-mail Marketing & Campanhas (Brevo)',
-      category: 'email',
-      subcategory: 'email',
-      color: 'bg-indigo-500',
-      badgeColor: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
-      iconName: 'email',
-    }
-  }
-
-  // 6. Checkouts & Plataformas de Pagamento
-  if (combined.includes('hotmart')) {
-    return {
-      name: 'Hotmart Checkout',
-      category: 'checkout',
-      subcategory: 'hotmart',
-      color: 'bg-orange-500',
-      badgeColor: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
-      iconName: 'hotmart',
-    }
-  }
-  if (combined.includes('kiwify')) {
-    return {
-      name: 'Kiwify Checkout',
-      category: 'checkout',
-      subcategory: 'kiwify',
-      color: 'bg-emerald-500',
-      badgeColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-      iconName: 'kiwify',
-    }
-  }
-  if (combined.includes('greenn')) {
-    return {
-      name: 'Greenn Checkout',
-      category: 'checkout',
-      subcategory: 'greenn',
-      color: 'bg-lime-500',
-      badgeColor: 'text-lime-400 bg-lime-500/10 border-lime-500/20',
-      iconName: 'greenn',
-    }
-  }
-  if (combined.includes('zouti')) {
-    return {
-      name: 'Zouti Checkout',
-      category: 'checkout',
-      subcategory: 'zouti',
-      color: 'bg-purple-500',
-      badgeColor: 'text-purple-400 bg-purple-500/10 border-purple-500/20',
-      iconName: 'zouti',
-    }
-  }
-
-  if (!rawSource) {
-    return {
-      name: 'Direto / Orgânico / Link da Bio',
-      category: 'organico',
-      subcategory: 'direto',
-      color: 'bg-teal-500',
-      badgeColor: 'text-teal-400 bg-teal-500/10 border-teal-500/20',
-      iconName: 'direct',
-    }
-  }
-
-  return {
-    name: rawSource,
-    category: 'other',
-    subcategory: 'outros',
-    color: 'bg-fg-subtle',
-    badgeColor: 'text-fg-subtle bg-surface-inset border-line-subtle',
-    iconName: 'direct',
-  }
+const SOURCE_FILTER_LABELS: Record<string, string> = {
+  mineracao: '⛏️ Mineração',
+  meta_ads: '📱 Meta Ads',
+  instagram: '📸 Instagram',
+  hotmart: '🛒 Hotmart',
+  kiwify: '🛒 Kiwify',
+  greenn: '🛒 Greenn',
+  zouti: '🛒 Zouti',
+  google_ads: '🔍 Google Ads',
+  email: '✉️ E-mail',
+  organico: '🌐 Orgânico',
 }
 
 export default async function OrigensPage({ searchParams }: PageProps) {
@@ -222,43 +79,47 @@ export default async function OrigensPage({ searchParams }: PageProps) {
   const { from, to } = resolvePeriod(params)
   const fromDate = new Date(`${from}T00:00:00-03:00`)
   const toDate = new Date(`${to}T23:59:59.999-03:00`)
+  const source = params.source?.trim() || null
 
   const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
   const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
 
-  const [totalRow, rawOrigensRows] = await Promise.all([
-    db
-      .select({
-        totalLeads: count(),
-        recoveredCount: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} = 'converted') as int)`,
-        recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} = 'converted'), 0) as bigint)`,
-      })
-      .from(recoveryLeads)
-      .where(baseWhere),
+  const rawOrigensRows = await db
+    .select({
+      rawSource: recoveryLeads.trackingSource,
+      rawMedium: recoveryLeads.utmMedium,
+      rawPlatform: recoveryLeads.platform,
+      rawEventType: recoveryLeads.eventType,
+      total: sql<number>`cast(count(*) as int)`,
+      recovered: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} = 'converted') as int)`,
+      recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} = 'converted'), 0) as bigint)`,
+    })
+    .from(recoveryLeads)
+    .where(baseWhere)
+    .groupBy(
+      recoveryLeads.trackingSource,
+      recoveryLeads.utmMedium,
+      recoveryLeads.platform,
+      recoveryLeads.eventType,
+    )
+    .orderBy(desc(sql<number>`count(*)`))
 
-    db
-      .select({
-        rawSource: sql<string>`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`,
-        rawMedium: sql<string>`coalesce(nullif(${recoveryLeads.utmMedium}, ''), '')`,
-        total: sql<number>`cast(count(*) as int)`,
-        recovered: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} = 'converted') as int)`,
-        recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} = 'converted'), 0) as bigint)`,
-      })
-      .from(recoveryLeads)
-      .where(baseWhere)
-      .groupBy(
-        sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`,
-        sql`coalesce(nullif(${recoveryLeads.utmMedium}, ''), '')`
-      )
-      .orderBy(desc(sql<number>`count(*)`)),
-  ])
+  // Cada linha bruta ganha a origem normalizada pela MESMA função usada no resto do produto
+  // (dashboard, pipeline, inbox): src/lib/origins.ts. Filtra por ?source= ANTES de somar,
+  // então todo total nesta página (incluindo os 4 cards do topo) reflete só a origem escolhida.
+  const rowsWithMeta = rawOrigensRows.map((row) => ({
+    row,
+    meta: normalizeOrigin(row.rawSource, row.rawMedium, row.rawPlatform, row.rawEventType),
+  }))
 
-  const totalLeads = totalRow[0]?.totalLeads ?? 0
-  const totalRecovered = totalRow[0]?.recoveredCount ?? 0
-  const totalRecoveredCents = Number(totalRow[0]?.recoveredValueCents ?? 0)
+  const filteredRows = source ? rowsWithMeta.filter(({ meta }) => matchesSourceFilter(meta, source)) : rowsWithMeta
+
+  const totalLeads = filteredRows.reduce((acc, { row }) => acc + row.total, 0)
+  const totalRecovered = filteredRows.reduce((acc, { row }) => acc + row.recovered, 0)
+  const totalRecoveredCents = filteredRows.reduce((acc, { row }) => acc + Number(row.recoveredValueCents), 0)
   const globalConvRate = totalLeads > 0 ? ((totalRecovered / totalLeads) * 100).toFixed(1) : '0.0'
 
-  // Agrupamento normalizado das origens
+  // Agrupamento normalizado das origens (já filtrado por ?source= quando presente)
   const origensMap = new Map<string, {
     name: string
     category: string
@@ -271,19 +132,18 @@ export default async function OrigensPage({ searchParams }: PageProps) {
     recoveredValueCents: number
   }>()
 
-  // Subcategorias específicas de Mineração
+  // Subcategorias específicas de Mineração (sempre calculadas sobre o conjunto filtrado)
   const mineracaoSubcats = {
     whatsapp: { name: 'WhatsApp Outreach', leads: 0, recovered: 0, recoveredValueCents: 0 },
     email: { name: 'E-mail Frio (Brevo)', leads: 0, recovered: 0, recoveredValueCents: 0 },
     instagram: { name: 'Instagram Direct', leads: 0, recovered: 0, recoveredValueCents: 0 },
   }
 
-  for (const row of rawOrigensRows) {
-    const meta = normalizeSource(row.rawSource, row.rawMedium)
-    const existing = origensMap.get(meta.name) ?? {
-      name: meta.name,
+  for (const { row, meta } of filteredRows) {
+    const existing = origensMap.get(meta.label) ?? {
+      name: meta.label,
       category: meta.category,
-      subcategory: meta.subcategory,
+      subcategory: meta.subcategory ?? '',
       color: meta.color,
       badgeColor: meta.badgeColor,
       iconName: meta.iconName,
@@ -294,7 +154,7 @@ export default async function OrigensPage({ searchParams }: PageProps) {
     existing.leads += row.total
     existing.recovered += row.recovered
     existing.recoveredValueCents += Number(row.recoveredValueCents)
-    origensMap.set(meta.name, existing)
+    origensMap.set(meta.label, existing)
 
     // Agrupa subcategorias de Mineração
     if (meta.category === 'mineracao') {
@@ -354,6 +214,20 @@ export default async function OrigensPage({ searchParams }: PageProps) {
             <PeriodBar from={from} to={to} />
           </Suspense>
         </div>
+        {source && (
+          <div className="flex items-center gap-2 text-micro">
+            <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">
+              <Target size={12} />
+              Filtrando por origem: {SOURCE_FILTER_LABELS[source] ?? source} ({totalLeads} leads)
+            </span>
+            <Link
+              href={`/origens?from=${from}&to=${to}`}
+              className="text-fg-subtle hover:text-fg underline underline-offset-2"
+            >
+              Limpar filtro
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* 2. 4 Cards de Métricas e KPIs de Aquisição */}
@@ -369,7 +243,7 @@ export default async function OrigensPage({ searchParams }: PageProps) {
           <div className="mt-3">
             <span className="num text-metric text-fg font-bold">{totalLeads}</span>
             <p className="mt-0.5 text-micro text-fg-subtle">
-              no período selecionado
+              no período selecionado{source ? ` · filtro: ${SOURCE_FILTER_LABELS[source] ?? source}` : ''}
             </p>
           </div>
         </div>
