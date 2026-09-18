@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Clock,
-  Instagram,
   RefreshCw,
   ExternalLink,
   ChevronRight,
@@ -21,6 +20,18 @@ import {
   Send,
   X,
 } from 'lucide-react'
+
+// lucide-react removeu os ícones de marca (Instagram incluso) a partir da v1.
+// Mesmo padrão já usado em canais/page.tsx, origens/page.tsx e kanban-board.tsx.
+function InstagramIcon({ size = 14, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <rect width="20" height="20" x="2" y="2" rx="5" ry="5"/>
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
+      <line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>
+    </svg>
+  )
+}
 
 interface AutomationRule {
   id: number
@@ -285,7 +296,7 @@ export default function ComentariosInstagramPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-pink-400 bg-pink-500/10 px-2.5 py-0.5 rounded-full border border-pink-500/30">
-              <Instagram size={12} />
+              <InstagramIcon size={12} />
               Automação Oficial Meta Graph API
             </span>
           </div>
@@ -708,7 +719,7 @@ export default function ComentariosInstagramPage() {
                                 />
                               ) : (
                                 <div className="w-10 h-10 rounded bg-surface-raised flex items-center justify-center shrink-0">
-                                  <Instagram size={16} className="text-fg-faint" />
+                                  <InstagramIcon size={16} className="text-fg-faint" />
                                 </div>
                               )}
                               <div className="min-w-0 flex-1">
