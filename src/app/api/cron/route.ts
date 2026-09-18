@@ -7,6 +7,7 @@ import { db } from '@/lib/db'
 import { messageJobs, recoveryLeads, sequenceMessages } from '@/lib/db/schema'
 import { eq, lte, and, gt, desc } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
+import { markLeadContacted } from '@/lib/leads'
 
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a)
@@ -159,6 +160,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           content: interpolate(job.upsellContent, lead),
         }, companyId)
         await db.update(messageJobs).set({ status: 'sent', sentAt: new Date(), externalWamid: wamid, deliveryStatus: 'sent' }).where(eq(messageJobs.id, job.id))
+        // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead
+        await markLeadContacted(lead.id)
         sent++
         continue
       }
@@ -203,6 +206,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         deliveryStatus: 'sent',
       }).where(eq(messageJobs.id, job.id))
       await db.update(recoveryLeads).set({ status: 'in_progress', updatedAt: new Date() }).where(eq(recoveryLeads.id, lead.id))
+      // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead
+      await markLeadContacted(lead.id)
       sent++
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)

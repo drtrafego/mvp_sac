@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
 import { processInstagramComment } from "@/lib/instagram-comment-processor"
+import { markLeadContacted } from "@/lib/leads"
 
 interface RouteContext {
   params: Promise<{ slug: string }>
@@ -137,6 +138,9 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               sentBy: 'user',
               externalId: message.mid ?? null,
             })
+
+            // Mensagem real trocada: se for a primeira, marca a abordagem do lead
+            await markLeadContacted(lead?.id)
           } catch (err) {
             console.error("[Instagram Webhook] Erro ao gravar mensagem:", err)
           }

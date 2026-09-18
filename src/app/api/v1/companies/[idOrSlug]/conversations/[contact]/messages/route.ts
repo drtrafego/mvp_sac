@@ -8,6 +8,7 @@ import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
 import { eq, and, asc, or, sql } from 'drizzle-orm'
+import { markLeadContacted } from '@/lib/leads'
 
 type Params = { params: Promise<{ idOrSlug: string; contact: string }> }
 
@@ -157,6 +158,9 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         externalId,
       })
       .returning()
+
+    // Mensagem real trocada: se for a primeira, marca a abordagem do lead
+    await markLeadContacted(lead.id)
 
     // Atualiza timestamp e última ação do lead
     await db

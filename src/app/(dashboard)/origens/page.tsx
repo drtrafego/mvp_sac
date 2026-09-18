@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
-import { eq, and, gte, lte, sql, desc } from 'drizzle-orm'
+import { eq, and, gte, lte, sql, desc, isNotNull, isNull } from 'drizzle-orm'
 import { resolvePeriod } from '@/lib/period'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { Suspense } from 'react'
@@ -82,27 +82,38 @@ export default async function OrigensPage({ searchParams }: PageProps) {
   const source = params.source?.trim() || null
 
   const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
-  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
+  // Mesma decisão de negócio do dashboard: só conta quem já foi ABORDADO de
+  // verdade (mensagem real trocada). Lead sem first_contact_at existe no
+  // banco mas fica fora de todo total/breakdown desta página.
+  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter, isNotNull(recoveryLeads.firstContactAt))
 
-  const rawOrigensRows = await db
-    .select({
-      rawSource: recoveryLeads.trackingSource,
-      rawMedium: recoveryLeads.utmMedium,
-      rawPlatform: recoveryLeads.platform,
-      rawEventType: recoveryLeads.eventType,
-      total: sql<number>`cast(count(*) as int)`,
-      recovered: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} = 'converted') as int)`,
-      recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} = 'converted'), 0) as bigint)`,
-    })
-    .from(recoveryLeads)
-    .where(baseWhere)
-    .groupBy(
-      recoveryLeads.trackingSource,
-      recoveryLeads.utmMedium,
-      recoveryLeads.platform,
-      recoveryLeads.eventType,
-    )
-    .orderBy(desc(sql<number>`count(*)`))
+  const [[awaitingRow], rawOrigensRows] = await Promise.all([
+    db
+      .select({ total: sql<number>`cast(count(*) as int)` })
+      .from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, cid), dateFilter, isNull(recoveryLeads.firstContactAt))),
+    db
+      .select({
+        rawSource: recoveryLeads.trackingSource,
+        rawMedium: recoveryLeads.utmMedium,
+        rawPlatform: recoveryLeads.platform,
+        rawEventType: recoveryLeads.eventType,
+        total: sql<number>`cast(count(*) as int)`,
+        recovered: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} = 'converted') as int)`,
+        recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} = 'converted'), 0) as bigint)`,
+      })
+      .from(recoveryLeads)
+      .where(baseWhere)
+      .groupBy(
+        recoveryLeads.trackingSource,
+        recoveryLeads.utmMedium,
+        recoveryLeads.platform,
+        recoveryLeads.eventType,
+      )
+      .orderBy(desc(sql<number>`count(*)`)),
+  ])
+
+  const awaitingContactCount = awaitingRow?.total ?? 0
 
   // Cada linha bruta ganha a origem normalizada pela MESMA função usada no resto do produto
   // (dashboard, pipeline, inbox): src/lib/origins.ts. Filtra por ?source= ANTES de somar,
@@ -230,8 +241,8 @@ export default async function OrigensPage({ searchParams }: PageProps) {
         )}
       </div>
 
-      {/* 2. 4 Cards de Métricas e KPIs de Aquisição */}
-      <div className="rise rise-2 grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* 2. Cards de Métricas e KPIs de Aquisição */}
+      <div className="rise rise-2 grid grid-cols-2 lg:grid-cols-5 gap-3">
         {/* Card 1: Total Leads */}
         <div className="panel p-4 rounded-[var(--r-lg)] border border-line-subtle bg-surface-panel flex flex-col justify-between">
           <div className="flex items-center justify-between">
@@ -243,7 +254,23 @@ export default async function OrigensPage({ searchParams }: PageProps) {
           <div className="mt-3">
             <span className="num text-metric text-fg font-bold">{totalLeads}</span>
             <p className="mt-0.5 text-micro text-fg-subtle">
-              no período selecionado{source ? ` · filtro: ${SOURCE_FILTER_LABELS[source] ?? source}` : ''}
+              abordados no período{source ? ` · filtro: ${SOURCE_FILTER_LABELS[source] ?? source}` : ''}
+            </p>
+          </div>
+        </div>
+
+        {/* Card extra: Aguardando Abordagem (fora do total principal, ignora ?source=) */}
+        <div className="panel p-4 rounded-[var(--r-lg)] border border-dashed border-amber-500/30 bg-amber-500/5 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-label uppercase text-fg-subtle font-semibold">Aguardando Abordagem</span>
+            <div className="h-7 w-7 rounded-[var(--r-md)] bg-amber-500/10 flex items-center justify-center text-amber-400">
+              <Zap size={15} />
+            </div>
+          </div>
+          <div className="mt-3">
+            <span className="num text-metric text-amber-400 font-bold">{awaitingContactCount}</span>
+            <p className="mt-0.5 text-micro text-fg-subtle">
+              no banco, nenhuma mensagem enviada ainda
             </p>
           </div>
         </div>

@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic'
 import Link from 'next/link'
 import { db } from '@/lib/db'
 import { recoveryLeads, messageJobs } from '@/lib/db/schema'
-import { eq, count, and, desc, sql, gte, lte } from 'drizzle-orm'
+import { eq, count, and, desc, sql, gte, lte, isNull, isNotNull } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import {
   Users,
@@ -70,6 +70,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
   const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
 
+  // Decisão de negócio: lead só conta no número principal depois de ser
+  // ABORDADO de verdade (mensagem real trocada). Sem isso ele existe no banco
+  // mas fica de fora de "Leads Captados" / "Total de Contatos" e aparece só
+  // no card separado de "Aguardando Abordagem".
+  const contactedWhere = and(baseWhere, isNotNull(recoveryLeads.firstContactAt))
+  const notContactedWhere = and(baseWhere, isNull(recoveryLeads.firstContactAt))
+
   const rangeDurationMs = toDate.getTime() - fromDate.getTime()
   const prevFrom = new Date(fromDate.getTime() - rangeDurationMs)
 
@@ -79,7 +86,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const isAgencia = company.slug.includes('autonomia') || company.slug.includes('casal') || company.slug.includes('gastao')
   const isInfoproduto = !isGramado && !isLucas && !isAgencia
 
-  const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown] = await Promise.all([
+  const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats]] = await Promise.all([
     db
       .select({
         total: count(),
@@ -106,7 +113,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         aprovada: sql<number>`cast(count(*) filter (where ${recoveryLeads.eventType} = 'compra_aprovada') as int)`,
       })
       .from(recoveryLeads)
-      .where(baseWhere),
+      .where(contactedWhere),
 
     db
       .select({
@@ -147,13 +154,22 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         count: sql<number>`cast(count(*) as int)`,
       })
       .from(recoveryLeads)
-      .where(baseWhere)
+      .where(contactedWhere)
       .groupBy(sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`)
       .orderBy(desc(sql<number>`count(*)`))
       .limit(5),
+
+    // Leads que existem no banco mas nunca foram abordados de verdade (nenhuma
+    // mensagem trocada ainda): ficam fora do total principal, mas aparecem
+    // aqui separado para o Gastão saber que a fila de contato não está vazia.
+    db
+      .select({ total: count() })
+      .from(recoveryLeads)
+      .where(notContactedWhere),
   ])
 
   const total = leadStats?.total ?? 0
+  const awaitingContactCount = awaitingStats?.total ?? 0
   const fechadosCount = leadStats?.fechadosTotal ?? 0
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
   const qualificadosCount = leadStats?.qualificadosTotal ?? 0
@@ -515,7 +531,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             Eficiência & SLA do Atendimento
           </h3>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-[var(--space-gutter)]">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-[var(--space-gutter)]">
           <div className="card bg-surface-raised p-3.5 flex flex-col justify-between border border-line-subtle rounded-xl">
             <div className="flex items-center justify-between">
               <span className="text-micro uppercase text-fg-subtle font-semibold flex items-center gap-1.5">
@@ -579,6 +595,22 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             <div className="mt-2">
               <span className="num text-metric-sm font-bold text-fg block">{total}</span>
               <span className="text-[11px] text-fg-faint mt-0.5 block">Interessados e leads no período</span>
+            </div>
+          </div>
+
+          <div className="card bg-surface-raised p-3.5 flex flex-col justify-between border border-line-subtle rounded-xl">
+            <div className="flex items-center justify-between">
+              <span className="text-micro uppercase text-fg-subtle font-semibold flex items-center gap-1.5">
+                <Clock size={13} className="text-fg-muted" />
+                Aguardando Abordagem
+              </span>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                Fila
+              </span>
+            </div>
+            <div className="mt-2">
+              <span className="num text-metric-sm font-bold text-fg block">{awaitingContactCount}</span>
+              <span className="text-[11px] text-fg-faint mt-0.5 block">No banco, mas nenhuma mensagem enviada ainda</span>
             </div>
           </div>
         </div>

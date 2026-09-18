@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { companies, settings, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { queryAgentsDb, getAgentsDbUrl } from '@/lib/db/agents-db'
 import { eq, and, or, sql } from 'drizzle-orm'
+import { backfillFirstContactFromMessages } from '@/lib/leads'
 
 export interface AgentDbRow {
   id: string
@@ -483,6 +484,10 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               responsibleAgent: l.ai_agent || 'Nina',
               followUpDate: l.follow_up_date ? new Date(l.follow_up_date) : undefined,
               followUpNote: l.follow_up_note,
+              // Só marca como abordado se o CRM de origem confirma o primeiro contato.
+              // Sem essa confirmação o lead entra no banco (aparece na lista), mas fica
+              // de fora da contagem principal até uma mensagem de verdade ser trocada.
+              firstContactAt: l.first_contact_at ? new Date(l.first_contact_at) : undefined,
               createdAt: leadDate,
               updatedAt: leadDate,
               lastActionAt: leadDate,
@@ -539,6 +544,18 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     }
   } catch (ctwaErr) {
     // Tabela opcional
+  }
+
+  // 7. Backfill de abordagem real: todo lead que ganhou mensagem de verdade
+  // nesta sincronização (conversas do agente e outreach de mineração, blocos
+  // 3 e 4 acima) mas ainda não tem first_contact_at, recebe a data da
+  // primeira mensagem. Roda por último e sobre a base toda porque threads de
+  // mensagens são inseridas em vários pontos acima; idempotente (só toca
+  // quem está nulo), então não sobrescreve leads já marcados.
+  try {
+    await backfillFirstContactFromMessages()
+  } catch (backfillErr) {
+    details.push(`Aviso no backfill de first_contact_at: ${String(backfillErr)}`)
   }
 
   return {

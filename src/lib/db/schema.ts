@@ -186,6 +186,11 @@ export const recoveryLeads = pgTable('recovery_leads', {
   lastActionBy: text('last_action_by'),                 // 'Luana (Agente IA)' | 'Renato (Agente IA)'
   lastActionAt: timestamp('last_action_at').defaultNow(),
 
+  // Abordagem real: preenchido só quando a PRIMEIRA mensagem de verdade (inbound
+  // ou outbound) é trocada com o lead. Nulo = lead existe no banco mas nunca foi
+  // contatado, e por isso não entra nas contagens principais do dashboard.
+  firstContactAt: timestamp('first_contact_at'),
+
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => [

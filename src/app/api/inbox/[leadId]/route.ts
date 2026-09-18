@@ -9,6 +9,7 @@ import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
 import { requireCompany } from '@/lib/auth'
 import { queryAgentsDb } from '@/lib/db/agents-db'
+import { markLeadContacted } from '@/lib/leads'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -164,6 +165,9 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       externalId,
     })
     .returning()
+
+  // Mensagem real trocada: se for a primeira, marca a abordagem do lead
+  await markLeadContacted(lead.id)
 
   // Atualizar data de modificação do lead
   await db

@@ -4,6 +4,7 @@ import { companies, settings, whatsappMessages, webhookReceived, recoveryLeads }
 import { eq } from "drizzle-orm"
 import { verifyMetaSignature } from "@/lib/meta-signature"
 import { processInstagramComment } from "@/lib/instagram-comment-processor"
+import { markLeadContacted } from "@/lib/leads"
 
 /**
  * GET - Global Meta Instagram Webhook verification handshake
@@ -130,6 +131,9 @@ export async function POST(req: NextRequest) {
                 sentBy: 'user',
                 externalId: message.mid ?? null,
               })
+
+              // Mensagem real trocada: se for a primeira, marca a abordagem do lead
+              await markLeadContacted(lead?.id)
             }
           }
 

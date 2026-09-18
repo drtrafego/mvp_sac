@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { whatsappMessages, recoveryLeads, settings, messageJobs } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { checkWebhookToken } from '@/lib/webhook-auth'
+import { markLeadContacted } from '@/lib/leads'
 
 function normalizePhone(raw: string): string {
   return raw.replace(/[@+\s\-().]/g, '').replace(/@.*$/, '').replace(/^0+/, '')
@@ -249,6 +250,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       sentBy: 'user',
       externalId: externalId ?? null,
     })
+
+    // Mensagem real trocada: se for a primeira, marca a abordagem do lead
+    await markLeadContacted(leadId)
 
     return NextResponse.json({ ok: true })
   } catch (err) {
