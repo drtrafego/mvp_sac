@@ -39,6 +39,7 @@ import { Suspense } from 'react'
 import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
+import { cn } from '@/lib/utils'
 
 function splitMoney(cents: number): { inteiro: string; centavos: string } {
   const [inteiro, centavos] = (cents / 100)
