@@ -3,6 +3,7 @@ import { db } from "@/lib/db"
 import { companies, settings, whatsappMessages, webhookReceived, recoveryLeads } from "@/lib/db/schema"
 import { eq } from "drizzle-orm"
 import { verifyMetaSignature } from "@/lib/meta-signature"
+import { processInstagramComment } from "@/lib/instagram-comment-processor"
 
 /**
  * GET - Global Meta Instagram Webhook verification handshake
@@ -83,6 +84,7 @@ export async function POST(req: NextRequest) {
         const companyId = matchedSetting?.companyId ?? null
 
         if (companyId) {
+          // 1. Mensagens diretas (DM)
           for (const item of messagingList) {
             const sender = item.sender as { id?: string } | undefined
             const message = item.message as { mid?: string; text?: string } | undefined
@@ -128,6 +130,32 @@ export async function POST(req: NextRequest) {
                 sentBy: 'user',
                 externalId: message.mid ?? null,
               })
+            }
+          }
+
+          // 2. Comentários em Posts/Reels (Comentário vira DM)
+          const changesList = (entry.changes as Record<string, unknown>[]) ?? []
+          for (const change of changesList) {
+            if (change.field === 'comments' && change.value) {
+              const val = change.value as Record<string, unknown>
+              const commentId = (val.id as string) || ''
+              const commentText = (val.text as string) || ''
+              const fromObj = val.from as { id?: string; username?: string } | undefined
+              const commenterId = fromObj?.id || ''
+              const commenterUsername = fromObj?.username
+              const mediaObj = val.media as { id?: string } | undefined
+              const mediaId = mediaObj?.id || (val.media_id as string) || ''
+
+              if (commentId && commenterId && commentText) {
+                await processInstagramComment({
+                  companyId,
+                  commentId,
+                  commenterId,
+                  commenterUsername,
+                  mediaId,
+                  commentText,
+                }).catch(err => console.error('[Comment-to-DM Webhook Global Error]:', err))
+              }
             }
           }
         }

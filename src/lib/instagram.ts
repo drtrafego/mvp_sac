@@ -73,3 +73,192 @@ export async function sendInstagramMessage({
     return { ok: false, error: String(error) }
   }
 }
+
+/**
+ * Dispara uma resposta privada (Private Reply / DM) diretamente vinculada a um comentário de post/reel.
+ * Endpoint Graph API: POST /{page_id}/messages
+ * Payload: { recipient: { comment_id: "..." }, message: { text: "..." } }
+ */
+export async function sendInstagramPrivateReply({
+  commentId,
+  text,
+  companyId,
+}: {
+  commentId: string
+  text: string
+  companyId: number
+}): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+  const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
+  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  if (!token) {
+    return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
+  }
+
+  const pageId = config?.instagramPageId || config?.instagramAccountId || 'me'
+
+  try {
+    const res = await fetch(`https://graph.facebook.com/v21.0/${pageId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        recipient: { comment_id: commentId },
+        message: { text },
+      }),
+    })
+
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    if (!res.ok) {
+      const errDetail = (data.error as Record<string, unknown>)?.message || JSON.stringify(data)
+      console.error('[Instagram Private Reply Error]:', errDetail)
+      return { ok: false, error: `Erro ao enviar resposta privada: ${errDetail}` }
+    }
+
+    const messageId = (data.message_id as string) || (data.id as string)
+    return { ok: true, messageId }
+  } catch (error) {
+    console.error('[Instagram Private Reply Exception]:', error)
+    return { ok: false, error: String(error) }
+  }
+}
+
+/**
+ * Publica uma resposta pública diretamente abaixo do comentário original.
+ * Endpoint Graph API: POST /{comment_id}/replies
+ * Payload: { message: "..." }
+ */
+export async function replyInstagramCommentPublic({
+  commentId,
+  text,
+  companyId,
+}: {
+  commentId: string
+  text: string
+  companyId: number
+}): Promise<{ ok: boolean; replyId?: string; error?: string }> {
+  const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
+  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  if (!token) {
+    return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
+  }
+
+  try {
+    const res = await fetch(`https://graph.facebook.com/v21.0/${commentId}/replies`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message: text }),
+    })
+
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    if (!res.ok) {
+      const errDetail = (data.error as Record<string, unknown>)?.message || JSON.stringify(data)
+      console.error('[Instagram Public Reply Error]:', errDetail)
+      return { ok: false, error: `Erro na resposta pública: ${errDetail}` }
+    }
+
+    const replyId = (data.id as string) || undefined
+    return { ok: true, replyId }
+  } catch (error) {
+    console.error('[Instagram Public Reply Exception]:', error)
+    return { ok: false, error: String(error) }
+  }
+}
+
+/**
+ * Oculta (ou desoculta) um comentário no Instagram.
+ * Endpoint Graph API: POST /{comment_id}
+ * Payload: { hide: true }
+ */
+export async function hideInstagramComment({
+  commentId,
+  companyId,
+  hide = true,
+}: {
+  commentId: string
+  companyId: number
+  hide?: boolean
+}): Promise<{ ok: boolean; error?: string }> {
+  const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
+  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  if (!token) {
+    return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
+  }
+
+  try {
+    const res = await fetch(`https://graph.facebook.com/v21.0/${commentId}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ hide }),
+    })
+
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    if (!res.ok) {
+      const errDetail = (data.error as Record<string, unknown>)?.message || JSON.stringify(data)
+      console.error('[Instagram Hide Comment Error]:', errDetail)
+      return { ok: false, error: `Erro ao ocultar comentário: ${errDetail}` }
+    }
+
+    return { ok: true }
+  } catch (error) {
+    console.error('[Instagram Hide Comment Exception]:', error)
+    return { ok: false, error: String(error) }
+  }
+}
+
+export interface InstagramMediaItem {
+  id: string
+  caption?: string
+  media_type?: string
+  media_url?: string
+  thumbnail_url?: string
+  permalink?: string
+  timestamp?: string
+}
+
+/**
+ * Obtém os posts/reels recentes da conta de Instagram vinculada à empresa.
+ */
+export async function getInstagramRecentMedia(
+  companyId: number,
+  limit = 25
+): Promise<{ ok: boolean; media: InstagramMediaItem[]; error?: string }> {
+  const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
+  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  if (!token) {
+    return { ok: false, media: [], error: 'Token de acesso do Instagram não configurado.' }
+  }
+
+  const accountId = config?.instagramAccountId || config?.instagramPageId || 'me'
+
+  try {
+    const url = `https://graph.facebook.com/v21.0/${accountId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=${limit}`
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    if (!res.ok) {
+      const errDetail = (data.error as Record<string, unknown>)?.message || JSON.stringify(data)
+      console.error('[Instagram Get Media Error]:', errDetail)
+      return { ok: false, media: [], error: `Erro ao buscar posts: ${errDetail}` }
+    }
+
+    const items = (Array.isArray(data.data) ? data.data : []) as InstagramMediaItem[]
+    return { ok: true, media: items }
+  } catch (error) {
+    console.error('[Instagram Get Media Exception]:', error)
+    return { ok: false, media: [], error: String(error) }
+  }
+}
+

@@ -179,13 +179,24 @@ export default async function CanaisPage() {
                 </div>
               </div>
 
-              <Link
-                href="/configuracoes"
-                className="w-full text-center text-micro font-semibold py-2 rounded-xl bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised border border-line-subtle transition-all flex items-center justify-center gap-1.5"
-              >
-                <Settings size={13} />
-                {c.isConfigured ? 'Gerenciar Credenciais' : 'Configurar Canal'}
-              </Link>
+              <div className="flex flex-col gap-1.5 pt-2">
+                {c.id === 'instagram' && (
+                  <Link
+                    href="/comentarios-instagram"
+                    className="w-full text-center text-micro font-semibold py-2 rounded-xl bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 border border-pink-500/30 transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <InstagramIcon size={13} />
+                    Configurar Comentário → DM
+                  </Link>
+                )}
+                <Link
+                  href="/configuracoes"
+                  className="w-full text-center text-micro font-semibold py-2 rounded-xl bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised border border-line-subtle transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Settings size={13} />
+                  {c.isConfigured ? 'Gerenciar Credenciais' : 'Configurar Canal'}
+                </Link>
+              </div>
             </div>
           )
         })}

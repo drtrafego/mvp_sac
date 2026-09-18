@@ -143,6 +143,54 @@ function ensureSchema(client: any): Promise<void> {
             SET invite_token = COALESCE(invite_token, 'sac_company_' || slug || '_' || md5(id::text || '_token'))
             WHERE invite_token IS NULL
           `,
+
+          // ─── Instagram Comment-to-DM (Automações e Logs) ───────────────────────
+          client`
+            CREATE TABLE IF NOT EXISTS instagram_comment_automations (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              media_id TEXT,
+              media_url TEXT,
+              media_caption TEXT,
+              keywords TEXT,
+              match_type TEXT NOT NULL DEFAULT 'contains',
+              dm_message TEXT NOT NULL,
+              public_reply TEXT,
+              hide_comment_after_reply BOOLEAN DEFAULT FALSE,
+              active_hours_start TEXT,
+              active_hours_end TEXT,
+              is_active BOOLEAN DEFAULT TRUE,
+              total_triggered INTEGER DEFAULT 0,
+              created_at TIMESTAMP DEFAULT NOW(),
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `,
+          client`
+            CREATE TABLE IF NOT EXISTS instagram_comment_logs (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              automation_id INTEGER REFERENCES instagram_comment_automations(id) ON DELETE CASCADE,
+              comment_id TEXT NOT NULL,
+              commenter_id TEXT NOT NULL,
+              commenter_username TEXT,
+              media_id TEXT,
+              comment_text TEXT,
+              matched_keyword TEXT,
+              status TEXT NOT NULL,
+              error_message TEXT,
+              sent_at TIMESTAMP,
+              created_at TIMESTAMP DEFAULT NOW()
+            )
+          `,
+          client`
+            CREATE UNIQUE INDEX IF NOT EXISTS instagram_comment_logs_comment_unique 
+            ON instagram_comment_logs (company_id, comment_id)
+          `,
+          client`
+            CREATE UNIQUE INDEX IF NOT EXISTS instagram_comment_logs_user_media_unique 
+            ON instagram_comment_logs (automation_id, commenter_id, media_id)
+          `,
         ])
       } catch (err: any) {
         console.error('[DB Schema Sync Error]', err?.message || err)

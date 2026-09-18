@@ -24,6 +24,7 @@ import {
   Filter,
   Bot,
   Code2,
+  MessageCircle,
 } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
 import { cn } from '@/lib/utils'
@@ -104,6 +105,7 @@ export function MineracaoLogoIcon({ size = 15, className = 'text-amber-400' }: {
 export const atendimentoNav = [
   { label: 'Visão geral', href: '/', icon: Activity },
   { label: 'Conversas', href: '/inbox', icon: MessageSquare },
+  { label: 'Comentário → DM', href: '/comentarios-instagram', icon: MessageCircle },
   { label: 'Pipeline', href: '/pipeline', icon: Columns3 },
   { label: 'Leads Recentes', href: '/leads', icon: Users },
 ]
@@ -155,6 +157,7 @@ export const zoutiNav = [
 ]
 
 export const instagramNav = [
+  { label: 'Comentário → DM', href: '/comentarios-instagram' },
   { label: 'Conversas Direct', href: '/inbox' },
   { label: 'Leads Instagram', href: '/leads' },
   { label: 'Performance Direct', href: '/origens' },

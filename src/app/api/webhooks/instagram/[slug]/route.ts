@@ -4,6 +4,7 @@ import { companies, settings, whatsappMessages, recoveryLeads, webhookReceived }
 import { eq } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
+import { processInstagramComment } from "@/lib/instagram-comment-processor"
 
 interface RouteContext {
   params: Promise<{ slug: string }>
@@ -138,6 +139,32 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             })
           } catch (err) {
             console.error("[Instagram Webhook] Erro ao gravar mensagem:", err)
+          }
+        }
+      }
+
+      // 2. Comentários em Posts/Reels (Comentário vira DM)
+      const changesList = (entry.changes as Record<string, unknown>[]) ?? []
+      for (const change of changesList) {
+        if (change.field === 'comments' && change.value) {
+          const val = change.value as Record<string, unknown>
+          const commentId = (val.id as string) || ''
+          const commentText = (val.text as string) || ''
+          const fromObj = val.from as { id?: string; username?: string } | undefined
+          const commenterId = fromObj?.id || ''
+          const commenterUsername = fromObj?.username
+          const mediaObj = val.media as { id?: string } | undefined
+          const mediaId = mediaObj?.id || (val.media_id as string) || ''
+
+          if (commentId && commenterId && commentText) {
+            await processInstagramComment({
+              companyId: company.id,
+              commentId,
+              commenterId,
+              commenterUsername,
+              mediaId,
+              commentText,
+            }).catch(err => console.error(`[Comment-to-DM Webhook ${slug} Error]:`, err))
           }
         }
       }

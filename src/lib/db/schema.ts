@@ -276,6 +276,46 @@ export const companyMembers = pgTable('company_members', {
   updatedAt: timestamp('updated_at').defaultNow(),
 })
 
+// ─── Automações de Comentário vira DM (Instagram Comment-to-DM) ─────────────
+export const instagramCommentAutomations = pgTable('instagram_comment_automations', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  name: text('name').notNull(),
+  mediaId: text('media_id'),                               // null = qualquer post/reel da conta
+  mediaUrl: text('media_url'),
+  mediaCaption: text('media_caption'),
+  keywords: text('keywords'),                             // palavras separadas por vírgula ("QUERO, PREÇO")
+  matchType: text('match_type').default('contains').notNull(), // 'contains' | 'exact' | 'any'
+  dmMessage: text('dm_message').notNull(),                // texto enviado no Direct
+  publicReply: text('public_reply'),                      // resposta pública no comentário (opcional)
+  hideCommentAfterReply: boolean('hide_comment_after_reply').default(false),
+  activeHoursStart: text('active_hours_start'),           // ex: "08:00"
+  activeHoursEnd: text('active_hours_end'),               // ex: "22:00"
+  isActive: boolean('is_active').default(true),
+  totalTriggered: integer('total_triggered').default(0),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
+export const instagramCommentLogs = pgTable('instagram_comment_logs', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  automationId: integer('automation_id').references(() => instagramCommentAutomations.id, { onDelete: 'cascade' }),
+  commentId: text('comment_id').notNull(),
+  commenterId: text('commenter_id').notNull(),
+  commenterUsername: text('commenter_username'),
+  mediaId: text('media_id'),
+  commentText: text('comment_text'),
+  matchedKeyword: text('matched_keyword'),
+  status: text('status').notNull(),                       // 'sent' | 'failed' | 'skipped' | 'rate_limited'
+  errorMessage: text('error_message'),
+  sentAt: timestamp('sent_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (table) => [
+  uniqueIndex('instagram_comment_logs_comment_unique').on(table.companyId, table.commentId),
+  uniqueIndex('instagram_comment_logs_user_media_unique').on(table.automationId, table.commenterId, table.mediaId),
+])
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const companiesRelations = relations(companies, ({ one, many }) => ({
   settings: one(settings, { fields: [companies.id], references: [settings.companyId] }),
@@ -283,6 +323,8 @@ export const companiesRelations = relations(companies, ({ one, many }) => ({
   leads: many(recoveryLeads),
   whatsappMessages: many(whatsappMessages),
   members: many(companyMembers),
+  commentAutomations: many(instagramCommentAutomations),
+  commentLogs: many(instagramCommentLogs),
 }))
 
 export const settingsRelations = relations(settings, ({ one }) => ({
@@ -316,4 +358,14 @@ export const whatsappMessagesRelations = relations(whatsappMessages, ({ one }) =
 
 export const companyMembersRelations = relations(companyMembers, ({ one }) => ({
   company: one(companies, { fields: [companyMembers.companyId], references: [companies.id] }),
+}))
+
+export const instagramCommentAutomationsRelations = relations(instagramCommentAutomations, ({ one, many }) => ({
+  company: one(companies, { fields: [instagramCommentAutomations.companyId], references: [companies.id] }),
+  logs: many(instagramCommentLogs),
+}))
+
+export const instagramCommentLogsRelations = relations(instagramCommentLogs, ({ one }) => ({
+  company: one(companies, { fields: [instagramCommentLogs.companyId], references: [companies.id] }),
+  automation: one(instagramCommentAutomations, { fields: [instagramCommentLogs.automationId], references: [instagramCommentAutomations.id] }),
 }))
