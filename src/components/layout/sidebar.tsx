@@ -231,6 +231,8 @@ export function SidebarBrand({ collapsed = false }: { collapsed?: boolean }) {
   )
 }
 
+const SECTIONS_STORAGE_KEY = 'sac_sidebar_sections_open'
+
 export function SidebarNavContent({
   hideMain = false,
   className,
@@ -265,6 +267,20 @@ export function SidebarNavContent({
     ajustes: true,
   })
 
+  // Carrega a preferência de seções recolhidas/expandidas salva no navegador.
+  // Sem isso, toda seção que o usuário fechava (Hotmart, Análise etc.) voltava
+  // a aparecer aberta ao recarregar a página, porque o estado só vivia em memória.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SECTIONS_STORAGE_KEY)
+      if (saved) {
+        setSectionsOpen(prev => ({ ...prev, ...JSON.parse(saved) }))
+      }
+    } catch {
+      // localStorage indisponível (modo privado, SSR etc.) — segue com o padrão
+    }
+  }, [])
+
   // Garantir que a seção ativa esteja sempre aberta
   useEffect(() => {
     if (analiseNav.some(item => isActive(item.href))) {
@@ -282,7 +298,15 @@ export function SidebarNavContent({
   }, [pathname])
 
   const toggleSection = (key: string) => {
-    setSectionsOpen(prev => ({ ...prev, [key]: !prev[key] }))
+    setSectionsOpen(prev => {
+      const next = { ...prev, [key]: !prev[key] }
+      try {
+        localStorage.setItem(SECTIONS_STORAGE_KEY, JSON.stringify(next))
+      } catch {
+        // localStorage indisponível — a sessão atual ainda funciona, só não persiste
+      }
+      return next
+    })
   }
 
   // Filtragem de seções baseada em sidebarConfig ou conexões ativas

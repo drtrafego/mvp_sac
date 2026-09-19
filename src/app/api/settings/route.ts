@@ -166,6 +166,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       instagramAccessToken: body.instagramAccessToken || null,
       instagramVerifyToken: body.instagramVerifyToken || null,
       instagramPageId: body.instagramPageId || null,
+      sidebarConfig: body.sidebarConfig ?? null,
       updatedAt: new Date(),
     })
     .returning()
