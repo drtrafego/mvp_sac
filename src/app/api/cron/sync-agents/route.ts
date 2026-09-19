@@ -31,6 +31,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   try {
     const report = await syncAgentsAndCompanies()
+    // Prova real do resultado no log do cron (nunca só "não deu erro"):
+    // investigação de 19/09/2026 mostrou console.error de queries opcionais
+    // (public.leads, ctwa_referrals) mascarando um sync principal que na
+    // verdade estava completando. Este log deixa explícito ok/contadores
+    // reais a cada execução, sem precisar reconstruir isso via CRON_SECRET.
+    console.log('[Cron Sync Agents] Relatório:', JSON.stringify({
+      ok: report.ok,
+      agentsFound: report.agentsFound,
+      companiesCreated: report.companiesCreated,
+      leadsCreated: report.leadsCreated,
+      messagesImported: report.messagesImported,
+      dbUrlUsed: report.dbUrlUsed,
+    }))
     return NextResponse.json(report)
   } catch (error) {
     console.error('[Cron Sync Agents Error]:', error)
