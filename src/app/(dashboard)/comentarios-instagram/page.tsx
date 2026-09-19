@@ -613,35 +613,38 @@ export default function ComentariosInstagramPage() {
 
       {/* Modal de Criação / Edição */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="card bg-surface-raised border border-line-subtle w-full max-w-2xl rounded-3xl p-6 shadow-2xl relative my-8">
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="card bg-surface-raised border border-line-subtle w-full max-w-2xl rounded-3xl shadow-2xl relative flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden">
             <button
               onClick={() => setIsModalOpen(false)}
-              className="absolute right-5 top-5 p-2 rounded-xl text-fg-muted hover:text-fg hover:bg-surface-base"
+              className="absolute right-4 top-4 sm:right-5 sm:top-5 p-2 rounded-xl text-fg-muted hover:text-fg hover:bg-surface-base z-10"
             >
               <X size={18} />
             </button>
 
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-micro font-bold text-pink-400 uppercase tracking-wider">
-                {editingRule ? 'Editar Automação' : 'Nova Automação'}
-              </span>
-            </div>
-            <h2 className="text-h2 text-fg font-black">
-              {editingRule ? 'Editar Regra de Comentário' : 'Criar Regra de Comentário → DM'}
-            </h2>
-            <p className="text-body text-fg-muted text-xs mt-0.5">
-              Quando alguém comentar as palavras-chave no Instagram, o SAC responderá na DM instantaneamente.
-            </p>
-
-            {actionError && (
-              <div className="mt-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2">
-                <AlertCircle size={15} />
-                <span>{actionError}</span>
+            <div className="px-5 pt-5 pb-3 sm:px-6 sm:pt-6 sm:pb-4 pr-12 border-b border-line-subtle shrink-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-micro font-bold text-pink-400 uppercase tracking-wider">
+                  {editingRule ? 'Editar Automação' : 'Nova Automação'}
+                </span>
               </div>
-            )}
+              <h2 className="text-h2 text-fg font-black">
+                {editingRule ? 'Editar Regra de Comentário' : 'Criar Regra de Comentário → DM'}
+              </h2>
+              <p className="text-body text-fg-muted text-xs mt-0.5">
+                Quando alguém comentar as palavras-chave no Instagram, o SAC responderá na DM instantaneamente.
+              </p>
+            </div>
 
-            <form onSubmit={handleSave} className="mt-5 space-y-4">
+            <form onSubmit={handleSave} className="flex flex-col flex-1 min-h-0">
+              <div className="px-5 py-4 sm:px-6 sm:py-5 space-y-4 overflow-y-auto flex-1 overscroll-contain">
+                {actionError && (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2">
+                    <AlertCircle size={15} />
+                    <span>{actionError}</span>
+                  </div>
+                )}
+
               {/* Nome da Regra */}
               <div>
                 <label className="block text-micro font-bold text-fg mb-1">Nome da Automação *</label>
@@ -838,9 +841,10 @@ export default function ComentariosInstagramPage() {
                   </div>
                 </div>
               </div>
+              </div>
 
               {/* Ações */}
-              <div className="flex items-center justify-end gap-3 pt-3">
+              <div className="flex items-center justify-end gap-3 px-5 py-3.5 sm:px-6 sm:py-4 border-t border-line-subtle shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
