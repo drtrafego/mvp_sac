@@ -79,11 +79,18 @@ export default function EmpresasPage() {
     setSyncing(true)
     setSyncReport(null)
     try {
+      const trimmedInput = supabaseUrlInput.trim()
+      // loadSupabaseStatus() pré-preenche este campo com a URL MASCARADA
+      // (senha trocada por "****") só pra exibição. Se o admin clicar em
+      // "Sincronizar" sem editar o campo, não pode reenviar essa máscara
+      // como se fosse a URL real: isso sobrescreveria settings.supabaseDatabaseUrl
+      // com uma string quebrada (achado em 19/09/2026 investigando o cron).
+      const isMaskedPlaceholder = trimmedInput.includes('****')
       const res = await fetch('/api/admin/sync-agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          supabaseUrl: supabaseUrlInput.trim() || undefined,
+          supabaseUrl: isMaskedPlaceholder ? undefined : (trimmedInput || undefined),
         }),
       })
       const data = await res.json()

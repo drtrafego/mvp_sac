@@ -13,10 +13,35 @@ function toTransactionPooler(url: string): string {
 let _sqlInstance: ReturnType<typeof postgres> | null = null
 let _lastUrl: string | null = null
 
+function maskUrl(url: string): string {
+  return url.replace(/:[^:@]+@/, ':****@')
+}
+
+// Investigado em 19/09/2026: a rota /api/cron/sync-agents (nova) e a rota
+// /api/admin/sync-agents (antiga) chamam a MESMA syncAgentsAndCompanies(),
+// que chama esta MESMA função, sem nenhum parâmetro. Não existe divergência
+// de código entre as duas. Os logs de produção mostram as DUAS rotas caindo
+// no mesmo erro ("relation public.leads does not exist" / "column
+// created_at does not exist") no mesmo dia, então o problema nunca foi uma
+// rota resolvendo certo e a outra errado: é a env var de produção
+// (AGENTS_DATABASE_URL, a única configurada na Vercel) apontando para um
+// banco sem o schema esperado, e/ou a query em `settings.supabaseDatabaseUrl`
+// não achando nada e caindo no fallback abaixo.
+// Esta função agora LOGA (mascarado, nunca a credencial completa) qual fonte
+// foi usada em cada chamada, pra próxima investigação não precisar adivinhar.
 export async function getAgentsDbUrl(): Promise<string | null> {
-  if (process.env.CRM_DATABASE_URL) return process.env.CRM_DATABASE_URL
-  if (process.env.SUPABASE_DATABASE_URL) return process.env.SUPABASE_DATABASE_URL
-  if (process.env.AGENTS_DATABASE_URL) return process.env.AGENTS_DATABASE_URL
+  const envCandidates: [string, string | undefined][] = [
+    ['CRM_DATABASE_URL', process.env.CRM_DATABASE_URL],
+    ['SUPABASE_DATABASE_URL', process.env.SUPABASE_DATABASE_URL],
+    ['AGENTS_DATABASE_URL', process.env.AGENTS_DATABASE_URL],
+  ]
+
+  for (const [name, value] of envCandidates) {
+    if (value) {
+      console.log(`[Agents DB] URL resolvida via env ${name}: ${maskUrl(value)}`)
+      return value
+    }
+  }
 
   try {
     const rows = await db
@@ -25,13 +50,23 @@ export async function getAgentsDbUrl(): Promise<string | null> {
       .where(isNotNull(settings.supabaseDatabaseUrl))
       .limit(1)
 
-    if (rows[0]?.url) return rows[0].url
+    if (rows[0]?.url) {
+      console.log(`[Agents DB] URL resolvida via settings.supabaseDatabaseUrl: ${maskUrl(rows[0].url)}`)
+      return rows[0].url
+    }
   } catch (err) {
-    // Silently continue to fallback
+    console.error('[Agents DB] Falha ao consultar settings.supabaseDatabaseUrl, seguindo sem banco configurado:', err)
   }
 
-  // Fallback padrão para o banco central dos agentes e CRM (2.800+ leads)
-  return 'postgresql://neondb_owner:npg_1bLg0vyUfPxC@ep-red-water-ahtndd0s-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require'
+  // Removido o fallback hardcoded para um banco Neon de terceiros
+  // (ep-red-water-ahtndd0s...neon.tech). Ele já tinha sido apontado como
+  // risco numa investigação anterior: silenciosamente conectava num banco
+  // com schema diferente do esperado (sem public.leads, sem created_at em
+  // ctwa_referrals) e gerava exatamente os erros vistos em produção em
+  // 19/09/2026, tanto na rota antiga quanto na nova. Falhar fechado (null)
+  // é melhor que sincronizar dados errados sem avisar ninguém.
+  console.error('[Agents DB] Nenhuma fonte de configuração encontrada (env CRM_DATABASE_URL/SUPABASE_DATABASE_URL/AGENTS_DATABASE_URL nem settings.supabaseDatabaseUrl). Configure uma delas.')
+  return null
 }
 
 /**
