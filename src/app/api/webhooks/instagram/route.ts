@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
+import { after } from "next/server"
 import { db } from "@/lib/db"
 import { companies, settings, whatsappMessages, webhookReceived, recoveryLeads } from "@/lib/db/schema"
 import { eq } from "drizzle-orm"
 import { verifyMetaSignature } from "@/lib/meta-signature"
 import { processInstagramComment } from "@/lib/instagram-comment-processor"
 import { markLeadContacted } from "@/lib/leads"
+import { generateAndSendAiReply } from "@/lib/ai-reply"
 
 /**
  * GET - Global Meta Instagram Webhook verification handshake
@@ -134,6 +136,19 @@ export async function POST(req: NextRequest) {
 
               // Mensagem real trocada: se for a primeira, marca a abordagem do lead
               await markLeadContacted(lead?.id)
+
+              // Resposta automática de IA (Fase 1): mesmo motor do WhatsApp, só
+              // muda o canal de envio (decidido dentro de generateAndSendAiReply
+              // pelo lead.channel). Roda depois do 200 sair, nunca atrasa o
+              // webhook. Respeita botPaused e o gate de aiSystemPrompt.
+              if (lead?.id && !lead.botPaused) {
+                const leadId = lead.id
+                after(() =>
+                  generateAndSendAiReply(leadId).catch((err) =>
+                    console.error('[AI Reply] erro no after() do webhook Instagram:', err),
+                  ),
+                )
+              }
             }
           }
 

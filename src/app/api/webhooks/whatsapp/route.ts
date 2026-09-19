@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { after } from 'next/server'
 import { db } from '@/lib/db'
 import { whatsappMessages, recoveryLeads, settings, messageJobs } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { markLeadContacted } from '@/lib/leads'
 import { verifyMetaSignature } from '@/lib/meta-signature'
+import { generateAndSendAiReply } from '@/lib/ai-reply'
 
 function normalizePhone(raw: string): string {
   return raw.replace(/[@+\s\-().]/g, '').replace(/@.*$/, '').replace(/^0+/, '')
@@ -244,6 +246,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // Mensagem real trocada: se for a primeira, marca a abordagem do lead
     await markLeadContacted(leadId)
+
+    // Resposta automática de IA (Fase 1): roda DEPOIS do 200 sair pra Meta,
+    // nunca atrasa o webhook. Respeita o handoff humano (botPaused) e o gate
+    // de aiSystemPrompt (dentro de generateAndSendAiReply).
+    if (!lead.botPaused) {
+      after(() =>
+        generateAndSendAiReply(leadId).catch((err) => console.error('[AI Reply] erro no after() do webhook WhatsApp:', err)),
+      )
+    }
 
     return NextResponse.json({ ok: true })
   } catch (err) {
