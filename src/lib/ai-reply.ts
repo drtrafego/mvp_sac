@@ -1,156 +1,57 @@
-// Motor de resposta automática da IA (Fase 1, Nina/AutonomIA). Chamado pelo
+// Motor de resposta automática da IA (Nina/AutonomIA, Amanda). Chamado pelo
 // webhook via `after()`, depois da mensagem inbound já estar gravada e da
 // resposta HTTP do webhook já ter saído: nada aqui pode atrasar a Meta.
 //
-// Ordem de segurança, igual ao receiver.py (não é acidente, é a ordem que
-// evitou incidente real lá): sinal interno ANTES de suspeita, suspeita nunca
-// deixa "já te respondo" repetir, marcador de agendamento só roda depois de
-// passar pelas duas.
+// Mudança de arquitetura (19/09/2026, ordem do Gastão): este SAC NÃO chama
+// mais nenhuma API de IA direto. Ele pede o texto pronto pra ponte da Luana
+// (`gerarResposta`, em lib/ai/ai-bridge.ts), que fala com o cérebro DE
+// VERDADE da Nina/Amanda (o mesmo claude -p / SOUL que já atende em
+// produção) e já aplica, do lado dela, as travas de conteúdo (vazamento,
+// sinal interno etc. do receiver.py). Evita duplicar aquela lógica aqui.
+//
+// O que sobra pro SAC é o FLUXO: quando chamar (respeitar botPaused e o
+// gate por empresa), pra quem enviar, o rate limit da NOSSA aplicação, e
+// executar de verdade a ação de agenda que a ponte apenas detectar
+// (`acao_detectada`) — a ponte só gera texto, nunca mexe na agenda sozinha.
 
 import { eq, desc } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { recoveryLeads, settings, whatsappMessages } from '@/lib/db/schema'
+import { recoveryLeads, settings, whatsappMessages, companies } from '@/lib/db/schema'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
-import {
-  ehSinalInterno,
-  mensagemSuspeita,
-  FALLBACK_GENERICO,
-  removerMarcadorEncerrar,
-} from '@/lib/ai/security-filters'
-import {
-  processarMarcadores,
-  formatarSlotsParaPrompt,
-  type AiScheduleState,
-} from '@/lib/ai/scheduling-markers'
+import { gerarResposta, type Bot, type HistoricoTurno } from '@/lib/ai/ai-bridge'
+import { executarAcaoDetectada, type AiScheduleState } from '@/lib/ai/agenda-actions'
 
-const HISTORICO_LIMITE = 40
-const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'
-const ANTHROPIC_MAX_TOKENS = 500
+// "até 20 mais recentes" é o limite documentado da ponte pro campo `historico`.
+const HISTORICO_LIMITE = 20
 
-type ChatMsg = { role: 'user' | 'assistant'; content: string }
+// Bot que a ponte espera receber, por slug de empresa (ver seeds em
+// src/lib/db/index.ts: 'autonomia' = AutonomIA/Nina, 'amanda' = Amanda Felix).
+// Empresa fora deste mapa não tem bot na ponte: resposta automática pulada.
+const BOT_POR_SLUG: Record<string, Bot> = {
+  autonomia: 'nina',
+  amanda: 'amanda',
+}
 
-function montarMensagens(
-  historico: { direction: string; content: string | null; messageType: string | null }[],
-): ChatMsg[] {
-  const brutas: ChatMsg[] = historico.map((m) => ({
-    role: m.direction === 'inbound' ? 'user' : 'assistant',
-    content: m.content && m.content.trim() ? m.content : `[${m.messageType || 'mídia'}]`,
+function nomeExibicaoDoBot(bot: Bot): string {
+  return bot === 'nina' ? 'Nina' : 'Amanda'
+}
+
+function montarHistorico(
+  linhas: { direction: string; content: string | null; messageType: string | null }[],
+): HistoricoTurno[] {
+  return linhas.map((m) => ({
+    role: m.direction === 'inbound' ? 'lead' : 'bot',
+    text: m.content && m.content.trim() ? m.content : `[${m.messageType || 'mídia'}]`,
   }))
-
-  // A Messages API exige alternância estrita de papel: funde turnos
-  // consecutivos do mesmo lado em vez de mandar dois "user" seguidos.
-  const fundidas: ChatMsg[] = []
-  for (const m of brutas) {
-    const ultima = fundidas[fundidas.length - 1]
-    if (ultima && ultima.role === m.role) {
-      ultima.content += `\n${m.content}`
-    } else {
-      fundidas.push({ ...m })
-    }
-  }
-
-  // e exige que a conversa comece com 'user'.
-  while (fundidas.length && fundidas[0].role !== 'user') fundidas.shift()
-  return fundidas
-}
-
-function estadoAgendamentoTexto(state: AiScheduleState): string {
-  if (state.eventId) {
-    return (
-      `Já existe uma reunião marcada com este lead: ${state.start ?? '?'} a ${state.end ?? '?'} ` +
-      `(nome: ${state.nome ?? '?'}). Se ele pedir pra REMARCAR ou CANCELAR, é ESSA reunião, você não ` +
-      `sabe (e não precisa saber) o id, só sinalizar a intenção.`
-    )
-  }
-  if (state.pendingStart) {
-    return (
-      `O lead já escolheu o horário ${state.pendingStart} a ${state.pendingEnd}, mas AINDA NÃO deu ` +
-      `e-mail: não existe reunião real ainda, não anuncie fechamento.`
-    )
-  }
-  return 'Não há reunião marcada com este lead ainda nesta conversa.'
-}
-
-async function montarSystemPrompt(opts: {
-  soul: string
-  nomeContato: string
-  state: AiScheduleState
-}): Promise<string> {
-  const slots = await formatarSlotsParaPrompt()
-  return `${opts.soul}
-
----
-CONTEXTO OPERACIONAL (não faz parte do SOUL, é a etapa em que esta conversa está agora):
-Nome de contato: ${opts.nomeContato || '(sem nome)'}
-
-HORÁRIOS REAIS LIVRES NA AGENDA (única fonte válida pra oferecer horário; vazio ou com erro = NÃO ofereça horário nenhum, diga que confirma a agenda e já volta):
-${slots}
-
-ESTADO DE AGENDAMENTO DESTA CONVERSA: ${estadoAgendamentoTexto(opts.state)}
-
----
-Responda APENAS com o texto que vai pro WhatsApp/Instagram (máximo 3 a 4 linhas, sem aspas, sem comentário seu).
-
-SÓ EXISTE AGENDAMENTO COM HORÁRIO E E-MAIL. Quando tiver os dois, termine sua resposta com uma linha adicional exatamente neste formato (será removida antes de enviar, o agendamento real é feito por fora):
-<<BOOK nome="NOME" email="EMAIL" start="ISO_START" end="ISO_END">>
-NUNCA escreva essa linha com email="": sem e-mail o sistema não cria evento nenhum.
-
-Se já existe reunião marcada (ver ESTADO DE AGENDAMENTO acima) e o lead confirmou um NOVO horário da lista de HORÁRIOS REAIS LIVRES pra remarcar, termine com:
-<<RESCHEDULE start="ISO_START" end="ISO_END">>
-
-Se já existe reunião marcada e o lead confirmou que quer CANCELAR, termine com:
-<<CANCEL>>
-
-Só gere UM desses marcadores, só quando tiver certeza, nunca invente id nem horário fora da lista.`
-}
-
-async function chamarAnthropic(system: string, messages: ChatMsg[]): Promise<string | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
-    console.error('[AI Reply] ANTHROPIC_API_KEY não configurada, abortando resposta automática')
-    return null
-  }
-  try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: ANTHROPIC_MAX_TOKENS,
-        system,
-        messages,
-      }),
-      signal: AbortSignal.timeout(45_000),
-    })
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '')
-      console.error(`[AI Reply] Anthropic API erro ${resp.status}: ${errText.slice(0, 500)}`)
-      return null
-    }
-    const data = (await resp.json()) as { content?: { type: string; text?: string }[] }
-    const texto = (data.content ?? [])
-      .filter((b) => b.type === 'text' && b.text)
-      .map((b) => b.text)
-      .join('\n')
-      .trim()
-    return texto || null
-  } catch (err) {
-    console.error('[AI Reply] exceção chamando Anthropic API:', err)
-    return null
-  }
 }
 
 /**
  * Gera e envia a resposta automática de IA pra um lead, se a empresa dele
- * tiver `aiSystemPrompt` configurado e o bot não estiver pausado por um
- * humano. Projetada pra rodar dentro de `after()`, então nunca lança: qualquer
- * falha só loga e desiste desta rodada (o `vigia`/humano cobre depois, quando
- * essa rede de segurança existir).
+ * tiver a IA ligada (`aiSystemPrompt` preenchido, hoje só um gate manual) e
+ * o bot não estiver pausado por um humano. Projetada pra rodar dentro de
+ * `after()`, então nunca lança: qualquer falha só loga e desiste desta
+ * rodada (a próxima mensagem do lead tenta de novo).
  */
 export async function generateAndSendAiReply(leadId: number): Promise<void> {
   try {
@@ -159,75 +60,98 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
     if (lead.botPaused) return
 
     const [config] = await db.select().from(settings).where(eq(settings.companyId, lead.companyId)).limit(1)
-    if (!config?.aiSystemPrompt) return // gate: só empresa com SOUL configurado recebe reply automático
+    if (!config?.aiSystemPrompt) return // gate manual: empresa sem IA ligada não recebe reply automático
 
-    const historico = await db
+    const [company] = await db.select().from(companies).where(eq(companies.id, lead.companyId)).limit(1)
+    const bot = company ? BOT_POR_SLUG[company.slug] : undefined
+    if (!bot) {
+      console.error(`[AI Reply] empresa=${lead.companyId} (slug=${company?.slug ?? '?'}) sem bot mapeado na ponte, pulando lead=${leadId}`)
+      return
+    }
+
+    // busca até HISTORICO_LIMITE + 1: a mais recente é a mensagem atual
+    // (já gravada pelo webhook antes de chamar esta função), o resto vira
+    // o `historico` que a ponte espera, em ordem cronológica.
+    const linhas = await db
       .select({
         direction: whatsappMessages.direction,
         content: whatsappMessages.content,
         messageType: whatsappMessages.messageType,
-        sentBy: whatsappMessages.sentBy,
       })
       .from(whatsappMessages)
       .where(eq(whatsappMessages.leadId, leadId))
       .orderBy(desc(whatsappMessages.createdAt))
-      .limit(HISTORICO_LIMITE)
+      .limit(HISTORICO_LIMITE + 1)
 
-    const historicoAsc = [...historico].reverse()
-    const mensagens = montarMensagens(historicoAsc)
-    if (mensagens.length === 0) return
-
-    const ultimaDoBot = [...historicoAsc].reverse().find((m) => m.direction === 'outbound' && m.sentBy === 'bot')
-    const ultimaFoiFallback = !!ultimaDoBot?.content?.trim().startsWith(FALLBACK_GENERICO.slice(0, 40))
+    if (linhas.length === 0) return
+    const [ultima, ...anteriores] = linhas
+    const mensagemAtual = ultima.content && ultima.content.trim() ? ultima.content : `[${ultima.messageType || 'mídia'}]`
+    const historico = montarHistorico(anteriores.reverse())
 
     const state: AiScheduleState = (lead.aiScheduleState as AiScheduleState) || {}
-    const system = await montarSystemPrompt({
-      soul: config.aiSystemPrompt,
+    const agendamentoAtual = Object.keys(state).length > 0 ? state : null
+
+    const resultado = await gerarResposta({
+      bot,
+      mensagem: mensagemAtual,
+      historico,
       nomeContato: lead.name || '',
-      state,
+      waId: lead.phone,
+      agendamentoAtual,
     })
 
-    const respostaBruta = await chamarAnthropic(system, mensagens)
-    if (!respostaBruta) return
-
-    // SINAL ANTES DE SUSPEITA (mesma ordem do receiver.py): marcador de
-    // controle não é resposta vazada, é o modelo pedindo silêncio.
-    if (ehSinalInterno(respostaBruta)) {
-      console.log(`[AI Reply] SINAL INTERNO lead=${leadId}: nada enviado, nada gravado.`)
+    if (!resultado.ok) {
+      console.error(
+        `[AI Reply] ponte indisponível lead=${leadId} motivo=${resultado.motivo}` +
+          (resultado.detalhe ? ` detalhe=${resultado.detalhe}` : '') +
+          '. Nada enviado, fica pro atendimento humano.',
+      )
       return
     }
 
-    let textoFinal: string
+    const envelope = resultado.resposta
+
+    if (envelope.status === 'sem_resposta') {
+      console.log(`[AI Reply] SEM_RESPOSTA lead=${leadId}: a ponte decidiu ficar em silêncio, nada enviado.`)
+      return
+    }
+
+    let textoFinal = (envelope.resposta || '').trim()
     let novoState = state
 
-    if (mensagemSuspeita(respostaBruta)) {
-      console.error(
-        `[AI Reply] VAZAMENTO DE IA BLOQUEADO lead=${leadId}: termo da lista de termos proibidos no texto gerado. Original: ${respostaBruta.slice(0, 300)}`,
-      )
-      if (ultimaFoiFallback) {
-        console.error(`[AI Reply] FALLBACK REPETIDO lead=${leadId}: calando, precisa de humano.`)
-        return
-      }
-      textoFinal = FALLBACK_GENERICO
-    } else {
-      const { texto: semEncerrar } = removerMarcadorEncerrar(respostaBruta)
-      const resultado = await processarMarcadores({
-        textoBruto: semEncerrar,
+    if (envelope.acao_detectada) {
+      const resultadoAcao = await executarAcaoDetectada({
+        acao: envelope.acao_detectada,
+        textoVisivel: textoFinal,
         telefone: lead.phone,
         nomeContato: lead.name || '',
         state,
       })
-      textoFinal = resultado.textoVisivel
-      novoState = resultado.novoState
+      textoFinal = resultadoAcao.textoVisivel
+      novoState = resultadoAcao.novoState
     }
 
-    if (!textoFinal || !textoFinal.trim()) {
-      console.error(`[AI Reply] texto final vazio depois dos filtros, lead=${leadId}, nada enviado.`)
-      return
-    }
-
+    // Persiste estado de agenda e/ou o encerramento ANTES de tentar enviar:
+    // se a agenda real mudou (ex.: reunião marcada de verdade) ou a
+    // conversa acabou, isso não pode se perder só porque o envio da
+    // mensagem falhou depois.
+    const updateData: Partial<typeof recoveryLeads.$inferInsert> = {}
     if (JSON.stringify(novoState) !== JSON.stringify(state)) {
-      await db.update(recoveryLeads).set({ aiScheduleState: novoState }).where(eq(recoveryLeads.id, leadId))
+      updateData.aiScheduleState = novoState
+    }
+    if (envelope.encerrar) {
+      console.log(`[AI Reply] ENCERRAR lead=${leadId}: motivo="${envelope.encerrar.motivo || '(sem motivo)'}". Pausando o bot pra humano assumir.`)
+      updateData.botPaused = true
+      updateData.botPausedAt = new Date()
+      updateData.botPausedBy = `IA (encerrou: ${envelope.encerrar.motivo || 'sem motivo informado'})`
+    }
+    if (Object.keys(updateData).length > 0) {
+      await db.update(recoveryLeads).set(updateData).where(eq(recoveryLeads.id, leadId))
+    }
+
+    if (!textoFinal.trim()) {
+      console.error(`[AI Reply] texto final vazio (status=${envelope.status}), lead=${leadId}, nada enviado.`)
+      return
     }
 
     if (lead.channel === 'instagram') {
@@ -249,8 +173,8 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
       content: textoFinal,
       messageType: 'text',
       sentBy: 'bot',
-      senderName: 'Nina',
-      agentId: 'nina',
+      senderName: nomeExibicaoDoBot(bot),
+      agentId: bot,
     })
   } catch (err) {
     console.error(`[AI Reply] erro inesperado gerando resposta pra lead=${leadId}:`, err)
