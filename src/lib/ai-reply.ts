@@ -21,6 +21,7 @@ import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { gerarResposta, type Bot, type HistoricoTurno } from '@/lib/ai/ai-bridge'
 import { executarAcaoDetectada, type AiScheduleState } from '@/lib/ai/agenda-actions'
+import { detectarBotDoOutroLado, type TurnoComTempo } from '@/lib/ai/bot-detector'
 
 // "até 20 mais recentes" é o limite documentado da ponte pro campo `historico`.
 const HISTORICO_LIMITE = 20
@@ -37,12 +38,29 @@ function nomeExibicaoDoBot(bot: Bot): string {
   return bot === 'nina' ? 'Nina' : 'Amanda'
 }
 
-function montarHistorico(
-  linhas: { direction: string; content: string | null; messageType: string | null }[],
-): HistoricoTurno[] {
+type LinhaMensagem = {
+  direction: string
+  content: string | null
+  messageType: string | null
+  createdAt?: Date | null
+}
+
+function textoDaLinha(m: LinhaMensagem): string {
+  return m.content && m.content.trim() ? m.content : `[${m.messageType || 'mídia'}]`
+}
+
+function montarHistorico(linhas: LinhaMensagem[]): HistoricoTurno[] {
   return linhas.map((m) => ({
     role: m.direction === 'inbound' ? 'lead' : 'bot',
-    text: m.content && m.content.trim() ? m.content : `[${m.messageType || 'mídia'}]`,
+    text: textoDaLinha(m),
+  }))
+}
+
+function montarCronologiaComTempo(linhas: LinhaMensagem[]): TurnoComTempo[] {
+  return linhas.map((m) => ({
+    role: m.direction === 'inbound' ? 'lead' : 'bot',
+    text: textoDaLinha(m),
+    createdAt: m.createdAt,
   }))
 }
 
@@ -77,6 +95,7 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
         direction: whatsappMessages.direction,
         content: whatsappMessages.content,
         messageType: whatsappMessages.messageType,
+        createdAt: whatsappMessages.createdAt,
       })
       .from(whatsappMessages)
       .where(eq(whatsappMessages.leadId, leadId))
@@ -85,8 +104,31 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
 
     if (linhas.length === 0) return
     const [ultima, ...anteriores] = linhas
-    const mensagemAtual = ultima.content && ultima.content.trim() ? ultima.content : `[${ultima.messageType || 'mídia'}]`
-    const historico = montarHistorico(anteriores.reverse())
+    const anterioresAsc = anteriores.reverse() // cronológico, mais antiga primeiro
+    const mensagemAtual = textoDaLinha(ultima)
+    const historico = montarHistorico(anterioresAsc)
+
+    // Anti-loop: do outro lado é uma máquina? Mesma lógica de
+    // detector_bot.py da Luana, rodando ANTES da ponte pra não gastar rate
+    // limit (nem arriscar loop de bot-com-bot) numa conversa que não é com
+    // gente de verdade. Ver src/lib/ai/bot-detector.ts.
+    const cronologiaCompleta = montarCronologiaComTempo([...anterioresAsc, ultima])
+    const deteccao = detectarBotDoOutroLado(cronologiaCompleta)
+    if (deteccao.bot) {
+      console.error(
+        `[AI Reply] BOT_DO_OUTRO_LADO lead=${leadId} pontos=${deteccao.pontos} msgs_lead=${deteccao.msgsLead} ` +
+          `sinais=${deteccao.sinais.join(',')}. Pulando a ponte (anti-loop), fica pro atendimento humano.`,
+      )
+      await db
+        .update(recoveryLeads)
+        .set({
+          botPaused: true,
+          botPausedAt: new Date(),
+          botPausedBy: `Anti-loop (bot do outro lado detectado: ${deteccao.sinais.join(', ')}, pontos=${deteccao.pontos})`,
+        })
+        .where(eq(recoveryLeads.id, leadId))
+      return
+    }
 
     const state: AiScheduleState = (lead.aiScheduleState as AiScheduleState) || {}
     const agendamentoAtual = Object.keys(state).length > 0 ? state : null
