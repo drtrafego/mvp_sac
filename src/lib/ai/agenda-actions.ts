@@ -1,20 +1,22 @@
-// Parse e execução dos marcadores de agendamento que o SOUL da Nina já sabe
-// emitir (<<BOOK ...>>, <<RESCHEDULE ...>>, <<CANCEL>>), portados de
-// processar_resposta() em receiver.py. O modelo nunca sabe o id do evento:
-// quem guarda isso é o `aiScheduleState` do lead (equivalente ao state.json
-// por lead que o receiver.py mantém em disco).
+// Execução real da ação de agenda que a ponte da Nina/Amanda (Luana) já
+// detecta pronta em `acao_detectada` (book | reschedule | cancel). A ponte
+// só GERA texto e reconhece a intenção do lead; quem chama a API de agenda
+// de verdade (Google Calendar via agenda-autonomia.ts) é este SAC, sempre.
+// Nunca assuma que a ponte já agendou/remarcou/cancelou nada sozinha.
 //
-// Trava central: NUNCA deixar a fala do modelo anunciar um agendamento que
-// não aconteceu de verdade. Falha ou recusa da API de agenda troca a
-// resposta inteira por uma frase de handoff, nunca deixa "fechado!" passar.
+// Trava central, herdada do desenho anterior (processar_resposta() do
+// receiver.py, e da versão 1 deste arquivo baseada em marcadores de texto
+// tipo <<BOOK ...>>): NUNCA deixar a fala que vai pro lead anunciar um
+// agendamento que não aconteceu de verdade. Falha ou recusa da API de
+// agenda troca a resposta inteira por uma frase de handoff, nunca deixa
+// "fechado!" passar.
+//
+// O modelo do lado da ponte nunca sabe o id do evento no Google Calendar:
+// quem guarda isso é `aiScheduleState` do lead, aqui no SAC.
 
-import {
-  buscarSlots,
-  marcarReuniao,
-  remarcarReuniao,
-  cancelarReuniao,
-} from '@/lib/agenda-autonomia'
+import { marcarReuniao, remarcarReuniao, cancelarReuniao } from '@/lib/agenda-autonomia'
 import { pareceFechamento, textoDeRecusa, textoPedeDados } from './security-filters'
+import type { AcaoDetectada } from './ai-bridge'
 
 export type AiScheduleState = {
   eventId?: string
@@ -27,84 +29,46 @@ export type AiScheduleState = {
   pendingNome?: string
 }
 
-const BOOK_RE = /<<BOOK\b([^>]*)>>/
-const RESCHEDULE_RE = /<<RESCHEDULE start="([^"]*)" end="([^"]*)">>/
-const CANCEL_RE = /<<CANCEL>>/
-
-function atributosBook(bruto: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  const re = /(\w+)\s*=\s*"([^"]*)"/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(bruto))) {
-    out[m[1].toLowerCase()] = m[2].trim()
-  }
-  return out
-}
-
 const NAO_ACHOU_REUNIAO =
   '\n\nNão encontrei uma reunião marcada pra você aqui, deixa eu confirmar com o time.'
 
 const MOVER_RECUSADO =
   'Opa, não consegui mexer nesse horário agora. Seu horário atual continua de pé. Quer que eu veja outra opção, ou o time confirma com você em instantes?'
 
-/** Formata os horários livres reais no texto que vai pro contexto do modelo.
- * Bloco vazio ou com erro é INTENCIONAL: o próprio SOUL já instrui a Nina a
- * não ofertar horário nenhum quando isso acontece (seção 9.1). */
-export async function formatarSlotsParaPrompt(): Promise<string> {
-  try {
-    const resultado = await buscarSlots({ days: 4 }, 'sac')
-    if (!resultado.ok || !resultado.horarios || resultado.horarios.length === 0) {
-      return '(nenhum horário livre retornado agora)'
-    }
-    const fmt = new Intl.DateTimeFormat('pt-BR', {
-      timeZone: 'America/Sao_Paulo',
-      weekday: 'long',
-      day: '2-digit',
-      month: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-    return resultado.horarios
-      .map((h) => {
-        const partes = fmt.formatToParts(new Date(h.start))
-        const get = (t: string) => partes.find((p) => p.type === t)?.value ?? ''
-        return `- ${get('weekday')}, ${get('day')}/${get('month')} às ${get('hour')}:${get('minute')} (start="${h.start}" end="${h.end}")`
-      })
-      .join('\n')
-  } catch (err) {
-    console.error('[Agenda Autonomia] buscarSlots falhou:', err)
-    return '(agenda indisponível agora, erro ao consultar a API)'
-  }
-}
+const CANCELAR_RECUSADO =
+  '\n\nNão consegui cancelar agora, o time confirma com você em instantes.'
 
-export async function processarMarcadores(opts: {
-  textoBruto: string
+/**
+ * Executa a ação que a ponte detectou (`acao_detectada`) e devolve o texto
+ * final (que pode substituir integralmente o `resposta` da ponte, se a ação
+ * falhar) e o novo `aiScheduleState` do lead.
+ */
+export async function executarAcaoDetectada(opts: {
+  acao: AcaoDetectada
+  textoVisivel: string
   telefone: string
   nomeContato: string
   state: AiScheduleState
 }): Promise<{ textoVisivel: string; novoState: AiScheduleState }> {
-  const { textoBruto, telefone, nomeContato } = opts
+  const { acao, telefone, nomeContato } = opts
   let state: AiScheduleState = { ...opts.state }
-  let textoVisivel = textoBruto
+  const textoVisivel = opts.textoVisivel
 
-  const bookMatch = BOOK_RE.exec(textoBruto)
-  if (bookMatch) {
-    textoVisivel = textoVisivel.replace(bookMatch[0], '').trim()
-    const attrs = atributosBook(bookMatch[1])
-    const nome = attrs.nome || ''
-    const email = attrs.email || ''
-    let start = attrs.start || ''
-    let end = attrs.end || ''
+  if (acao.tipo === 'book') {
+    const nome = acao.nome || ''
+    const email = acao.email || ''
+    let start = acao.start || ''
+    let end = acao.end || ''
 
-    // o e-mail chegou mas o modelo esqueceu de repetir o horário: usa o
-    // pendente guardado na rodada anterior.
+    // e-mail chegou mas a ponte não repetiu o horário: usa o pendente
+    // guardado na rodada anterior (lead já tinha escolhido um slot).
     if (!(start && end) && email && state.pendingStart && state.pendingEnd) {
       start = state.pendingStart
       end = state.pendingEnd
     }
 
     if (!(start && end)) {
-      console.error(`[AI Scheduling] BOOK sem horário e sem pendente, ignorado (tel=${telefone.slice(-4)})`)
+      console.error(`[Agenda Actions] BOOK sem horário e sem pendente, ignorado (tel=...${telefone.slice(-4)})`)
       return { textoVisivel, novoState: state }
     }
 
@@ -115,13 +79,13 @@ export async function processarMarcadores(opts: {
       try {
         const r = await remarcarReuniao({ eventId: state.eventId, telefone, start, end })
         if (!r.ok) {
-          console.error(`[AI Scheduling] remarcar (via BOOK) recusado: ${r.erro || r.detalhe}`)
+          console.error(`[Agenda Actions] remarcar (via BOOK) recusado: ${r.erro || r.detalhe}`)
           return { textoVisivel: MOVER_RECUSADO, novoState: state }
         }
         state = { ...state, start, end }
         return { textoVisivel, novoState: state }
       } catch (err) {
-        console.error('[Agenda Autonomia] remarcarReuniao (via BOOK) falhou:', err)
+        console.error('[Agenda Actions] remarcarReuniao (via BOOK) falhou:', err)
         return { textoVisivel: textoDeRecusa(undefined), novoState: state }
       }
     }
@@ -143,61 +107,58 @@ export async function processarMarcadores(opts: {
         end,
       })
       if (!r.ok || !r.event_id) {
-        console.error(`[AI Scheduling] BOOK recusado: ${r.erro || r.detalhe}`)
+        console.error(`[Agenda Actions] BOOK recusado: ${r.erro || r.detalhe}`)
         return { textoVisivel: textoDeRecusa(r.erro), novoState: state }
       }
       state = { eventId: r.event_id, start, end, nome, email }
       return { textoVisivel, novoState: state }
     } catch (err) {
-      console.error('[Agenda Autonomia] marcarReuniao falhou:', err)
+      console.error('[Agenda Actions] marcarReuniao falhou:', err)
       return { textoVisivel: textoDeRecusa(undefined), novoState: state }
     }
   }
 
-  const rescheduleMatch = RESCHEDULE_RE.exec(textoBruto)
-  if (rescheduleMatch) {
-    textoVisivel = textoVisivel.replace(rescheduleMatch[0], '').trim()
-    const [, start, end] = rescheduleMatch
+  if (acao.tipo === 'reschedule') {
     if (!state.eventId) {
       return { textoVisivel: textoVisivel + NAO_ACHOU_REUNIAO, novoState: state }
+    }
+    const start = acao.start || ''
+    const end = acao.end || ''
+    if (!(start && end)) {
+      console.error(`[Agenda Actions] RESCHEDULE sem horário (tel=...${telefone.slice(-4)}), ignorado`)
+      return { textoVisivel: MOVER_RECUSADO, novoState: state }
     }
     try {
       const r = await remarcarReuniao({ eventId: state.eventId, telefone, start, end })
       if (!r.ok) {
-        console.error(`[AI Scheduling] RESCHEDULE recusado: ${r.erro || r.detalhe}`)
+        console.error(`[Agenda Actions] RESCHEDULE recusado: ${r.erro || r.detalhe}`)
         return { textoVisivel: MOVER_RECUSADO, novoState: state }
       }
       state = { ...state, start, end }
       return { textoVisivel, novoState: state }
     } catch (err) {
-      console.error('[Agenda Autonomia] remarcarReuniao falhou:', err)
+      console.error('[Agenda Actions] remarcarReuniao falhou:', err)
       return { textoVisivel: MOVER_RECUSADO, novoState: state }
     }
   }
 
-  if (CANCEL_RE.test(textoBruto)) {
-    textoVisivel = textoVisivel.replace(CANCEL_RE, '').trim()
+  if (acao.tipo === 'cancel') {
     if (!state.eventId) {
       return { textoVisivel: textoVisivel + NAO_ACHOU_REUNIAO, novoState: state }
     }
     try {
       const r = await cancelarReuniao({ eventId: state.eventId, telefone })
       if (r.ok) {
-        return { textoVisivel: textoVisivel + '\n\n(cancelado de verdade na agenda)', novoState: {} }
+        return { textoVisivel, novoState: {} }
       }
-      console.error(`[AI Scheduling] CANCEL recusado: ${r.erro || r.detalhe}`)
-      return {
-        textoVisivel: textoVisivel + '\n\nNão consegui cancelar agora, o time confirma com você em instantes.',
-        novoState: state,
-      }
+      console.error(`[Agenda Actions] CANCEL recusado: ${r.erro || r.detalhe}`)
+      return { textoVisivel: textoVisivel + CANCELAR_RECUSADO, novoState: state }
     } catch (err) {
-      console.error('[Agenda Autonomia] cancelarReuniao falhou:', err)
-      return {
-        textoVisivel: textoVisivel + '\n\nNão consegui cancelar agora, o time confirma com você em instantes.',
-        novoState: state,
-      }
+      console.error('[Agenda Actions] cancelarReuniao falhou:', err)
+      return { textoVisivel: textoVisivel + CANCELAR_RECUSADO, novoState: state }
     }
   }
 
+  console.error(`[Agenda Actions] tipo de ação desconhecido da ponte: ${(acao as { tipo?: string }).tipo}`)
   return { textoVisivel, novoState: state }
 }
