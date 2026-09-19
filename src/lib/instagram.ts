@@ -49,7 +49,7 @@ export async function sendInstagramMessage({
 
   try {
     const pageId = config?.instagramPageId || 'me'
-    const res = await fetch(`https://graph.facebook.com/v21.0/${pageId}/messages`, {
+    const res = await fetch(`https://graph.instagram.com/v21.0/${pageId}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -97,7 +97,7 @@ export async function sendInstagramPrivateReply({
   const pageId = config?.instagramPageId || config?.instagramAccountId || 'me'
 
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/${pageId}/messages`, {
+    const res = await fetch(`https://graph.instagram.com/v21.0/${pageId}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -145,7 +145,7 @@ export async function replyInstagramCommentPublic({
   }
 
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/${commentId}/replies`, {
+    const res = await fetch(`https://graph.instagram.com/v21.0/${commentId}/replies`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -190,7 +190,7 @@ export async function hideInstagramComment({
   }
 
   try {
-    const res = await fetch(`https://graph.facebook.com/v21.0/${commentId}`, {
+    const res = await fetch(`https://graph.instagram.com/v21.0/${commentId}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -239,7 +239,7 @@ export async function getInstagramRecentMedia(
   const accountId = config?.instagramAccountId || config?.instagramPageId || 'me'
 
   try {
-    const url = `https://graph.facebook.com/v21.0/${accountId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=${limit}`
+    const url = `https://graph.instagram.com/v21.0/${accountId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=${limit}`
     const res = await fetch(url, {
       method: 'GET',
       headers: {
