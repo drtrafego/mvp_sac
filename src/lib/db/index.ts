@@ -203,8 +203,21 @@ function ensureSchema(client: any): Promise<void> {
             ON instagram_comment_logs (company_id, comment_id)
           `,
           client`
-            CREATE UNIQUE INDEX IF NOT EXISTS instagram_comment_logs_user_media_unique 
+            CREATE UNIQUE INDEX IF NOT EXISTS instagram_comment_logs_user_media_unique
             ON instagram_comment_logs (automation_id, commenter_id, media_id)
+          `,
+
+          // ─── Rate limit local da ponte de IA (Nina/Amanda, 19/09/2026) ─────────
+          client`
+            CREATE TABLE IF NOT EXISTS ai_bridge_calls (
+              id SERIAL PRIMARY KEY,
+              status TEXT NOT NULL,
+              created_at TIMESTAMP DEFAULT NOW()
+            )
+          `,
+          client`
+            CREATE INDEX IF NOT EXISTS ai_bridge_calls_created_at_idx
+            ON ai_bridge_calls (created_at)
           `,
         ])
       } catch (err: any) {

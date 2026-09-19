@@ -56,9 +56,10 @@ export const settings = pgTable('settings', {
   pipelineColumns: jsonb('pipeline_columns'),
   // Configuração personalizada de menus da barra lateral (visibilidade por cliente/empresa)
   sidebarConfig: jsonb('sidebar_config'),
-  // Resposta automática por IA (Fase 1, Nina/AutonomIA): o SOUL/prompt de sistema
-  // que vai pra Anthropic Messages API. Nulo = resposta automática desligada
-  // pra essa empresa (é o gate: só quem tem isto preenchido recebe reply de IA).
+  // Resposta automática por IA (Nina/Amanda, via ponte da Luana): não é mais o
+  // prompt enviado pra API nenhuma (a ponte tem o SOUL dela mesma), sobrou só
+  // como o GATE manual: nulo = resposta automática desligada pra essa empresa,
+  // preenchido = ligada (ver src/lib/ai-reply.ts).
   aiSystemPrompt: text('ai_system_prompt'),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
@@ -330,6 +331,16 @@ export const instagramCommentLogs = pgTable('instagram_comment_logs', {
   uniqueIndex('instagram_comment_logs_comment_unique').on(table.companyId, table.commentId),
   uniqueIndex('instagram_comment_logs_user_media_unique').on(table.automationId, table.commenterId, table.mediaId),
 ])
+
+// ─── Rate limit local da ponte de IA (Nina/Amanda, ver src/lib/ai/ai-bridge.ts) ─
+// Contagem GLOBAL, não por empresa: o serviço do outro lado (claude -p) é
+// single-thread e compartilha fila com o atendimento REAL do WhatsApp de
+// produção. Cada linha é uma tentativa de chamada (sucesso ou não).
+export const aiBridgeCalls = pgTable('ai_bridge_calls', {
+  id: serial('id').primaryKey(),
+  status: text('status').notNull(), // 'em_andamento' | status HTTP como texto | 'excecao'
+  createdAt: timestamp('created_at').defaultNow(),
+})
 
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const companiesRelations = relations(companies, ({ one, many }) => ({
