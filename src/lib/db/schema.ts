@@ -56,6 +56,10 @@ export const settings = pgTable('settings', {
   pipelineColumns: jsonb('pipeline_columns'),
   // Configuração personalizada de menus da barra lateral (visibilidade por cliente/empresa)
   sidebarConfig: jsonb('sidebar_config'),
+  // Resposta automática por IA (Fase 1, Nina/AutonomIA): o SOUL/prompt de sistema
+  // que vai pra Anthropic Messages API. Nulo = resposta automática desligada
+  // pra essa empresa (é o gate: só quem tem isto preenchido recebe reply de IA).
+  aiSystemPrompt: text('ai_system_prompt'),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
 
@@ -190,6 +194,12 @@ export const recoveryLeads = pgTable('recovery_leads', {
   // ou outbound) é trocada com o lead. Nulo = lead existe no banco mas nunca foi
   // contatado, e por isso não entra nas contagens principais do dashboard.
   firstContactAt: timestamp('first_contact_at'),
+
+  // Estado de agendamento da IA (Fase 1, espelha o state.json por lead que o
+  // receiver.py da Nina já mantém): { eventId?, start?, end?, nome?, email?,
+  // pendingStart?, pendingEnd?, pendingNome? }. É o que permite RESCHEDULE/CANCEL
+  // saberem qual reunião mexer sem o modelo precisar saber o id.
+  aiScheduleState: jsonb('ai_schedule_state'),
 
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),

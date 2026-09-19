@@ -1,6 +1,7 @@
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
 import * as schema from './schema'
+import { NINA_SOUL } from '../souls/nina'
 
 type Db = ReturnType<typeof drizzle<typeof schema>>
 
@@ -52,6 +53,8 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS allowed_ips text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS pipeline_columns jsonb`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sidebar_config jsonb`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS ai_system_prompt text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_schedule_state jsonb`,
 
           // agent_activity_logs
           client`
@@ -107,6 +110,18 @@ function ensureSchema(client: any): Promise<void> {
           client`INSERT INTO companies (name, slug, plan) VALUES ('Amanda Felix', 'amanda', 'pro') ON CONFLICT (slug) DO NOTHING`,
           // 5. Garante registro em settings para cada empresa
           client`INSERT INTO settings (company_id) SELECT id FROM companies ON CONFLICT (company_id) DO NOTHING`,
+
+          // Fase 1 da resposta automática de IA (Nina/AutonomIA, 19/09/2026):
+          // popula o SOUL só na primeira vez (nunca sobrescreve edição feita
+          // depois pela tela de Configurações ou direto no banco).
+          client`
+            UPDATE settings
+            SET ai_system_prompt = ${NINA_SOUL}
+            FROM companies
+            WHERE settings.company_id = companies.id
+              AND companies.slug = 'autonomia'
+              AND settings.ai_system_prompt IS NULL
+          `,
 
           // Garante os proprietários como administradores ativos de todas as empresas
           client`
