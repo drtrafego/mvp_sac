@@ -41,6 +41,7 @@ interface SettingsData {
   metaAccessToken: string
   metaVerifyToken: string
   metaWabaId: string
+  metaAppSecret: string
   uazapiBaseUrl: string
   uazapiInstanceToken: string
   notificationPhone: string
@@ -104,6 +105,7 @@ const defaults: SettingsData = {
   metaAccessToken: '',
   metaVerifyToken: '',
   metaWabaId: '',
+  metaAppSecret: '',
   uazapiBaseUrl: '',
   uazapiInstanceToken: '',
   notificationPhone: '',
@@ -547,6 +549,7 @@ export default function ConfiguracoesPage() {
         metaAccessToken: data.metaAccessToken ?? '',
         metaVerifyToken: data.metaVerifyToken ?? '',
         metaWabaId: data.metaWabaId ?? '',
+        metaAppSecret: data.metaAppSecret ?? '',
         uazapiBaseUrl: data.uazapiBaseUrl ?? '',
         uazapiInstanceToken: data.uazapiInstanceToken ?? '',
         notificationPhone: data.notificationPhone ?? '',
@@ -944,6 +947,22 @@ export default function ConfiguracoesPage() {
           </div>
         </section>
       )}
+
+      {/* Meta / Segurança de Webhook (App Secret, validação HMAC) */}
+      <section className="panel space-y-4 p-[var(--space-card)]">
+        <h2 className="text-h2 text-fg">Meta / Segurança de Webhook</h2>
+        <Separator className="bg-line-subtle" />
+        <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+          Usado para validar a assinatura (HMAC) dos webhooks de WhatsApp e Instagram que a Meta envia. Deixe vazio para usar o App Secret compartilhado padrão. Preencha só se esta empresa tiver o PRÓPRIO app criado no Meta for Developers.
+        </p>
+        <div className="space-y-1.5">
+          <Label>App Secret (opcional, app próprio na Meta)</Label>
+          <SecretInput value={form.metaAppSecret} onChange={v => set('metaAppSecret', v)} placeholder="Deixe vazio para usar o App Secret compartilhado" />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Encontrado em Meta for Developers, no seu App, em Configurações do App &gt; Básico &gt; Chave Secreta do Aplicativo.
+          </p>
+        </div>
+      </section>
 
       {form.whatsappProvider === 'uazapi' && (
         <section className="panel space-y-4 p-[var(--space-card)]">

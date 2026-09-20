@@ -54,6 +54,7 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS pipeline_columns jsonb`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sidebar_config jsonb`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS ai_system_prompt text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_app_secret text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_schedule_state jsonb`,
 
           // agent_activity_logs

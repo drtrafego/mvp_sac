@@ -12,6 +12,22 @@ function normalizePhone(raw: string): string {
   return raw.replace(/[@+\s\-().]/g, '').replace(/@.*$/, '').replace(/^0+/, '')
 }
 
+// Extrai o phone_number_id cedo, só pra resolver qual empresa validar o
+// segredo, ANTES de qualquer outro processamento do payload.
+function extractPhoneNumberIdForSecret(body: Record<string, unknown>): string | null {
+  if (body.object !== 'whatsapp_business_account') return null
+  const entries = (body.entry as Record<string, unknown>[]) ?? []
+  for (const entry of entries) {
+    const changes = (entry.changes as Record<string, unknown>[]) ?? []
+    for (const change of changes) {
+      const value = change.value as Record<string, unknown> | undefined
+      const phoneNumberId = value?.metadata ? (value.metadata as Record<string, string>).phone_number_id : null
+      if (phoneNumberId) return phoneNumberId
+    }
+  }
+  return null
+}
+
 // ─── Meta Cloud API ───────────────────────────────────────────────────────────
 
 interface MetaStatus {
@@ -139,10 +155,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const isMeta = body.object === 'whatsapp_business_account'
 
     if (isMeta) {
-      // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem
-      const secret = process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET
+      // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem.
+      // Se a empresa (achada pelo phone_number_id do payload) tiver App Secret próprio, usa o dela;
+      // senão cai no META_APP_SECRET compartilhado de hoje.
+      let companySecret: string | null = null
+      const phoneNumberIdForSecret = extractPhoneNumberIdForSecret(body)
+      if (phoneNumberIdForSecret) {
+        const [cfgForSecret] = await db.select().from(settings).where(eq(settings.metaPhoneNumberId, phoneNumberIdForSecret))
+        companySecret = cfgForSecret?.metaAppSecret ?? null
+      }
+      const secret = companySecret || process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET
       if (!secret) {
-        console.error('[WhatsApp Webhook] META_APP_SECRET não configurado, recusando requisição')
+        console.error('[WhatsApp Webhook] Nenhum App Secret configurado (nem da empresa, nem o compartilhado), recusando requisição')
         return NextResponse.json({ error: 'meta_app_secret_not_configured' }, { status: 503 })
       }
       const sigHeader = req.headers.get('x-hub-signature-256')
