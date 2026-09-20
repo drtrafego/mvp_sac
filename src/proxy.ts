@@ -20,16 +20,19 @@ const PUBLIC_PATHS = [
   '/index.html',
 ]
 
-// Garante que after_auth_return_to só aponte pra um caminho relativo desta
-// mesma origem. pathname começando com "//" ou "/\" é interpretado por
-// browsers e por new URL() como URL absoluta (protocol-relative), o que
-// abriria open redirect pós-login pro Stack Auth mandar o usuário pra fora
-// do domínio depois de um login legítimo.
-function sanitizeReturnPath(pathname: string) {
-  if (!pathname.startsWith('/') || pathname.startsWith('//') || pathname.startsWith('/\\')) {
+// Garante que after_auth_return_to só aponte pra um caminho da mesma origem.
+// Whitelist por resultado (resolve com new URL() e compara origin), em vez de
+// blacklist de prefixo: fecha qualquer caractere especial que o parser de URL
+// trate como divisor de authority (ex.: "//", "/\", ou um caractere de
+// controle que some no parsing e vire um desses dois na prática), sem
+// depender de listar prefixo por prefixo.
+function sanitizeReturnPath(pathname: string, base: URL) {
+  try {
+    const resolved = new URL(pathname, base)
+    return resolved.origin === base.origin ? pathname : '/'
+  } catch {
     return '/'
   }
-  return pathname
 }
 
 export async function proxy(request: NextRequest) {
@@ -69,7 +72,7 @@ export async function proxy(request: NextRequest) {
     const user = await stackMiddlewareApp.getUser()
     if (!user) {
       const url = new URL('/handler/sign-in', request.url)
-      url.searchParams.set('after_auth_return_to', sanitizeReturnPath(pathname))
+      url.searchParams.set('after_auth_return_to', sanitizeReturnPath(pathname, url))
       return NextResponse.redirect(url)
     }
   }
