@@ -9,6 +9,11 @@ import { Suspense } from 'react'
 import { Users, DollarSign, ShoppingBag, TrendingUp, WifiOff } from 'lucide-react'
 import { VendasFilters } from './vendas-filters'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
+import PartitionBar, {
+  PartitionBarSegment,
+  PartitionBarSegmentTitle,
+  PartitionBarSegmentValue,
+} from '@/components/ui/partition-bar'
 
 const PAYMENT_LABELS: Record<string, string> = {
   credit_card: 'Cartão',
@@ -299,7 +304,7 @@ export default async function AnalyticsVendasPage({ searchParams }: PageProps) {
   const fmt = (cents: number) =>
     (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-  // Participação por plataforma: uma barra empilhada, não quatro barras soltas
+  // Participação por plataforma: um Partition Bar (@8starlabs, 21st.dev) proporcional, não quatro barras soltas
   const platformRows = [
     { key: 'hotmart', label: 'Hotmart', color: PLATFORM_VAR.hotmart, count: hotmartCount, revenue: hotmartRevenue },
     { key: 'greenn',  label: 'Greenn',  color: PLATFORM_VAR.greenn,  count: greennCount,  revenue: greennRevenue },
@@ -380,31 +385,24 @@ export default async function AnalyticsVendasPage({ searchParams }: PageProps) {
         <div className="card-section p-5">
           <p className="text-label uppercase text-fg-subtle mb-4">Plataformas</p>
           {platformRows.length > 0 ? (
-            <>
-              <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-inset">
-                {platformRows.map((p) => (
-                  <div
-                    key={p.key}
-                    style={{
-                      width: `${totalSales > 0 ? (p.count / totalSales) * 100 : 0}%`,
-                      background: p.color,
-                    }}
-                  />
-                ))}
-              </div>
-              <ul className="mt-4 space-y-2.5">
-                {platformRows.map((p) => (
-                  <li key={p.key} className="flex items-center gap-2">
-                    <span className="dot" style={{ color: p.color }} />
-                    <span className="text-micro text-fg-muted flex-1 truncate">{p.label}</span>
-                    <span className="num text-micro text-fg">{fmt(p.revenue)}</span>
-                    <span className="num text-micro text-fg-subtle w-16 text-right">
-                      {p.count} · {totalSales > 0 ? Math.round((p.count / totalSales) * 100) : 0}%
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
+            <PartitionBar size="sm" gap={1.5} className="mt-1">
+              {platformRows.map((p) => (
+                <PartitionBarSegment
+                  key={p.key}
+                  num={p.count}
+                  alignment="left"
+                  barColor={p.color}
+                  title={`${p.label}: ${fmt(p.revenue)} · ${p.count} venda${p.count === 1 ? '' : 's'} (${totalSales > 0 ? Math.round((p.count / totalSales) * 100) : 0}%)`}
+                >
+                  <PartitionBarSegmentTitle className="truncate max-w-full text-fg-muted font-medium">
+                    {p.label}
+                  </PartitionBarSegmentTitle>
+                  <PartitionBarSegmentValue className="truncate max-w-full">
+                    {fmt(p.revenue)}
+                  </PartitionBarSegmentValue>
+                </PartitionBarSegment>
+              ))}
+            </PartitionBar>
           ) : (
             <p className="text-body text-fg-subtle">Nenhuma venda no período</p>
           )}
