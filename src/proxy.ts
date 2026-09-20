@@ -5,6 +5,7 @@ import { verifyAgentSessionCookie } from '@/lib/agent-session'
 
 const PUBLIC_PATHS = [
   '/handler',
+  '/invite',
   '/api/webhooks',
   '/api/v1',
   '/api/agent',
@@ -56,7 +57,7 @@ export async function proxy(request: NextRequest) {
     const user = await stackMiddlewareApp.getUser()
     if (!user) {
       const url = new URL('/handler/sign-in', request.url)
-      url.searchParams.set('after_sign_in', pathname)
+      url.searchParams.set('after_auth_return_to', pathname)
       return NextResponse.redirect(url)
     }
   }
