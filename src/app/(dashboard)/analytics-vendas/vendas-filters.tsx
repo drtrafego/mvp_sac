@@ -30,6 +30,12 @@ const PLATFORM_VAR: Record<string, string> = {
   kiwify: 'var(--plat-kiwify)',
 }
 
+const ORIGEM_OPTIONS = [
+  { value: '', label: 'Tudo' },
+  { value: 'recuperada', label: 'Recuperada' },
+  { value: 'direta', label: 'Direta' },
+]
+
 /*
   Chip ativo é borda de 1px na cor a 45% mais fundo da mesma cor a 12%. O glow
   colorido anterior virava mancha borrada na compressão de vídeo.
@@ -135,6 +141,7 @@ export function VendasFilters({ from, to, products, utmSources, utmMediums, utmC
   const utmTerm = searchParams.get('utmTerm') ?? ''
   const sck = searchParams.get('sck') ?? ''
   const platform = searchParams.get('platform') ?? ''
+  const origem = searchParams.get('origem') ?? ''
 
   const uniqueNames = Array.from(new Set(products.map((p) => p.name)))
 
@@ -179,6 +186,14 @@ export function VendasFilters({ from, to, products, utmSources, utmMediums, utmC
   // Chips removíveis do que está aplicado, para o filtro nunca ficar invisível
   const appliedChips: { id: string; label: string; color?: string; remove: () => void }[] = []
 
+  if (origem) {
+    appliedChips.push({
+      id: `origem-${origem}`,
+      label: `Origem: ${ORIGEM_OPTIONS.find((o) => o.value === origem)?.label ?? origem}`,
+      color: origem === 'recuperada' ? 'var(--ev-pix)' : 'var(--brand)',
+      remove: () => update({ origem: '' }),
+    })
+  }
   if (platform) {
     appliedChips.push({
       id: `platform-${platform}`,
@@ -360,7 +375,27 @@ export function VendasFilters({ from, to, products, utmSources, utmMediums, utmC
     <div className="space-y-3">
       {/* Linha única: PeriodBar oficial à esquerda, ações e filtros à direita */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <PeriodBar from={from} to={to} />
+        <div className="flex flex-wrap items-center gap-2">
+          <PeriodBar from={from} to={to} />
+
+          {/* Origem da venda: recuperada x direta, o corte central desta tela */}
+          <div className={`inline-flex items-center gap-0.5 rounded-[var(--r-sm)] border border-line-subtle bg-surface-raised p-0.5 ${CONTROL}`}>
+            {ORIGEM_OPTIONS.map(({ value, label }) => {
+              const isActive = origem === value
+              return (
+                <button
+                  key={value || 'tudo'}
+                  onClick={() => update({ origem: value })}
+                  className={`focus-ring h-full rounded-[calc(var(--r-sm)-2px)] px-3 text-body font-medium transition-colors ${
+                    isActive ? 'bg-brand-solid text-on-accent' : 'text-fg-muted hover:text-fg'
+                  }`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
 
         <div className="flex shrink-0 items-center gap-2">
           <button

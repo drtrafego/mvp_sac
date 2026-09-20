@@ -5,6 +5,7 @@ import { recoveryLeads } from '@/lib/db/schema'
 import { eq, and, gte, lte, sql, desc, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { resolvePeriod } from '@/lib/period'
+import { isRecoveredSaleSql } from '@/lib/sales-attribution'
 import { Suspense } from 'react'
 import { Users, DollarSign, ShoppingBag, TrendingUp, WifiOff } from 'lucide-react'
 import { VendasFilters } from './vendas-filters'
@@ -72,6 +73,7 @@ interface PageProps {
     utmContent?: string
     utmTerm?: string
     sck?: string
+    origem?: string
   }>
 }
 
@@ -100,6 +102,13 @@ export default async function AnalyticsVendasPage({ searchParams }: PageProps) {
   if (params.utmContent)  baseConditions.push(eq(recoveryLeads.utmContent, params.utmContent))
   if (params.utmTerm)     baseConditions.push(eq(recoveryLeads.utmTerm, params.utmTerm))
   if (params.sck)         baseConditions.push(eq(recoveryLeads.trackingSourceSck, params.sck))
+
+  // Origem da venda: recuperada (o telefone tinha boleto/pix/carrinho/cartão
+  // pendente antes desta aprovação) ou direta (compra_aprovada sem estágio
+  // pendente anterior). Ver src/lib/sales-attribution.ts para o critério.
+  const origem = params.origem === 'recuperada' || params.origem === 'direta' ? params.origem : null
+  if (origem === 'recuperada') baseConditions.push(isRecoveredSaleSql)
+  if (origem === 'direta')     baseConditions.push(sql`not (${isRecoveredSaleSql})`)
 
   const whereClause = and(...baseConditions)
 
@@ -311,7 +320,11 @@ export default async function AnalyticsVendasPage({ searchParams }: PageProps) {
     <div className="space-y-4">
       <div className="rise rise-1">
         <h1 className="text-h1 text-fg">Analytics Vendas</h1>
-        <p className="text-body text-fg-muted mt-1">Receita, clientes e atribuição de campanhas</p>
+        <p className="text-body text-fg-muted mt-1">
+          Receita, clientes e atribuição de campanhas
+          {origem === 'recuperada' && ' · Só vendas recuperadas (follow-up de boleto/pix/carrinho)'}
+          {origem === 'direta' && ' · Só vendas diretas (sem estágio pendente antes)'}
+        </p>
       </div>
 
       {/* Filtros: uma linha só, o resto vive no painel lateral */}

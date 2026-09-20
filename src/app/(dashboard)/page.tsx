@@ -34,12 +34,16 @@ import {
   Utensils,
   Stethoscope,
   CheckCheck,
+  LifeBuoy,
+  Wallet,
+  Zap,
 } from 'lucide-react'
 import { Suspense } from 'react'
 import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
+import { isRecoveredSaleSql } from '@/lib/sales-attribution'
 
 function splitMoney(cents: number): { inteiro: string; centavos: string } {
   const [inteiro, centavos] = (cents / 100)
@@ -100,7 +104,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return s ? `/?${s}` : '/'
   }
 
-  const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats]] = await Promise.all([
+  const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats], [revenueStats]] = await Promise.all([
     db
       .select({
         total: count(),
@@ -181,10 +185,32 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       .select({ total: count() })
       .from(recoveryLeads)
       .where(notContactedWhere),
+
+    // Receita de vendas aprovadas no período, partida em recuperada (o
+    // telefone já tinha um boleto/pix/carrinho/cartão pendente antes) e
+    // direta (compra_aprovada sem estágio pendente anterior). As duas
+    // categorias são mutuamente exclusivas e cobrem 100% das linhas, então
+    // recuperada + direta = total sempre, por construção da query.
+    db
+      .select({
+        totalRevenue: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}), 0) as bigint)`,
+        recoveredRevenue: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${isRecoveredSaleSql}), 0) as bigint)`,
+        directRevenue: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where not (${isRecoveredSaleSql})), 0) as bigint)`,
+      })
+      .from(recoveryLeads)
+      .where(and(
+        eq(recoveryLeads.companyId, cid),
+        eq(recoveryLeads.eventType, 'compra_aprovada'),
+        dateFilter,
+        sourceFilter,
+      )),
   ])
 
   const total = leadStats?.total ?? 0
   const awaitingContactCount = awaitingStats?.total ?? 0
+  const totalRevenueCents = Number(revenueStats?.totalRevenue ?? 0)
+  const recoveredRevenueCents = Number(revenueStats?.recoveredRevenue ?? 0)
+  const directRevenueCents = Number(revenueStats?.directRevenue ?? 0)
   const fechadosCount = leadStats?.fechadosTotal ?? 0
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
   const qualificadosCount = leadStats?.qualificadosTotal ?? 0
@@ -671,6 +697,61 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
+
+      {/* 5. Receita de Vendas Aprovadas: Recuperada vs Direta */}
+      <div className="rise rise-4 flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <p className="text-label uppercase text-fg-subtle font-bold flex items-center gap-1.5">
+            <DollarSign size={13} className="text-brand-ink" />
+            Receita de Vendas Aprovadas
+          </p>
+          <Link href="/analytics-vendas" className="text-micro font-semibold text-brand-ink hover:underline flex items-center gap-1">
+            Ver Analytics Vendas <ExternalLink size={12} />
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 gap-[var(--space-gutter)] sm:grid-cols-3">
+          <Link
+            href="/analytics-vendas?origem=recuperada"
+            className="card group block p-[var(--space-card)] transition-all hover:border-brand-ink/50"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-label uppercase text-fg-subtle leading-tight">Renda Recuperada</p>
+              <LifeBuoy size={14} className="text-fg-faint shrink-0 transition-colors group-hover:text-brand-ink" />
+            </div>
+            <p className="num text-metric-sm text-fg mt-3">{formatBRL(recoveredRevenueCents)}</p>
+            <p className="text-micro text-fg-faint mt-1">
+              {totalRevenueCents > 0
+                ? `${Math.round((recoveredRevenueCents / totalRevenueCents) * 100)}% do total · boleto/pix/carrinho convertido`
+                : 'boleto, pix e carrinho convertidos por follow-up'}
+            </p>
+          </Link>
+
+          <Link
+            href="/analytics-vendas?origem=direta"
+            className="card group block p-[var(--space-card)] transition-all hover:border-brand-ink/50"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-label uppercase text-fg-subtle leading-tight">Renda Direta</p>
+              <Zap size={14} className="text-fg-faint shrink-0 transition-colors group-hover:text-brand-ink" />
+            </div>
+            <p className="num text-metric-sm text-fg mt-3">{formatBRL(directRevenueCents)}</p>
+            <p className="text-micro text-fg-faint mt-1">
+              {totalRevenueCents > 0
+                ? `${Math.round((directRevenueCents / totalRevenueCents) * 100)}% do total · sem estágio pendente antes`
+                : 'compra aprovada sem passar por recuperação'}
+            </p>
+          </Link>
+
+          <Link href="/analytics-vendas" className="card-highlight block p-[var(--space-card)] transition-all hover:opacity-90">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-label uppercase text-fg-subtle leading-tight">Renda Total</p>
+              <Wallet size={14} className="text-brand-ink shrink-0" />
+            </div>
+            <p className="num text-metric-sm text-brand-ink mt-3">{formatBRL(totalRevenueCents)}</p>
+            <p className="text-micro text-fg-subtle mt-1">vendas aprovadas no período</p>
+          </Link>
+        </div>
+      </div>
 
       {/* 6. Gráficos de Canais & Origens de Tráfego */}
       <div className="rise rise-5 grid grid-cols-1 md:grid-cols-2 gap-[var(--space-gutter)]">
