@@ -254,7 +254,8 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
         </div>
 
         {/* Abas Rápidas de Canal */}
-        <div className="flex items-center gap-1 overflow-x-auto scroll-thin pb-0.5 pt-0.5">
+        <div className="relative">
+          <div className="flex items-center gap-1 overflow-x-auto scroll-thin pb-0.5 pt-0.5">
           <button
             type="button"
             onClick={() => setChannelFilter('all')}
@@ -319,6 +320,8 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
             <Pickaxe size={12} className="text-amber-400 shrink-0" />
             Mineração ({channelCounts.mineracao})
           </button>
+          </div>
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-surface-panel to-transparent" />
         </div>
 
         {/* Filtro secundário: Status do Atendimento / Bot */}

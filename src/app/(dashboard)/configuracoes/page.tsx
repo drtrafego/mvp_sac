@@ -1108,11 +1108,10 @@ export default function ConfiguracoesPage() {
 
         <div className="space-y-1.5">
           <Label>Verify Token do Webhook do Instagram</Label>
-          <Input
+          <SecretInput
             value={form.instagramVerifyToken}
-            onChange={e => set('instagramVerifyToken', e.target.value)}
+            onChange={v => set('instagramVerifyToken', v)}
             placeholder="meu_token_instagram_secreto"
-            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
           />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
             Token secreto definido por você para validação do webhook no portal Meta for Developers.
