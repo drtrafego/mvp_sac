@@ -5,6 +5,7 @@ import { verifyAgentSessionCookie } from '@/lib/agent-session'
 
 const PUBLIC_PATHS = [
   '/handler',
+  '/invite',
   '/api/webhooks',
   '/api/v1',
   '/api/agent',
@@ -18,6 +19,21 @@ const PUBLIC_PATHS = [
   '/public',
   '/index.html',
 ]
+
+// Garante que after_auth_return_to só aponte pra um caminho da mesma origem.
+// Whitelist por resultado (resolve com new URL() e compara origin), em vez de
+// blacklist de prefixo: fecha qualquer caractere especial que o parser de URL
+// trate como divisor de authority (ex.: "//", "/\", ou um caractere de
+// controle que some no parsing e vire um desses dois na prática), sem
+// depender de listar prefixo por prefixo.
+function sanitizeReturnPath(pathname: string, base: URL) {
+  try {
+    const resolved = new URL(pathname, base)
+    return resolved.origin === base.origin ? pathname : '/'
+  } catch {
+    return '/'
+  }
+}
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -56,7 +72,7 @@ export async function proxy(request: NextRequest) {
     const user = await stackMiddlewareApp.getUser()
     if (!user) {
       const url = new URL('/handler/sign-in', request.url)
-      url.searchParams.set('after_sign_in', pathname)
+      url.searchParams.set('after_auth_return_to', sanitizeReturnPath(pathname, url))
       return NextResponse.redirect(url)
     }
   }
