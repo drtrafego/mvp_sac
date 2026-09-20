@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { Building2, LogOut, Zap } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
+import { ErrorBoundary } from '@/components/ui/error-boundary'
 
 function BrandMark() {
   return (
@@ -43,7 +44,9 @@ export function AdminTopbar() {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-line-subtle bg-surface-panel px-4 lg:hidden">
       <BrandMark />
-      <SignOutButton className="focus-ring flex h-11 w-11 items-center justify-center rounded-[var(--r-md)] text-fg-subtle hover:bg-surface-inset hover:text-fg" />
+      <ErrorBoundary fallback={null}>
+        <SignOutButton className="focus-ring flex h-11 w-11 items-center justify-center rounded-[var(--r-md)] text-fg-subtle hover:bg-surface-inset hover:text-fg" />
+      </ErrorBoundary>
     </header>
   )
 }
@@ -67,7 +70,9 @@ export function AdminSidebar() {
       </nav>
 
       <div className="border-t border-line-subtle px-2.5 py-3">
-        <SignOutButton />
+        <ErrorBoundary fallback={null}>
+          <SignOutButton />
+        </ErrorBoundary>
       </div>
     </aside>
   )
