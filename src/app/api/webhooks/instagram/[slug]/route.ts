@@ -63,10 +63,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "Payload JSON inválido" }, { status: 400 })
   }
 
-  // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem
-  const secret = process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
+  // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem.
+  // Empresa já foi resolvida pelo slug acima: se ela tiver App Secret próprio, usa o dela;
+  // senão cai no META_APP_SECRET compartilhado de hoje.
+  const [companySettingsForSecret] = await db.select().from(settings).where(eq(settings.companyId, company.id))
+  const secret = companySettingsForSecret?.metaAppSecret || process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
   if (!secret) {
-    console.error("[Instagram Webhook] META_APP_SECRET/INSTAGRAM_APP_SECRET não configurado, recusando requisição")
+    console.error("[Instagram Webhook] Nenhum App Secret configurado (nem da empresa, nem o compartilhado), recusando requisição")
     return NextResponse.json({ error: "meta_app_secret_not_configured" }, { status: 503 })
   }
   const sigHeader = req.headers.get("x-hub-signature-256")

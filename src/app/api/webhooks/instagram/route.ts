@@ -8,6 +8,17 @@ import { processInstagramComment } from "@/lib/instagram-comment-processor"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 
+// Extrai o pageId do primeiro entry, só pra resolver qual empresa validar o
+// segredo, ANTES de qualquer outro processamento do payload.
+function extractFirstPageIdForSecret(body: Record<string, unknown>): string | null {
+  if (body.object !== 'instagram' || !Array.isArray(body.entry)) return null
+  for (const entry of body.entry as Record<string, unknown>[]) {
+    const pageId = entry.id as string | undefined
+    if (pageId) return pageId
+  }
+  return null
+}
+
 /**
  * GET - Global Meta Instagram Webhook verification handshake
  */
@@ -51,10 +62,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
   }
 
-  // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem
-  const secret = process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
+  // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem.
+  // Se a empresa (achada pelo Instagram Account ID/Page ID do payload) tiver App Secret próprio,
+  // usa o dela; senão cai no META_APP_SECRET compartilhado de hoje.
+  let companySecret: string | null = null
+  const pageIdForSecret = extractFirstPageIdForSecret(rawBody)
+  if (pageIdForSecret) {
+    let [matchedForSecret] = await db.select().from(settings).where(eq(settings.instagramAccountId, pageIdForSecret)).limit(1)
+    if (!matchedForSecret) {
+      const [byPageId] = await db.select().from(settings).where(eq(settings.instagramPageId, pageIdForSecret)).limit(1)
+      matchedForSecret = byPageId
+    }
+    companySecret = matchedForSecret?.metaAppSecret ?? null
+  }
+  const secret = companySecret || process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
   if (!secret) {
-    console.error("[Instagram Webhook] META_APP_SECRET/INSTAGRAM_APP_SECRET não configurado, recusando requisição")
+    console.error("[Instagram Webhook] Nenhum App Secret configurado (nem da empresa, nem o compartilhado), recusando requisição")
     return NextResponse.json({ error: "meta_app_secret_not_configured" }, { status: 503 })
   }
   const sigHeader = req.headers.get("x-hub-signature-256")

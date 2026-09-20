@@ -32,6 +32,10 @@ export const settings = pgTable('settings', {
   metaAccessToken: text('meta_access_token'),
   metaVerifyToken: text('meta_verify_token'),
   metaWabaId: text('meta_waba_id'),
+  // App Secret da Meta específico desta empresa (quando ela tem o PRÓPRIO app
+  // na Meta, não o compartilhado). Nulo = usa o META_APP_SECRET compartilhado
+  // do .env (comportamento de hoje). Ver src/lib/meta-signature.ts.
+  metaAppSecret: text('meta_app_secret'),
   uazapiBaseUrl: text('uazapi_base_url'),
   uazapiInstanceToken: text('uazapi_instance_token'),
   notificationPhone: text('notification_phone'),
