@@ -3,6 +3,7 @@
 import { useState, useEffect, Fragment } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { ErrorBoundary } from '@/components/ui/error-boundary'
 import {
   Activity,
   MessageSquare,
@@ -1007,7 +1008,9 @@ export function Sidebar({ isAdmin, activeConnections, sidebarConfig }: SidebarPr
         sidebarConfig={sidebarConfig}
       />
 
-      <SidebarFooter isAdmin={isAdmin} collapsed={collapsed} />
+      <ErrorBoundary fallback={null}>
+        <SidebarFooter isAdmin={isAdmin} collapsed={collapsed} />
+      </ErrorBoundary>
     </aside>
   )
 }

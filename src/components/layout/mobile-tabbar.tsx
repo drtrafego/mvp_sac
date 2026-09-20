@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { LayoutDashboard, MessageSquare, Users, BarChart3, Menu } from 'lucide-react'
 import { Sheet } from '@/components/ui/sheet'
 import { SidebarNavContent, SidebarFooter, ActiveConnections } from './sidebar'
+import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { cn } from '@/lib/utils'
 
 const tabs = [
@@ -79,7 +80,9 @@ export function MobileTabBar({ isAdmin, activeConnections, sidebarConfig }: Mobi
           activeConnections={activeConnections}
           sidebarConfig={sidebarConfig}
         />
-        <SidebarFooter isAdmin={isAdmin} />
+        <ErrorBoundary fallback={null}>
+          <SidebarFooter isAdmin={isAdmin} />
+        </ErrorBoundary>
       </Sheet>
     </>
   )
