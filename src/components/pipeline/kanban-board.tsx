@@ -512,7 +512,7 @@ export function KanbanBoard({
     <div className="flex flex-col h-full w-full gap-3 overflow-hidden">
       {/* Toast Notification */}
       {savedToast && (
-        <div className="fixed bottom-6 right-6 z-[10000] bg-surface-panel border border-brand-solid/40 text-brand-ink px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-body font-medium animate-in fade-in slide-in-from-bottom-3">
+        <div className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom)+8px)] right-6 lg:bottom-6 z-[10000] bg-surface-panel border border-brand-solid/40 text-brand-ink px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-body font-medium animate-in fade-in slide-in-from-bottom-3">
           <Sparkles size={16} />
           {savedToast}
         </div>
@@ -815,6 +815,16 @@ export function KanbanBoard({
                     </div>
                   ))
                 )}
+
+                {/* Sentinela real no DOM que compensa a bottom tab bar mobile.
+                    Esta coluna tem scroll PRÓPRIO (overflow-y-auto) e não herda
+                    o BottomNavSpacer do Shell em (dashboard)/layout.tsx, que só
+                    cobre o <main> externo. Sem isto o último card nasce embaixo
+                    do viewport e fica inacessível via toque/scroll. */}
+                <div
+                  aria-hidden
+                  className="shrink-0 h-[calc(4rem+1px+env(safe-area-inset-bottom)+24px)] lg:hidden"
+                />
               </div>
             </div>
           )
