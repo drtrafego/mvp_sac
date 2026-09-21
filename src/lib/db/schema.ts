@@ -216,6 +216,23 @@ export const recoveryLeads = pgTable('recovery_leads', {
   uniqueIndex('recovery_leads_txn_dedup_unique')
     .on(table.companyId, table.platform, table.transactionId, table.eventType)
     .where(sql`${table.transactionId} is not null`),
+
+  // Idempotência dos webhooks de ATENDIMENTO (Instagram Direct e WhatsApp
+  // SAC, platform IN ('instagram','sac')): SELECT-então-INSERT sem lock
+  // deixava uma corrida entre requisições concorrentes com o mesmo telefone
+  // novo, e cada uma criava um lead próprio, fragmentando a conversa do
+  // cliente em vários cards no Inbox (provado pelo QA ao vivo, 2ª rodada: 10
+  // requisições concorrentes com telefone novo e mesmo mid → 6 leads
+  // distintos). Parcial e restrito a platform IN ('instagram','sac') de
+  // propósito: os webhooks de VENDA (hotmart/greenn/zouti/kiwify, platform
+  // nesses valores) criam MÚLTIPLAS linhas legítimas para o mesmo
+  // company_id+phone (um lead por transação/evento, ver
+  // recovery_leads_txn_dedup_unique acima) e um índice único geral em
+  // (company_id, phone) quebraria esse fluxo. phone é NOT NULL, então não
+  // precisa de "IS NOT NULL" na condição parcial.
+  uniqueIndex('recovery_leads_chat_company_phone_unique')
+    .on(table.companyId, table.phone)
+    .where(sql`${table.platform} in ('instagram', 'sac')`),
 ])
 
 // ─── Fila de mensagens agendadas ─────────────────────────────────────────────
@@ -251,7 +268,32 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
   agentId: text('agent_id'),                // 'luana' | 'renato'
   externalId: text('external_id'),
   createdAt: timestamp('created_at').defaultNow(),
-})
+}, (table) => [
+  // Idempotência contra reentrega de webhook da Meta (comportamento real e
+  // documentado dela, não hipotético): sem isso, o mesmo evento reentregue
+  // grava duas linhas inbound iguais e o generateAndSendAiReply() dispara
+  // DUAS respostas reais pro mesmo cliente pra mesma mensagem.
+  // Segunda camada: a primeira é o SELECT em src/lib/webhook-dedup.ts antes
+  // do insert, que não fecha corrida entre duas requisições concorrentes.
+  // Restrita a direction='inbound' porque external_id também é usado em
+  // mensagens outbound (resposta manual do Inbox, DM de comentário, sync de
+  // outros agentes), que têm semântica diferente e não devem colidir aqui.
+  //
+  // Inclui company_id (achado do QA, 2ª rodada, severidade MÉDIA): antes o
+  // índice era só (channel, external_id), e isInboundMessageAlreadyProcessed()
+  // em src/lib/webhook-dedup.ts já checa companyId + externalId + direction,
+  // então havia um descompasso teórico entre a checagem em código (por
+  // empresa) e a trava do banco (global por canal): uma empresa mal
+  // configurada compartilhando phone_number_id/instagram_account_id com
+  // outra (cenário já visto neste projeto) poderia ter uma mensagem legítima
+  // descartada como "duplicada" de outra empresa. Renomeado de propósito
+  // (whatsapp_messages_inbound_external_id_unique → …_company_channel_…):
+  // "CREATE UNIQUE INDEX IF NOT EXISTS" com o mesmo nome não teria recriado
+  // o índice em produção com a composição nova (ver src/lib/db/index.ts).
+  uniqueIndex('whatsapp_messages_inbound_company_channel_external_id_unique')
+    .on(table.companyId, table.channel, table.externalId)
+    .where(sql`${table.externalId} is not null and ${table.direction} = 'inbound'`),
+])
 
 // ─── Log de atividades dos agentes IA (Luana e Renato) ─────────────────────────
 export const agentActivityLogs = pgTable('agent_activity_logs', {

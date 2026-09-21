@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
+import { after } from "next/server"
 import { db } from "@/lib/db"
 import { companies, settings, whatsappMessages, recoveryLeads, webhookReceived } from "@/lib/db/schema"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
 import { processInstagramComment } from "@/lib/instagram-comment-processor"
 import { markLeadContacted } from "@/lib/leads"
+import { generateAndSendAiReply } from "@/lib/ai-reply"
+import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 
 interface RouteContext {
   params: Promise<{ slug: string }>
@@ -99,51 +102,81 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         const message = item.message as { mid?: string; text?: string } | undefined
         if (sender?.id && message?.text) {
           try {
-            const igPhone = `ig_${sender.id}`
-
-            // Busca ou cria o lead para a conversa aparecer no Inbox
-            let [lead] = await db
-              .select()
-              .from(recoveryLeads)
-              .where(eq(recoveryLeads.phone, igPhone))
-              .limit(1)
-
-            if (!lead) {
-              const [newLead] = await db
-                .insert(recoveryLeads)
-                .values({
-                  companyId: company.id,
-                  platform: 'instagram',
-                  channel: 'instagram',
-                  eventType: 'instagram_direct',
-                  phone: igPhone,
-                  name: `Instagram Direct (${sender.id.slice(-4)})`,
-                  status: 'in_conversation',
-                  trackingSource: 'instagram_direct',
-                })
-                .returning()
-              lead = newLead
-            } else {
-              await db
-                .update(recoveryLeads)
-                .set({ updatedAt: new Date(), channel: 'instagram' })
-                .where(eq(recoveryLeads.id, lead.id))
+            // Idempotência contra reentrega de webhook da Meta: reentrega é
+            // comportamento real dela, não hipotético. Sem isso, o mesmo
+            // evento reentregue grava duas linhas inbound iguais e dispara
+            // DUAS respostas reais de IA pro mesmo cliente pra mesma mensagem.
+            if (await isInboundMessageAlreadyProcessed(company.id, message.mid)) {
+              console.log(`[Instagram Webhook] mensagem já processada (reentrega da Meta), slug=${slug} mid=${message.mid}, pulando`)
+              continue
             }
 
-            await db.insert(whatsappMessages).values({
-              companyId: company.id,
-              leadId: lead?.id ?? null,
-              phone: igPhone,
-              channel: 'instagram',
-              direction: 'inbound',
-              content: message.text,
-              messageType: 'text',
-              sentBy: 'user',
-              externalId: message.mid ?? null,
-            })
+            const igPhone = `ig_${sender.id}`
+
+            // Upsert atômico: SELECT-então-INSERT deixava uma janela de
+            // corrida entre duas requisições concorrentes com o mesmo
+            // telefone novo, e cada uma criava um lead próprio (provado
+            // pelo QA ao vivo: 10 requisições concorrentes → 6 leads
+            // distintos pro mesmo telefone). O índice único parcial
+            // recovery_leads_chat_company_phone_unique (ver schema.ts)
+            // fecha essa corrida no banco.
+            const [lead] = await db
+              .insert(recoveryLeads)
+              .values({
+                companyId: company.id,
+                platform: 'instagram',
+                channel: 'instagram',
+                eventType: 'instagram_direct',
+                phone: igPhone,
+                name: `Instagram Direct (${sender.id.slice(-4)})`,
+                status: 'in_conversation',
+                trackingSource: 'instagram_direct',
+              })
+              .onConflictDoUpdate({
+                target: [recoveryLeads.companyId, recoveryLeads.phone],
+                targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac')`,
+                set: { updatedAt: new Date(), channel: 'instagram' },
+              })
+              .returning()
+
+            try {
+              await db.insert(whatsappMessages).values({
+                companyId: company.id,
+                leadId: lead?.id ?? null,
+                phone: igPhone,
+                channel: 'instagram',
+                direction: 'inbound',
+                content: message.text,
+                messageType: 'text',
+                sentBy: 'user',
+                externalId: message.mid ?? null,
+              })
+            } catch (err) {
+              // Segunda camada (índice único parcial): corrida entre duas
+              // requisições concorrentes que passaram pelo SELECT acima ao
+              // mesmo tempo. Já processado, não é erro fatal.
+              if (isUniqueViolation(err)) {
+                console.log(`[Instagram Webhook] corrida no insert (unique violation), slug=${slug} mid=${message.mid}, tratando como já processado`)
+                continue
+              }
+              throw err
+            }
 
             // Mensagem real trocada: se for a primeira, marca a abordagem do lead
             await markLeadContacted(lead?.id)
+
+            // Resposta automática de IA (Fase 1): mesmo motor do endpoint global
+            // e do WhatsApp (decidido dentro de generateAndSendAiReply pelo
+            // lead.channel). Roda depois do 200 sair, nunca atrasa o webhook.
+            // Respeita botPaused e o gate de aiSystemPrompt.
+            if (lead?.id && !lead.botPaused) {
+              const leadId = lead.id
+              after(() =>
+                generateAndSendAiReply(leadId).catch((err) =>
+                  console.error(`[AI Reply] erro no after() do webhook Instagram (slug=${slug}):`, err),
+                ),
+              )
+            }
           } catch (err) {
             console.error("[Instagram Webhook] Erro ao gravar mensagem:", err)
           }

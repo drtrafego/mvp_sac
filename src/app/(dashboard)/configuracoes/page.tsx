@@ -527,7 +527,10 @@ export default function ConfiguracoesPage() {
   const zoutiWebhookUrl = webhookUrl('zouti')
   const kiwifyWebhookUrl = webhookUrl('kiwify')
   const metaWebhookUrl = slug ? `${origin}/api/webhooks/whatsapp` : null
-  const instagramWebhookUrl = webhookUrl('instagram')
+  // Instagram usa o endpoint GLOBAL (igual ao WhatsApp), nunca o por-slug: a Meta permite
+  // só UMA URL de webhook por App, e é o endpoint global que resolve a empresa pelo
+  // instagramAccountId/instagramPageId do payload e já dispara a resposta automática da IA.
+  const instagramWebhookUrl = slug ? `${origin}/api/webhooks/instagram` : null
 
   useEffect(() => {
     fetch('/api/settings')

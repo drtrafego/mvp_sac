@@ -221,6 +221,66 @@ function ensureSchema(client: any): Promise<void> {
             ON ai_bridge_calls (created_at)
           `,
         ])
+
+        // ─── Idempotência contra reentrega de webhook da Meta (20/09/2026, ────
+        // ampliado 21/09/2026 pra incluir company_id, achado do QA 2ª rodada)
+        // Fora do Promise.allSettled acima de propósito: aquele array nunca
+        // inspeciona o resultado de cada statement, então uma falha ali some
+        // em silêncio. Esta CREATE UNIQUE INDEX só falha se já existir
+        // external_id duplicado (mesmo company_id+channel, direction='inbound')
+        // em produção, e isso precisa aparecer no log em vez de sumir — sem o
+        // índice, só a camada 1 (SELECT antes do insert, ver
+        // src/lib/webhook-dedup.ts) protege contra reentrega, sem fechar a
+        // corrida entre requisições concorrentes.
+        //
+        // O índice antigo (channel, external_id), sem company_id, é
+        // removido primeiro: "CREATE UNIQUE INDEX IF NOT EXISTS" com um nome
+        // novo não apaga o antigo sozinho, e mantê-lo não protegeria nada a
+        // mais (o novo já cobre o mesmo par channel+external_id, só que
+        // também escopado por empresa) e ficaria como índice morto.
+        try {
+          await client`DROP INDEX IF EXISTS whatsapp_messages_inbound_external_id_unique`
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_messages_inbound_company_channel_external_id_unique
+            ON whatsapp_messages (company_id, channel, external_id)
+            WHERE external_id IS NOT NULL AND direction = 'inbound'
+          `
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error(
+            '[DB Schema Sync Error] Falha ao criar whatsapp_messages_inbound_company_channel_external_id_unique ' +
+              '(provável causa: já existe external_id duplicado em whatsapp_messages para o mesmo company_id+channel ' +
+              "com direction='inbound'; rode " +
+              "\"SELECT company_id, channel, external_id, count(*) FROM whatsapp_messages WHERE external_id IS NOT NULL AND direction='inbound' GROUP BY company_id, channel, external_id HAVING count(*) > 1\" " +
+              'e resolva as duplicatas antes de tentar de novo):',
+            message,
+          )
+        }
+
+        // ─── Idempotência dos webhooks de atendimento contra lead duplicado ───
+        // (21/09/2026, achado do QA 2ª rodada, severidade ALTA): mesmo padrão
+        // acima, fora do Promise.allSettled de propósito para que uma falha
+        // apareça no log em vez de sumir. Só falha se já existir
+        // company_id+phone duplicado entre leads de atendimento (platform
+        // IN ('instagram','sac')) em produção; leads de VENDA (hotmart etc.)
+        // não entram nessa condição e não são afetados.
+        try {
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS recovery_leads_chat_company_phone_unique
+            ON recovery_leads (company_id, phone)
+            WHERE platform IN ('instagram', 'sac')
+          `
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error(
+            '[DB Schema Sync Error] Falha ao criar recovery_leads_chat_company_phone_unique ' +
+              '(provável causa: já existe phone duplicado em recovery_leads para o mesmo company_id entre ' +
+              "leads de atendimento; rode " +
+              "\"SELECT company_id, phone, count(*) FROM recovery_leads WHERE platform IN ('instagram','sac') GROUP BY company_id, phone HAVING count(*) > 1\" " +
+              'e resolva as duplicatas (mesclar os leads e as mensagens do lead perdedor no vencedor) antes de tentar de novo):',
+            message,
+          )
+        }
       } catch (err: any) {
         console.error('[DB Schema Sync Error]', err?.message || err)
       }
