@@ -1,7 +1,20 @@
 import { or, sql, type SQL } from 'drizzle-orm'
 import { recoveryLeads } from '@/lib/db/schema'
 
-export type InboxChannelFilter = 'all' | 'whatsapp' | 'instagram' | 'email' | 'mineracao'
+// mineracao_email/mineracao_whatsapp/mineracao_instagram são o FILTRO
+// COMPOSTO: dentro do universo já classificado como 'mineracao' (categoria
+// principal, precedência mantida), filtra pela segunda dimensão (canal REAL
+// de contato do lead). Não são categorias novas no nível principal, então
+// não mexem em nenhuma regra de precedência das 4 rodadas anteriores.
+export type InboxChannelFilter =
+  | 'all'
+  | 'whatsapp'
+  | 'instagram'
+  | 'email'
+  | 'mineracao'
+  | 'mineracao_email'
+  | 'mineracao_whatsapp'
+  | 'mineracao_instagram'
 
 type ChannelFields = {
   channel?: string | null
@@ -17,10 +30,14 @@ export type ChannelClassification = {
   isWhatsapp: boolean
 }
 
-type ChannelCategory = 'mineracao' | 'email' | 'instagram'
+// Canal REAL de contato de um lead já classificado como 'mineracao'. É uma
+// segunda dimensão, independente da categoria principal: um lead pode ser
+// categoria='mineracao' (porque tracking_source bateu em %prospeccao%) e
+// mineracaoSubchannel='email' (porque o contato de verdade é por e-mail).
+export type MineracaoSubchannel = 'email' | 'whatsapp' | 'instagram'
 
 interface CategoryRule {
-  name: ChannelCategory
+  name: string
   channelEquals?: string
   platformEquals?: string
   trackingIncludes: string[]
@@ -87,6 +104,41 @@ const CATEGORY_RULES: CategoryRule[] = [
   },
 ]
 
+/**
+ * Sub-regras de canal REAL de contato, aplicadas SÓ dentro do universo que já
+ * bateu em CATEGORY_RULES 'mineracao' (a Aria/Gastão confirmou: mineracao
+ * sempre vence no canal principal, isto aqui é uma segunda dimensão de
+ * filtro, não uma categoria nova). Mesmo mecanismo de precedência do nível
+ * principal, mesma justificativa de ordem:
+ *
+ *  1. email primeiro: tracking_source de mineração por e-mail costuma trazer
+ *     "email"/"mail"/"brevo" no texto (ex.: "prospeccao_email_followup"), que
+ *     colide com o texto livre de instagram nalguns casos combinados.
+ *  2. instagram depois: channel/platform='instagram', tracking com
+ *     "instagram"/"direct", ou telefone com prefixo "ig_".
+ *  3. whatsapp é o else: é o canal de outreach mais comum da mineração
+ *     (WhatsApp Outreach), e qualquer lead que não bater nos sinais de
+ *     e-mail/instagram cai aqui, por construção, sem buraco.
+ *
+ * Espelha a mesma partição feita hoje em src/lib/origins.ts (normalizeOrigin,
+ * bloco "1. Mineração"), que já mostra estas 3 subcategorias no dashboard de
+ * Origens. Aqui é a mesma lógica de negócio, reaproveitada pro Inbox.
+ */
+const MINERACAO_SUBCATEGORY_RULES: CategoryRule[] = [
+  {
+    name: 'email',
+    channelEquals: 'email',
+    trackingIncludes: ['email', 'mail', 'brevo'],
+  },
+  {
+    name: 'instagram',
+    channelEquals: 'instagram',
+    platformEquals: 'instagram',
+    trackingIncludes: ['instagram', 'direct'],
+    phonePrefix: 'ig_',
+  },
+]
+
 // Condição SQL (booleana) de UMA regra: bate em qualquer um dos sinais dela.
 // coalesce(..., false): channel/platform/trackingSource são colunas
 // nullable, e em lógica de 3 valores do SQL "coluna = X" com coluna NULL não
@@ -126,11 +178,38 @@ function channelLabelSql(): SQL {
   return expr
 }
 
+// Mesmo CASE WHEN do nível principal, mas com as sub-regras de mineração e
+// caindo em 'whatsapp' no else (o "WhatsApp Outreach" da mineração). Só faz
+// sentido avaliar isto sobre linhas que já bateram em 'mineracao' no nível
+// principal; channelWhereCondition sempre combina os dois com AND.
+function mineracaoSubchannelLabelSql(): SQL {
+  let expr: SQL = sql`'whatsapp'`
+  for (let i = MINERACAO_SUBCATEGORY_RULES.length - 1; i >= 0; i--) {
+    const rule = MINERACAO_SUBCATEGORY_RULES[i]
+    expr = sql`case when ${ruleConditionSql(rule)} then ${rule.name} else (${expr}) end`
+  }
+  return expr
+}
+
+const MINERACAO_COMPOUND_PREFIX = 'mineracao_'
+
 /**
  * WHERE do banco pra uma aba de canal. Retorna undefined pra 'all' (ou
  * qualquer valor desconhecido): sem filtro nenhum.
+ *
+ * Também aceita os filtros compostos 'mineracao_email' / 'mineracao_whatsapp'
+ * / 'mineracao_instagram': categoria principal 'mineracao' (a mesma condição
+ * de sempre, precedência intacta) E, dentro dela, o canal real de contato.
  */
 export function channelWhereCondition(chFilter: string | null | undefined): SQL | undefined {
+  if (chFilter && chFilter.startsWith(MINERACAO_COMPOUND_PREFIX)) {
+    const sub = chFilter.slice(MINERACAO_COMPOUND_PREFIX.length)
+    if (sub === 'email' || sub === 'whatsapp' || sub === 'instagram') {
+      return sql<boolean>`(${channelLabelSql()} = 'mineracao') and (${mineracaoSubchannelLabelSql()} = ${sub})`
+    }
+    return undefined
+  }
+
   if (chFilter !== 'whatsapp' && chFilter !== 'instagram' && chFilter !== 'email' && chFilter !== 'mineracao') {
     return undefined
   }
@@ -167,4 +246,24 @@ export function classifyChannelInMemory(fields: ChannelFields): ChannelClassific
     }
   }
   return { isMineracao: false, isEmail: false, isInstagram: false, isWhatsapp: true }
+}
+
+/**
+ * Complementar a classifyChannelInMemory: dado um lead que JÁ é 'mineracao'
+ * (chamar classifyChannelInMemory antes e checar isMineracao), diz qual é o
+ * canal real de contato dele. Mesma lista de regras usada no
+ * mineracaoSubchannelLabelSql, então SQL e memória não têm como divergir.
+ *
+ * Chamar isto num lead que não é mineracao não tem efeito colateral (é uma
+ * pergunta válida, só que fora de contexto de negócio): a função classifica
+ * o canal real igual faria dentro do universo mineracao, não valida a
+ * categoria principal, quem chama é responsável por checar isMineracao antes.
+ */
+export function classifyMineracaoSubchannel(fields: ChannelFields): MineracaoSubchannel {
+  for (const rule of MINERACAO_SUBCATEGORY_RULES) {
+    if (matchesRule(rule, fields)) {
+      return rule.name as MineracaoSubchannel
+    }
+  }
+  return 'whatsapp'
 }

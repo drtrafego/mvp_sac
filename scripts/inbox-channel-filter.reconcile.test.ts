@@ -24,7 +24,13 @@ import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { sql } from 'drizzle-orm'
 import { recoveryLeads } from '../src/lib/db/schema'
-import { channelWhereCondition, classifyChannelInMemory, type ChannelClassification } from '../src/lib/inbox-channel-filter'
+import {
+  channelWhereCondition,
+  classifyChannelInMemory,
+  classifyMineracaoSubchannel,
+  type ChannelClassification,
+  type MineracaoSubchannel,
+} from '../src/lib/inbox-channel-filter'
 
 type Categoria = 'mineracao' | 'email' | 'instagram' | 'whatsapp'
 
@@ -37,6 +43,10 @@ type LeadFixture = {
   trackingSource: string | null
   phone: string
   esperado: Categoria
+  // Só preenchido quando esperado === 'mineracao': qual o canal REAL de
+  // contato dentro do universo mineracao (a granularidade nova pedida pelo
+  // Gastão). Fixtures sem esse campo não entram nos testes de subcategoria.
+  esperadoSub?: MineracaoSubchannel
 }
 
 const FIXTURES: LeadFixture[] = [
@@ -77,6 +87,7 @@ const FIXTURES: LeadFixture[] = [
     trackingSource: null,
     phone: '5511933334444',
     esperado: 'mineracao',
+    esperadoSub: 'whatsapp', // sem sinal de email/instagram: cai no else (WhatsApp Outreach)
   },
   {
     descricao: "channel='' (string vazia): não é 'whatsapp' por engano nem quebra o WHERE",
@@ -105,6 +116,7 @@ const FIXTURES: LeadFixture[] = [
     trackingSource: 'prospeccao_email_followup',
     phone: '5511966667777',
     esperado: 'mineracao',
+    esperadoSub: 'email', // dentro de mineracao, o canal real de contato É email
   },
   {
     descricao: "channel='instagram' explícito + trackingSource='brevo_newsletter': bate em instagram E email, precedência decide email",
@@ -123,6 +135,7 @@ const FIXTURES: LeadFixture[] = [
     trackingSource: 'PROSPECCAO_INSTAGRAM_MINERACAO',
     phone: '5511988889999',
     esperado: 'mineracao',
+    esperadoSub: 'instagram', // dentro de mineracao, o canal real de contato É instagram
   },
   // ── Rodada 4 (esta): case-sensitivity ────────────────────────────────────
   {
@@ -161,6 +174,7 @@ const FIXTURES: LeadFixture[] = [
     trackingSource: null,
     phone: '5511900002222',
     esperado: 'mineracao',
+    esperadoSub: 'whatsapp', // sem sinal de email/instagram: cai no else
   },
   {
     descricao: "platform='instagram', channel NULL",
@@ -206,6 +220,80 @@ const FIXTURES: LeadFixture[] = [
     trackingSource: null,
     phone: '5511900007777',
     esperado: 'whatsapp',
+  },
+  // ── Rodada 5 (esta): granularidade nova — subcategoria de canal real DENTRO
+  // de mineracao (pedido do Gastão em 21/09/2026, depois do bug de e-mail
+  // sumido: mineracao continua vencendo no canal principal, mas agora tem
+  // uma segunda dimensão de filtro pelo canal real de contato) ────────────
+  {
+    descricao: "mineracao via platform='mineracao' + channel='email' explícito: sub deve ser email (não só tracking_source aciona sub)",
+    origem: 'rodada 5',
+    channel: 'email',
+    platform: 'mineracao',
+    trackingSource: null,
+    phone: '5511900011111',
+    esperado: 'mineracao',
+    esperadoSub: 'email',
+  },
+  {
+    descricao: "mineracao via channel='mineracao' + channel também bateria... trackingSource='mineracao_whatsapp_outreach', sem sinal de email/instagram: sub cai no else (whatsapp)",
+    origem: 'rodada 5',
+    channel: null,
+    platform: null,
+    trackingSource: 'mineracao_whatsapp_outreach',
+    phone: '5511900022222',
+    esperado: 'mineracao',
+    esperadoSub: 'whatsapp',
+  },
+  {
+    descricao: "mineracao via trackingSource='mineracao_prospeccao' + channel='instagram' explícito: sub deve ser instagram",
+    origem: 'rodada 5',
+    channel: 'instagram',
+    platform: null,
+    trackingSource: 'mineracao_prospeccao',
+    phone: '5511900033333',
+    esperado: 'mineracao',
+    esperadoSub: 'instagram',
+  },
+  {
+    descricao: "mineracao via trackingSource='prospeccao_direct_frio' + phone com prefixo ig_: sub deve ser instagram (sinal duplo, mesma direção)",
+    origem: 'rodada 5',
+    channel: null,
+    platform: null,
+    trackingSource: 'prospeccao_direct_frio',
+    phone: 'ig_5511900044444',
+    esperado: 'mineracao',
+    esperadoSub: 'instagram',
+  },
+  {
+    descricao: "mineracao via trackingSource='mineracao_instagram_email_crosspost': bate em email E instagram DENTRO do sub, precedência do sub decide email (mesmo motivo de colisão textual do nível principal)",
+    origem: 'rodada 5',
+    channel: null,
+    platform: null,
+    trackingSource: 'mineracao_instagram_email_crosspost',
+    phone: '5511900055555',
+    esperado: 'mineracao',
+    esperadoSub: 'email',
+  },
+  {
+    descricao: "mineracao via platform='mineracao' + channel='EMAIL' (maiúsculo): sub precisa cair em email, não em whatsapp (case-sensitivity dentro do sub, mesmo bug da rodada 4)",
+    origem: 'rodada 5',
+    channel: 'EMAIL',
+    platform: 'mineracao',
+    trackingSource: null,
+    phone: '5511900066666',
+    esperado: 'mineracao',
+    esperadoSub: 'email',
+  },
+  {
+    descricao: "mineracao via platform='mineracao' + phone='IG_5511900077777' (prefixo maiúsculo): sub precisa cair em instagram, não em whatsapp",
+    origem: 'rodada 5',
+    channel: null,
+    platform: 'mineracao',
+    trackingSource: null,
+    phone: 'IG_5511900077777',
+    esperado: 'mineracao',
+    esperadoSub: 'instagram',
   },
 ]
 
@@ -457,6 +545,86 @@ async function main() {
       }
       if (divergencias.length > 0) {
         assert.fail(`SQL e memória divergiram:\n${divergencias.join('\n')}`)
+      }
+    })
+
+    // ── 5. Subcategoria (canal real dentro de mineracao): caso a caso ───────
+    const fixturesComSub = FIXTURES.map((f, i) => ({ f, id: idByIndex.get(i)! })).filter(
+      ({ f }) => f.esperado === 'mineracao' && f.esperadoSub !== undefined
+    )
+
+    for (const { f, id } of fixturesComSub) {
+      const subEsperado = f.esperadoSub!
+
+      await caso(`[${f.origem}] classifyMineracaoSubchannel classifica "${f.descricao}" como '${subEsperado}'`, () => {
+        const sub = classifyMineracaoSubchannel(f)
+        assert.equal(sub, subEsperado, `esperava sub='${subEsperado}', veio '${sub}'`)
+      })
+
+      await caso(`[${f.origem}] channelWhereCondition('mineracao_${subEsperado}') bate no lead de "${f.descricao}"`, async () => {
+        const cond = channelWhereCondition(`mineracao_${subEsperado}`)!
+        const rows = await db
+          .select({ id: recoveryLeads.id })
+          .from(recoveryLeads)
+          .where(sql`${recoveryLeads.id} = ${id} and ${cond}`)
+        assert.equal(rows.length, 1, `lead ${id} deveria bater em mineracao_${subEsperado}`)
+      })
+
+      await caso(`[${f.origem}] "${f.descricao}" NÃO bate nas outras 2 subcategorias de mineracao`, async () => {
+        const outrasSubs: MineracaoSubchannel[] = (['email', 'whatsapp', 'instagram'] as MineracaoSubchannel[]).filter(
+          s => s !== subEsperado
+        )
+        for (const outraSub of outrasSubs) {
+          const cond = channelWhereCondition(`mineracao_${outraSub}`)!
+          const rows = await db
+            .select({ id: recoveryLeads.id })
+            .from(recoveryLeads)
+            .where(sql`${recoveryLeads.id} = ${id} and ${cond}`)
+          assert.equal(rows.length, 0, `lead ${id} NÃO deveria bater em mineracao_${outraSub}`)
+        }
+      })
+    }
+
+    // ── 6. Reconciliação agregada da subcategoria: soma dos 3 sub-buckets ===
+    // categoria principal 'mineracao' (empresa toda, não só os fixtures com
+    // esperadoSub), sem overlap nem buraco DENTRO do universo mineracao.
+    await caso('reconciliação da subcategoria: soma de mineracao_email + mineracao_whatsapp + mineracao_instagram == mineracao', async () => {
+      const [row] = await db
+        .select({
+          mineracao: sql<number>`count(*) filter (where ${channelWhereCondition('mineracao')})`,
+          mineracaoEmail: sql<number>`count(*) filter (where ${channelWhereCondition('mineracao_email')})`,
+          mineracaoWhatsapp: sql<number>`count(*) filter (where ${channelWhereCondition('mineracao_whatsapp')})`,
+          mineracaoInstagram: sql<number>`count(*) filter (where ${channelWhereCondition('mineracao_instagram')})`,
+        })
+        .from(recoveryLeads)
+
+      const mineracao = Number(row.mineracao)
+      const somaSub = Number(row.mineracaoEmail) + Number(row.mineracaoWhatsapp) + Number(row.mineracaoInstagram)
+
+      assert.equal(
+        somaSub,
+        mineracao,
+        `soma dos 3 sub-buckets (${somaSub}) deveria ser IGUAL ao total de mineracao (${mineracao}) — overlap ou buraco na subcategoria`
+      )
+    })
+
+    // ── 7. Overlap direto da subcategoria: nenhum lead em 2 sub-buckets ao mesmo tempo
+    await caso('nenhum lead aparece em mais de uma subcategoria de mineracao ao mesmo tempo (overlap direto)', async () => {
+      const subs: MineracaoSubchannel[] = ['email', 'whatsapp', 'instagram']
+      const contagemPorId = new Map<number, string[]>()
+      for (const sub of subs) {
+        const cond = channelWhereCondition(`mineracao_${sub}`)!
+        const rows = await db.select({ id: recoveryLeads.id }).from(recoveryLeads).where(cond)
+        for (const r of rows) {
+          contagemPorId.set(r.id, [...(contagemPorId.get(r.id) ?? []), sub])
+        }
+      }
+      const comOverlap = [...contagemPorId.entries()].filter(([, cats]) => cats.length > 1)
+      if (comOverlap.length > 0) {
+        const detalhe = comOverlap
+          .map(([id, cats]) => `lead ${id} (${fixtureByIndexId.get(id)?.descricao}) em [${cats.join(', ')}]`)
+          .join('; ')
+        assert.fail(`overlap de subcategoria encontrado: ${detalhe}`)
       }
     })
   } finally {

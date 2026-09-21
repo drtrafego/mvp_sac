@@ -11,7 +11,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
   const { searchParams } = new URL(req.url)
 
-  const chFilter = searchParams.get('channel') // all | whatsapp | instagram | email | mineracao
+  const chFilter = searchParams.get('channel') // all | whatsapp | instagram | email | mineracao | mineracao_email | mineracao_whatsapp | mineracao_instagram
   const statusFilter = searchParams.get('status') // all | paused | active
   const q = searchParams.get('q')?.trim()
 
