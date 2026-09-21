@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, text, boolean, timestamp, jsonb, uniqueIndex } from 'drizzle-orm/pg-core'
+import { pgTable, serial, integer, text, boolean, timestamp, jsonb, uniqueIndex, date } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
 
 // ─── Empresas (multi-tenant) ──────────────────────────────────────────────────
@@ -36,6 +36,15 @@ export const settings = pgTable('settings', {
   // na Meta, não o compartilhado). Nulo = usa o META_APP_SECRET compartilhado
   // do .env (comportamento de hoje). Ver src/lib/meta-signature.ts.
   metaAppSecret: text('meta_app_secret'),
+  // Marketing API (Anúncios), DISTINTO do metaAccessToken acima (esse é o
+  // token do WhatsApp Cloud API). Token de sistema com escopo ads_read na
+  // conta de anúncios do cliente, usado para resolver campanha/conjunto/
+  // anúncio (e o url_tags/UTM configurado no anúncio) de um lead a partir do
+  // meta_ad_id salvo nele. Porta de META_ACCESS_TOKEN_<slug> do painel antigo
+  // (agente_painel/app.py). Nulo = atribuição de anúncio desligada para esta
+  // empresa. Ver src/lib/ads-attribution.ts.
+  metaAdsAccessToken: text('meta_ads_access_token'),
+  metaAdsAccountId: text('meta_ads_account_id'),        // formato act_XXXXXXXXXXXX
   uazapiBaseUrl: text('uazapi_base_url'),
   uazapiInstanceToken: text('uazapi_instance_token'),
   notificationPhone: text('notification_phone'),
@@ -60,6 +69,14 @@ export const settings = pgTable('settings', {
   pipelineColumns: jsonb('pipeline_columns'),
   // Configuração personalizada de menus da barra lateral (visibilidade por cliente/empresa)
   sidebarConfig: jsonb('sidebar_config'),
+  // Grade semanal de horário de atendimento da agenda (por dia da semana), fuso e
+  // duração do slot. Espelha o agenda_config.json que cada bot Hermes guarda hoje
+  // dentro do próprio container (ver agenda_tools.py no painel antigo). Aqui é
+  // só a CONFIGURAÇÃO: nenhum bot consome isto ainda (integração é trabalho futuro).
+  // Formato: { segunda: { inicio, fim } | null, terca: {...}, quarta: {...},
+  // quinta: {...}, sexta: {...}, sabado: {...}, domingo: {...}, timezone,
+  // duracaoSlotMinutos }. Dia com valor null = fechado naquele dia.
+  availabilitySchedule: jsonb('availability_schedule'),
   // Resposta automática por IA (Nina/Amanda, via ponte da Luana): não é mais o
   // prompt enviado pra API nenhuma (a ponte tem o SOUL dela mesma), sobrou só
   // como o GATE manual: nulo = resposta automática desligada pra essa empresa,
@@ -184,6 +201,7 @@ export const recoveryLeads = pgTable('recovery_leads', {
   botPaused: boolean('bot_paused').default(false),    // true se o atendente humano pausou o bot para assumir
   botPausedAt: timestamp('bot_paused_at'),
   botPausedBy: text('bot_paused_by'),
+  botPausedAll: boolean('bot_paused_all').default(false), // true só quando o PAUSAR TUDO da empresa foi quem pausou este lead.
 
   // Follow-up, Lembretes e Etapa do Pipeline
   followUpDate: timestamp('follow_up_date'),
@@ -205,6 +223,36 @@ export const recoveryLeads = pgTable('recovery_leads', {
   // pendingStart?, pendingEnd?, pendingNome? }. É o que permite RESCHEDULE/CANCEL
   // saberem qual reunião mexer sem o modelo precisar saber o id.
   aiScheduleState: jsonb('ai_schedule_state'),
+
+  // Lock otimista por lead durante a geração da resposta automática de IA
+  // (21/09/2026, plano de migração Dr. Lucas/Gramado, seção 3): sem isto,
+  // duas mensagens do mesmo lead em sequência rápida disparam duas chamadas
+  // concorrentes de generateAndSendAiReply pro MESMO lead (resposta fora de
+  // ordem, ou pior quando a ferramenta de agenda entrar em cena: duas
+  // execuções de reserva na mesma sessão). Preenchido = alguém está gerando
+  // resposta pra este lead agora; nulo = livre. O timeout de 3 minutos (ver
+  // src/lib/ai-reply.ts) é rede de segurança contra processo morto no meio
+  // (função da Vercel derrubada por timeout) sem exigir liberação explícita.
+  aiReplyLockAt: timestamp('ai_reply_lock_at'),
+
+  // Tags estruturadas de mineração (21/09/2026): classificação/segmentação do
+  // lead vinda do lado do minerador, via sync-agents.ts (Agents DB
+  // intermediário, CRM_DATABASE_URL). TODOS os campos são opcionais porque o
+  // dado real tem lacuna e o sync precisa ser resiliente a fonte incompleta:
+  //   origem: já 100% preenchido no minerador (source: google_places |
+  //     instagram | linkedin | manual), só herdado/copiado pro lead aqui.
+  //   nicho: promovido do nível da mineração (minings.niche) pro lead.
+  //   temperatura: hot | cold | warm; 9% dos leads (4.474 de 49.785) não têm
+  //     valor no minerador, por isso nullable também aqui.
+  //   statusRelacionamento: campo NOVO, introduzido pelo SAC. Não existe
+  //     centralizado no minerador hoje (só fragmentado por campanha, 8,6% de
+  //     cobertura), por isso nasce vazio pra 91,4% dos leads.
+  miningTags: jsonb('mining_tags').$type<{
+    origem?: string
+    nicho?: string
+    temperatura?: string
+    statusRelacionamento?: string
+  }>(),
 
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
@@ -378,6 +426,23 @@ export const instagramCommentLogs = pgTable('instagram_comment_logs', {
   uniqueIndex('instagram_comment_logs_user_media_unique').on(table.automationId, table.commenterId, table.mediaId),
 ])
 
+// ─── Bloqueios de agenda por data (férias, congresso, feriado) ───────────────
+// Espelha o comando `bloquear <data> [motivo]` do agenda_tools.py do painel
+// antigo (roda dentro do container Hermes de cada bot). Aqui é só a
+// CONFIGURAÇÃO ficando salva no banco do SAC: nenhum bot consulta isto ainda,
+// a integração ("o bot pergunta ao SAC antes de oferecer horário") é trabalho
+// futuro, fora do escopo desta tarefa.
+export const agendaBlockedDates = pgTable('agenda_blocked_dates', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  date: date('date', { mode: 'string' }).notNull(),   // 'YYYY-MM-DD', sem timestamp: bloqueio é o dia inteiro
+  reason: text('reason'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (table) => [
+  // Não faz sentido bloquear a mesma data duas vezes para a mesma empresa.
+  uniqueIndex('agenda_blocked_dates_company_date_unique').on(table.companyId, table.date),
+])
+
 // ─── Rate limit local da ponte de IA (Nina/Amanda, ver src/lib/ai/ai-bridge.ts) ─
 // Contagem GLOBAL, não por empresa: o serviço do outro lado (claude -p) é
 // single-thread e compartilha fila com o atendimento REAL do WhatsApp de
@@ -397,6 +462,7 @@ export const companiesRelations = relations(companies, ({ one, many }) => ({
   members: many(companyMembers),
   commentAutomations: many(instagramCommentAutomations),
   commentLogs: many(instagramCommentLogs),
+  agendaBlockedDates: many(agendaBlockedDates),
 }))
 
 export const settingsRelations = relations(settings, ({ one }) => ({
@@ -440,4 +506,8 @@ export const instagramCommentAutomationsRelations = relations(instagramCommentAu
 export const instagramCommentLogsRelations = relations(instagramCommentLogs, ({ one }) => ({
   company: one(companies, { fields: [instagramCommentLogs.companyId], references: [companies.id] }),
   automation: one(instagramCommentAutomations, { fields: [instagramCommentLogs.automationId], references: [instagramCommentAutomations.id] }),
+}))
+
+export const agendaBlockedDatesRelations = relations(agendaBlockedDates, ({ one }) => ({
+  company: one(companies, { fields: [agendaBlockedDates.companyId], references: [companies.id] }),
 }))

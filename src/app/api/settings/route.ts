@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
+import { mask } from '@/lib/settings-mask'
 
 /**
  * Token da barreira de webhooks, devolvido SÓ para admin.
@@ -17,12 +18,6 @@ async function webhookTokenParaAdmin(): Promise<string | null> {
   const user = await getCurrentUser()
   if (!user?.isAdmin) return null
   return process.env.RECUPERAVENDAS_WEBHOOK_SECRET ?? null
-}
-
-function mask(val: string | null | undefined): string {
-  if (!val) return ''
-  if (val.length <= 4) return '****'
-  return '****' + val.slice(-4)
 }
 
 function resolveSecret(bodyVal: string | undefined, existingVal: string | null | undefined): string | null {
@@ -56,6 +51,8 @@ export async function GET(): Promise<NextResponse> {
       metaVerifyToken: '',
       metaWabaId: '',
       metaAppSecret: '',
+      metaAdsAccessToken: '',
+      metaAdsAccountId: '',
       uazapiBaseUrl: '',
       uazapiInstanceToken: '',
       notificationPhone: '',
@@ -84,6 +81,8 @@ export async function GET(): Promise<NextResponse> {
     metaAccessToken: mask(row.metaAccessToken),
     metaWabaId: row.metaWabaId ?? '',
     metaAppSecret: mask(row.metaAppSecret),
+    metaAdsAccessToken: mask(row.metaAdsAccessToken),
+    metaAdsAccountId: row.metaAdsAccountId ?? '',
     uazapiInstanceToken: mask(row.uazapiInstanceToken),
     brevoApiKey: mask(row.brevoApiKey),
     brevoSenderEmail: row.brevoSenderEmail ?? '',
@@ -121,6 +120,8 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
         metaVerifyToken: body.metaVerifyToken ?? existing.metaVerifyToken,
         metaWabaId: body.metaWabaId ?? existing.metaWabaId,
         metaAppSecret: resolveSecret(body.metaAppSecret, existing.metaAppSecret),
+        metaAdsAccessToken: resolveSecret(body.metaAdsAccessToken, existing.metaAdsAccessToken),
+        metaAdsAccountId: body.metaAdsAccountId ?? existing.metaAdsAccountId,
         uazapiBaseUrl: body.uazapiBaseUrl ?? existing.uazapiBaseUrl,
         uazapiInstanceToken: resolveSecret(body.uazapiInstanceToken, existing.uazapiInstanceToken),
         notificationPhone: body.notificationPhone ?? existing.notificationPhone,
@@ -159,6 +160,8 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       metaVerifyToken: body.metaVerifyToken || null,
       metaWabaId: body.metaWabaId || null,
       metaAppSecret: body.metaAppSecret || null,
+      metaAdsAccessToken: body.metaAdsAccessToken || null,
+      metaAdsAccountId: body.metaAdsAccountId || null,
       uazapiBaseUrl: body.uazapiBaseUrl || null,
       uazapiInstanceToken: body.uazapiInstanceToken || null,
       notificationPhone: body.notificationPhone || null,

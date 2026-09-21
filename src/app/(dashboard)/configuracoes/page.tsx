@@ -1,13 +1,23 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import { useTheme } from 'next-themes'
-import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette, Columns3 } from 'lucide-react'
+import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette, Columns3, CalendarClock, ChevronRight, PauseCircle, PlayCircle, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 
 /*
@@ -367,6 +377,208 @@ function EquipeSection() {
   )
 }
 
+interface PauseAllCounts {
+  total: number
+  paused: number
+  pausedByMassAction: number
+  pausedIndividually: number
+}
+
+function PausarTudoSection({ slug }: { slug: string }) {
+  const [counts, setCounts] = useState<PauseAllCounts | null>(null)
+  const [loadingCounts, setLoadingCounts] = useState(true)
+  const [reason, setReason] = useState('')
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmAction, setConfirmAction] = useState<'pause' | 'unpause' | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+  const [feedback, setFeedback] = useState('')
+
+  const fetchCounts = useCallback(async () => {
+    if (!slug) return
+    try {
+      const res = await fetch(`/api/v1/companies/${slug}/pause-all`)
+      if (!res.ok) return
+      const json = await res.json()
+      setCounts({
+        total: json.total ?? 0,
+        paused: json.paused ?? 0,
+        pausedByMassAction: json.pausedByMassAction ?? 0,
+        pausedIndividually: json.pausedIndividually ?? 0,
+      })
+    } catch {
+      // silencioso: contadores voltam na próxima tentativa
+    } finally {
+      setLoadingCounts(false)
+    }
+  }, [slug])
+
+  useEffect(() => {
+    fetchCounts()
+    const interval = setInterval(fetchCounts, 15000)
+    return () => clearInterval(interval)
+  }, [fetchCounts])
+
+  function openConfirm(action: 'pause' | 'unpause') {
+    setError('')
+    setFeedback('')
+    setConfirmAction(action)
+    setConfirmOpen(true)
+  }
+
+  async function handleConfirm() {
+    if (!confirmAction || !slug) return
+    setSubmitting(true)
+    setError('')
+    setFeedback('')
+
+    const body: Record<string, unknown> = { action: confirmAction }
+    if (confirmAction === 'pause') {
+      body.confirm = true
+      if (reason.trim()) body.reason = reason.trim()
+    }
+
+    try {
+      const res = await fetch(`/api/v1/companies/${slug}/pause-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json()
+
+      if (!res.ok) {
+        setError(json.error || 'Erro ao processar a ação.')
+        setSubmitting(false)
+        return
+      }
+
+      setFeedback(
+        confirmAction === 'pause'
+          ? `Atendimento pausado para ${json.affected} lead(s).`
+          : `Atendimento reativado para ${json.affected} lead(s).`
+      )
+      setReason('')
+      setConfirmOpen(false)
+      await fetchCounts()
+    } catch {
+      setError('Erro de rede ao processar a ação.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const activeCount = counts ? counts.total - counts.paused : 0
+
+  return (
+    <section className="panel space-y-4 p-[var(--space-card)]">
+      <div className="flex items-center gap-2">
+        <PauseCircle size={16} className="text-st-negativo" />
+        <h2 className="text-h2 text-fg">Pausar todo o atendimento</h2>
+      </div>
+      <Separator className="bg-line-subtle" />
+      <p className="text-body text-fg-muted">
+        Pausa o bot de IA em todos os leads da empresa de uma vez. Quem já estava pausado individualmente
+        por decisão humana antes desta ação continua como estava. Ao reativar, só volta quem esta mesma
+        ação em massa pausou, uma pausa individual feita depois não é revertida por engano.
+      </p>
+
+      {/* Contadores ao vivo */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
+          <p className="text-micro text-fg-subtle uppercase">Ativos</p>
+          <p className="num text-h2 text-st-positivo">{loadingCounts ? '—' : activeCount}</p>
+        </div>
+        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
+          <p className="text-micro text-fg-subtle uppercase">Pausados (total)</p>
+          <p className="num text-h2 text-fg">{loadingCounts ? '—' : counts?.paused ?? 0}</p>
+        </div>
+        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
+          <p className="text-micro text-fg-subtle uppercase">Pausados em massa</p>
+          <p className="num text-h2 text-st-atencao">{loadingCounts ? '—' : counts?.pausedByMassAction ?? 0}</p>
+        </div>
+        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
+          <p className="text-micro text-fg-subtle uppercase">Pausados individualmente</p>
+          <p className="num text-h2 text-fg">{loadingCounts ? '—' : counts?.pausedIndividually ?? 0}</p>
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Motivo (opcional, só para a pausa em massa)</Label>
+        <Textarea
+          value={reason}
+          onChange={e => setReason(e.target.value)}
+          placeholder="Ex.: manutenção programada, campanha suspensa..."
+          className="bg-surface-inset border-line-subtle max-w-[var(--w-form)]"
+          rows={2}
+        />
+      </div>
+
+      {feedback && <p className="text-micro text-st-positivo">{feedback}</p>}
+
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <Button
+          onClick={() => openConfirm('pause')}
+          disabled={loadingCounts}
+          className="focus-ring h-11 lg:h-9 bg-st-negativo text-white hover:bg-st-negativo/90"
+        >
+          <PauseCircle size={15} />
+          Pausar tudo
+        </Button>
+        <Button
+          onClick={() => openConfirm('unpause')}
+          disabled={loadingCounts || !counts?.pausedByMassAction}
+          variant="outline"
+          className="focus-ring h-11 lg:h-9 border-line-default"
+        >
+          <PlayCircle size={15} />
+          Reativar tudo {counts?.pausedByMassAction ? `(${counts.pausedByMassAction})` : ''}
+        </Button>
+      </div>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle size={18} className="text-st-atencao" />
+              {confirmAction === 'pause' ? 'Pausar todo o atendimento?' : 'Reativar todo o atendimento?'}
+            </DialogTitle>
+            <DialogDescription>
+              {confirmAction === 'pause' ? (
+                <>
+                  O bot de IA vai parar de responder <strong className="text-fg">{activeCount}</strong> lead(s)
+                  ativo(s) agora mesmo. Quem já está pausado por decisão individual não é afetado.
+                </>
+              ) : (
+                <>
+                  Vai reverter a pausa de <strong className="text-fg">{counts?.pausedByMassAction ?? 0}</strong>{' '}
+                  lead(s) pausado(s) por esta ação em massa. Pausas individuais feitas depois não são revertidas.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {error && <p className="text-micro text-st-negativo">{error}</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={submitting} className="h-9">
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleConfirm}
+              disabled={submitting}
+              className={cn(
+                'h-9 text-white',
+                confirmAction === 'pause' ? 'bg-st-negativo hover:bg-st-negativo/90' : 'bg-st-positivo hover:bg-st-positivo/90'
+              )}
+            >
+              {submitting ? <Loader2 size={14} className="animate-spin" /> : null}
+              {confirmAction === 'pause' ? 'Sim, pausar tudo' : 'Sim, reativar tudo'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </section>
+  )
+}
+
 function AparenciaSection() {
   const [mounted, setMounted] = useState(false)
   const { theme, resolvedTheme, setTheme } = useTheme()
@@ -596,8 +808,35 @@ export default function ConfiguracoesPage() {
       {/* Aparência & Tema */}
       <AparenciaSection />
 
+      {/* Pausar Tudo */}
+      {slug && <PausarTudoSection slug={slug} />}
+
       {/* Equipe */}
       <EquipeSection />
+
+      {/* Agenda: bloqueios de data e horário de atendimento */}
+      <Link href="/configuracoes/agenda" className="focus-ring block">
+        <section className="panel p-[var(--space-card)] flex items-center justify-between gap-3 hover:bg-surface-raised transition-colors cursor-pointer">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+              style={{
+                background: 'color-mix(in oklch, var(--brand-solid) 12%, transparent)',
+                border: '1px solid color-mix(in oklch, var(--brand-solid) 22%, transparent)',
+              }}
+            >
+              <CalendarClock size={16} className="text-brand-ink" />
+            </div>
+            <div>
+              <h2 className="text-h2 text-fg">Agenda</h2>
+              <p className="text-body text-fg-muted mt-0.5">
+                Bloqueie datas (férias, congresso) e defina o horário semanal de atendimento.
+              </p>
+            </div>
+          </div>
+          <ChevronRight size={18} className="text-fg-subtle shrink-0" />
+        </section>
+      </Link>
 
       {/* Personalização dos Menus da Barra Lateral (Simplificação por Cliente) */}
       <section className="panel space-y-4 p-[var(--space-card)]">

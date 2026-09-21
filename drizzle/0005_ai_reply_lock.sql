@@ -1,0 +1,29 @@
+-- Migração aditiva (expand): coluna nova nullable em recovery_leads, nenhum
+-- dado existente é tocado. Fecha um gap de concorrência real já em produção
+-- (Nina/Amanda) e que fica mais perigoso quando Dr. Lucas/Gramado migrarem
+-- (ferramenta de agenda/reserva rodando dentro da mesma sessão de IA): não
+-- existia lock por lead durante a geração da resposta automática. Duas
+-- mensagens em sequência rápida do mesmo lead ("oi" / "quero reservar pra
+-- hoje às 20h") podiam disparar duas chamadas concorrentes de
+-- generateAndSendAiReply pro MESMO lead (resposta fora de ordem, ou pior:
+-- duas execuções de ação de agenda na mesma sessão).
+--
+-- Lock otimista via UPDATE atômico condicional (mesmo padrão já usado no
+-- rate-limit local da ponte, ver reservarSlotDeChamada em
+-- src/lib/ai/ai-bridge.ts): quem conseguir o UPDATE processa, quem não
+-- conseguir desiste desta rodada sem erro (a próxima mensagem do lead relê
+-- o histórico já atualizado). O timeout de 3 minutos embutido na condição
+-- do WHERE (ver src/lib/ai-reply.ts) é rede de segurança contra processo
+-- morto no meio (função da Vercel derrubada por timeout) sem exigir
+-- liberação explícita do lock.
+--
+-- Este projeto foi versionado até aqui via `drizzle-kit push` direto /
+-- self-healing schema em src/lib/db/index.ts (ensureSchema), não por
+-- reconciliação de snapshot do drizzle-kit generate (mesmo padrão de
+-- 0001/0002/0003). Este arquivo é aditivo e independente, seguro de aplicar
+-- sozinho com psql/drizzle-kit push.
+--
+-- Numeração consolidada: 0004 pertence a agenda-config-bloqueios; esta
+-- migração de lock de resposta automática ocupa 0005.
+
+ALTER TABLE "recovery_leads" ADD COLUMN IF NOT EXISTS "ai_reply_lock_at" timestamp;

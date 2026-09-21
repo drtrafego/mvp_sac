@@ -43,6 +43,10 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       botPaused: nextPaused,
       botPausedAt: nextPaused ? new Date() : null,
       botPausedBy: nextPaused ? operatorName : null,
+      // Pausa/despausa individual sempre "reivindica" o lead: zera o flag da
+      // ação em massa pra "Despausar Tudo" não reverter uma decisão humana
+      // tomada depois do pause-all (ver pause-all/route.ts).
+      botPausedAll: false,
       updatedAt: new Date(),
     })
     .where(eq(recoveryLeads.id, id))

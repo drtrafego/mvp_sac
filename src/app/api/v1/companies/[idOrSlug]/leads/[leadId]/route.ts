@@ -65,7 +65,13 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     if (body.status !== undefined) updateData.status = body.status
     if (body.stage !== undefined) updateData.pipelineStage = body.stage
     if (body.pipelineStage !== undefined) updateData.pipelineStage = body.pipelineStage
-    if (body.botPaused !== undefined) updateData.botPaused = Boolean(body.botPaused)
+    if (body.botPaused !== undefined) {
+      updateData.botPaused = Boolean(body.botPaused)
+      // Pausa/despausa individual sempre "reivindica" o lead: zera o flag da
+      // ação em massa pra "Despausar Tudo" não reverter uma decisão humana
+      // tomada depois do pause-all (ver pause-all/route.ts).
+      updateData.botPausedAll = false
+    }
     if (body.botPausedBy !== undefined) updateData.botPausedBy = body.botPausedBy
     if (body.botPaused !== undefined && body.botPaused) updateData.botPausedAt = new Date()
 

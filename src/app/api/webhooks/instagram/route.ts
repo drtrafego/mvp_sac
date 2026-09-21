@@ -1,3 +1,9 @@
+// generateAndSendAiReply roda via after() e chama a ponte de IA, que tem
+// timeout de 150s (TIMEOUT_MS em src/lib/ai/ai-bridge.ts). Sem maxDuration
+// explícito, o default da Vercel pode matar a function antes disso e o
+// finally que libera o lock de concorrência nunca roda.
+export const maxDuration = 180
+
 import { NextRequest, NextResponse } from "next/server"
 import { after } from "next/server"
 import { db } from "@/lib/db"

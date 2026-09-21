@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq, desc, and, or, inArray } from 'drizzle-orm'
+import { channelWhereCondition } from '@/lib/inbox-channel-filter'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -19,6 +20,13 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   if (error || !context) return error!
 
   const companyId = context.company.id
+
+  // Sem parâmetro = mesmo comportamento de sempre (todos os canais). Passar
+  // ?channel=email|whatsapp|instagram|mineracao filtra no WHERE, mesma
+  // heurística usada no inbox interno.
+  const { searchParams } = new URL(req.url)
+  const channelParam = searchParams.get('channel')?.trim().toLowerCase() || undefined
+  const channelCondition = channelWhereCondition(channelParam)
 
   const leads = await db
     .select({
@@ -39,7 +47,9 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       createdAt: recoveryLeads.createdAt,
     })
     .from(recoveryLeads)
-    .where(eq(recoveryLeads.companyId, companyId))
+    .where(
+      channelCondition ? and(eq(recoveryLeads.companyId, companyId), channelCondition) : eq(recoveryLeads.companyId, companyId)
+    )
     .orderBy(desc(recoveryLeads.updatedAt))
     .limit(250)
 
@@ -109,7 +119,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   })
 
   // Deduplicação e consolidação por pessoa
-  const personMap = new Map<string, any>()
+  const personMap = new Map<string, (typeof withMessages)[number]>()
   for (const c of withMessages) {
     const rawDigits = (c.phone || '').replace(/\D/g, '')
     const key = rawDigits.length >= 9

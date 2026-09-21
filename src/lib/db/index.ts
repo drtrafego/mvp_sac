@@ -18,6 +18,7 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_paused boolean DEFAULT false`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_paused_at timestamp`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_paused_by text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_paused_all boolean DEFAULT false`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS converted_by_job_id integer`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS converted_from text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS priority integer DEFAULT 0`,
@@ -56,6 +57,11 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS ai_system_prompt text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_app_secret text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_schedule_state jsonb`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_reply_lock_at timestamp`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS availability_schedule jsonb`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_ads_access_token text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_ads_account_id text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS mining_tags jsonb`,
 
           // agent_activity_logs
           client`
@@ -206,6 +212,23 @@ function ensureSchema(client: any): Promise<void> {
           client`
             CREATE UNIQUE INDEX IF NOT EXISTS instagram_comment_logs_user_media_unique
             ON instagram_comment_logs (automation_id, commenter_id, media_id)
+          `,
+
+          // ─── Bloqueios de agenda por data (férias, congresso, feriado) ─────────
+          // Só a CONFIGURAÇÃO fica salva aqui: nenhum bot consulta isto ainda
+          // (ver comentário no schema.ts em agendaBlockedDates).
+          client`
+            CREATE TABLE IF NOT EXISTS agenda_blocked_dates (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              date DATE NOT NULL,
+              reason TEXT,
+              created_at TIMESTAMP DEFAULT NOW()
+            )
+          `,
+          client`
+            CREATE UNIQUE INDEX IF NOT EXISTS agenda_blocked_dates_company_date_unique
+            ON agenda_blocked_dates (company_id, date)
           `,
 
           // ─── Rate limit local da ponte de IA (Nina/Amanda, 19/09/2026) ─────────

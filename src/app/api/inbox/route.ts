@@ -3,8 +3,9 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
-import { desc, eq, sql, and, or, inArray, ilike } from 'drizzle-orm'
+import { desc, eq, sql, and, or, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
+import { channelWhereCondition } from '@/lib/inbox-channel-filter'
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
@@ -13,6 +14,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const chFilter = searchParams.get('channel') // all | whatsapp | instagram | email | mineracao
   const statusFilter = searchParams.get('status') // all | paused | active
   const q = searchParams.get('q')?.trim()
+
+  // Filtro de canal precisa entrar no WHERE, antes do LIMIT: filtrar depois
+  // (em memória, sobre os 200 já cortados por atividade recente) é o que
+  // fazia o WhatsApp de alta recorrência engolir as vagas e some e-mail
+  // recém-criado da lista mesmo estando salvo certo no banco.
+  const channelCondition = channelWhereCondition(chFilter)
 
   const leads = await db
     .select({
@@ -36,7 +43,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       lastActionAt: recoveryLeads.lastActionAt,
     })
     .from(recoveryLeads)
-    .where(eq(recoveryLeads.companyId, company.id))
+    .where(
+      channelCondition
+        ? and(eq(recoveryLeads.companyId, company.id), channelCondition)
+        : eq(recoveryLeads.companyId, company.id)
+    )
     .orderBy(desc(sql`COALESCE(${recoveryLeads.lastActionAt}, ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`))
     .limit(200)
 
@@ -113,27 +124,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
   })
 
-  if (chFilter && chFilter !== 'all') {
-    mapped = mapped.filter(l => {
-      const ch = (l.channel || 'whatsapp').toLowerCase()
-      const pl = (l.platform || '').toLowerCase()
-      const src = (l.trackingSource || '').toLowerCase()
-      if (chFilter === 'instagram') {
-        return ch === 'instagram' || pl === 'instagram' || src.includes('instagram') || l.phone.startsWith('ig_')
-      }
-      if (chFilter === 'email') {
-        return ch === 'email' || src.includes('email') || src.includes('brevo')
-      }
-      if (chFilter === 'mineracao') {
-        return ch === 'mineracao' || pl === 'mineracao' || src.includes('mineracao') || src.includes('prospeccao')
-      }
-      if (chFilter === 'whatsapp') {
-        return ch === 'whatsapp' && !l.phone.startsWith('ig_')
-      }
-      return true
-    })
-  }
-
+  // Canal já filtrado no WHERE acima (channelWhereCondition). Status e busca
+  // seguem em memória: operam sobre o resultado já correto por canal.
   if (statusFilter && statusFilter !== 'all') {
     if (statusFilter === 'paused') {
       mapped = mapped.filter(l => l.botPaused === true)
