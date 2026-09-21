@@ -47,6 +47,20 @@ export interface OutreachConvoDbRow {
   status: string | null
   last_at: string | null
   msg_count?: number | null
+  // Tags de mineração (21/09/2026): colunas OPCIONAIS no Agents DB, gravadas
+  // pelo lado do minerador (outreach_sync.py, trabalho da Luana, em paralelo
+  // e pode não estar pronto ainda). Só aparecem aqui quando
+  // detectOutreachTagColumns() confirmou a existência da coluna ANTES do
+  // SELECT incluí-la — se não existir, o campo simplesmente vem undefined,
+  // sem quebrar a query nem o sync. Nomes reais conforme
+  // central-db/outreach_sync.py:91-97 (ALTER TABLE do lado da Luana): nicho,
+  // origem, temperatura, outreach_status. "origem" aqui é a coluna NOVA
+  // (origem real do lead), diferente de "source" abaixo, que é uma constante
+  // fixa "prospeccao" sempre presente e não tem relação com a origem real.
+  nicho?: string | null
+  origem?: string | null
+  temperatura?: string | null
+  outreach_status?: string | null
 }
 
 export interface OutreachMsgDbRow {
@@ -88,6 +102,33 @@ export interface SyncReport {
 function normalizeDigits(val: string | null | undefined): string {
   if (!val) return ''
   return val.replace(/\D/g, '')
+}
+
+// Tags de mineração (21/09/2026): nicho, origem, temperatura e status de
+// relacionamento consolidado ainda não existem em public.outreach_convos no
+// Agents DB (a Luana trabalha nisso em paralelo, outreach_sync.py, e pode não
+// ter terminado). Selecionar uma coluna inexistente derruba a query INTEIRA
+// (queryAgentsDb captura o erro e devolve null), o que quebraria todo o bloco
+// 4 de sync de leads/mensagens de mineração, não só as tags. Por isso a lista
+// de colunas do SELECT é montada dinamicamente: só entra o que o
+// information_schema confirma existir agora. Roda de novo em toda chamada de
+// sync, então o dia em que a coluna aparecer ela passa a ser lida sozinha,
+// sem precisar de deploy novo aqui.
+// Nomes REAIS confirmados em central-db/outreach_sync.py:91-97 (ALTER TABLE
+// do lado da Luana): nicho, origem, temperatura, outreach_status.
+const OUTREACH_TAG_COLUMN_CANDIDATES = ['nicho', 'origem', 'temperatura', 'outreach_status'] as const
+
+async function detectOutreachTagColumns(): Promise<Set<string>> {
+  const rows = await queryAgentsDb<{ column_name: string }>(
+    `
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'outreach_convos'
+        and column_name = ANY($1)
+    `,
+    [OUTREACH_TAG_COLUMN_CANDIDATES as unknown as string[]]
+  )
+  return new Set((rows || []).map((r) => r.column_name))
 }
 
 export async function syncAgentsAndCompanies(): Promise<SyncReport> {
@@ -321,8 +362,13 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
   // 4. Sincroniza Leads e Mensagens de Mineração / Prospecção em BATCH
   try {
+    const outreachTagCols = await detectOutreachTagColumns()
+    const outreachTagSelect = Array.from(outreachTagCols)
+      .map((c) => `, ${c}`)
+      .join('')
+
     const outreachConvos = await queryAgentsDb<OutreachConvoDbRow>(`
-      select id, agent_slug, channel, source, lead_name, lead_handle, lead_company, status, last_at, msg_count
+      select id, agent_slug, channel, source, lead_name, lead_handle, lead_company, status, last_at, msg_count${outreachTagSelect}
       from public.outreach_convos
       where agent_slug not ilike '%lucas%'
       order by last_at desc
@@ -369,6 +415,21 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           ? leadMap.get(`${comp.id}_${rawHandle.toLowerCase()}`)
           : (leadMap.get(`${comp.id}_${phone}`) || leadMap.get(`${comp.id}_${last9}`))
 
+        // Tags de mineração: as 4 (nicho/origem/temperatura/outreach_status)
+        // só entram se a coluna existir na fonte (ver detectOutreachTagColumns
+        // acima). "origem" aqui é a coluna NOVA com a origem real do lead
+        // (google_places/instagram/linkedin/manual), NUNCA oc.source: essa é
+        // uma constante fixa "prospeccao" (marcador de "é conversa de
+        // prospecção" pro dashboard da Luana), sem relação com a origem real.
+        // Nunca gravar chave vazia: um valor ausente não deve apagar uma tag
+        // que já existia.
+        const miningTagsPatch: { origem?: string; nicho?: string; temperatura?: string; statusRelacionamento?: string } = {}
+        if (oc.origem) miningTagsPatch.origem = oc.origem
+        if (oc.nicho) miningTagsPatch.nicho = oc.nicho
+        if (oc.temperatura) miningTagsPatch.temperatura = oc.temperatura
+        if (oc.outreach_status) miningTagsPatch.statusRelacionamento = oc.outreach_status
+        const hasMiningTags = Object.keys(miningTagsPatch).length > 0
+
         if (!leadId) {
           const [newLead] = await db
             .insert(recoveryLeads)
@@ -383,6 +444,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               eventType: oc.source || 'prospeccao',
               status: oc.status === 'active' ? 'in_conversation' : 'pending',
               trackingSource: 'mineracao_prospeccao',
+              miningTags: hasMiningTags ? miningTagsPatch : undefined,
               createdAt: ocDate,
               updatedAt: ocDate,
               lastActionAt: ocDate,
@@ -397,6 +459,17 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             if (phone.length >= 9) leadMap.set(`${comp.id}_${last9}`, leadId)
           }
           leadsCreated++
+        } else if (hasMiningTags) {
+          // Lead já existia: faz merge (||) em cima do que já está gravado,
+          // nunca overwrite cego. Assim uma sincronização com só "origem"
+          // disponível não apaga um "nicho" já gravado numa passada anterior.
+          await db
+            .update(recoveryLeads)
+            .set({
+              miningTags: sql`COALESCE(${recoveryLeads.miningTags}, '{}'::jsonb) || ${JSON.stringify(miningTagsPatch)}::jsonb`,
+              updatedAt: new Date(),
+            })
+            .where(eq(recoveryLeads.id, leadId))
         }
 
         const convoMsgs = msgsByConvo.get(oc.id) || []

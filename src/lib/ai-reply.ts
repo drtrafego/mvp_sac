@@ -14,7 +14,7 @@
 // executar de verdade a ação de agenda que a ponte apenas detectar
 // (`acao_detectada`) — a ponte só gera texto, nunca mexe na agenda sozinha.
 
-import { eq, desc } from 'drizzle-orm'
+import { eq, desc, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { recoveryLeads, settings, whatsappMessages, companies } from '@/lib/db/schema'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
@@ -22,6 +22,37 @@ import { sendInstagramMessage } from '@/lib/instagram'
 import { gerarResposta, type Bot, type HistoricoTurno } from '@/lib/ai/ai-bridge'
 import { executarAcaoDetectada, type AiScheduleState } from '@/lib/ai/agenda-actions'
 import { detectarBotDoOutroLado, type TurnoComTempo } from '@/lib/ai/bot-detector'
+
+// Rede de segurança contra processo morto no meio (função da Vercel
+// derrubada por timeout com o lock preso): depois deste tempo o lock é
+// considerado abandonado e outra chamada pode assumir.
+const LOCK_TIMEOUT_MINUTOS = 3
+
+/**
+ * Lock otimista por lead (UPDATE atômico condicional, mesmo padrão do
+ * rate-limit local da ponte em src/lib/ai/ai-bridge.ts): quem conseguir o
+ * UPDATE processa esta rodada, quem não conseguir desiste sem erro. Evita
+ * que duas mensagens em sequência rápida do mesmo lead disparem duas
+ * chamadas concorrentes de generateAndSendAiReply pro mesmo lead.
+ */
+async function tentarAdquirirLock(leadId: number): Promise<boolean> {
+  const result = await db.execute<{ id: number }>(sql`
+    UPDATE recovery_leads
+    SET ai_reply_lock_at = now()
+    WHERE id = ${leadId}
+      AND (ai_reply_lock_at IS NULL OR ai_reply_lock_at < now() - make_interval(mins => ${LOCK_TIMEOUT_MINUTOS}))
+    RETURNING id
+  `)
+  return result.rows.length > 0
+}
+
+async function liberarLock(leadId: number): Promise<void> {
+  try {
+    await db.execute(sql`UPDATE recovery_leads SET ai_reply_lock_at = NULL WHERE id = ${leadId}`)
+  } catch (err) {
+    console.error(`[AI Reply] falha ao liberar lock lead=${leadId} (timeout de ${LOCK_TIMEOUT_MINUTOS}min garante que ele destrava sozinho):`, err)
+  }
+}
 
 // "até 20 mais recentes" é o limite documentado da ponte pro campo `historico`.
 const HISTORICO_LIMITE = 20
@@ -72,7 +103,14 @@ function montarCronologiaComTempo(linhas: LinhaMensagem[]): TurnoComTempo[] {
  * rodada (a próxima mensagem do lead tenta de novo).
  */
 export async function generateAndSendAiReply(leadId: number): Promise<void> {
+  let lockAdquirido = false
   try {
+    lockAdquirido = await tentarAdquirirLock(leadId)
+    if (!lockAdquirido) {
+      console.log(`[AI Reply] lock ocupado lead=${leadId}, pulando esta chamada (a próxima mensagem do lead vai reler o histórico já atualizado e responder as duas juntas)`)
+      return
+    }
+
     const [lead] = await db.select().from(recoveryLeads).where(eq(recoveryLeads.id, leadId)).limit(1)
     if (!lead) return
     if (lead.botPaused) return
@@ -220,5 +258,9 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
     })
   } catch (err) {
     console.error(`[AI Reply] erro inesperado gerando resposta pra lead=${leadId}:`, err)
+  } finally {
+    if (lockAdquirido) {
+      await liberarLock(leadId)
+    }
   }
 }

@@ -26,6 +26,10 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       botPaused: pause,
       botPausedAt: pause ? new Date() : null,
       botPausedBy: pause ? (body.pausedBy || `${context.agentName} (Agente IA)`) : null,
+      // Pausa/despausa individual sempre "reivindica" o lead: zera o flag da
+      // ação em massa pra "Despausar Tudo" não reverter uma decisão humana
+      // tomada depois do pause-all (ver pause-all/route.ts).
+      botPausedAll: false,
       lastActionBy: `${context.agentName} (Agente IA)`,
       lastActionAt: new Date(),
       updatedAt: new Date(),

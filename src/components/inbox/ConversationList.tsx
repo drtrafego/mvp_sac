@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -25,6 +25,7 @@ import {
   InstagramLogoIcon,
 } from './ChannelBadge'
 import { MetaWindowBadge } from './MetaWindowBadge'
+import { classifyChannelInMemory } from '@/lib/inbox-channel-filter'
 
 export interface ConversationSummary {
   id: number
@@ -110,6 +111,15 @@ function formatMessageTimestamp(dateStr: string | null | undefined): { time: str
 type ChannelFilter = 'all' | 'whatsapp' | 'instagram' | 'email' | 'mineracao'
 type StatusFilter = 'all' | 'paused' | 'active' | 'unread'
 
+// classifyChannel é só um adaptador fino pra classifyChannelInMemory
+// (src/lib/inbox-channel-filter.ts), que é a ÚNICA fonte da verdade da
+// heurística de canal, compartilhada com o WHERE do banco
+// (channelWhereCondition). Não reimplementar a lógica aqui: SQL e memória
+// não têm mais como divergir porque leem a mesma lista de regras.
+function classifyChannel(c: Pick<ConversationSummary, 'channel' | 'platform' | 'trackingSource' | 'phone'>) {
+  return classifyChannelInMemory(c)
+}
+
 export function ConversationList({ initial, initialError = null }: { initial: ConversationSummary[]; initialError?: string | null }) {
   const [convs, setConvs] = useState<ConversationSummary[]>(initial)
   const [error, setError] = useState<string | null>(initialError)
@@ -119,28 +129,86 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   const [refreshing, setRefreshing] = useState(false)
   const pathname = usePathname()
 
-  const refresh = useCallback(async (silent = true) => {
-    if (!silent) setRefreshing(true)
-    try {
-      const res = await fetch('/api/inbox')
-      if (res.ok) {
-        const data = await res.json()
-        setConvs(data)
-        setError(null)
-      } else {
-        setError('Erro ao sincronizar conversas com o servidor.')
+  // Busca no backend já filtrada pelo canal selecionado: a aba "Todos" não
+  // manda parâmetro (mesmo comportamento de sempre), as abas de canal
+  // específico mandam ?channel=X, reaproveitando o chFilter que o backend já
+  // sabia interpretar mas que o front nunca enviava. Sem isso, a lista corta
+  // em 200 registros misturando todos os canais antes de filtrar, e um canal
+  // de baixo volume por conversa (e-mail) pode nunca aparecer.
+  const refresh = useCallback(
+    async (silent = true) => {
+      if (!silent) setRefreshing(true)
+      try {
+        const qs = channelFilter !== 'all' ? `?channel=${channelFilter}` : ''
+        const res = await fetch(`/api/inbox${qs}`)
+        if (res.ok) {
+          const data = await res.json()
+          setConvs(data)
+          setError(null)
+        } else {
+          setError('Erro ao sincronizar conversas com o servidor.')
+        }
+      } catch {
+        setError('Falha de rede ao buscar conversas.')
+      } finally {
+        if (!silent) setRefreshing(false)
       }
-    } catch {
-      setError('Falha de rede ao buscar conversas.')
-    } finally {
-      if (!silent) setRefreshing(false)
+    },
+    [channelFilter]
+  )
+
+  // Refetch imediato ao trocar de aba (não espera o poll de 15s). O
+  // carregamento inicial já veio do Server Component com "Todos", então pula
+  // a primeira execução pra não duplicar aquela mesma busca.
+  const didMountRef = useRef(false)
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true
+      return
     }
-  }, [])
+    refresh(true)
+  }, [channelFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const t = setInterval(() => refresh(true), 15_000)
     return () => clearInterval(t)
   }, [refresh])
+
+  // Contagem por aba: vem de /api/inbox/counts (COUNT real no banco, empresa
+  // inteira). O cálculo local abaixo é só o palpite inicial antes do fetch
+  // responder (evita "0" piscando na primeira renderização); depois disso
+  // quem manda é sempre a resposta do endpoint, nunca o array já cortado em
+  // 200 e filtrado por canal, que mostraria só o total daquele canal e
+  // zeraria os outros.
+  const [counts, setCounts] = useState(() => {
+    const initialCounts = { all: initial.length, whatsapp: 0, instagram: 0, email: 0, mineracao: 0 }
+    initial.forEach(c => {
+      const { isInstagram, isEmail, isMineracao, isWhatsapp } = classifyChannel(c)
+      if (isInstagram) initialCounts.instagram++
+      else if (isEmail) initialCounts.email++
+      else if (isMineracao) initialCounts.mineracao++
+      else if (isWhatsapp) initialCounts.whatsapp++
+    })
+    return initialCounts
+  })
+
+  const fetchCounts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/inbox/counts')
+      if (res.ok) {
+        const data = await res.json()
+        setCounts(data)
+      }
+    } catch {
+      // mantém a última contagem conhecida (calculada localmente na primeira carga)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchCounts() // eslint-disable-line react-hooks/set-state-in-effect -- fetch assíncrono, setState só corre depois do await, não durante o corpo do effect
+    const t = setInterval(fetchCounts, 15_000)
+    return () => clearInterval(t)
+  }, [fetchCounts])
 
   const activeId = pathname.split('/inbox/')[1]?.split('/')[0] || ''
 
@@ -148,26 +216,11 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
     return convs.filter(c => {
       // 1. Filtro por canal
       if (channelFilter !== 'all') {
-        const ch = (c.channel || 'whatsapp').toLowerCase()
-        const pl = (c.platform || '').toLowerCase()
-        const src = (c.trackingSource || '').toLowerCase()
-        if (channelFilter === 'instagram') {
-          if (ch !== 'instagram' && pl !== 'instagram' && !src.includes('instagram') && !c.phone.startsWith('ig_')) {
-            return false
-          }
-        } else if (channelFilter === 'email') {
-          if (ch !== 'email' && !src.includes('email') && !src.includes('brevo')) {
-            return false
-          }
-        } else if (channelFilter === 'mineracao') {
-          if (ch !== 'mineracao' && pl !== 'mineracao' && !src.includes('mineracao') && !src.includes('prospeccao')) {
-            return false
-          }
-        } else if (channelFilter === 'whatsapp') {
-          if (ch !== 'whatsapp' || c.phone.startsWith('ig_')) {
-            return false
-          }
-        }
+        const { isInstagram, isEmail, isMineracao, isWhatsapp } = classifyChannel(c)
+        if (channelFilter === 'instagram' && !isInstagram) return false
+        if (channelFilter === 'email' && !isEmail) return false
+        if (channelFilter === 'mineracao' && !isMineracao) return false
+        if (channelFilter === 'whatsapp' && !isWhatsapp) return false
       }
 
       // 2. Filtro por status do bot / leitura
@@ -187,25 +240,6 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
       )
     })
   }, [convs, channelFilter, statusFilter, search])
-
-  const channelCounts = useMemo(() => {
-    const counts = { all: convs.length, whatsapp: 0, instagram: 0, email: 0, mineracao: 0 }
-    convs.forEach(c => {
-      const ch = (c.channel || 'whatsapp').toLowerCase()
-      const pl = (c.platform || '').toLowerCase()
-      const src = (c.trackingSource || '').toLowerCase()
-      if (ch === 'instagram' || pl === 'instagram' || src.includes('instagram') || c.phone.startsWith('ig_')) {
-        counts.instagram++
-      } else if (ch === 'email' || src.includes('email') || src.includes('brevo')) {
-        counts.email++
-      } else if (ch === 'mineracao' || pl === 'mineracao' || src.includes('mineracao') || src.includes('prospeccao')) {
-        counts.mineracao++
-      } else {
-        counts.whatsapp++
-      }
-    })
-    return counts
-  }, [convs])
 
   return (
     <aside
@@ -266,7 +300,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
                 : 'bg-surface-inset text-fg-subtle hover:text-fg hover:bg-surface-raised'
             )}
           >
-            Todos ({channelCounts.all})
+            Todos ({counts.all})
           </button>
           <button
             type="button"
@@ -279,7 +313,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
             )}
           >
             <MessageCircle size={12} className="text-emerald-400 shrink-0" />
-            WhatsApp ({channelCounts.whatsapp})
+            WhatsApp ({counts.whatsapp})
           </button>
           <button
             type="button"
@@ -292,7 +326,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
             )}
           >
             <InstagramLogoIcon size={12} className="text-pink-400 shrink-0" />
-            Direct ({channelCounts.instagram})
+            Direct ({counts.instagram})
           </button>
           <button
             type="button"
@@ -305,7 +339,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
             )}
           >
             <Mail size={12} className="text-indigo-400 shrink-0" />
-            E-mail ({channelCounts.email})
+            E-mail ({counts.email})
           </button>
           <button
             type="button"
@@ -318,7 +352,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
             )}
           >
             <Pickaxe size={12} className="text-amber-400 shrink-0" />
-            Mineração ({channelCounts.mineracao})
+            Mineração ({counts.mineracao})
           </button>
           </div>
           <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-surface-panel to-transparent" />
