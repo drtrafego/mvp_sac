@@ -64,6 +64,7 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       'metaWabaId',
       'metaAdsAccessToken',
       'metaAdsAccountId',
+      'metaPixelId',
       'uazapiBaseUrl',
       'uazapiInstanceToken',
       'notificationPhone',

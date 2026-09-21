@@ -45,6 +45,16 @@ export const settings = pgTable('settings', {
   // empresa. Ver src/lib/ads-attribution.ts.
   metaAdsAccessToken: text('meta_ads_access_token'),
   metaAdsAccountId: text('meta_ads_account_id'),        // formato act_XXXXXXXXXXXX
+  // Conversions API (evento de conversão offline pro Meta, ex.: Purchase de
+  // checkout aprovado), 21/09/2026. Pixel ID é ID público (não é segredo, não
+  // entra na mask() do GET). Reaproveita metaAdsAccessToken acima como token
+  // de envio: a CAPI aceita o mesmo tipo de token de sistema, DESDE QUE o
+  // usuário de sistema também esteja atribuído a este Pixel com permissão de
+  // escrita (não basta ads_read na conta de anúncios). Se o teste real de
+  // envio falhar por permissão, aí sim nasce um metaCapiAccessToken separado.
+  // Nulo = envio de conversão desligado para esta empresa. Ver
+  // src/lib/meta-conversions-api.ts.
+  metaPixelId: text('meta_pixel_id'),
   uazapiBaseUrl: text('uazapi_base_url'),
   uazapiInstanceToken: text('uazapi_instance_token'),
   notificationPhone: text('notification_phone'),
@@ -372,6 +382,33 @@ export const webhookReceived = pgTable('webhook_received', {
   receivedAt: timestamp('received_at').defaultNow(),
 })
 
+// ─── Log de envio da Meta Conversions API (irmão de saída do webhook_received) ─
+// webhookReceived audita ENTRADA (webhook de compra chegando). Esta tabela
+// audita SAÍDA (evento de conversão saindo pro Meta), 21/09/2026. Sem isso não
+// tem como provar "todo lead que fechou mandou evento pro Meta", nem retentar
+// falha de rede/token sem reenviar o que já foi aceito. eventId é o mesmo
+// event_id que vai no payload da Graph API: uniqueIndex garante que o mesmo
+// evento de negócio (ex.: purchase_<transactionId>) nunca é mandado duas
+// vezes por esta tabela, mesmo com retry.
+export const metaConversionEvents = pgTable('meta_conversion_events', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'set null' }), // nullable: pode falhar antes de resolver o lead
+  eventName: text('event_name').notNull(),          // 'Purchase' (checkout) | 'Schedule' (reserva/agendamento, futuro)
+  eventId: text('event_id').notNull(),              // vai em data[].event_id na Graph API, chave de dedup
+  pixelId: text('pixel_id'),
+  status: text('status').default('pending').notNull(), // 'pending' | 'sent' | 'failed' | 'skipped' | 'expired_token'
+  httpStatus: integer('http_status'),
+  metaResponse: jsonb('meta_response'),             // resposta crua da Graph API (sucesso ou erro), auditoria
+  errorMessage: text('error_message'),
+  attempts: integer('attempts').default(0).notNull(),
+  nextRetryAt: timestamp('next_retry_at'),          // usado pelo cron de retry (ainda não implementado)
+  createdAt: timestamp('created_at').defaultNow(),
+  sentAt: timestamp('sent_at'),
+}, (table) => [
+  uniqueIndex('meta_conversion_events_company_event_unique').on(table.companyId, table.eventId),
+])
+
 // ─── Membros da empresa ───────────────────────────────────────────────────────
 export const companyMembers = pgTable('company_members', {
   id: serial('id').primaryKey(),
@@ -463,6 +500,7 @@ export const companiesRelations = relations(companies, ({ one, many }) => ({
   commentAutomations: many(instagramCommentAutomations),
   commentLogs: many(instagramCommentLogs),
   agendaBlockedDates: many(agendaBlockedDates),
+  metaConversionEvents: many(metaConversionEvents),
 }))
 
 export const settingsRelations = relations(settings, ({ one }) => ({
@@ -496,6 +534,11 @@ export const whatsappMessagesRelations = relations(whatsappMessages, ({ one }) =
 
 export const companyMembersRelations = relations(companyMembers, ({ one }) => ({
   company: one(companies, { fields: [companyMembers.companyId], references: [companies.id] }),
+}))
+
+export const metaConversionEventsRelations = relations(metaConversionEvents, ({ one }) => ({
+  company: one(companies, { fields: [metaConversionEvents.companyId], references: [companies.id] }),
+  lead: one(recoveryLeads, { fields: [metaConversionEvents.leadId], references: [recoveryLeads.id] }),
 }))
 
 export const instagramCommentAutomationsRelations = relations(instagramCommentAutomations, ({ one, many }) => ({

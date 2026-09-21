@@ -62,6 +62,7 @@ function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_ads_access_token text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_ads_account_id text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS mining_tags jsonb`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_pixel_id text`,
 
           // agent_activity_logs
           client`
@@ -242,6 +243,30 @@ function ensureSchema(client: any): Promise<void> {
           client`
             CREATE INDEX IF NOT EXISTS ai_bridge_calls_created_at_idx
             ON ai_bridge_calls (created_at)
+          `,
+
+          // ─── Meta Conversions API: log de envio de conversão (21/09/2026) ──────
+          // Irmão de saída do webhook_received. uniqueIndex(company_id, event_id)
+          // via UNIQUE inline garante que o mesmo evento (ex.: purchase_<txnId>)
+          // nunca é mandado duas vezes, mesmo com retry. Ver src/lib/meta-conversions-api.ts.
+          client`
+            CREATE TABLE IF NOT EXISTS meta_conversion_events (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              lead_id INTEGER REFERENCES recovery_leads(id) ON DELETE SET NULL,
+              event_name TEXT NOT NULL,
+              event_id TEXT NOT NULL,
+              pixel_id TEXT,
+              status TEXT NOT NULL DEFAULT 'pending',
+              http_status INTEGER,
+              meta_response JSONB,
+              error_message TEXT,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              next_retry_at TIMESTAMP,
+              created_at TIMESTAMP DEFAULT NOW(),
+              sent_at TIMESTAMP,
+              UNIQUE (company_id, event_id)
+            )
           `,
         ])
 
