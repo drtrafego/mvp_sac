@@ -98,6 +98,7 @@ export default async function OrigensPage({ searchParams }: PageProps) {
         rawMedium: recoveryLeads.utmMedium,
         rawPlatform: recoveryLeads.platform,
         rawEventType: recoveryLeads.eventType,
+        rawChannel: recoveryLeads.channel,
         total: sql<number>`cast(count(*) as int)`,
         recovered: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} = 'converted') as int)`,
         recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} = 'converted'), 0) as bigint)`,
@@ -109,6 +110,7 @@ export default async function OrigensPage({ searchParams }: PageProps) {
         recoveryLeads.utmMedium,
         recoveryLeads.platform,
         recoveryLeads.eventType,
+        recoveryLeads.channel,
       )
       .orderBy(desc(sql<number>`count(*)`)),
   ])
@@ -120,7 +122,7 @@ export default async function OrigensPage({ searchParams }: PageProps) {
   // então todo total nesta página (incluindo os 4 cards do topo) reflete só a origem escolhida.
   const rowsWithMeta = rawOrigensRows.map((row) => ({
     row,
-    meta: normalizeOrigin(row.rawSource, row.rawMedium, row.rawPlatform, row.rawEventType),
+    meta: normalizeOrigin(row.rawSource, row.rawMedium, row.rawPlatform, row.rawEventType, row.rawChannel),
   }))
 
   const filteredRows = source ? rowsWithMeta.filter(({ meta }) => matchesSourceFilter(meta, source)) : rowsWithMeta

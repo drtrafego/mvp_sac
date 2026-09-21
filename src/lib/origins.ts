@@ -31,12 +31,14 @@ export function normalizeOrigin(
   rawSource: string | null | undefined,
   rawMedium: string | null | undefined = null,
   platform: string | null | undefined = null,
-  eventType: string | null | undefined = null
+  eventType: string | null | undefined = null,
+  channel: string | null | undefined = null
 ): OriginBadgeMeta {
   const s = (rawSource || '').toLowerCase().trim()
   const m = (rawMedium || '').toLowerCase().trim()
   const p = (platform || '').toLowerCase().trim()
   const ev = (eventType || '').toLowerCase().trim()
+  const ch = (channel || '').toLowerCase().trim()
   const combined = `${s} ${m} ${p} ${ev}`
 
   // Regra prioritária de proteção médica / Dr. Lucas: NUNCA é Mineração
@@ -75,7 +77,16 @@ export function normalizeOrigin(
     combined.includes('prospeccao') ||
     combined.includes('places')
   ) {
-    if (combined.includes('email') || combined.includes('mail') || combined.includes('brevo')) {
+    // Sinal primário: a coluna `channel` de recoveryLeads (mesma fonte de
+    // verdade que o inbox-channel-filter.ts usa). O sync de mineração
+    // (sync-agents.ts, bloco 4) grava trackingSource/platform com constantes
+    // fixas ("mineracao_prospeccao"/"sac") pra TODO lead do pipeline, então
+    // o texto livre de trackingSource/platform/eventType nunca diferencia
+    // e-mail de Instagram de WhatsApp. Quem diferencia é `channel`
+    // ('email'|'instagram'|'whatsapp'), setado corretamente por lead desde o
+    // sync. Texto livre fica como sinal SECUNDÁRIO (OR), pra não regredir
+    // nenhum caso que hoje já funciona via UTM (utm_medium=email/instagram).
+    if (ch === 'email' || combined.includes('email') || combined.includes('mail') || combined.includes('brevo')) {
       return {
         key: 'mineracao_email',
         label: 'Mineração — E-mail Frio (Brevo)',
@@ -88,7 +99,7 @@ export function normalizeOrigin(
         iconName: 'email',
       }
     }
-    if (combined.includes('ig') || combined.includes('instagram') || combined.includes('direct')) {
+    if (ch === 'instagram' || combined.includes('ig') || combined.includes('instagram') || combined.includes('direct')) {
       return {
         key: 'mineracao_instagram',
         label: 'Mineração — Instagram Direct',
@@ -352,7 +363,7 @@ export function extractLeadOrigins(lead: {
   }
 
   for (const c of candidates) {
-    const meta = normalizeOrigin(c.source, c.medium, c.platform, c.eventType)
+    const meta = normalizeOrigin(c.source, c.medium, c.platform, c.eventType, lead.channel)
     if (!seenKeys.has(meta.key)) {
       seenKeys.add(meta.key)
       result.push(meta)
