@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { db } from '@/lib/db'
 import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { checkWebhookToken } from '@/lib/webhook-auth'
+import { purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 
 type SaleMeta = { meta_key?: string; meta_value?: string }
 
@@ -281,6 +282,24 @@ export async function POST(
           .where(eq(recoveryLeads.id, leadId))
       }
     }
+  }
+
+  // Meta Conversions API: evento Purchase fire-and-forget (after(), mesmo
+  // padrão do webhook WhatsApp). onConflictDoNothing() já fez `if (!lead)
+  // return` mais acima em caso de retry da Greenn, então só roda para venda NOVA.
+  if (mappedType === 'compra_aprovada') {
+    after(() =>
+      sendConversionEvent({
+        companyId: company.id,
+        leadId: lead.id,
+        eventName: 'Purchase',
+        eventId: purchaseEventId(lead.transactionId || `greenn_${lead.id}`),
+        phone: lead.phone,
+        email: lead.email,
+        value: lead.productValue != null ? lead.productValue / 100 : null,
+        currency: 'BRL',
+      }).catch((err) => console.error('[meta-capi] erro no after() do webhook Greenn:', err)),
+    )
   }
 
   const RECOVERY_TYPES = ['boleto', 'pix', 'carrinho_abandonado', 'cartao_recusado']

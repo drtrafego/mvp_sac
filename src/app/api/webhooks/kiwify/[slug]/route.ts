@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import crypto from 'node:crypto'
 import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived } from '@/lib/db/schema'
 import { db } from '@/lib/db'
@@ -6,6 +6,7 @@ import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
+import { purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
 // Fonte: docs.kiwify.com.br, exemplos oficiais de payload e captura real do
@@ -745,6 +746,25 @@ export async function POST(
             .where(eq(recoveryLeads.id, cancelledLeadId))
         }
       }
+    }
+
+    // Meta Conversions API: evento Purchase fire-and-forget (after(), mesmo
+    // padrão do webhook WhatsApp). onConflictDoNothing() já devolveu cedo
+    // (outcome 'duplicate') em caso de reenvio da mesma transação, então este
+    // ponto só roda para venda NOVA.
+    if (mappedType === 'compra_aprovada') {
+      after(() =>
+        sendConversionEvent({
+          companyId: company.id,
+          leadId,
+          eventName: 'Purchase',
+          eventId: purchaseEventId(draft.transactionId || `kiwify_${leadId}`),
+          phone: draft.phone,
+          email: draft.email,
+          value: draft.productValue != null ? draft.productValue / 100 : null,
+          currency: 'BRL',
+        }).catch((err) => console.error('[meta-capi] erro no after() do webhook Kiwify:', err)),
+      )
     }
 
     const isRecovery = RECOVERY_TYPES.includes(mappedType)
