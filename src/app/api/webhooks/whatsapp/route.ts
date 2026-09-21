@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { db } from '@/lib/db'
 import { whatsappMessages, recoveryLeads, settings, messageJobs } from '@/lib/db/schema'
-import { eq, and } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { markLeadContacted } from '@/lib/leads'
 import { verifyMetaSignature } from '@/lib/meta-signature'
 import { generateAndSendAiReply } from '@/lib/ai-reply'
+import { isInboundMessageAlreadyProcessed, isUniqueViolation } from '@/lib/webhook-dedup'
 
 function normalizePhone(raw: string): string {
   return raw.replace(/[@+\s\-().]/g, '').replace(/@.*$/, '').replace(/^0+/, '')
@@ -217,56 +218,73 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     if (!companyId) return NextResponse.json({ ok: true, skipped: true })
 
-    let [lead] = await db
-      .select()
-      .from(recoveryLeads)
-      .where(and(eq(recoveryLeads.phone, phone), eq(recoveryLeads.companyId, companyId)))
-      .limit(1)
-
-    let leadId = lead?.id
-
-    if (!leadId) {
-      const now = new Date()
-      const [newLead] = await db
-        .insert(recoveryLeads)
-        .values({
-          companyId,
-          phone,
-          name: name || `WhatsApp ${phone.slice(-4)}`,
-          platform: 'sac',
-          channel: 'whatsapp',
-          eventType: 'atendimento',
-          status: 'in_conversation',
-          trackingSource: 'whatsapp_direto',
-          createdAt: now,
-          updatedAt: now,
-          lastActionAt: now,
-        })
-        .returning()
-      lead = newLead
-      leadId = newLead.id
-    } else {
-      const updateData: Record<string, any> = {
-        updatedAt: new Date(),
-        lastActionAt: new Date(),
-        status: 'in_conversation',
-      }
-      if (name && !lead.name) updateData.name = name
-      await db.update(recoveryLeads).set(updateData).where(eq(recoveryLeads.id, lead.id))
+    // Idempotência contra reentrega de webhook da Meta: reentrega é
+    // comportamento real dela, não hipotético. Checa ANTES de tocar no lead:
+    // senão a reentrega "ressuscita" um lead que já tinha sido resolvido
+    // (bump de status/updatedAt/lastActionAt pelo upsert) mesmo sem nenhuma
+    // mensagem nova de verdade ser gravada. Mesmo padrão de ordem das rotas
+    // de Instagram (dedup antes do upsert do lead).
+    if (await isInboundMessageAlreadyProcessed(companyId, externalId)) {
+      console.log(`[WhatsApp Webhook] mensagem já processada (reentrega da Meta), externalId=${externalId}, pulando`)
+      return NextResponse.json({ ok: true, duplicate: true })
     }
 
-    await db.insert(whatsappMessages).values({
-      companyId,
-      leadId,
-      phone,
-      channel: 'whatsapp',
-      direction: 'inbound',
-      content,
-      messageType,
-      mediaUrl,
-      sentBy: 'user',
-      externalId: externalId ?? null,
-    })
+    // Upsert atômico: SELECT-então-INSERT deixava uma janela de corrida entre
+    // duas requisições concorrentes com o mesmo telefone novo, e cada uma
+    // criava um lead próprio (provado pelo QA ao vivo: 10 requisições
+    // concorrentes → 6 leads distintos pro mesmo telefone). O índice único
+    // parcial recovery_leads_chat_company_phone_unique (ver schema.ts) fecha
+    // essa corrida no banco. Nome só é sobrescrito se o lead ainda não tinha
+    // um (mesma regra de antes: NULLIF trata string vazia como "sem nome").
+    const [lead] = await db
+      .insert(recoveryLeads)
+      .values({
+        companyId,
+        phone,
+        name: name || `WhatsApp ${phone.slice(-4)}`,
+        platform: 'sac',
+        channel: 'whatsapp',
+        eventType: 'atendimento',
+        status: 'in_conversation',
+        trackingSource: 'whatsapp_direto',
+      })
+      .onConflictDoUpdate({
+        target: [recoveryLeads.companyId, recoveryLeads.phone],
+        targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac')`,
+        set: {
+          updatedAt: new Date(),
+          lastActionAt: new Date(),
+          status: 'in_conversation',
+          ...(name ? { name: sql`COALESCE(NULLIF(${recoveryLeads.name}, ''), ${name})` } : {}),
+        },
+      })
+      .returning()
+
+    const leadId = lead.id
+
+    try {
+      await db.insert(whatsappMessages).values({
+        companyId,
+        leadId,
+        phone,
+        channel: 'whatsapp',
+        direction: 'inbound',
+        content,
+        messageType,
+        mediaUrl,
+        sentBy: 'user',
+        externalId: externalId ?? null,
+      })
+    } catch (err) {
+      // Segunda camada (índice único parcial): corrida entre duas
+      // requisições concorrentes que passaram pelo SELECT acima ao mesmo
+      // tempo. Já processado, não é erro fatal.
+      if (isUniqueViolation(err)) {
+        console.log(`[WhatsApp Webhook] corrida no insert (unique violation), externalId=${externalId}, tratando como já processado`)
+        return NextResponse.json({ ok: true, duplicate: true })
+      }
+      throw err
+    }
 
     // Mensagem real trocada: se for a primeira, marca a abordagem do lead
     await markLeadContacted(leadId)

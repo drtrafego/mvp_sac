@@ -15,6 +15,20 @@
       "when": 1789000000000,
       "tag": "0001_add_first_contact_at",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790000000000,
+      "tag": "0002_whatsapp_messages_inbound_dedup",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791000000000,
+      "tag": "0003_recovery_leads_dedup_and_whatsapp_scope",
+      "breakpoints": true
     }
   ]
 }
