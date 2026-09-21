@@ -25,7 +25,7 @@ import {
   InstagramLogoIcon,
 } from './ChannelBadge'
 import { MetaWindowBadge } from './MetaWindowBadge'
-import { classifyChannelInMemory } from '@/lib/inbox-channel-filter'
+import { classifyChannelInMemory, classifyMineracaoSubchannel } from '@/lib/inbox-channel-filter'
 
 export interface ConversationSummary {
   id: number
@@ -110,6 +110,12 @@ function formatMessageTimestamp(dateStr: string | null | undefined): { time: str
 
 type ChannelFilter = 'all' | 'whatsapp' | 'instagram' | 'email' | 'mineracao'
 type StatusFilter = 'all' | 'paused' | 'active' | 'unread'
+// Sub-filtro de canal REAL de contato, só relevante quando channelFilter é
+// 'mineracao': 'all' mostra tudo dentro de mineração (comportamento de
+// sempre), os outros três restringem ao sub-canal. Aparece como um segundo
+// nível de aba (mesmo padrão visual já usado no filtro de Status abaixo),
+// não como abas novas na fileira principal.
+type MineracaoSubFilter = 'all' | 'email' | 'whatsapp' | 'instagram'
 
 // classifyChannel é só um adaptador fino pra classifyChannelInMemory
 // (src/lib/inbox-channel-filter.ts), que é a ÚNICA fonte da verdade da
@@ -125,6 +131,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   const [error, setError] = useState<string | null>(initialError)
   const [search, setSearch] = useState('')
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>('all')
+  const [mineracaoSubFilter, setMineracaoSubFilter] = useState<MineracaoSubFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [refreshing, setRefreshing] = useState(false)
   const pathname = usePathname()
@@ -135,11 +142,20 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   // sabia interpretar mas que o front nunca enviava. Sem isso, a lista corta
   // em 200 registros misturando todos os canais antes de filtrar, e um canal
   // de baixo volume por conversa (e-mail) pode nunca aparecer.
+  // Canal composto pra mandar ao backend: 'mineracao' + sub-filtro vira
+  // 'mineracao_email'/'mineracao_whatsapp'/'mineracao_instagram', que
+  // channelWhereCondition (src/lib/inbox-channel-filter.ts) já sabe
+  // interpretar como "mineracao E, dentro dela, este canal real".
+  const effectiveChannelParam =
+    channelFilter === 'mineracao' && mineracaoSubFilter !== 'all'
+      ? `mineracao_${mineracaoSubFilter}`
+      : channelFilter
+
   const refresh = useCallback(
     async (silent = true) => {
       if (!silent) setRefreshing(true)
       try {
-        const qs = channelFilter !== 'all' ? `?channel=${channelFilter}` : ''
+        const qs = effectiveChannelParam !== 'all' ? `?channel=${effectiveChannelParam}` : ''
         const res = await fetch(`/api/inbox${qs}`)
         if (res.ok) {
           const data = await res.json()
@@ -154,7 +170,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
         if (!silent) setRefreshing(false)
       }
     },
-    [channelFilter]
+    [effectiveChannelParam]
   )
 
   // Refetch imediato ao trocar de aba (não espera o poll de 15s). O
@@ -167,7 +183,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
       return
     }
     refresh(true)
-  }, [channelFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effectiveChannelParam]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const t = setInterval(() => refresh(true), 15_000)
@@ -181,13 +197,27 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   // 200 e filtrado por canal, que mostraria só o total daquele canal e
   // zeraria os outros.
   const [counts, setCounts] = useState(() => {
-    const initialCounts = { all: initial.length, whatsapp: 0, instagram: 0, email: 0, mineracao: 0 }
+    const initialCounts = {
+      all: initial.length,
+      whatsapp: 0,
+      instagram: 0,
+      email: 0,
+      mineracao: 0,
+      mineracaoEmail: 0,
+      mineracaoWhatsapp: 0,
+      mineracaoInstagram: 0,
+    }
     initial.forEach(c => {
       const { isInstagram, isEmail, isMineracao, isWhatsapp } = classifyChannel(c)
       if (isInstagram) initialCounts.instagram++
       else if (isEmail) initialCounts.email++
-      else if (isMineracao) initialCounts.mineracao++
-      else if (isWhatsapp) initialCounts.whatsapp++
+      else if (isMineracao) {
+        initialCounts.mineracao++
+        const sub = classifyMineracaoSubchannel(c)
+        if (sub === 'email') initialCounts.mineracaoEmail++
+        else if (sub === 'instagram') initialCounts.mineracaoInstagram++
+        else initialCounts.mineracaoWhatsapp++
+      } else if (isWhatsapp) initialCounts.whatsapp++
     })
     return initialCounts
   })
@@ -210,6 +240,14 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
     return () => clearInterval(t)
   }, [fetchCounts])
 
+  // Troca de aba principal: sair de "Mineração" limpa o sub-filtro de canal
+  // real (senão o usuário voltaria pra "WhatsApp", por exemplo, com um
+  // sub-filtro fantasma que não se aplica mais a nenhuma aba visível).
+  const selectChannelFilter = useCallback((next: ChannelFilter) => {
+    setChannelFilter(next)
+    if (next !== 'mineracao') setMineracaoSubFilter('all')
+  }, [])
+
   const activeId = pathname.split('/inbox/')[1]?.split('/')[0] || ''
 
   const filtered = useMemo(() => {
@@ -219,7 +257,11 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
         const { isInstagram, isEmail, isMineracao, isWhatsapp } = classifyChannel(c)
         if (channelFilter === 'instagram' && !isInstagram) return false
         if (channelFilter === 'email' && !isEmail) return false
-        if (channelFilter === 'mineracao' && !isMineracao) return false
+        if (channelFilter === 'mineracao') {
+          if (!isMineracao) return false
+          // 1b. Dentro de mineração, sub-filtro pelo canal REAL de contato.
+          if (mineracaoSubFilter !== 'all' && classifyMineracaoSubchannel(c) !== mineracaoSubFilter) return false
+        }
         if (channelFilter === 'whatsapp' && !isWhatsapp) return false
       }
 
@@ -239,7 +281,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
         c.lastMessage?.toLowerCase().includes(q)
       )
     })
-  }, [convs, channelFilter, statusFilter, search])
+  }, [convs, channelFilter, mineracaoSubFilter, statusFilter, search])
 
   return (
     <aside
@@ -292,7 +334,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
           <div className="flex items-center gap-1 overflow-x-auto scroll-thin pb-0.5 pt-0.5">
           <button
             type="button"
-            onClick={() => setChannelFilter('all')}
+            onClick={() => selectChannelFilter('all')}
             className={cn(
               'px-2.5 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'all'
@@ -304,7 +346,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
           </button>
           <button
             type="button"
-            onClick={() => setChannelFilter('whatsapp')}
+            onClick={() => selectChannelFilter('whatsapp')}
             className={cn(
               'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'whatsapp'
@@ -317,7 +359,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
           </button>
           <button
             type="button"
-            onClick={() => setChannelFilter('instagram')}
+            onClick={() => selectChannelFilter('instagram')}
             className={cn(
               'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'instagram'
@@ -330,7 +372,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
           </button>
           <button
             type="button"
-            onClick={() => setChannelFilter('email')}
+            onClick={() => selectChannelFilter('email')}
             className={cn(
               'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'email'
@@ -343,7 +385,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
           </button>
           <button
             type="button"
-            onClick={() => setChannelFilter('mineracao')}
+            onClick={() => selectChannelFilter('mineracao')}
             className={cn(
               'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'mineracao'
@@ -357,6 +399,66 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
           </div>
           <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-surface-panel to-transparent" />
         </div>
+
+        {/* Sub-filtro: canal REAL de contato dentro de Mineração. Só aparece
+            com a aba Mineração ativa, mesmo padrão visual do filtro de Status
+            logo abaixo (label maiúscula + pills sublinhadas). "IG" só entra
+            se o dado real trouxer volume (counts.mineracaoInstagram > 0),
+            pra não oferecer um filtro que nunca teria resultado. */}
+        {channelFilter === 'mineracao' && (
+          <div className="flex items-center justify-between text-[11px] pt-1">
+            <span className="text-fg-faint font-semibold uppercase text-[10px] tracking-wider">Canal real:</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setMineracaoSubFilter('all')}
+                className={cn(
+                  'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer',
+                  mineracaoSubFilter === 'all' ? 'text-fg font-bold underline decoration-brand-ink' : 'text-fg-subtle hover:text-fg'
+                )}
+              >
+                Todos
+              </button>
+              <span className="text-fg-faint">·</span>
+              <button
+                type="button"
+                onClick={() => setMineracaoSubFilter('whatsapp')}
+                className={cn(
+                  'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
+                  mineracaoSubFilter === 'whatsapp' ? 'text-emerald-500 font-bold underline' : 'text-fg-subtle hover:text-emerald-500'
+                )}
+              >
+                <MessageCircle size={10} /> WhatsApp ({counts.mineracaoWhatsapp})
+              </button>
+              <span className="text-fg-faint">·</span>
+              <button
+                type="button"
+                onClick={() => setMineracaoSubFilter('email')}
+                className={cn(
+                  'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
+                  mineracaoSubFilter === 'email' ? 'text-indigo-500 font-bold underline' : 'text-fg-subtle hover:text-indigo-500'
+                )}
+              >
+                <Mail size={10} /> E-mail ({counts.mineracaoEmail})
+              </button>
+              {(mineracaoSubFilter === 'instagram' || counts.mineracaoInstagram > 0) && (
+                <>
+                  <span className="text-fg-faint">·</span>
+                  <button
+                    type="button"
+                    onClick={() => setMineracaoSubFilter('instagram')}
+                    className={cn(
+                      'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
+                      mineracaoSubFilter === 'instagram' ? 'text-pink-500 font-bold underline' : 'text-fg-subtle hover:text-pink-500'
+                    )}
+                  >
+                    <InstagramLogoIcon size={10} /> Instagram ({counts.mineracaoInstagram})
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Filtro secundário: Status do Atendimento / Bot */}
         <div className="flex items-center justify-between text-[11px] pt-1">

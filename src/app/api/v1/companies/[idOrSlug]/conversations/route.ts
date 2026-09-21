@@ -22,8 +22,8 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   const companyId = context.company.id
 
   // Sem parâmetro = mesmo comportamento de sempre (todos os canais). Passar
-  // ?channel=email|whatsapp|instagram|mineracao filtra no WHERE, mesma
-  // heurística usada no inbox interno.
+  // ?channel=email|whatsapp|instagram|mineracao|mineracao_email|mineracao_whatsapp|mineracao_instagram
+  // filtra no WHERE, mesma heurística usada no inbox interno.
   const { searchParams } = new URL(req.url)
   const channelParam = searchParams.get('channel')?.trim().toLowerCase() || undefined
   const channelCondition = channelWhereCondition(channelParam)

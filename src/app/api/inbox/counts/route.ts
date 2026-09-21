@@ -18,6 +18,13 @@ export async function GET(): Promise<NextResponse> {
   const emailCond = channelWhereCondition('email')!
   const mineracaoCond = channelWhereCondition('mineracao')!
   const whatsappCond = channelWhereCondition('whatsapp')!
+  // Subcategorias: canal REAL de contato dentro do universo já classificado
+  // como mineracao (mesma condição principal, segunda dimensão de filtro).
+  // A soma das 3 sempre bate com `mineracao` acima, pela mesma garantia de
+  // precedência/cobertura total do channelWhereCondition.
+  const mineracaoEmailCond = channelWhereCondition('mineracao_email')!
+  const mineracaoWhatsappCond = channelWhereCondition('mineracao_whatsapp')!
+  const mineracaoInstagramCond = channelWhereCondition('mineracao_instagram')!
 
   const [row] = await db
     .select({
@@ -26,6 +33,9 @@ export async function GET(): Promise<NextResponse> {
       instagram: sql<number>`count(*) filter (where ${instagramCond})`,
       email: sql<number>`count(*) filter (where ${emailCond})`,
       mineracao: sql<number>`count(*) filter (where ${mineracaoCond})`,
+      mineracaoEmail: sql<number>`count(*) filter (where ${mineracaoEmailCond})`,
+      mineracaoWhatsapp: sql<number>`count(*) filter (where ${mineracaoWhatsappCond})`,
+      mineracaoInstagram: sql<number>`count(*) filter (where ${mineracaoInstagramCond})`,
     })
     .from(recoveryLeads)
     .where(eq(recoveryLeads.companyId, company.id))
@@ -36,5 +46,8 @@ export async function GET(): Promise<NextResponse> {
     instagram: Number(row?.instagram ?? 0),
     email: Number(row?.email ?? 0),
     mineracao: Number(row?.mineracao ?? 0),
+    mineracaoEmail: Number(row?.mineracaoEmail ?? 0),
+    mineracaoWhatsapp: Number(row?.mineracaoWhatsapp ?? 0),
+    mineracaoInstagram: Number(row?.mineracaoInstagram ?? 0),
   })
 }
