@@ -478,11 +478,37 @@ export const instagramCommentLogs = pgTable('instagram_comment_logs', {
 // CONFIGURAÇÃO ficando salva no banco do SAC: nenhum bot consulta isto ainda,
 // a integração ("o bot pergunta ao SAC antes de oferecer horário") é trabalho
 // futuro, fora do escopo desta tarefa.
+// 22/09/2026: a tela de Agenda do Dr. Lucas (company_id=3, slug 'drlucas')
+// passou a refletir o Google Calendar real dele além do bloqueio manual e do
+// bloqueio gravado pelo bot via WhatsApp (Hermes). `source` diz de onde veio
+// cada linha: 'manual' (padrão, criado pela tela ou pelo comando antigo),
+// 'google_calendar' (evento de dia inteiro lido do Calendar), 'bot_bloqueios'
+// (gravado pelo bot Hermes via WhatsApp, fora desta tarefa) ou o valor
+// combinado 'google_calendar+bot_bloqueios' quando as duas fontes bloquearam
+// a mesma data. `externalRef` guarda o id do evento do Google (só quando
+// source inclui 'google_calendar'); `syncedAt` é a última vez que uma fonte
+// EXTERNA confirmou a linha (fica null pra 'manual', que não tem fonte externa).
+//
+// FIX de QA (bug ALTO, 22/09/2026): `reason` era concatenado e sobrescrito
+// diretamente a cada sync, e a 2ª rodada apagava a parte do bot mesmo sem
+// nada mudar do lado dele. `reason` deixou de ser fonte de verdade e virou
+// campo CALCULADO a cada escrita: `[botReason, googleReason].filter(Boolean)
+// .join('; ')`. `botReason` guarda só o texto vindo do bot (bot_bloqueios,
+// nunca tocado por escrita que só veio do Google) e `googleReason` guarda só
+// o texto vindo do Google Calendar (nunca tocado por escrita que só veio do
+// bot). Ver src/lib/google-calendar-sync.ts para a lógica de upsert e o
+// fallback de compatibilidade com o script Hermes (fora deste repo) que
+// ainda escreve direto em `reason`.
 export const agendaBlockedDates = pgTable('agenda_blocked_dates', {
   id: serial('id').primaryKey(),
   companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
   date: date('date', { mode: 'string' }).notNull(),   // 'YYYY-MM-DD', sem timestamp: bloqueio é o dia inteiro
-  reason: text('reason'),
+  reason: text('reason'),                              // CALCULADO: ver comentário acima, nunca escrever por concatenação manual
+  botReason: text('bot_reason'),                        // só o texto vindo do bot (bot_bloqueios), preservado entre syncs do Google
+  googleReason: text('google_reason'),                  // só o texto vindo do Google Calendar, recalculado a cada sync
+  source: text('source').notNull().default('manual'), // 'manual' | 'google_calendar' | 'bot_bloqueios' | 'google_calendar+bot_bloqueios'
+  externalRef: text('external_ref'),                   // id do evento do Google, só quando source inclui 'google_calendar'
+  syncedAt: timestamp('synced_at'),                     // última confirmação pela fonte externa; null quando source = 'manual'
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   // Não faz sentido bloquear a mesma data duas vezes para a mesma empresa.

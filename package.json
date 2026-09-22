@@ -13,7 +13,8 @@
     "test:inbox-channel-filter": "tsx scripts/inbox-channel-filter.reconcile.test.ts",
     "test:hermes-conversion-webhook": "tsx --experimental-test-module-mocks scripts/hermes-conversion-webhook.test.ts",
     "test:sync-agents-crm-channel": "tsx --experimental-test-module-mocks scripts/sync-agents-crm-channel.test.ts",
-    "test:agent-auth-key-bypass": "tsx --experimental-test-module-mocks --test scripts/agent-auth-key-bypass.test.ts"
+    "test:agent-auth-key-bypass": "tsx --experimental-test-module-mocks --test scripts/agent-auth-key-bypass.test.ts",
+    "test:agenda-google-calendar-sync": "tsx --experimental-test-module-mocks --test scripts/agenda-google-calendar-sync.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -23,6 +24,8 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
+    "google-auth-library": "^9.15.1",
+    "googleapis": "^144.0.0",
     "lucide-react": "^1.14.0",
     "next": "16.2.6",
     "next-themes": "^0.4.6",

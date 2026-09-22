@@ -6,6 +6,7 @@ import { settings } from '@/lib/db/schema'
 import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_AVAILABILITY_SCHEDULE, validateAvailabilitySchedule, type AvailabilitySchedule } from '@/lib/agenda-schedule'
+import { maybeRefreshGoogleCalendarSync } from '@/lib/google-calendar-sync'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -13,6 +14,13 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   const { idOrSlug } = await params
   const { error, context } = await authenticateAgentRequest(req, idOrSlug)
   if (error || !context) return error!
+
+  // Auto-refresh: se a última confirmação do Google Calendar tem mais de 5
+  // minutos (ou nunca rodou), sincroniza antes de responder. Não-fatal: uma
+  // falha de rede/credencial aqui nunca quebra esta tela (ver
+  // maybeRefreshGoogleCalendarSync). Sem efeito pra qualquer empresa que não
+  // seja o Dr. Lucas.
+  await maybeRefreshGoogleCalendarSync({ id: context.company.id, slug: context.company.slug })
 
   const [row] = await db.select().from(settings).where(eq(settings.companyId, context.company.id))
   const schedule = (row?.availabilitySchedule as AvailabilitySchedule | null) ?? DEFAULT_AVAILABILITY_SCHEDULE
