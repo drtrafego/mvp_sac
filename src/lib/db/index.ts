@@ -285,6 +285,35 @@ export function ensureSchema(client: any): Promise<void> {
               UNIQUE (company_id, event_id)
             )
           `,
+
+          // ─── Cursores de sync incremental Agents/CRM (22/09/2026) ─────────
+          // Guarda uma linha por empresa + fonte + schema/chave da fonte. Usado
+          // por sync-agents.ts para separar novidades de backfill histórico e
+          // acabar com o LIMIT fixo que deixava histórico antigo preso para
+          // sempre quando uma fonte tinha mais de 300 linhas.
+          client`
+            CREATE TABLE IF NOT EXISTS sync_cursors (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              source TEXT NOT NULL,
+              source_key TEXT NOT NULL,
+              newest_synced_at TIMESTAMP,
+              newest_synced_id TEXT,
+              backfill_before_at TIMESTAMP,
+              backfill_before_id TEXT,
+              last_run_at TIMESTAMP,
+              created_at TIMESTAMP DEFAULT NOW(),
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `,
+          client`
+            CREATE UNIQUE INDEX IF NOT EXISTS sync_cursors_company_source_key_unique
+            ON sync_cursors (company_id, source, source_key)
+          `,
+          client`
+            CREATE INDEX IF NOT EXISTS sync_cursors_source_lookup_idx
+            ON sync_cursors (source, source_key)
+          `,
         ])
 
         // ─── Idempotência contra reentrega de webhook da Meta (20/09/2026, ────
