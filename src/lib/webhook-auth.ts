@@ -36,3 +36,30 @@ export function checkWebhookToken(req: NextRequest): WebhookAuthResult {
 
   return { ok: true }
 }
+
+// Autenticação do webhook de conversão do Hermes (reserva/agendamento
+// confirmado por bot no WhatsApp): token PRÓPRIO e SEPARADO do dos 4
+// webhooks de checkout, achado ALTO do QA (22/09/2026). Este endpoint recebe
+// chamadas de um script Python rodando num servidor Hetzner externo (bot do
+// cliente), superfície de exposição maior que o checkout (que só recebe de
+// Hotmart/Greenn/Zouti/Kiwify) — um vazamento aqui não deve comprometer o
+// secret dos webhooks de venda. `HERMES_WEBHOOK_SECRET || SAC_WEBHOOK_SECRET`
+// é fallback INTENCIONAL e temporário: só até a env var nova ser configurada
+// na Vercel (não criada por esta tarefa, é passo de deploy). Assim que
+// HERMES_WEBHOOK_SECRET existir, o Hermes já para de compartilhar segredo com
+// o checkout sem precisar de outra alteração de código.
+export function checkHermesWebhookToken(req: NextRequest): WebhookAuthResult {
+  const secret = process.env.HERMES_WEBHOOK_SECRET || process.env.SAC_WEBHOOK_SECRET
+
+  if (!secret) return { ok: false, status: 503, reason: 'webhook_secret_not_configured' }
+
+  const incoming = req.nextUrl.searchParams.get('token') ?? req.headers.get('x-webhook-token')
+  if (!incoming) return { ok: false, status: 401, reason: 'invalid_webhook_token' }
+
+  const sanitized = incoming.split(/[?&]/)[0]
+  if (!safeEqual(incoming, secret) && !safeEqual(sanitized, secret)) {
+    return { ok: false, status: 401, reason: 'invalid_webhook_token' }
+  }
+
+  return { ok: true }
+}
