@@ -27,6 +27,9 @@ const PROJECT_ROOT = path.resolve(__dirname, '..')
 const CONTAINER_NAME = 'sync_agents_pagination_backfill_test'
 const SOURCE_SCHEMA = 'agent_sync_pagination'
 const TOTAL_CONVERSATIONS = 500
+const CTWA_1201_PHONE = '5511999991201'
+const CTWA_1201_CAMPAIGN = 'ag [ENG] [WHATSAPP] 23/09'
+const CTWA_1201_AD = 'ag [WHATSAPP] img-42-sem-resposta 23/09'
 
 function dockerAvailable(): boolean {
   const r = spawnSync('docker', ['info'], { stdio: 'ignore' })
@@ -196,9 +199,16 @@ async function setupRealAgentsSource(sql: ReturnType<typeof postgres>) {
     create table public.ctwa_referrals (
       id text primary key,
       phone_norm text,
-      campaign_name text,
+      source_id text,
       ad_name text,
-      created_at timestamp
+      adset_name text,
+      campaign_name text,
+      headline text,
+      body text,
+      source_url text,
+      ctwa_clid text,
+      ts bigint,
+      synced_at timestamptz default now()
     )
   `
 
@@ -236,6 +246,59 @@ async function setupRealAgentsSource(sql: ReturnType<typeof postgres>) {
 
   await sql`insert into ${sql(SOURCE_SCHEMA)}.conversations ${sql(conversations)}`
   await sql`insert into ${sql(SOURCE_SCHEMA)}.messages ${sql(messages)}`
+  await sql`
+    insert into public.ctwa_referrals (
+      id, phone_norm, source_id, ad_name, adset_name, campaign_name,
+      headline, body, source_url, ctwa_clid, ts, synced_at
+    )
+    values (
+      '5511999991201_1790098806_120248295700610686',
+      ${CTWA_1201_PHONE},
+      '120248295700610686',
+      ${CTWA_1201_AD},
+      '[ENG] [WHATSAPP] [BR] Advantage+ 23/09',
+      ${CTWA_1201_CAMPAIGN},
+      'Headline teste CTWA',
+      'Body teste CTWA',
+      'https://fb.me/teste-ctwa',
+      'ctwa-clid-teste',
+      1790098806,
+      '2026-09-22T19:00:41Z'
+    )
+  `
+}
+
+async function seedLocalCtwaLeadFixtures(sql: ReturnType<typeof postgres>) {
+  const [company] = await sql`
+    insert into companies (name, slug, plan)
+    values ('AutonomIA', 'autonomia', 'pro')
+    on conflict (slug) do update set name = excluded.name
+    returning id
+  `
+
+  await sql`
+    insert into recovery_leads (company_id, platform, event_type, phone, name, status)
+    values
+      (${company.id}, 'manual', 'manual', ${CTWA_1201_PHONE}, 'Lead CTWA 1201', 'pending'),
+      (${company.id}, 'manual', 'manual', '5511999997777', 'Lead sem CTWA', 'pending')
+  `
+}
+
+async function reproduceOldCtwaCreatedAtBug(sql: ReturnType<typeof postgres>): Promise<unknown> {
+  try {
+    await sql.unsafe(`
+      select id, phone_norm, campaign_name, ad_name, created_at,
+             coalesce(created_at, '1970-01-01T00:00:00.000Z'::timestamp) as __sync_sort_at,
+             id::text as __sync_cursor_id
+      from public.ctwa_referrals
+      where phone_norm is not null and length(phone_norm) >= 8
+      order by coalesce(created_at, '1970-01-01T00:00:00.000Z'::timestamp) desc, id::text desc
+      limit 300
+    `)
+    return null
+  } catch (err) {
+    return err
+  }
 }
 
 async function localCounts(sql: ReturnType<typeof postgres>) {
@@ -282,6 +345,8 @@ async function main() {
     const testDb = drizzle(sql, { schema })
 
     await setupRealAgentsSource(sql)
+    await seedLocalCtwaLeadFixtures(sql)
+    const oldCtwaBugError = await reproduceOldCtwaCreatedAtBug(sql)
 
     mock.module('@/lib/db', {
       namedExports: { db: testDb },
@@ -306,6 +371,21 @@ async function main() {
 
     const report1 = await syncAgentsAndCompanies()
     const counts1 = await localCounts(sql)
+    const [ctwaLead1201AfterSync] = await sql`
+      select tracking_source, utm_campaign
+      from recovery_leads
+      where phone = ${CTWA_1201_PHONE}
+    `
+    const [leadWithoutCtwaAfterSync] = await sql`
+      select tracking_source, utm_campaign
+      from recovery_leads
+      where phone = '5511999997777'
+    `
+
+    await test('CTWA: query antiga com created_at reproduz o bug antes do fix', () => {
+      assert.ok(oldCtwaBugError, 'a query antiga deveria falhar porque public.ctwa_referrals não tem created_at')
+      assert.match(String(oldCtwaBugError), /created_at/)
+    })
 
     await test('1ª execução do cron importa só o primeiro lote de 300 e grava cursor', async () => {
       assert.equal(report1.ok, true)
@@ -321,6 +401,22 @@ async function main() {
       assert.equal(cursors.length, 1, 'cursor de conversas deveria existir após a 1ª rodada')
       assert.ok(cursors[0].newest_synced_at, 'newest_synced_at deveria ser preenchido')
       assert.ok(cursors[0].backfill_before_at, 'backfill_before_at deveria ser preenchido')
+    })
+
+    await test('CTWA: telefone real sufixo 1201 passa a ser marcado como meta_ads', () => {
+      assert.ok(ctwaLead1201AfterSync, 'lead 1201 deveria existir no banco local de teste')
+      assert.equal(ctwaLead1201AfterSync.tracking_source, 'meta_ads')
+      assert.equal(ctwaLead1201AfterSync.utm_campaign, CTWA_1201_CAMPAIGN)
+      assert.ok(
+        report1.details.some((detail: string) => detail.includes('leads identificados como Anúncios Meta')),
+        'relatório deveria registrar atualização CTWA'
+      )
+    })
+
+    await test('CTWA: lead sem referral continua sem alteração', () => {
+      assert.ok(leadWithoutCtwaAfterSync, 'lead sem CTWA deveria existir no banco local de teste')
+      assert.equal(leadWithoutCtwaAfterSync.tracking_source, null)
+      assert.equal(leadWithoutCtwaAfterSync.utm_campaign, null)
     })
 
     const report2 = await syncAgentsAndCompanies()
@@ -347,6 +443,20 @@ async function main() {
       assert.equal(counts3.distinctPhones, TOTAL_CONVERSATIONS)
       assert.equal(counts3.distinctMessageExternalIds, TOTAL_CONVERSATIONS)
       assert.equal(counts3.duplicateMessages, 0)
+    })
+
+    await sql`drop table public.ctwa_referrals`
+    const reportWithoutCtwaTable = await syncAgentsAndCompanies()
+    const [leadWithoutCtwaTable] = await sql`
+      select tracking_source, utm_campaign
+      from recovery_leads
+      where phone = '5511999997777'
+    `
+
+    await test('CTWA: tabela opcional ausente não quebra o sync', () => {
+      assert.equal(reportWithoutCtwaTable.ok, true)
+      assert.equal(leadWithoutCtwaTable.tracking_source, null)
+      assert.equal(leadWithoutCtwaTable.utm_campaign, null)
     })
   } finally {
     await sql.end({ timeout: 2 })
