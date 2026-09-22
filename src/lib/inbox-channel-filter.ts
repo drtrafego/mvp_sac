@@ -88,7 +88,17 @@ const CATEGORY_RULES: CategoryRule[] = [
     name: 'mineracao',
     channelEquals: 'mineracao',
     platformEquals: 'mineracao',
-    trackingIncludes: ['mineracao', 'prospeccao'],
+    // Lista PRECISA ficar sincronizada com src/lib/origins.ts (normalizeOrigin,
+    // bloco "1. Mineração"): são duas heurísticas de texto livre escritas à
+    // mão em arquivos separados pro MESMO conceito de negócio, e já
+    // divergiram uma vez de verdade em produção. Achado real (22/09/2026): o
+    // CRM grava campaign_source canônico "Minerador" (ver
+    // /opt/gastaomatos/conexoes_comuns/crm.md), e sync-agents.ts (bloco 5)
+    // grava esse valor direto em trackingSource. "Minerador" bate em 'miner'
+    // mas NÃO batia em 'mineracao'/'prospeccao': o lead aparecia certo em
+    // Origens (que já tinha 'miner') e sumia da aba Mineração do Inbox (que
+    // só tinha a lista estreita). Mudou um lado, mude o outro.
+    trackingIncludes: ['mineracao', 'prospeccao', 'miner', 'mining', 'places'],
   },
   {
     name: 'email',
@@ -139,6 +149,38 @@ const MINERACAO_SUBCATEGORY_RULES: CategoryRule[] = [
   },
 ]
 
+// Borda de palavra (regex ~*) no lugar do ILIKE '%needle%' puro. ILIKE por
+// substring solta colide com texto livre de TERCEIROS que chega em
+// trackingSource pelos 4 checkouts (Hotmart/Greenn/Zouti/Kiwify, onde o
+// valor vem direto de utm_source/tracking.source, controlado pelo
+// afiliado/vendedor, não é texto interno). Achado real do QA (22/09/2026):
+// 'places' batia em "hotmart_marketplaces_afiliados" e 'miner' batia em
+// "facebook_ads_examiner_leads", os dois com o termo colado dentro de uma
+// palavra maior e SEM relação nenhuma com mineração.
+//
+// A borda é SÓ DO LADO ESQUERDO (`^` ou caractere não-letra antes do termo),
+// de propósito NÃO simétrica. Testado e confirmado (script ad-hoc, Postgres
+// e Node, 22/09/2026): borda dos DOIS lados quebra o valor canônico real do
+// CRM ("Minerador", gravado por sync-agents.ts) porque ali 'miner' é PREFIXO
+// de uma palavra maior ("Miner" + "ador"), não uma palavra isolada — com
+// borda simétrica esse lead sumiria de novo da aba Mineração (o bug exato
+// que a rodada 6 corrigiu). Borda só à esquerda resolve os dois falsos
+// positivos confirmados (nos dois casos o termo aparece como SUFIXO,
+// precedido de letra) sem reintroduzir aquele bug, e não muda nenhum dos
+// 137 casos do teste de reconciliação nem os 3 negativos novos do QA.
+//
+// Limitação conhecida e NÃO resolvida por borda de palavra (reportado, não
+// escondido): "bitcoin_mining_influencer_promo" tem 'mining' como palavra
+// inteira, delimitada por '_' dos dois lados, estruturalmente IDÊNTICA ao
+// caso legítimo "mining_campaign_leads". Nenhuma regra de borda de texto
+// distingue os dois; resolver isso exigiria uma regra de negócio nova
+// (lista de exclusão tipo "bitcoin"/"cripto", no molde do isDrLucas de
+// origins.ts), fora do escopo desta correção e pendente de decisão.
+function wordBoundaryPattern(needle: string): string {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return `(^|[^a-z])${escaped}`
+}
+
 // Condição SQL (booleana) de UMA regra: bate em qualquer um dos sinais dela.
 // coalesce(..., false): channel/platform/trackingSource são colunas
 // nullable, e em lógica de 3 valores do SQL "coluna = X" com coluna NULL não
@@ -155,7 +197,9 @@ function ruleConditionSql(rule: CategoryRule): SQL {
   if (rule.channelEquals) parts.push(sql`lower(${channel}) = ${rule.channelEquals}`)
   if (rule.platformEquals) parts.push(sql`lower(${platform}) = ${rule.platformEquals}`)
   for (const needle of rule.trackingIncludes) {
-    parts.push(sql`${trackingSource} ilike ${'%' + needle + '%'}`)
+    // ~* = regex POSIX case-insensitive (Postgres já case-fold a classe
+    // [^a-z] sob ~*, confirmado com teste direto contra o banco).
+    parts.push(sql`${trackingSource} ~* ${wordBoundaryPattern(needle)}`)
   }
   if (rule.phonePrefix) {
     parts.push(sql`left(lower(${phone}), ${rule.phonePrefix.length}) = ${rule.phonePrefix}`)
@@ -216,6 +260,14 @@ export function channelWhereCondition(chFilter: string | null | undefined): SQL 
   return sql<boolean>`${channelLabelSql()} = ${chFilter}`
 }
 
+// Espelho em memória de wordBoundaryPattern/ruleConditionSql: mesma borda só
+// à esquerda, mesmo motivo (ver comentário lá). `src` já chega lowercased
+// aqui embaixo, então não precisa de flag 'i'.
+function matchesWordBoundary(src: string, needle: string): boolean {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^a-z])${escaped}`).test(src)
+}
+
 function matchesRule(rule: CategoryRule, fields: ChannelFields): boolean {
   const ch = (fields.channel || '').toLowerCase()
   const pl = (fields.platform || '').toLowerCase()
@@ -224,7 +276,7 @@ function matchesRule(rule: CategoryRule, fields: ChannelFields): boolean {
 
   if (rule.channelEquals && ch === rule.channelEquals) return true
   if (rule.platformEquals && pl === rule.platformEquals) return true
-  if (rule.trackingIncludes.some(needle => src.includes(needle))) return true
+  if (rule.trackingIncludes.some(needle => matchesWordBoundary(src, needle))) return true
   if (rule.phonePrefix && phone.startsWith(rule.phonePrefix)) return true
   return false
 }

@@ -31,6 +31,7 @@ import {
   type ChannelClassification,
   type MineracaoSubchannel,
 } from '../src/lib/inbox-channel-filter'
+import { normalizeOrigin } from '../src/lib/origins'
 
 type Categoria = 'mineracao' | 'email' | 'instagram' | 'whatsapp'
 
@@ -294,6 +295,84 @@ const FIXTURES: LeadFixture[] = [
     phone: 'IG_5511900077777',
     esperado: 'mineracao',
     esperadoSub: 'instagram',
+  },
+  // ── Rodada 6 (esta): trackingIncludes estreito divergia de origins.ts ──────
+  // Achado real em produção (22/09/2026): o CRM grava campaign_source
+  // canônico "Minerador" (ver /opt/gastaomatos/conexoes_comuns/crm.md) e
+  // sync-agents.ts (bloco 5) grava esse valor direto em trackingSource
+  // (`l.campaign_source || l.utm_source || 'mineracao_prospeccao'`, e
+  // campaign_source não é nulo, então o fallback nunca disparava). "Minerador"
+  // bate em origins.ts (que já tinha 'miner') mas NÃO batia na lista antiga
+  // de inbox-channel-filter.ts (só 'mineracao'/'prospeccao'): o lead aparecia
+  // certo em Origens e sumia da aba Mineração do Inbox. Estes 3 casos cobrem
+  // os 3 termos novos adicionados ('miner', 'mining', 'places').
+  {
+    descricao: "trackingSource='Minerador' (valor canônico exato gravado pelo CRM/sync-agents.ts, com maiúscula)",
+    origem: 'rodada 6',
+    channel: null,
+    platform: null,
+    trackingSource: 'Minerador',
+    phone: '5511900088888',
+    esperado: 'mineracao',
+    esperadoSub: 'whatsapp',
+  },
+  {
+    descricao: "trackingSource='mining_campaign_leads' (termo novo 'mining')",
+    origem: 'rodada 6',
+    channel: null,
+    platform: null,
+    trackingSource: 'mining_campaign_leads',
+    phone: '5511900099999',
+    esperado: 'mineracao',
+    esperadoSub: 'whatsapp',
+  },
+  {
+    descricao: "trackingSource='google_places_scraper' (termo novo 'places', ferramenta de mineração via Google Maps)",
+    origem: 'rodada 6',
+    channel: null,
+    platform: null,
+    trackingSource: 'google_places_scraper',
+    phone: '5511900010101',
+    esperado: 'mineracao',
+    esperadoSub: 'whatsapp',
+  },
+  // ── Rodada 7 (esta): ILIKE/`.includes()` por SUBSTRING SOLTA (sem borda de
+  // palavra) colidia com texto livre de TERCEIROS que chega em
+  // trackingSource pelos 4 checkouts (Hotmart/Greenn/Zouti/Kiwify), onde o
+  // valor vem direto de utm_source/tracking.source controlado pelo
+  // afiliado/vendedor, não é texto interno. Achado do QA (22/09/2026), 2 dos
+  // 3 exemplos confirmados e corrigidos por borda de palavra (só do lado
+  // ESQUERDO: ver wordBoundaryPattern em inbox-channel-filter.ts e
+  // hasWordBoundary em origins.ts — borda nos dois lados quebraria o valor
+  // canônico real "Minerador" da rodada 6, que tem 'miner' como PREFIXO de
+  // palavra maior, não palavra isolada).
+  //
+  // ⚠️ NÃO incluído aqui: "bitcoin_mining_influencer_promo" (3º exemplo do
+  // QA). Continua classificando como mineracao=true mesmo depois da correção:
+  // 'mining' aparece lá como palavra INTEIRA, delimitada por '_' dos dois
+  // lados, estruturalmente idêntica ao caso legítimo
+  // "mining_campaign_leads" (fixture da rodada 6, algumas linhas acima).
+  // Nenhuma regra de borda de texto distingue os dois; corrigir isso exige
+  // uma regra de negócio nova (lista de exclusão tipo "bitcoin"/"cripto"),
+  // que é decisão de produto, não faz parte desta correção. Reportado
+  // separadamente, não escondido nem forçado a passar aqui.
+  {
+    descricao: "trackingSource='hotmart_marketplaces_afiliados': 'places' aparece como SUFIXO de 'marketplaces' (precedido de letra), não deve virar Mineração",
+    origem: 'rodada 7',
+    channel: null,
+    platform: 'hotmart',
+    trackingSource: 'hotmart_marketplaces_afiliados',
+    phone: '5511900012121',
+    esperado: 'whatsapp',
+  },
+  {
+    descricao: "trackingSource='facebook_ads_examiner_leads': 'miner' aparece como SUFIXO de 'examiner' (precedido de letra), não deve virar Mineração",
+    origem: 'rodada 7',
+    channel: null,
+    platform: null,
+    trackingSource: 'facebook_ads_examiner_leads',
+    phone: '5511900013131',
+    esperado: 'whatsapp',
   },
 ]
 
@@ -627,6 +706,43 @@ async function main() {
         assert.fail(`overlap de subcategoria encontrado: ${detalhe}`)
       }
     })
+    // ── 8. Rodada 6: inbox-channel-filter.ts concorda com origins.ts pros
+    // termos novos ('miner'/'mining'/'places'). É a prova direta de que as
+    // duas heurísticas de texto livre, escritas à mão em arquivos separados
+    // pro mesmo conceito de negócio, não divergem mais pro achado real do
+    // CRM ("Minerador").
+    const fixturesRodada6 = FIXTURES.map((f, i) => ({ f, id: idByIndex.get(i)! })).filter(
+      ({ f }) => f.origem === 'rodada 6'
+    )
+
+    for (const { f } of fixturesRodada6) {
+      await caso(
+        `[rodada 6] normalizeOrigin (src/lib/origins.ts) também classifica "${f.descricao}" como categoria 'mineracao'`,
+        () => {
+          const meta = normalizeOrigin(f.trackingSource, null, f.platform, null, f.channel)
+          assert.equal(
+            meta.category,
+            'mineracao',
+            `normalizeOrigin deveria classificar trackingSource='${f.trackingSource}' como categoria 'mineracao', veio '${meta.category}'`
+          )
+        }
+      )
+
+      await caso(
+        `[rodada 6] classifyChannelInMemory (inbox-channel-filter.ts) concorda com normalizeOrigin (origins.ts) para "${f.descricao}"`,
+        () => {
+          const classificacaoInbox = classifyChannelInMemory(f)
+          const metaOrigins = normalizeOrigin(f.trackingSource, null, f.platform, null, f.channel)
+          assert.equal(classificacaoInbox.isMineracao, true, 'inbox-channel-filter.ts deveria marcar isMineracao=true')
+          assert.equal(metaOrigins.category, 'mineracao', 'origins.ts deveria marcar category=mineracao')
+          assert.equal(
+            classificacaoInbox.isMineracao,
+            metaOrigins.category === 'mineracao',
+            `as duas heurísticas divergiram para trackingSource='${f.trackingSource}'`
+          )
+        }
+      )
+    }
   } finally {
     await client.end({ timeout: 2 })
     if (stopContainer) stopContainer()
