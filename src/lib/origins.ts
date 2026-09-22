@@ -41,6 +41,24 @@ export function normalizeOrigin(
   const ch = (channel || '').toLowerCase().trim()
   const combined = `${s} ${m} ${p} ${ev}`
 
+  // Borda de palavra (só do lado ESQUERDO) pro bloco de Mineração abaixo.
+  // Mesma correção e mesma justificativa de src/lib/inbox-channel-filter.ts
+  // (ruleConditionSql/wordBoundaryPattern): ILIKE/`.includes()` por
+  // substring solta colide com texto livre de terceiros (trackingSource dos
+  // 4 checkouts, controlado pelo afiliado). Ex. real confirmado pelo QA:
+  // "hotmart_marketplaces_afiliados" batia em 'places', "facebook_ads_
+  // examiner_leads" batia em 'miner'. Borda só à esquerda porque o valor
+  // canônico real "Minerador" (gravado por sync-agents.ts) tem 'miner' como
+  // PREFIXO de palavra maior, não palavra isolada: borda dos dois lados
+  // quebraria esse caso de novo. `\b` do JS NÃO serve aqui porque trata `_`
+  // como caractere de palavra, e os valores reais usam `_` como separador
+  // (ex.: "prospeccao_email_followup") — por isso `[^a-z]` explícito, igual
+  // ao SQL do outro arquivo.
+  const hasWordBoundary = (needle: string) => {
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return new RegExp(`(^|[^a-z])${escaped}`, 'i').test(combined)
+  }
+
   // Regra prioritária de proteção médica / Dr. Lucas: NUNCA é Mineração
   const isDrLucas = combined.includes('lucas') || combined.includes('clara') || combined.includes('fernandes') || combined.includes('clinica') || combined.includes('consultorio')
   if (isDrLucas) {
@@ -72,10 +90,10 @@ export function normalizeOrigin(
 
   // 1. Mineração (AutonomIA) - Apenas para empresas de prospecção fria real
   if (
-    combined.includes('miner') ||
-    combined.includes('mining') ||
-    combined.includes('prospeccao') ||
-    combined.includes('places')
+    hasWordBoundary('miner') ||
+    hasWordBoundary('mining') ||
+    hasWordBoundary('prospeccao') ||
+    hasWordBoundary('places')
   ) {
     // Sinal primário: a coluna `channel` de recoveryLeads (mesma fonte de
     // verdade que o inbox-channel-filter.ts usa). O sync de mineração
