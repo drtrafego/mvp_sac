@@ -17,6 +17,7 @@ export async function GET(): Promise<NextResponse> {
   const instagramCond = channelWhereCondition('instagram')!
   const emailCond = channelWhereCondition('email')!
   const mineracaoCond = channelWhereCondition('mineracao')!
+  const anuncioCond = channelWhereCondition('anuncio')!
   const whatsappCond = channelWhereCondition('whatsapp')!
   // Subcategorias: canal REAL de contato dentro do universo já classificado
   // como mineracao (mesma condição principal, segunda dimensão de filtro).
@@ -25,6 +26,8 @@ export async function GET(): Promise<NextResponse> {
   const mineracaoEmailCond = channelWhereCondition('mineracao_email')!
   const mineracaoWhatsappCond = channelWhereCondition('mineracao_whatsapp')!
   const mineracaoInstagramCond = channelWhereCondition('mineracao_instagram')!
+  const anuncioMetaAdsCond = channelWhereCondition('anuncio_meta_ads')!
+  const anuncioGoogleAdsCond = channelWhereCondition('anuncio_google_ads')!
 
   const [row] = await db
     .select({
@@ -33,9 +36,12 @@ export async function GET(): Promise<NextResponse> {
       instagram: sql<number>`count(*) filter (where ${instagramCond})`,
       email: sql<number>`count(*) filter (where ${emailCond})`,
       mineracao: sql<number>`count(*) filter (where ${mineracaoCond})`,
+      anuncio: sql<number>`count(*) filter (where ${anuncioCond})`,
       mineracaoEmail: sql<number>`count(*) filter (where ${mineracaoEmailCond})`,
       mineracaoWhatsapp: sql<number>`count(*) filter (where ${mineracaoWhatsappCond})`,
       mineracaoInstagram: sql<number>`count(*) filter (where ${mineracaoInstagramCond})`,
+      anuncioMetaAds: sql<number>`count(*) filter (where ${anuncioMetaAdsCond})`,
+      anuncioGoogleAds: sql<number>`count(*) filter (where ${anuncioGoogleAdsCond})`,
     })
     .from(recoveryLeads)
     .where(eq(recoveryLeads.companyId, company.id))
@@ -46,8 +52,11 @@ export async function GET(): Promise<NextResponse> {
     instagram: Number(row?.instagram ?? 0),
     email: Number(row?.email ?? 0),
     mineracao: Number(row?.mineracao ?? 0),
+    anuncio: Number(row?.anuncio ?? 0),
     mineracaoEmail: Number(row?.mineracaoEmail ?? 0),
     mineracaoWhatsapp: Number(row?.mineracaoWhatsapp ?? 0),
     mineracaoInstagram: Number(row?.mineracaoInstagram ?? 0),
+    anuncioMetaAds: Number(row?.anuncioMetaAds ?? 0),
+    anuncioGoogleAds: Number(row?.anuncioGoogleAds ?? 0),
   })
 }
