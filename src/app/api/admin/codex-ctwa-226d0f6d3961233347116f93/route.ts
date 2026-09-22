@@ -77,18 +77,16 @@ function selectList(columns: Set<string>): string {
 
 function orderByCreated(columns: Set<string>): string {
   if (columns.has('created_at')) return 'order by c.created_at desc nulls last'
-  if (columns.has('ts') && columns.has('synced_at')) return 'order by coalesce(c.ts, c.synced_at) desc nulls last'
-  if (columns.has('ts')) return 'order by c.ts desc nulls last'
   if (columns.has('synced_at')) return 'order by c.synced_at desc nulls last'
+  if (columns.has('ts')) return 'order by c.ts desc nulls last'
   return ''
 }
 
 function timeExpr(columns: Set<string>, prefix = ''): string | null {
   const p = prefix ? `${prefix}.` : ''
   if (columns.has('created_at')) return `${p}created_at`
-  if (columns.has('ts') && columns.has('synced_at')) return `coalesce(${p}ts, ${p}synced_at)`
-  if (columns.has('ts')) return `${p}ts`
   if (columns.has('synced_at')) return `${p}synced_at`
+  if (columns.has('ts')) return `${p}ts`
   return null
 }
 
