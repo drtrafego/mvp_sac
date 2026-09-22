@@ -26,6 +26,16 @@
 //   (e) empresa que não é o Dr. Lucas nunca sincroniza (guard explícito)
 //   (f) rodar a sync duas vezes seguidas pro mesmo evento não duplica linha
 //       (índice único company_id+date respeitado pelo upsert)
+//
+// Casos do FIX de bug de produção (ALTO, 22/09/2026): o calendário principal
+// nunca foi compartilhado com a Service Account (404) e o iClinic é o único
+// que funciona de verdade. Antes, Promise.all derrubava a sync inteira mesmo
+// com o iClinic 100% acessível:
+//   (j) principal falha (404) e iClinic funciona: eventos do iClinic são
+//       gravados normalmente, e `calendars` no resultado mostra qual
+//       calendário falhou e qual funcionou (sucesso parcial)
+//   (k) os DOIS calendários falham: retorna erro geral google_api_error,
+//       sem gravar nada incorreto
 // Casos do fix de QA (bug ALTO, 22/09/2026, reason virou botReason +
 // googleReason calculado em vez de string concatenada irreversível) e da 2ª
 // rodada (bug ALTO reaberto: Hermes concatenava e o fallback de herança
@@ -158,8 +168,18 @@ async function main() {
   // calendarId -> lista de eventos de dia inteiro que o mock de
   // googleapis.events.list() devolve pra ele. Cada teste ajusta antes de rodar.
   let eventsByCalendar: Record<string, FakeAllDayEvent[]> = {}
+  // calendarId -> mensagem de erro que o mock de events.list() deve lançar
+  // pra simular o 404 real (calendário nunca compartilhado com a Service
+  // Account). Usado pelos casos (j) e (k) de sucesso/falha parcial. Reseta
+  // sozinho a cada setCalendarEvents pra nenhum teste vazar erro simulado
+  // pro próximo.
+  let errorByCalendar: Record<string, string> = {}
   function setCalendarEvents(map: Record<string, FakeAllDayEvent[]>) {
     eventsByCalendar = map
+    errorByCalendar = {}
+  }
+  function setCalendarErrors(map: Record<string, string>) {
+    errorByCalendar = map
   }
 
   mock.module('@/lib/db', {
@@ -199,6 +219,8 @@ async function main() {
         calendar: (_opts: unknown) => ({
           events: {
             list: async ({ calendarId }: { calendarId: string }) => {
+              const errorMessage = errorByCalendar[calendarId]
+              if (errorMessage) throw new Error(errorMessage)
               const items = (eventsByCalendar[calendarId] ?? []).map(ev => ({
                 id: ev.id,
                 summary: ev.summary,
@@ -447,6 +469,62 @@ async function main() {
       assert.equal(row.botReason, null, 'sem fallback, botReason fica null até o Hermes escrever de novo (lacuna aceitável, não é bug)')
       assert.equal(row.googleReason, 'Congresso')
       assert.equal(row.reason, 'Congresso', 'reason nunca duplica nem inventa o texto antigo do bot')
+    })
+
+    // ── (j) FIX bug de produção (ALTO, 22/09/2026): principal falha (404,
+    // nunca compartilhado com a Service Account) e iClinic funciona. Antes,
+    // Promise.all derrubava a sync inteira mesmo com o iClinic 100%
+    // acessível. Agora o evento do iClinic tem que ser gravado normalmente,
+    // e o resultado tem que reportar qual calendário falhou e qual funcionou.
+    await test('sucesso parcial: calendário principal falha (404) mas iClinic funciona, eventos do iClinic são gravados e o resultado reporta os dois status', async () => {
+      setCalendarEvents({
+        [PRIMARY_CALENDAR]: [],
+        [ICLINIC_CALENDAR]: [{ id: 'ev-iclinic-1', summary: 'Bloqueio iClinic', date: '2026-10-20' }],
+      })
+      setCalendarErrors({
+        [PRIMARY_CALENDAR]: 'Not Found',
+      })
+
+      const result = await syncGoogleCalendarBlockedDates({ id: drLucas.id, slug: drLucas.slug })
+      assert.equal(result.ok, true, 'sucesso parcial ainda é ok:true, um calendário funcionando basta')
+      assert.equal(result.skipped, false)
+      assert.equal(result.created, 1)
+      assert.equal(result.eventsFound, 1, 'só conta o evento do calendário que funcionou')
+
+      const row = await blockedRow(drLucas.id, '2026-10-20')
+      assert.ok(row, 'evento do iClinic (calendário que funciona) tem que ser gravado mesmo com o principal falhando')
+      assert.equal(row.source, 'google_calendar')
+      assert.equal(row.reason, 'Bloqueio iClinic')
+
+      assert.ok(Array.isArray(result.calendars), 'resultado tem que reportar o status de cada calendário')
+      const primaryStatus = result.calendars!.find(c => c.id === PRIMARY_CALENDAR)
+      const iclinicStatus = result.calendars!.find(c => c.id === ICLINIC_CALENDAR)
+      assert.equal(primaryStatus?.ok, false)
+      assert.equal(primaryStatus?.error, 'Not Found')
+      assert.equal(iclinicStatus?.ok, true)
+      assert.equal(iclinicStatus?.eventsFound, 1)
+    })
+
+    // ── (k) os DOIS calendários falham: erro geral, nada gravado ──────────
+    await test('os dois calendários falham (404 nos dois): retorna erro geral google_api_error, sem gravar nada', async () => {
+      setCalendarEvents({
+        [PRIMARY_CALENDAR]: [],
+        [ICLINIC_CALENDAR]: [],
+      })
+      setCalendarErrors({
+        [PRIMARY_CALENDAR]: 'Not Found',
+        [ICLINIC_CALENDAR]: 'Not Found',
+      })
+
+      const result = await syncGoogleCalendarBlockedDates({ id: drLucas.id, slug: drLucas.slug })
+      assert.equal(result.ok, false)
+      assert.equal(result.skipped, false)
+      assert.equal(result.reason, 'google_api_error')
+      assert.ok(result.errorMessage?.includes('Not Found'))
+      assert.equal(result.created, undefined, 'não deve processar upsert nenhum quando os dois falham')
+
+      assert.ok(Array.isArray(result.calendars))
+      assert.ok(result.calendars!.every(c => c.ok === false))
     })
 
     // ── (e) empresa que não é o Dr. Lucas nunca sincroniza ───────────────

@@ -34,7 +34,12 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
 
   if (!result.ok) {
     return NextResponse.json(
-      { ok: false, error: result.errorMessage || 'Erro ao sincronizar com o Google Calendar.', reason: result.reason },
+      {
+        ok: false,
+        error: result.errorMessage || 'Erro ao sincronizar com o Google Calendar.',
+        reason: result.reason,
+        calendars: result.calendars,
+      },
       { status: 502 },
     )
   }
@@ -51,6 +56,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
         created: result.created,
         updated: result.updated,
         skippedManual: result.skippedManual,
+        calendars: result.calendars,
       },
     })
   }
