@@ -8,7 +8,7 @@ type Db = ReturnType<typeof drizzle<typeof schema>>
 let _db: Db | undefined
 let _migrationPromise: Promise<void> | null = null
 
-function ensureSchema(client: any): Promise<void> {
+export function ensureSchema(client: any): Promise<void> {
   if (!_migrationPromise) {
     _migrationPromise = (async () => {
       try {
@@ -306,17 +306,26 @@ function ensureSchema(client: any): Promise<void> {
         }
 
         // ─── Idempotência dos webhooks de atendimento contra lead duplicado ───
-        // (21/09/2026, achado do QA 2ª rodada, severidade ALTA): mesmo padrão
-        // acima, fora do Promise.allSettled de propósito para que uma falha
-        // apareça no log em vez de sumir. Só falha se já existir
-        // company_id+phone duplicado entre leads de atendimento (platform
-        // IN ('instagram','sac')) em produção; leads de VENDA (hotmart etc.)
-        // não entram nessa condição e não são afetados.
+        // (21/09/2026, achado do QA 2ª rodada, severidade ALTA; predicado
+        // ampliado com 'hermes' em 22/09/2026, achado CRÍTICO da 2ª rodada
+        // seguinte): mesmo padrão do índice acima, fora do Promise.allSettled
+        // de propósito para que uma falha apareça no log em vez de sumir.
+        // O DROP antes do CREATE é indispensável aqui: sem ele, o índice
+        // antigo (predicado sem 'hermes') já existe em produção e o
+        // "IF NOT EXISTS" pula a criação, deixando o predicado velho pra
+        // sempre, o que quebra com "there is no unique or exclusion
+        // constraint matching ON CONFLICT" toda vez que uma rota (hermes,
+        // whatsapp, instagram) fizer ON CONFLICT com o predicado novo. Só
+        // falha se já existir company_id+phone duplicado entre leads de
+        // atendimento (platform IN ('instagram','sac','hermes')) em
+        // produção; leads de VENDA (hotmart etc.) não entram nessa condição
+        // e não são afetados.
         try {
+          await client`DROP INDEX IF EXISTS recovery_leads_chat_company_phone_unique`
           await client`
             CREATE UNIQUE INDEX IF NOT EXISTS recovery_leads_chat_company_phone_unique
             ON recovery_leads (company_id, phone)
-            WHERE platform IN ('instagram', 'sac')
+            WHERE platform IN ('instagram', 'sac', 'hermes')
           `
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
@@ -324,7 +333,7 @@ function ensureSchema(client: any): Promise<void> {
             '[DB Schema Sync Error] Falha ao criar recovery_leads_chat_company_phone_unique ' +
               '(provável causa: já existe phone duplicado em recovery_leads para o mesmo company_id entre ' +
               "leads de atendimento; rode " +
-              "\"SELECT company_id, phone, count(*) FROM recovery_leads WHERE platform IN ('instagram','sac') GROUP BY company_id, phone HAVING count(*) > 1\" " +
+              "\"SELECT company_id, phone, count(*) FROM recovery_leads WHERE platform IN ('instagram','sac','hermes') GROUP BY company_id, phone HAVING count(*) > 1\" " +
               'e resolva as duplicatas (mesclar os leads e as mensagens do lead perdedor no vencedor) antes de tentar de novo):',
             message,
           )

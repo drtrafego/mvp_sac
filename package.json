@@ -10,7 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "test:inbox-channel-filter": "tsx scripts/inbox-channel-filter.reconcile.test.ts"
+    "test:inbox-channel-filter": "tsx scripts/inbox-channel-filter.reconcile.test.ts",
+    "test:hermes-conversion-webhook": "tsx --experimental-test-module-mocks scripts/hermes-conversion-webhook.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

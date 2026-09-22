@@ -275,22 +275,31 @@ export const recoveryLeads = pgTable('recovery_leads', {
     .on(table.companyId, table.platform, table.transactionId, table.eventType)
     .where(sql`${table.transactionId} is not null`),
 
-  // Idempotência dos webhooks de ATENDIMENTO (Instagram Direct e WhatsApp
-  // SAC, platform IN ('instagram','sac')): SELECT-então-INSERT sem lock
-  // deixava uma corrida entre requisições concorrentes com o mesmo telefone
-  // novo, e cada uma criava um lead próprio, fragmentando a conversa do
-  // cliente em vários cards no Inbox (provado pelo QA ao vivo, 2ª rodada: 10
-  // requisições concorrentes com telefone novo e mesmo mid → 6 leads
-  // distintos). Parcial e restrito a platform IN ('instagram','sac') de
-  // propósito: os webhooks de VENDA (hotmart/greenn/zouti/kiwify, platform
-  // nesses valores) criam MÚLTIPLAS linhas legítimas para o mesmo
-  // company_id+phone (um lead por transação/evento, ver
-  // recovery_leads_txn_dedup_unique acima) e um índice único geral em
-  // (company_id, phone) quebraria esse fluxo. phone é NOT NULL, então não
-  // precisa de "IS NOT NULL" na condição parcial.
+  // Idempotência dos webhooks de ATENDIMENTO (Instagram Direct, WhatsApp SAC
+  // e Hermes/reserva confirmada, platform IN ('instagram','sac','hermes')):
+  // SELECT-então-INSERT sem lock deixava uma corrida entre requisições
+  // concorrentes com o mesmo telefone novo, e cada uma criava um lead
+  // próprio, fragmentando a conversa do cliente em vários cards no Inbox
+  // (provado pelo QA ao vivo, 2ª rodada: 10 requisições concorrentes com
+  // telefone novo e mesmo mid → 6 leads distintos). 'hermes' foi adicionado
+  // em 22/09/2026 (QA reproduziu o mesmo bug ao vivo no webhook de conversão
+  // do Hermes: 2 requisições concorrentes com telefone novo → 2 leads),
+  // migration drizzle/0010_recovery_leads_hermes_dedup.sql. Parcial e
+  // restrito a platform IN ('instagram','sac','hermes') de propósito: os
+  // webhooks de VENDA (hotmart/greenn/zouti/kiwify, platform nesses valores)
+  // criam MÚLTIPLAS linhas legítimas para o mesmo company_id+phone (um lead
+  // por transação/evento, ver recovery_leads_txn_dedup_unique acima) e um
+  // índice único geral em (company_id, phone) quebraria esse fluxo. phone é
+  // NOT NULL, então não precisa de "IS NOT NULL" na condição parcial.
+  //
+  // ⚠️ Qualquer INSERT com onConflictDoUpdate/onConflictDoNothing que usa
+  // este índice como arbiter (webhooks whatsapp/instagram/instagram-[slug]/
+  // hermes) precisa que o `targetWhere`/`where` da query bata EXATAMENTE com
+  // esta condição parcial (Postgres exige o predicado casar com o índice pra
+  // inferir o arbiter em ON CONFLICT). Mudou aqui? Muda nos 4 lugares.
   uniqueIndex('recovery_leads_chat_company_phone_unique')
     .on(table.companyId, table.phone)
-    .where(sql`${table.platform} in ('instagram', 'sac')`),
+    .where(sql`${table.platform} in ('instagram', 'sac', 'hermes')`),
 ])
 
 // ─── Fila de mensagens agendadas ─────────────────────────────────────────────

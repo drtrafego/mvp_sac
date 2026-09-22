@@ -199,7 +199,13 @@ export async function POST(req: NextRequest) {
                   })
                   .onConflictDoUpdate({
                     target: [recoveryLeads.companyId, recoveryLeads.phone],
-                    targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac')`,
+                    // Precisa bater EXATAMENTE com o WHERE do índice
+                    // recovery_leads_chat_company_phone_unique (schema.ts) pro
+                    // Postgres inferir o arbiter do ON CONFLICT. Ampliado pra
+                    // incluir 'hermes' em 22/09/2026 junto com a migration
+                    // 0010 (fix de concorrência no webhook de conversão do
+                    // Hermes) — mudou lá, muda aqui também.
+                    targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes')`,
                     set: { updatedAt: new Date(), channel: 'instagram' },
                   })
                   .returning()
