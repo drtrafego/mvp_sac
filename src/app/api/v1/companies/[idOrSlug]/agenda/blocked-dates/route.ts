@@ -6,6 +6,7 @@ import { agendaBlockedDates, settings } from '@/lib/db/schema'
 import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { isUniqueViolation } from '@/lib/webhook-dedup'
 import { DEFAULT_AVAILABILITY_SCHEDULE, isValidDate, type AvailabilitySchedule } from '@/lib/agenda-schedule'
+import { maybeRefreshGoogleCalendarSync } from '@/lib/google-calendar-sync'
 import { eq, and, asc, gte } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
@@ -33,6 +34,9 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   if (error || !context) return error!
 
   const showAll = req.nextUrl.searchParams.get('all') === '1'
+
+  // Auto-refresh: mesma lógica de schedule/route.ts, ver comentário lá.
+  await maybeRefreshGoogleCalendarSync({ id: context.company.id, slug: context.company.slug })
 
   const [settingsRow] = await db.select().from(settings).where(eq(settings.companyId, context.company.id))
   const timezone =

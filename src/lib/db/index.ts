@@ -232,6 +232,18 @@ export function ensureSchema(client: any): Promise<void> {
             ON agenda_blocked_dates (company_id, date)
           `,
 
+          // ─── Sync com Google Calendar real do Dr. Lucas (22/09/2026) ───────────
+          // Ver comentário completo em schema.ts. Mecanismo REAL de produção é
+          // aqui, não em drizzle/0011_*.sql (que é só documental) — é o
+          // mesmo erro que atingiu recovery_leads antes, não repetir.
+          client`ALTER TABLE agenda_blocked_dates ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'manual'`,
+          client`ALTER TABLE agenda_blocked_dates ADD COLUMN IF NOT EXISTS external_ref text`,
+          client`ALTER TABLE agenda_blocked_dates ADD COLUMN IF NOT EXISTS synced_at timestamp`,
+          // Fix de QA (bug ALTO, 22/09/2026): reason vira campo calculado a
+          // partir de bot_reason + google_reason, ver comentário em schema.ts.
+          client`ALTER TABLE agenda_blocked_dates ADD COLUMN IF NOT EXISTS bot_reason text`,
+          client`ALTER TABLE agenda_blocked_dates ADD COLUMN IF NOT EXISTS google_reason text`,
+
           // ─── Rate limit local da ponte de IA (Nina/Amanda, 19/09/2026) ─────────
           client`
             CREATE TABLE IF NOT EXISTS ai_bridge_calls (

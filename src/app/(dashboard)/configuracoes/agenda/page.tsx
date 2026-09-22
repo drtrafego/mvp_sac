@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, CalendarOff, Clock, Plus, Save, Trash2, AlertCircle } from 'lucide-react'
+import { ArrowLeft, CalendarOff, Clock, Plus, RefreshCw, Save, Trash2, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -16,11 +16,28 @@ import {
   type DayRange,
 } from '@/lib/agenda-schedule'
 
+type BlockedDateSource = 'manual' | 'google_calendar' | 'bot_bloqueios' | 'google_calendar+bot_bloqueios'
+
 interface BlockedDate {
   id: number
   date: string
   reason: string | null
+  source: BlockedDateSource
+  externalRef: string | null
+  syncedAt: string | null
   createdAt: string
+}
+
+const SOURCE_LABELS: Record<BlockedDateSource, string> = {
+  manual: 'Manual',
+  google_calendar: 'Google Calendar',
+  bot_bloqueios: 'Bloqueio do bot (WhatsApp)',
+  'google_calendar+bot_bloqueios': 'Google Calendar + Bot',
+}
+
+function sourceLabel(source: BlockedDateSource | undefined | null): string {
+  if (!source) return SOURCE_LABELS.manual
+  return SOURCE_LABELS[source] ?? SOURCE_LABELS.manual
 }
 
 function formatDateBr(iso: string): string {
@@ -37,6 +54,8 @@ export default function AgendaConfigPage() {
   const [newReason, setNewReason] = useState('')
   const [blockError, setBlockError] = useState('')
   const [blocking, setBlocking] = useState(false)
+  const [syncingCalendar, setSyncingCalendar] = useState(false)
+  const [syncMessage, setSyncMessage] = useState('')
 
   const [schedule, setSchedule] = useState<AvailabilitySchedule>(DEFAULT_AVAILABILITY_SCHEDULE)
   const [savingSchedule, setSavingSchedule] = useState(false)
@@ -88,6 +107,32 @@ export default function AgendaConfigPage() {
     setBlockedDates(prev => [...prev, json.blockedDate].sort((a, b) => a.date.localeCompare(b.date)))
     setNewDate('')
     setNewReason('')
+  }
+
+  async function handleSyncCalendar() {
+    setSyncMessage('')
+    setSyncingCalendar(true)
+    try {
+      const res = await fetch(`/api/v1/companies/${companySlug}/agenda/sync?backfill=0`)
+      const json = await res.json()
+      if (!res.ok || !json.ok) {
+        setSyncMessage(json.error ?? 'Erro ao atualizar do Google Calendar.')
+      } else if (json.skipped) {
+        setSyncMessage(
+          json.reason === 'not_drlucas'
+            ? 'Sincronização com Google Calendar não se aplica a esta empresa.'
+            : 'Google Calendar ainda não configurado (falta a Service Account).',
+        )
+      } else {
+        setSyncMessage(`Atualizado: ${json.created ?? 0} novo(s), ${json.updated ?? 0} atualizado(s).`)
+        const blockedRes = await fetch(`/api/v1/companies/${companySlug}/agenda/blocked-dates`).then(r => r.json())
+        if (blockedRes.ok) setBlockedDates(blockedRes.blockedDates)
+      }
+    } catch {
+      setSyncMessage('Erro ao atualizar do Google Calendar.')
+    }
+    setSyncingCalendar(false)
+    setTimeout(() => setSyncMessage(''), 5000)
   }
 
   async function handleRemoveBlock(date: string) {
@@ -150,15 +195,27 @@ export default function AgendaConfigPage() {
 
       {/* Bloqueios de agenda */}
       <section className="panel space-y-4 p-[var(--space-card)]">
-        <div className="flex items-center gap-2">
-          <CalendarOff size={16} className="text-fg-subtle" />
-          <h2 className="text-h2 text-fg">Datas bloqueadas</h2>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CalendarOff size={16} className="text-fg-subtle" />
+            <h2 className="text-h2 text-fg">Datas bloqueadas</h2>
+          </div>
+          <Button
+            onClick={handleSyncCalendar}
+            disabled={syncingCalendar || !companySlug}
+            variant="outline"
+            className="focus-ring h-9 gap-1.5 border-line-subtle text-fg-subtle"
+          >
+            <RefreshCw size={13} className={syncingCalendar ? 'animate-spin' : ''} />
+            {syncingCalendar ? 'Atualizando...' : 'Atualizar agora'}
+          </Button>
         </div>
         <Separator className="bg-line-subtle" />
         <p className="text-body text-fg-muted">
           Datas em que não deve ser oferecido nenhum horário de atendimento (ex.: férias, congresso, feriado
-          fechado).
+          fechado). Inclui tanto o bloqueio manual quanto o que vem do Google Calendar real e do bot no WhatsApp.
         </p>
+        {syncMessage && <p className="text-micro text-fg-subtle">{syncMessage}</p>}
 
         <div className="space-y-2">
           {blockedDates.length === 0 && (
@@ -170,7 +227,12 @@ export default function AgendaConfigPage() {
               className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle px-4 py-3 flex items-center gap-3"
             >
               <div className="flex-1 min-w-0">
-                <p className="text-h3 text-fg num">{formatDateBr(b.date)}</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-h3 text-fg num">{formatDateBr(b.date)}</p>
+                  <span className="text-micro rounded-full bg-surface-overlay border border-line-subtle px-2 py-0.5 text-fg-subtle shrink-0">
+                    {sourceLabel(b.source)}
+                  </span>
+                </div>
                 {b.reason && <p className="text-micro text-fg-subtle truncate">{b.reason}</p>}
               </div>
               <button
