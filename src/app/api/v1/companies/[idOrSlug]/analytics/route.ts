@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq, and, count, sql, gte, lte } from 'drizzle-orm'
+import { dashboardLeadStatsSelect, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -27,17 +28,16 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     lte(recoveryLeads.createdAt, toDate)
   )
 
-  const isGramado = context.company.slug.includes('gramado')
-  const isLucas = context.company.slug.includes('lucas')
-  const isAgencia = context.company.slug.includes('autonomia') || context.company.slug.includes('casal') || context.company.slug.includes('gastao')
+  const businessModel = resolveDashboardBusinessModel(context.company.slug)
+  const isGramado = businessModel === 'gramado'
+  const isLucas = businessModel === 'lucas'
+  const isAgencia = businessModel === 'agencia'
 
   const [[leadStats], [jobStats]] = await Promise.all([
     db
       .select({
+        ...dashboardLeadStatsSelect(businessModel),
         total: count(),
-        fechadosTotal: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} in ('converted', 'completed') or ${recoveryLeads.eventType} in ('compra_aprovada', 'reserva_confirmada', 'agendado') or ${recoveryLeads.pipelineStage} in ('fechado', 'agendado')) as int)`,
-        valorFechadoCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} in ('converted', 'completed') or ${recoveryLeads.eventType} in ('compra_aprovada', 'reserva_confirmada') or ${recoveryLeads.pipelineStage} in ('fechado', 'agendado')), 0) as bigint)`,
-        qualificadosTotal: sql<number>`cast(count(*) filter (where ${recoveryLeads.pipelineStage} in ('qualificado', 'agendado', 'em_atendimento') or ${recoveryLeads.eventType} in ('pix', 'boleto', 'agendamento')) as int)`,
       })
       .from(recoveryLeads)
       .where(baseWhere),
