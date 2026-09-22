@@ -347,11 +347,16 @@ export function BotStatusPill({
   paused,
   compact = false,
   className,
+  agentName,
 }: {
   paused: boolean
   compact?: boolean
   className?: string
+  // Nome real do agente (ex.: "Clara"), vindo de companies.agentDisplayName.
+  // Sem isso, cai no genérico "Bot IA" de sempre (nunca quebra a tela).
+  agentName?: string | null
 }) {
+  const label = agentName?.trim() || 'Bot IA'
   if (paused) {
     return (
       <span
@@ -376,7 +381,7 @@ export function BotStatusPill({
       )}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse shrink-0" />
-      <span>{compact ? 'Bot IA' : 'Bot IA Ativo'}</span>
+      <span>{compact ? label : `${label} Ativo`}</span>
     </span>
   )
 }

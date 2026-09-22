@@ -45,6 +45,10 @@ export interface ChatLead {
   lastMessageAt?: string | null
   lastInboundAt?: string | null
   lastOutboundAt?: string | null
+  // Nome de persona do bot desta empresa (ex.: "Clara" pro Dr. Lucas), vindo
+  // de companies.agentDisplayName via sync-agents.ts. Nulo = nenhum agente
+  // resolvido ainda; a UI cai no fallback genérico "Bot IA" (22/09/2026).
+  agentDisplayName?: string | null
 }
 
 function formatBRL(centavos: number | null | undefined) {
@@ -163,6 +167,10 @@ export function ChatWindow({
 
   const displayName = lead.name || lead.phone
   const initials = displayName.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
+  // Fallback genérico preservado quando a empresa ainda não tem nome de
+  // agente resolvido (companies.agentDisplayName nulo), pra nunca quebrar a
+  // tela por falta desse dado.
+  const agentLabel = lead.agentDisplayName?.trim() || 'Bot IA'
 
   const channelLabel =
     lead.channel === 'instagram' || lead.phone.startsWith('ig_')
@@ -273,7 +281,7 @@ export function ChatWindow({
 
         {/* 2. Área de Mensagens */}
         <div ref={messagesContainerRef} className="scroll-thin flex-1 overflow-y-auto bg-surface-base px-4 py-4 min-h-0">
-          <MessageList messages={messages} contactName={lead.name} />
+          <MessageList messages={messages} contactName={lead.name} agentName={agentLabel} />
         </div>
 
         {/* 3. Área de Envio da Mensagem */}
@@ -313,7 +321,7 @@ export function ChatWindow({
                 </span>
               ) : (
                 <span className="text-emerald-500 font-semibold flex items-center gap-1">
-                  <Bot size={12} /> Bot IA Monitorando
+                  <Bot size={12} /> {agentLabel} Monitorando
                 </span>
               )}
             </span>
@@ -338,7 +346,7 @@ export function ChatWindow({
           <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-micro font-bold uppercase text-fg-subtle">Status Bot:</span>
-              <BotStatusPill paused={botPaused} />
+              <BotStatusPill paused={botPaused} agentName={agentLabel} />
             </div>
             {lead.botPausedAt && (
               <p className="text-[10px] text-fg-faint font-mono">

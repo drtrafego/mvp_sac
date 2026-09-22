@@ -104,6 +104,154 @@ function normalizeDigits(val: string | null | undefined): string {
   return val.replace(/\D/g, '')
 }
 
+// ─── Resolução do nome real do lead (22/09/2026) ───────────────────────────
+// Bug reportado: o bloco 3 (sync de conversas de agente IA) gravava
+// name: cv.title (o ASSUNTO/resumo gerado da conversa, ex.: "Custo da
+// eletrocauterização"), nunca o nome de verdade da pessoa, e nunca atualizava
+// depois da criação. Investigação confirmou duas fontes melhores no mesmo
+// Agents DB, mesmo schema por empresa: "<schema>".agendamentos.nome (nome
+// dito na hora de marcar consulta, cobertura menor mas o mais confiável) e
+// "<schema>".crm_leads.name (nome capturado pelo CRM/kanban nativo do
+// Hermes, cobertura maior mas ocasionalmente ruim, ex. "Resposta De Cleide").
+//
+// Prioridade: agendamentos.nome > crm_leads.name válido (descartando
+// placeholder "Lead 123") > conversations.title (fallback atual) >
+// "Atendimento XXXX" (fallback final).
+//
+// Nem toda empresa tem agendamentos/crm_leads no Agents DB (Gramado,
+// AutonomIA não têm necessariamente esse formato) — checagem de existência
+// de tabela ANTES de consultar, mesmo padrão de detectOutreachTagColumns()
+// abaixo, pra nunca derrubar o bloco 3 inteiro por uma tabela ausente.
+const LEAD_PLACEHOLDER_NAME_RE = /^Lead\s+\d+$/i
+const FALLBACK_ATENDIMENTO_NAME_RE = /^Atendimento\s+\d+$/i
+
+export type LeadNameSource = 'agendamento' | 'crm' | 'title' | 'fallback'
+
+const LEAD_NAME_SOURCE_RANK: Record<LeadNameSource, number> = {
+  fallback: 0,
+  title: 1,
+  crm: 2,
+  agendamento: 3,
+}
+
+export function resolveLeadName(opts: {
+  agendamentoName?: string | null
+  crmName?: string | null
+  title?: string | null
+  fallback: string
+}): { name: string; source: LeadNameSource } {
+  const agendamentoName = (opts.agendamentoName || '').trim()
+  if (agendamentoName) return { name: agendamentoName, source: 'agendamento' }
+
+  const crmName = (opts.crmName || '').trim()
+  if (crmName && !LEAD_PLACEHOLDER_NAME_RE.test(crmName)) return { name: crmName, source: 'crm' }
+
+  const title = (opts.title || '').trim()
+  if (title) return { name: title, source: 'title' }
+
+  return { name: opts.fallback, source: 'fallback' }
+}
+
+// Como o "name" salvo hoje não guarda de qual fonte ele veio, infere a
+// origem mais provável pelo FORMATO do valor já gravado, só pra decidir se
+// vale a pena sobrescrever. Regra de segurança: nunca conhecemos a origem
+// real com certeza, então tratamos qualquer nome que não bata em nenhum
+// padrão de placeholder/título como "pelo menos tão bom quanto crm" (rank 2)
+// — assim um nome de verdade já salvo nunca é rebaixado por um título ou
+// fallback chegando depois, só é trocado por outro de rank igual ou maior
+// (crm mais atualizado, ou agendamento, que é sempre a melhor fonte).
+export function inferStoredLeadNameSource(
+  storedName: string | null | undefined,
+  title: string | null | undefined,
+  fallback: string
+): LeadNameSource {
+  const stored = (storedName || '').trim()
+  if (!stored) return 'fallback'
+  if (stored === fallback) return 'fallback'
+  if (FALLBACK_ATENDIMENTO_NAME_RE.test(stored)) return 'fallback'
+  if (LEAD_PLACEHOLDER_NAME_RE.test(stored)) return 'fallback'
+  if (title && stored === title.trim()) return 'title'
+  return 'crm'
+}
+
+export function shouldUpdateLeadName(
+  current: { name: string; source: LeadNameSource },
+  next: { name: string; source: LeadNameSource }
+): boolean {
+  if (!next.name || current.name === next.name) return false
+  return LEAD_NAME_SOURCE_RANK[next.source] >= LEAD_NAME_SOURCE_RANK[current.source]
+}
+
+async function tableExistsInAgentsDb(schema: string, table: string): Promise<boolean> {
+  const rows = await queryAgentsDb<{ exists: boolean }>(
+    `
+      select exists (
+        select 1 from information_schema.tables
+        where table_schema = $1 and table_name = $2
+      ) as exists
+    `,
+    [schema, table]
+  )
+  return !!rows?.[0]?.exists
+}
+
+interface AgendamentoDbRow {
+  nome: string | null
+  telefone: string | null
+  telefone_norm: string | null
+}
+
+interface CrmLeadNameDbRow {
+  name: string | null
+  phone: string | null
+}
+
+// Mapa telefone (dígitos limpos, chave cheia + últimos 9) -> nome, pras duas
+// fontes melhores do bloco 3. Só consulta quando a tabela existe no schema.
+async function loadPhoneNameMap(
+  schema: string,
+  table: 'agendamentos' | 'crm_leads'
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  const exists = await tableExistsInAgentsDb(schema, table)
+  if (!exists) return map
+
+  const rows =
+    table === 'agendamentos'
+      ? await queryAgentsDb<AgendamentoDbRow>(`
+          select nome, telefone, telefone_norm
+          from "${schema}".agendamentos
+          where nome is not null and trim(nome) <> ''
+        `)
+      : await queryAgentsDb<CrmLeadNameDbRow>(`
+          select name, phone
+          from "${schema}".crm_leads
+          where name is not null and trim(name) <> ''
+        `)
+
+  for (const r of rows || []) {
+    const rawName = table === 'agendamentos' ? (r as AgendamentoDbRow).nome : (r as CrmLeadNameDbRow).name
+    const name = (rawName || '').trim()
+    if (!name) continue
+
+    const rawPhone =
+      table === 'agendamentos'
+        ? (r as AgendamentoDbRow).telefone_norm || (r as AgendamentoDbRow).telefone
+        : (r as CrmLeadNameDbRow).phone
+    const norm = normalizeDigits(rawPhone)
+    if (!norm) continue
+    const last9 = norm.length >= 9 ? norm.slice(-9) : norm
+
+    // Primeira ocorrência por telefone vence (não há orderBy garantido de
+    // "mais recente" nas duas tabelas); suficiente para o propósito de achar
+    // UM nome de verdade por telefone.
+    if (!map.has(norm)) map.set(norm, name)
+    if (!map.has(last9)) map.set(last9, name)
+  }
+
+  return map
+}
+
 // Tags de mineração (21/09/2026): nicho, origem, temperatura e status de
 // relacionamento consolidado ainda não existem em public.outreach_convos no
 // Agents DB (a Luana trabalha nisso em paralelo, outreach_sync.py, e pode não
@@ -199,11 +347,17 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
   // Pre-carrega em memória os telefones e externalIds existentes para evitar N+1 queries
   const existingLeadsRows = await db
-    .select({ id: recoveryLeads.id, companyId: recoveryLeads.companyId, phone: recoveryLeads.phone, email: recoveryLeads.email })
+    .select({ id: recoveryLeads.id, companyId: recoveryLeads.companyId, phone: recoveryLeads.phone, email: recoveryLeads.email, name: recoveryLeads.name })
     .from(recoveryLeads)
 
   const leadMap = new Map<string, number>()
+  // Nome atualmente salvo por lead (id -> name), usado só pra decidir se vale
+  // a pena sobrescrever com um nome melhor no bloco 3 (ver resolveLeadName /
+  // shouldUpdateLeadName acima). Mantido em memória e atualizado localmente
+  // a cada troca nesta mesma rodada, pra não precisar reler do banco.
+  const leadNameMap = new Map<number, string | null>()
   for (const row of existingLeadsRows) {
+    leadNameMap.set(row.id, row.name)
     if (row.phone) {
       const clean = row.phone.replace(/\D/g, '') || row.phone
       leadMap.set(`${row.companyId}_${clean}`, row.id)
@@ -254,6 +408,23 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       companyMap.set(companySlug, company)
     }
 
+    // Persiste o nome de persona do bot (ex.: "Clara" pro Dr. Lucas) pra UI
+    // do Inbox parar de mostrar "Bot IA" genérico (22/09/2026). agent.name é
+    // a fonte de verdade única (não existe tela de edição manual ainda), por
+    // isso SEMPRE sincroniza, sem checar valor anterior: não há "edição do
+    // usuário" pra proteger, e um nome desatualizado aqui é sempre pior que
+    // o nome atual do Agents DB. Só grava quando muda, pra não gerar updates
+    // (e updatedAt) à toa em toda rodada de sync.
+    if (agent.name && agent.name.trim() && company.agentDisplayName !== agent.name.trim()) {
+      const newAgentDisplayName = agent.name.trim()
+      await db
+        .update(companies)
+        .set({ agentDisplayName: newAgentDisplayName, updatedAt: new Date() })
+        .where(eq(companies.id, company.id))
+      company.agentDisplayName = newAgentDisplayName
+      companyMap.set(companySlug, company)
+    }
+
     // 3. Sincroniza Conversas e Mensagens recentes do schema do agente em BATCH
     const schema = agent.schema_name
     if (schema) {
@@ -264,6 +435,13 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           order by coalesce(ended_at, started_at) desc
           limit 300
         `)
+
+        // Fontes melhores de nome do lead que o título da conversa (ver
+        // resolveLeadName acima). Toleram schema sem essas tabelas (Gramado,
+        // AutonomIA): loadPhoneNameMap checa a existência antes de consultar
+        // e devolve mapa vazio, sem derrubar o bloco.
+        const agendamentoNameByPhone = await loadPhoneNameMap(schema, 'agendamentos')
+        const crmNameByPhone = await loadPhoneNameMap(schema, 'crm_leads')
 
         if (convs && convs.length > 0) {
           const sessionIds = convs.map(c => c.session_id).filter(Boolean)
@@ -300,13 +478,26 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             let leadDate = cv.ended_at ? new Date(cv.ended_at) : (cv.started_at ? new Date(cv.started_at) : new Date())
             if (isNaN(leadDate.getTime())) leadDate = new Date()
 
+            // Nome do lead: agendamentos.nome > crm_leads.name válido >
+            // conversations.title > "Atendimento XXXX". Recalculado em TODA
+            // rodada de sync com o que está disponível agora, pra um lead
+            // criado só com título poder ganhar o nome real depois que a
+            // pessoa marcar consulta ou aparecer no CRM.
+            const fallbackName = `Atendimento ${cleanPhone.slice(-4)}`
+            const resolvedName = resolveLeadName({
+              agendamentoName: agendamentoNameByPhone.get(cleanPhone) || agendamentoNameByPhone.get(last9),
+              crmName: crmNameByPhone.get(cleanPhone) || crmNameByPhone.get(last9),
+              title: cv.title,
+              fallback: fallbackName,
+            })
+
             if (!leadId) {
               const [newLead] = await db
                 .insert(recoveryLeads)
                 .values({
                   companyId: company.id,
                   phone: cleanPhone,
-                  name: cv.title || `Atendimento ${cleanPhone.slice(-4)}`,
+                  name: resolvedName.name,
                   platform: 'sac',
                   channel: channelType,
                   eventType: 'atendimento_ia',
@@ -321,7 +512,26 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               leadId = newLead.id
               leadMap.set(`${company.id}_${cleanPhone}`, leadId)
               if (cleanPhone.length >= 9) leadMap.set(`${company.id}_${last9}`, leadId)
+              leadNameMap.set(leadId, newLead.name)
               leadsCreated++
+            } else {
+              // Lead já existe: só sobrescreve o nome se a fonte calculada
+              // agora for de prioridade MAIOR OU IGUAL à que provavelmente
+              // gerou o valor salvo (ver inferStoredLeadNameSource /
+              // shouldUpdateLeadName acima). Isso permite promover
+              // "Atendimento 1234" ou o título pra um nome real quando
+              // agendamentos/crm_leads aparecerem depois, sem nunca
+              // rebaixar um nome de verdade já salvo por um título ou
+              // fallback.
+              const storedName = leadNameMap.get(leadId) ?? null
+              const currentSource = inferStoredLeadNameSource(storedName, cv.title, fallbackName)
+              if (shouldUpdateLeadName({ name: storedName || '', source: currentSource }, resolvedName)) {
+                await db
+                  .update(recoveryLeads)
+                  .set({ name: resolvedName.name })
+                  .where(eq(recoveryLeads.id, leadId))
+                leadNameMap.set(leadId, resolvedName.name)
+              }
             }
 
             const convMsgs = msgsBySession.get(cv.session_id) || []
