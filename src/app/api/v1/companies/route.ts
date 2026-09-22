@@ -10,8 +10,10 @@ import { randomBytes } from 'crypto'
 function genToken() { return randomBytes(24).toString('hex') }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  const { error } = await authenticateAgentRequest(req)
-  if (error) return error
+  const { error, context } = await authenticateAgentRequest(req)
+  if (error || !context) {
+    return error ?? NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
+  }
 
   // inviteToken NÃO entra aqui: funciona como credencial mestra da empresa
   // (mesmo formato aceito como chave nas rotas /companies/:slug/...), e esta
@@ -19,25 +21,33 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // não só a da empresa dona da chave. Vazava a credencial mestra de todos
   // os clientes pra qualquer cliente autenticado. Também não faz parte do
   // contrato documentado em API_DOCS.md (id, name, slug, plan, createdAt).
-  const rows = await db
-    .select({
-      id: companies.id,
-      name: companies.name,
-      slug: companies.slug,
-      plan: companies.plan,
-      createdAt: companies.createdAt,
-      totalLeads: sql<number>`COALESCE((SELECT COUNT(*)::int FROM recovery_leads WHERE recovery_leads.company_id = "companies"."id"), 0)`,
-      totalMessages: sql<number>`COALESCE((SELECT COUNT(*)::int FROM whatsapp_messages WHERE whatsapp_messages.company_id = "companies"."id"), 0)`,
-    })
-    .from(companies)
-    .orderBy(companies.id)
+  const companySelect = {
+    id: companies.id,
+    name: companies.name,
+    slug: companies.slug,
+    plan: companies.plan,
+    createdAt: companies.createdAt,
+    totalLeads: sql<number>`COALESCE((SELECT COUNT(*)::int FROM recovery_leads WHERE recovery_leads.company_id = "companies"."id"), 0)`,
+    totalMessages: sql<number>`COALESCE((SELECT COUNT(*)::int FROM whatsapp_messages WHERE whatsapp_messages.company_id = "companies"."id"), 0)`,
+  }
+
+  // Apenas credenciais globais ou uma sessão de super admin podem listar
+  // todas as empresas. Cliente e chave de empresa recebem um único tenant.
+  const rows = context.isSuperAdmin
+    ? await db.select(companySelect).from(companies).orderBy(companies.id)
+    : await db.select(companySelect).from(companies).where(eq(companies.id, context.company.id)).orderBy(companies.id)
 
   return NextResponse.json({ ok: true, count: rows.length, companies: rows })
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const { error } = await authenticateAgentRequest(req)
-  if (error) return error
+  const { error, context } = await authenticateAgentRequest(req)
+  if (error || !context) {
+    return error ?? NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
+  }
+  if (!context.isSuperAdmin) {
+    return NextResponse.json({ error: 'Apenas super admins podem criar empresas.' }, { status: 403 })
+  }
 
   try {
     const body = await req.json()

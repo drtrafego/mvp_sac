@@ -10,6 +10,8 @@ export type AgentDisplayName = 'Bia' | 'Luana' | 'Renato' | 'Master' | 'Administ
 export interface AgentAuthContext {
   company: typeof companies.$inferSelect
   isAdmin: boolean
+  /** Admin global pode trocar de empresa e acessar todos os bots. */
+  isSuperAdmin: boolean
   isAgentApiKey: boolean
   agentId: AgentIdentifier
   agentName: AgentDisplayName
@@ -74,6 +76,7 @@ export async function authenticateAgentRequest(
   let isAgentApiKey = false
   let isMasterKey = false
   let isAdmin = false
+  let isSuperAdmin = false
   let agentId: AgentIdentifier = 'humano'
   let agentName: AgentDisplayName = 'Humano'
   let matchedCompany: typeof companies.$inferSelect | null = null
@@ -93,20 +96,24 @@ export async function authenticateAgentRequest(
     if (envMasterKey && providedKey === envMasterKey) {
       isMasterKey = true
       isAdmin = true
+      isSuperAdmin = true
       agentId = (agentHeader as AgentIdentifier) || 'master'
       agentName = agentId === 'bia' ? 'Bia' : (agentId === 'luana' ? 'Luana' : (agentId === 'renato' ? 'Renato' : 'Master'))
     }
     // 1.2 Chaves de Agentes Globais via Variável de Ambiente
     else if (envBiaKey && providedKey === envBiaKey) {
       isAdmin = true
+      isSuperAdmin = true
       agentId = 'bia'
       agentName = 'Bia'
     } else if (envLuanaKey && providedKey === envLuanaKey) {
       isAdmin = true
+      isSuperAdmin = true
       agentId = 'luana'
       agentName = 'Luana'
     } else if (envRenatoKey && providedKey === envRenatoKey) {
       isAdmin = true
+      isSuperAdmin = true
       agentId = 'renato'
       agentName = 'Renato'
     }
@@ -221,7 +228,7 @@ export async function authenticateAgentRequest(
       }
     }
     finalCompany = matchedCompany
-  } else if (isMasterKey || (providedKey && isAdmin)) {
+  } else if (isSuperAdmin) {
     // Se for Master Key Global ou Agent Global do env:
     if (!targetCompany) {
       return {
@@ -251,9 +258,29 @@ export async function authenticateAgentRequest(
         }
       }
       finalCompany = await getCurrentCompany()
-      isAdmin = !!user.isAdmin
+      isSuperAdmin = !!user.isAdmin
+      isAdmin = isSuperAdmin
       agentId = isAdmin ? 'admin' : 'humano'
       agentName = isAdmin ? 'Administrador' : 'Humano'
+
+      // Usuário normal só pode operar a própria empresa, mesmo que tente
+      // informar outro id/slug na URL. Super admin pode escolher qualquer
+      // empresa para administrar seus bots.
+      if (targetCompany) {
+        if (isSuperAdmin) {
+          finalCompany = targetCompany
+        } else if (!finalCompany || finalCompany.id !== targetCompany.id) {
+          return {
+            error: NextResponse.json(
+              {
+                error: 'Acesso negado: você não tem acesso a esta empresa.',
+                code: 'FORBIDDEN_CROSS_TENANT',
+              },
+              { status: 403 }
+            ),
+          }
+        }
+      }
     } catch {
       return {
         error: NextResponse.json(
@@ -322,6 +349,7 @@ export async function authenticateAgentRequest(
     context: {
       company: finalCompany,
       isAdmin,
+      isSuperAdmin,
       isAgentApiKey,
       agentId,
       agentName,
