@@ -24,6 +24,8 @@ type LeadRow = {
   utm_source: string | null
   utm_medium: string | null
   mining_tags: unknown
+  ad_signal: boolean
+  mining_signal: boolean
 }
 
 function channelLabel(classification: ReturnType<typeof classifyChannelInMemory>): string {
@@ -79,23 +81,23 @@ export async function GET(req: NextRequest) {
       utm_campaign,
       utm_source,
       utm_medium,
-      mining_tags
-    from lead_base
-    where (
-      tracking_source ~* '(^|[^a-z])(meta|facebook|fb|ads|anuncio)'
-      or event_type ~* '(^|[^a-z])(meta|facebook|fb|ads|anuncio)'
-      or utm_campaign is not null
-      or combined ~* '(^|[^a-z])(meta|facebook|fb|ads|anuncio)'
-    )
-      and not (
+      mining_tags,
+      (
+        coalesce(tracking_source, '') ~* '(^|[^a-z])(meta|facebook|fb|ads|anuncio|campanha|campaign)'
+        or coalesce(event_type, '') ~* '(^|[^a-z])(meta|facebook|fb|ads|anuncio|campanha|campaign)'
+        or coalesce(utm_campaign, '') <> ''
+        or combined ~* '(^|[^a-z])(meta|facebook|fb|ads|anuncio|campanha|campaign)'
+      ) as ad_signal,
+      (
         coalesce(channel, '') ~* '(^|[^a-z])(miner|mining|prospeccao|places)'
         or coalesce(platform, '') ~* '(^|[^a-z])(miner|mining|prospeccao|places)'
         or coalesce(tracking_source, '') ~* '(^|[^a-z])(miner|mining|prospeccao|places)'
         or coalesce(event_type, '') ~* '(^|[^a-z])(miner|mining|prospeccao|places)'
         or combined ~* '(^|[^a-z])(miner|mining|prospeccao|places)'
-      )
+      ) as mining_signal
+    from lead_base
     order by created_at desc
-    limit 3
+    limit 25
   `
 
   const leads = (rows as unknown as LeadRow[]).map((row) => {
@@ -128,13 +130,18 @@ export async function GET(req: NextRequest) {
       utmSource: row.utm_source,
       utmMedium: row.utm_medium,
       miningTags: row.mining_tags ?? null,
+      adSignal: row.ad_signal,
+      miningSignal: row.mining_signal,
     }
   })
+
+  const adCandidates = leads.filter((lead) => lead.adSignal && !lead.miningSignal).slice(0, 3)
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
     companyId: 292,
-    count: leads.length,
-    leads,
+    count: adCandidates.length,
+    leads: adCandidates,
+    recentLeads: leads,
   })
 }
