@@ -545,7 +545,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               productName: l.company || l.notes || 'Agente 24h / CRM',
               productValue: prodVal,
               platform: 'sac',
-              channel: 'whatsapp',
+              channel: cleanPhone ? 'whatsapp' : 'email',
               eventType: l.campaign_source || 'prospeccao',
               status: l.status === 'converted' ? 'converted' : 'in_conversation',
               pipelineStage: stage,
