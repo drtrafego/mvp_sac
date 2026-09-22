@@ -52,6 +52,9 @@ interface SettingsData {
   metaVerifyToken: string
   metaWabaId: string
   metaAppSecret: string
+  metaAdsAccessToken: string
+  metaAdsAccountId: string
+  metaPixelId: string
   uazapiBaseUrl: string
   uazapiInstanceToken: string
   notificationPhone: string
@@ -116,6 +119,9 @@ const defaults: SettingsData = {
   metaVerifyToken: '',
   metaWabaId: '',
   metaAppSecret: '',
+  metaAdsAccessToken: '',
+  metaAdsAccountId: '',
+  metaPixelId: '',
   uazapiBaseUrl: '',
   uazapiInstanceToken: '',
   notificationPhone: '',
@@ -765,6 +771,9 @@ export default function ConfiguracoesPage() {
         metaVerifyToken: data.metaVerifyToken ?? '',
         metaWabaId: data.metaWabaId ?? '',
         metaAppSecret: data.metaAppSecret ?? '',
+        metaAdsAccessToken: data.metaAdsAccessToken ?? '',
+        metaAdsAccountId: data.metaAdsAccountId ?? '',
+        metaPixelId: data.metaPixelId ?? '',
         uazapiBaseUrl: data.uazapiBaseUrl ?? '',
         uazapiInstanceToken: data.uazapiInstanceToken ?? '',
         notificationPhone: data.notificationPhone ?? '',
@@ -1202,6 +1211,41 @@ export default function ConfiguracoesPage() {
           <SecretInput value={form.metaAppSecret} onChange={v => set('metaAppSecret', v)} placeholder="Deixe vazio para usar o App Secret compartilhado" />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
             Encontrado em Meta for Developers, no seu App, em Configurações do App &gt; Básico &gt; Chave Secreta do Aplicativo.
+          </p>
+        </div>
+      </section>
+
+      {/* Meta Ads (Conversions API) */}
+      <section className="panel space-y-4 p-[var(--space-card)]">
+        <div className="flex items-center gap-2">
+          <h2 className="text-h2 text-fg">Meta Ads (Conversions API)</h2>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
+            Eventos de Conversão
+          </span>
+        </div>
+        <Separator className="bg-line-subtle" />
+        <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+          Usado para mandar eventos de conversão real (compra aprovada) pro Meta Ads, melhorando a otimização dos seus anúncios. Preencha o Pixel ID e o Access Token abaixo para ativar.
+        </p>
+        <div className="space-y-1.5">
+          <Label>Pixel ID</Label>
+          <Input value={form.metaPixelId} onChange={e => set('metaPixelId', e.target.value)} placeholder="1234567890123456" className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]" />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Encontrado no Gerenciador de Eventos do Meta Ads (Events Manager), na aba Fontes de Dados.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Access Token do Meta Ads</Label>
+          <SecretInput value={form.metaAdsAccessToken} onChange={v => set('metaAdsAccessToken', v)} placeholder="EAAxxxxxxx..." />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Token do System User com permissão ads_management, gerado em Meta Business, Configurações do Negócio, Usuários do Sistema.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label>ID da Conta de Anúncios</Label>
+          <Input value={form.metaAdsAccountId} onChange={e => set('metaAdsAccountId', e.target.value)} placeholder="act_1234567890123" className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]" />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Formato act_XXXXXXXXXXXX, visível na URL do Gerenciador de Anúncios.
           </p>
         </div>
       </section>
