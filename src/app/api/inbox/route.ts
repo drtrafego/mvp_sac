@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { desc, eq, sql, and, or, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
-import { channelWhereCondition } from '@/lib/inbox-channel-filter'
+import { channelWhereCondition, matchesPhoneSearch } from '@/lib/inbox-channel-filter'
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
@@ -139,7 +139,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     mapped = mapped.filter(
       l =>
         l.name?.toLowerCase().includes(term) ||
-        l.phone.toLowerCase().includes(term) ||
+        matchesPhoneSearch(l.phone, term) ||
         l.email?.toLowerCase().includes(term) ||
         l.lastMessage?.toLowerCase().includes(term) ||
         l.productName?.toLowerCase().includes(term)
