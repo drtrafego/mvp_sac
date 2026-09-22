@@ -416,6 +416,58 @@ async function main() {
       assert.equal(eventos.length, 1, 'só deveria existir 1 linha de evento Schedule pro lead, não 2')
     })
 
+    // ── (i) pipelineStage vira 'agendado' pra aparecer no Pipeline ─────────
+    // Regressão do achado do Gastão (22/09/2026): leads de Dr. Lucas/Gramado
+    // nascem via sync-agents.ts (bloco 3, conversa do agente IA) sem
+    // pipelineStage, e o fallback do Pipeline não reconhece
+    // eventType='reserva_confirmada'. Este webhook é quem preenche o campo.
+    await test('reserva confirmada marca pipelineStage=agendado no lead', async () => {
+      const phone = '11955554444'
+      const formattedPhone = '5511955554444'
+      const req = makeRequest('gramado-plaza-teste', { phone, nome: 'Pipeline Teste', valor: 120 })
+      const res = await POST(req, { params: Promise.resolve({ slug: 'gramado-plaza-teste' }) })
+      assert.equal(res.status, 200)
+
+      const [lead] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.phone, formattedPhone))
+      assert.ok(lead, 'deveria ter criado o lead')
+      assert.equal(lead.pipelineStage, 'agendado')
+    })
+
+    // ── (j) nunca regride um card que um humano já fechou manualmente ──────
+    await test('reserva confirmada NÃO regride pipelineStage já em fechado', async () => {
+      const phone = '11944443333'
+      const formattedPhone = '5511944443333'
+
+      // Simula: lead já existe (conversa antiga do bot) e um humano já
+      // arrastou o card pra "Fechado / Ganho" no Kanban.
+      const [preexisting] = await testDb
+        .insert(schema.recoveryLeads)
+        .values({
+          companyId: company.id,
+          platform: 'sac',
+          eventType: 'atendimento_ia',
+          phone: formattedPhone,
+          name: 'Hóspede Já Fechado',
+          channel: 'whatsapp',
+          status: 'in_conversation',
+          pipelineStage: 'fechado',
+        })
+        .returning()
+
+      const req = makeRequest('gramado-plaza-teste', { phone, nome: 'Hóspede Já Fechado', valor: 50 })
+      const res = await POST(req, { params: Promise.resolve({ slug: 'gramado-plaza-teste' }) })
+      assert.equal(res.status, 200)
+
+      const [lead] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.id, preexisting.id))
+      assert.equal(lead.pipelineStage, 'fechado', 'não deveria regredir um card já fechado manualmente')
+    })
+
     // ── JSON inválido -> 400, auditado ──────────────────────────────────
     await test('JSON inválido -> 400', async () => {
       const url = 'https://sac.example.com/api/webhooks/hermes/gramado-plaza-teste/conversion'

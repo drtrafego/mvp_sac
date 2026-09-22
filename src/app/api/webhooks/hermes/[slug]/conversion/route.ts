@@ -239,11 +239,25 @@ export async function POST(
   const { time: eventTime, deterministic: eventTimeDeterministic } = resolveEventTime(body.dataReserva, body.horario)
 
   // Resolve/cria lead por telefone: REAPROVEITA o lead existente (a mesma
-  // conversa do bot no WhatsApp já deve ter um) sem mexer em nenhum campo
-  // dele — este webhook só precisa de um leadId pra correlacionar o evento
-  // de conversão, nunca deve alterar estado de pipeline/atendimento de um
-  // lead que já existe. Só cria um registro mínimo quando de fato não existe
-  // nenhum lead com este telefone nesta empresa.
+  // conversa do bot no WhatsApp já deve ter um) sem mexer nos campos de
+  // atendimento dele (nome, mensagens, responsável). Só cria um registro
+  // mínimo quando de fato não existe nenhum lead com este telefone nesta
+  // empresa.
+  //
+  // pipelineStage É a exceção deliberada (22/09/2026, achado do Gastão: a
+  // tela de Pipeline nunca mostrava reserva/agendamento pra Dr. Lucas e
+  // Gramado Plaza). Os leads destas duas empresas nascem no bloco 3 de
+  // sync-agents.ts (conversa do agente IA) com status FIXO 'in_conversation'
+  // e sem pipelineStage — o fallback heurístico do Pipeline
+  // (src/app/(dashboard)/pipeline/page.tsx) não reconhece esse status nem o
+  // eventType 'reserva_confirmada', então o card ficava preso em "Novo
+  // Contato" pra sempre, mesmo com a reserva confirmada de verdade. Este
+  // webhook é o único ponto do sistema que sabe que uma reserva foi
+  // confirmada, então é ele quem grava pipelineStage = 'agendado' (estágio
+  // "Agendado / Reserva" do Kanban, já usado como sinônimo de reserva
+  // confirmada em src/app/(dashboard)/page.tsx). Só ESSE campo é tocado;
+  // nunca sobrescreve um card que um humano já arrastou pra 'fechado'
+  // manualmente (ver o UPDATE logo após o resolve do leadId, abaixo).
   //
   // FIX 1 (CRÍTICO, QA 22/09/2026): o SELECT-então-INSERT de antes deixava
   // uma corrida entre requisições concorrentes com o mesmo telefone novo —
@@ -305,6 +319,24 @@ export async function POST(
       skipReason: 'lead_resolve_no_id', rawBody: body, headers: headersObj,
     })
     return NextResponse.json({ error: 'Falha ao gravar lead' }, { status: 500 })
+  }
+
+  // Empurra o card pro estágio "Agendado / Reserva" do Pipeline. Idempotente
+  // (roda em toda reserva confirmada, inclusive retries) e nunca regride um
+  // card que já está em 'fechado' — esse estágio final só é decisão manual
+  // de quem usa o Kanban, o bot nunca sabe de fechamento de venda de verdade.
+  try {
+    await db
+      .update(recoveryLeads)
+      .set({ pipelineStage: 'agendado', updatedAt: new Date() })
+      .where(
+        and(
+          eq(recoveryLeads.id, leadId),
+          sql`(${recoveryLeads.pipelineStage} is null or ${recoveryLeads.pipelineStage} <> 'fechado')`,
+        ),
+      )
+  } catch (e) {
+    console.error('[hermes-conversion] falha ao atualizar pipelineStage:', e)
   }
 
   // FIX 2 (CRÍTICO, QA 22/09/2026): quando falta dataReserva/horario,
