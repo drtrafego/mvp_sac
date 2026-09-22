@@ -103,6 +103,8 @@ export interface CtwaReferralDbRow {
   campaign_name: string | null
   ad_name: string | null
   created_at?: string | null
+  ts?: string | number | null
+  synced_at?: string | null
   __sync_sort_at?: string | Date | null
   __sync_cursor_id?: string | number | null
 }
@@ -529,9 +531,19 @@ function crmLeadCursorPosition(row: CrmLeadDbRow): CursorPosition | null {
   )
 }
 
+function ctwaTsToDate(value: string | number | null | undefined): Date | null {
+  if (value == null || value === '') return null
+  const epoch = Number(value)
+  if (!Number.isFinite(epoch) || epoch <= 0) return null
+
+  const millis = epoch > 9_999_999_999 ? epoch : epoch * 1000
+  const date = new Date(millis)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
 function ctwaCursorPosition(row: CtwaReferralDbRow): CursorPosition | null {
   return buildCursorPosition(
-    row.__sync_sort_at ?? row.created_at ?? EPOCH_CURSOR_ISO,
+    row.__sync_sort_at ?? ctwaTsToDate(row.ts) ?? row.synced_at ?? row.created_at ?? EPOCH_CURSOR_ISO,
     row.__sync_cursor_id ?? row.id ?? `${row.phone_norm}|${row.campaign_name || ''}|${row.ad_name || ''}`
   )
 }
@@ -1205,14 +1217,35 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   try {
     const ctwaCursorCompany = companyMap.get('autonomia') || companyMap.values().next().value
     if (ctwaCursorCompany) {
-      const ctwaColumns = await detectAgentsTableColumns('public', 'ctwa_referrals', ['id', 'created_at'])
+      const ctwaColumns = await detectAgentsTableColumns('public', 'ctwa_referrals', ['id', 'ts', 'synced_at'])
 
-      if (ctwaColumns.has('created_at')) {
-        const ctwaSortExpr = `coalesce(created_at, '${EPOCH_CURSOR_ISO}'::timestamp)`
-        const ctwaIdExpr = ctwaColumns.has('id')
-          ? 'id::text'
-          : "concat_ws('|', phone_norm, campaign_name, ad_name, created_at::text)"
-        const ctwaIdSelect = ctwaColumns.has('id') ? 'id,' : ''
+      if (ctwaColumns.has('ts') || ctwaColumns.has('synced_at')) {
+        const ctwaSortCandidates = [
+          ctwaColumns.has('ts')
+            ? `(to_timestamp((case when ts > 9999999999 then ts / 1000.0 else ts end)::double precision) at time zone 'UTC')`
+            : null,
+          ctwaColumns.has('synced_at') ? `(synced_at at time zone 'UTC')` : null,
+          `'${EPOCH_CURSOR_ISO}'::timestamp`,
+        ].filter((expr): expr is string => !!expr)
+        const ctwaSortExpr = `coalesce(${ctwaSortCandidates.join(', ')})`
+        const ctwaFallbackIdParts = [
+          'phone_norm',
+          'campaign_name',
+          'ad_name',
+          ctwaColumns.has('ts') ? 'ts::text' : null,
+          ctwaColumns.has('synced_at') ? 'synced_at::text' : null,
+        ].filter((expr): expr is string => !!expr).join(', ')
+        const ctwaCursorIdExpr = ctwaColumns.has('id') ? 'id::text' : `concat_ws('|', ${ctwaFallbackIdParts})`
+        const ctwaSelectColumns = [
+          ctwaColumns.has('id') ? 'id' : null,
+          'phone_norm',
+          'campaign_name',
+          'ad_name',
+          ctwaColumns.has('ts') ? 'ts' : null,
+          ctwaColumns.has('synced_at') ? 'synced_at' : null,
+          `${ctwaSortExpr} as __sync_sort_at`,
+          `${ctwaCursorIdExpr} as __sync_cursor_id`,
+        ].filter((column): column is string => !!column).join(', ')
         const ctwaBatch = await loadTimedSyncBatch<CtwaReferralDbRow>({
           companyId: ctwaCursorCompany.id,
           source: 'ctwa_referrals',
@@ -1221,13 +1254,11 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           fetchNewRows: (cursor) =>
             queryAgentsDb<CtwaReferralDbRow>(
               `
-                select ${ctwaIdSelect} phone_norm, campaign_name, ad_name, created_at,
-                       ${ctwaSortExpr} as __sync_sort_at,
-                       ${ctwaIdExpr} as __sync_cursor_id
+                select ${ctwaSelectColumns}
                 from public.ctwa_referrals
                 where phone_norm is not null and length(phone_norm) >= 8
-                  and (${ctwaSortExpr}, ${ctwaIdExpr}) > ($1::timestamp, $2::text)
-                order by ${ctwaSortExpr} asc, ${ctwaIdExpr} asc
+                  and (${ctwaSortExpr}, ${ctwaCursorIdExpr}) > ($1::timestamp, $2::text)
+                order by ${ctwaSortExpr} asc, ${ctwaCursorIdExpr} asc
                 limit ${SYNC_NEW_BATCH_SIZE}
               `,
               [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
@@ -1236,13 +1267,11 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const hasBackfillCursor = !!cursor.backfillBeforeAt
             return queryAgentsDb<CtwaReferralDbRow>(
               `
-                select ${ctwaIdSelect} phone_norm, campaign_name, ad_name, created_at,
-                       ${ctwaSortExpr} as __sync_sort_at,
-                       ${ctwaIdExpr} as __sync_cursor_id
+                select ${ctwaSelectColumns}
                 from public.ctwa_referrals
                 where phone_norm is not null and length(phone_norm) >= 8
-                ${hasBackfillCursor ? `and (${ctwaSortExpr}, ${ctwaIdExpr}) < ($1::timestamp, $2::text)` : ''}
-                order by ${ctwaSortExpr} desc, ${ctwaIdExpr} desc
+                ${hasBackfillCursor ? `and (${ctwaSortExpr}, ${ctwaCursorIdExpr}) < ($1::timestamp, $2::text)` : ''}
+                order by ${ctwaSortExpr} desc, ${ctwaCursorIdExpr} desc
                 limit ${SYNC_BACKFILL_BATCH_SIZE}
               `,
               hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
