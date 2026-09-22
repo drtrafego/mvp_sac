@@ -30,6 +30,16 @@
 // texto já misturado com o motivo do Google e duplicava a informação na
 // tela. Se `botReason` estiver null é só porque o Hermes ainda não rodou
 // pra essa data depois do deploy, nunca um sinal de dado errado.
+//
+// ⚠️ FIX bug de produção (ALTO, 22/09/2026): os dois calendários eram lidos
+// com Promise.all, então o 404 do calendário principal (nunca compartilhado
+// com a Service Account) derrubava a rota inteira com google_api_error, e o
+// iClinic (compartilhado, 100% acessível, é o que o Gastão usa de verdade)
+// não sincronizava nada mesmo funcionando. Agora cada calendário é lido de
+// forma isolada (fetchCalendarSafe, nunca lança): um calendário falho vira
+// "sem eventos dessa fonte" e é reportado em `calendars`, o(s) que
+// funcionar(em) alimentam a sync normalmente. Só retorna erro geral
+// (google_api_error) se os DOIS falharem.
 
 import { google } from 'googleapis'
 import { and, desc, eq, like } from 'drizzle-orm'
@@ -52,6 +62,19 @@ export const GOOGLE_CALENDAR_SYNC_STALE_MS = 5 * 60 * 1000 // 5 minutos
 
 export type GoogleSyncSkipReason = 'not_drlucas' | 'google_sync_not_configured'
 
+// Status de leitura de UM calendário nesta rodada. Ver bug de produção de
+// 22/09/2026: o calendário do iClinic foi compartilhado com a Service
+// Account e funciona; o principal nunca foi compartilhado (404). Antes,
+// Promise.all derrubava a sincronização inteira quando só UM dos dois
+// falhava. Agora cada calendário é lido de forma isolada e reportado aqui,
+// pra diagnóstico futuro não precisar de investigação manual como a de hoje.
+export interface GoogleCalendarStatus {
+  id: string
+  ok: boolean
+  eventsFound?: number
+  error?: string
+}
+
 export interface GoogleSyncResult {
   ok: boolean
   skipped: boolean
@@ -61,6 +84,7 @@ export interface GoogleSyncResult {
   created?: number
   updated?: number
   skippedManual?: number
+  calendars?: GoogleCalendarStatus[]
 }
 
 interface AllDayEvent {
@@ -123,6 +147,32 @@ async function fetchAllDayEvents(
   return events
 }
 
+interface CalendarFetchResult {
+  calendarId: string
+  ok: boolean
+  events: AllDayEvent[]
+  error?: string
+}
+
+// Nunca lança: cada calendário é isolado do outro. Um 404/403 num calendário
+// (ex.: nunca compartilhado com a Service Account) não pode derrubar a
+// leitura de outro calendário que está funcionando.
+async function fetchCalendarSafe(
+  calendarId: string,
+  auth: InstanceType<typeof google.auth.JWT>,
+  timeMin: string,
+  timeMax: string,
+): Promise<CalendarFetchResult> {
+  try {
+    const events = await fetchAllDayEvents(calendarId, auth, timeMin, timeMax)
+    return { calendarId, ok: true, events }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    console.error(`[google-calendar-sync] falha ao ler o calendário ${calendarId}:`, error)
+    return { calendarId, ok: false, events: [], error }
+  }
+}
+
 // Roda a sync de verdade: lê os 2 calendários do Dr. Lucas e faz upsert em
 // agendaBlockedDates. Chamada tanto pela rota GET /agenda/sync (manual,
 // inclusive com ?backfill=1) quanto pelo auto-refresh das rotas
@@ -150,18 +200,28 @@ export async function syncGoogleCalendarBlockedDates(company: {
   const timeMin = new Date(now.getTime() - WINDOW_PAST_DAYS * 24 * 60 * 60 * 1000).toISOString()
   const timeMax = new Date(now.getTime() + WINDOW_FUTURE_DAYS * 24 * 60 * 60 * 1000).toISOString()
 
-  let events: AllDayEvent[]
-  try {
-    const [primaryEvents, iclinicEvents] = await Promise.all([
-      fetchAllDayEvents(getPrimaryCalendarId(), auth, timeMin, timeMax),
-      fetchAllDayEvents(ICLINIC_CALENDAR_ID, auth, timeMin, timeMax),
-    ])
-    events = [...primaryEvents, ...iclinicEvents]
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err)
-    console.error('[google-calendar-sync] falha ao ler eventos do Google Calendar:', errorMessage)
-    return { ok: false, skipped: false, reason: 'google_api_error', errorMessage }
+  // Cada calendário é lido de forma isolada (nunca um Promise.all que
+  // derruba tudo se só um falhar): o iClinic pode estar 100% acessível
+  // mesmo com o principal ainda não compartilhado com a Service Account.
+  const fetchResults = await Promise.all([
+    fetchCalendarSafe(getPrimaryCalendarId(), auth, timeMin, timeMax),
+    fetchCalendarSafe(ICLINIC_CALENDAR_ID, auth, timeMin, timeMax),
+  ])
+
+  const calendars: GoogleCalendarStatus[] = fetchResults.map(r => ({
+    id: r.calendarId,
+    ok: r.ok,
+    eventsFound: r.ok ? r.events.length : undefined,
+    error: r.ok ? undefined : r.error,
+  }))
+
+  const okResults = fetchResults.filter(r => r.ok)
+  if (okResults.length === 0) {
+    const errorMessage = fetchResults.map(r => `${r.calendarId}: ${r.error}`).join(' | ')
+    return { ok: false, skipped: false, reason: 'google_api_error', errorMessage, calendars }
   }
+
+  const events: AllDayEvent[] = okResults.flatMap(r => r.events)
 
   // Agrupa por data: os dois calendários podem ter, cada um, um evento de
   // dia inteiro na mesma data (ex.: bloqueio manual no principal + evento
@@ -256,7 +316,7 @@ export async function syncGoogleCalendarBlockedDates(company: {
     updated++
   }
 
-  return { ok: true, skipped: false, eventsFound: events.length, created, updated, skippedManual }
+  return { ok: true, skipped: false, eventsFound: events.length, created, updated, skippedManual, calendars }
 }
 
 // A linha mais recente de origem Google (source contém 'google_calendar')
