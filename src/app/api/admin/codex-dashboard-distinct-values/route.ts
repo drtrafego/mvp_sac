@@ -136,6 +136,88 @@ export async function GET(req: NextRequest) {
   })
 
   const adCandidates = leads.filter((lead) => lead.adSignal && !lead.miningSignal).slice(0, 3)
+  const diagnostics = await sql`
+    with base as (
+      select
+        id,
+        created_at,
+        channel,
+        platform,
+        tracking_source,
+        event_type,
+        utm_campaign,
+        utm_medium,
+        utm_content,
+        utm_term,
+        meta_campaign_id,
+        meta_adset_id,
+        meta_ad_id,
+        mining_tags,
+        lower(concat_ws(' ', tracking_source, event_type, utm_campaign, utm_medium, utm_content, utm_term, platform, raw_payload::text, meta_campaign_id, meta_adset_id, meta_ad_id)) as combined
+      from recovery_leads
+      where company_id = 292
+    ),
+    totals as (
+      select
+        count(*)::int as total,
+        count(*) filter (where tracking_source is not null)::int as with_tracking_source,
+        count(*) filter (where utm_campaign is not null)::int as with_utm_campaign,
+        count(*) filter (where meta_campaign_id is not null or meta_adset_id is not null or meta_ad_id is not null)::int as with_meta_ids,
+        count(*) filter (where raw_payload is not null)::int as with_raw_payload,
+        count(*) filter (where mining_tags is not null)::int as with_mining_tags,
+        count(*) filter (where combined ~* '(^|[^a-z])(meta|facebook|fb|ads|anuncio|campanha|campaign|ctwa)')::int as broad_ad_signal,
+        count(*) filter (where combined ~* '(^|[^a-z])(miner|mining|prospeccao|places)')::int as mining_signal
+      from base
+    ),
+    distinct_values as (
+      select 'tracking_source' as field, tracking_source as value, count(*)::int as count, max(created_at)::text as newest
+      from base
+      group by tracking_source
+      union all
+      select 'event_type' as field, event_type as value, count(*)::int as count, max(created_at)::text as newest
+      from base
+      group by event_type
+      union all
+      select 'utm_campaign' as field, utm_campaign as value, count(*)::int as count, max(created_at)::text as newest
+      from base
+      where utm_campaign is not null
+      group by utm_campaign
+      union all
+      select 'utm_medium' as field, utm_medium as value, count(*)::int as count, max(created_at)::text as newest
+      from base
+      where utm_medium is not null
+      group by utm_medium
+    )
+    select jsonb_build_object(
+      'totals', (select to_jsonb(totals) from totals),
+      'distinctValues', (
+        select coalesce(jsonb_agg(to_jsonb(distinct_values) order by newest desc, field, value nulls first), '[]'::jsonb)
+        from distinct_values
+      ),
+      'broadAdRows', (
+        select coalesce(jsonb_agg(to_jsonb(x) order by x.created_at desc), '[]'::jsonb)
+        from (
+          select
+            id,
+            created_at::text,
+            channel,
+            platform,
+            tracking_source,
+            event_type,
+            utm_campaign,
+            utm_medium,
+            meta_campaign_id,
+            meta_adset_id,
+            meta_ad_id,
+            mining_tags
+          from base
+          where combined ~* '(^|[^a-z])(meta|facebook|fb|ads|anuncio|campanha|campaign|ctwa)'
+          order by created_at desc
+          limit 10
+        ) x
+      )
+    ) as payload
+  `
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
@@ -143,5 +225,6 @@ export async function GET(req: NextRequest) {
     count: adCandidates.length,
     leads: adCandidates,
     recentLeads: leads,
+    diagnostics: (diagnostics as unknown as { payload: unknown }[])[0]?.payload ?? null,
   })
 }
