@@ -48,5 +48,6 @@ export async function GET(req: NextRequest) {
       ) as payload
   `)
 
-  return NextResponse.json(rows[0]?.payload ?? {})
+  const payload = (rows as { rows?: { payload?: unknown }[] }).rows?.[0]?.payload
+  return NextResponse.json(payload ?? {})
 }
