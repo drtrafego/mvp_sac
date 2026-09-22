@@ -153,6 +153,7 @@ export async function GET(req: NextRequest) {
         meta_adset_id,
         meta_ad_id,
         mining_tags,
+        raw_payload,
         lower(concat_ws(' ', tracking_source, event_type, utm_campaign, utm_medium, utm_content, utm_term, platform, raw_payload::text, meta_campaign_id, meta_adset_id, meta_ad_id)) as combined
       from recovery_leads
       where company_id = 292
