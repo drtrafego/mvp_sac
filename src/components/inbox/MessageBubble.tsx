@@ -52,9 +52,13 @@ function formatDateSeparator(dateStr: string) {
 export function MessageBubble({
   message,
   contactName,
+  agentName,
 }: {
   message: InboxMessage
   contactName?: string | null
+  // Nome real do agente (ex.: "Clara"), vindo de companies.agentDisplayName.
+  // Sem isso, cai no genérico "Bot IA" de sempre (nunca quebra a tela).
+  agentName?: string | null
 }) {
   const isInbound = message.direction === 'inbound'
   const isBot = message.sentBy === 'bot' || message.sentBy === 'system'
@@ -70,7 +74,7 @@ export function MessageBubble({
   const senderLabel = isInbound
     ? contactName || 'Cliente'
     : isBot
-      ? 'Bot IA'
+      ? agentName?.trim() || 'Bot IA'
       : 'Atendente Humano'
 
   return (
@@ -199,9 +203,11 @@ export function MessageBubble({
 export function MessageList({
   messages,
   contactName,
+  agentName,
 }: {
   messages: InboxMessage[]
   contactName?: string | null
+  agentName?: string | null
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -230,7 +236,7 @@ export function MessageList({
                 </span>
               </div>
             )}
-            <MessageBubble message={msg} contactName={contactName} />
+            <MessageBubble message={msg} contactName={contactName} agentName={agentName} />
           </React.Fragment>
         )
       })}

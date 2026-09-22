@@ -70,6 +70,7 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
       lastMessageAt: lastMsg?.createdAt?.toISOString() ?? null,
       lastInboundAt: lastInbound?.createdAt?.toISOString() ?? null,
       lastOutboundAt: lastOutbound?.createdAt?.toISOString() ?? null,
+      agentDisplayName: company.agentDisplayName ?? null,
     },
     messages: messages.map(m => ({
       id: m.id,

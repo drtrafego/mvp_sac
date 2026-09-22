@@ -64,6 +64,11 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS mining_tags jsonb`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_pixel_id text`,
 
+          // ─── Nome de persona do bot no Inbox (22/09/2026) ──────────────────────
+          // Ver comentário completo em src/lib/db/schema.ts (companies.agentDisplayName)
+          // e drizzle/0012_companies_agent_display_name.sql (documental).
+          client`ALTER TABLE companies ADD COLUMN IF NOT EXISTS agent_display_name text`,
+
           // agent_activity_logs
           client`
             CREATE TABLE IF NOT EXISTS agent_activity_logs (

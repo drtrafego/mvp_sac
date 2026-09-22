@@ -1,0 +1,21 @@
+-- Migração ADITIVA (expand): companies ganha o nome de persona do bot de
+-- atendimento (ex.: "Clara" pro Dr. Lucas), 22/09/2026. Corrige a UI do Inbox
+-- mostrando "Bot IA" genérico em vez do nome real do agente configurado no
+-- Agents DB (public.agents.name).
+--
+-- Nulo = nenhum agente resolvido ainda pra esta empresa; a UI cai no fallback
+-- genérico "Bot IA" (ver comentário em src/components/inbox/MessageBubble.tsx,
+-- ChannelBadge.tsx e ChatWindow.tsx) em vez de quebrar.
+--
+-- Sincronizado automaticamente por src/lib/sync-agents.ts (bloco 2), sempre
+-- sobrescrevendo a partir do Agents DB: não existe tela de edição manual
+-- ainda, então não há valor "do usuário" para proteger.
+--
+-- ATENÇÃO: esta migration .sql é só documental. O mecanismo REAL que aplica
+-- schema em produção é ensureSchema() em src/lib/db/index.ts (ALTER TABLE
+-- ... ADD COLUMN IF NOT EXISTS) — foi lá que a coluna abaixo também entrou.
+-- Rodar só esta migration sem o ensureSchema correspondente NÃO basta em
+-- produção (mesmo erro que já atingiu recovery_leads e agenda_blocked_dates
+-- antes, ver comentário em 0011_agenda_google_calendar_sync.sql).
+
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS agent_display_name text;
