@@ -35,6 +35,7 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({
       companyId: company.id,
       companySlug: company.slug,
+      agentDisplayName: company.agentDisplayName ?? '',
       webhookUrlToken,
       hotmartWebhookToken: '',
       hotmartClientId: '',
@@ -71,6 +72,7 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json({
     ...row,
     companySlug: company.slug,
+    agentDisplayName: company.agentDisplayName ?? '',
     webhookUrlToken,
     hotmartWebhookToken: mask(row.hotmartWebhookToken),
     hotmartClientSecret: mask(row.hotmartClientSecret),

@@ -36,6 +36,7 @@ const PROVIDER_OPTIONS: Record<string, string> = {
 
 interface SettingsData {
   companySlug: string
+  agentDisplayName: string
   webhookUrlToken?: string | null
   hotmartWebhookToken: string
   hotmartClientId: string
@@ -103,6 +104,7 @@ interface MembersData {
 
 const defaults: SettingsData = {
   companySlug: '',
+  agentDisplayName: '',
   webhookUrlToken: null,
   hotmartWebhookToken: '',
   hotmartClientId: '',
@@ -755,6 +757,7 @@ export default function ConfiguracoesPage() {
       .then(r => r.json())
       .then(data => setForm({
         companySlug: data.companySlug ?? '',
+        agentDisplayName: data.agentDisplayName ?? '',
         webhookUrlToken: data.webhookUrlToken ?? null,
         hotmartWebhookToken: data.hotmartWebhookToken ?? '',
         hotmartClientId: data.hotmartClientId ?? '',
@@ -819,6 +822,13 @@ export default function ConfiguracoesPage() {
 
       {/* Pausar Tudo */}
       {slug && <PausarTudoSection slug={slug} />}
+
+      <section className="panel p-[var(--space-card)]">
+        <p className="text-label uppercase text-fg-subtle">Bot de atendimento</p>
+        <p className="text-body text-fg mt-1">
+          Nome do bot: <span className="font-semibold">{form.agentDisplayName || 'Não definido'}</span>
+        </p>
+      </section>
 
       {/* Equipe */}
       <EquipeSection />
