@@ -148,30 +148,6 @@ export async function authenticateAgentRequest(
         console.error('[agent-auth DB Query Error]', dbErr)
       }
 
-      // Fallback: reconhecimento determinístico por prefixo de chave gerada
-      if (!matchedCompany && providedKey.startsWith('sac_')) {
-        const parts = providedKey.split('_')
-        if (parts.length >= 3) {
-          const type = parts[1] // 'bia' | 'luana' | 'renato' | 'company'
-          const slugPart = parts[2] // 'autonomia' | 'gramado-plaza' | 'drlucas'...
-
-          const [compBySlug] = await db
-            .select()
-            .from(companies)
-            .where(eq(companies.slug, slugPart))
-            .limit(1)
-
-          if (compBySlug) {
-            matchedCompany = compBySlug
-            if (type === 'bia') { agentId = 'bia'; agentName = 'Bia' }
-            else if (type === 'luana') { agentId = 'luana'; agentName = 'Luana' }
-            else if (type === 'renato') { agentId = 'renato'; agentName = 'Renato' }
-            else { agentId = 'admin'; agentName = 'Administrador' }
-            isAdmin = true
-          }
-        }
-      }
-
       if (matchedCompany) {
         isAdmin = true
         if (matchedRow) {
