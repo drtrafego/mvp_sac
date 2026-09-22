@@ -169,10 +169,13 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   // Mensagem real trocada: se for a primeira, marca a abordagem do lead
   await markLeadContacted(lead.id)
 
-  // Atualizar data de modificação do lead
+  // Atualizar data de modificação e a última ação do lead. lastActionAt
+  // precisa entrar junto: o COALESCE de ordenação do Inbox trava no
+  // primeiro valor não nulo, então uma resposta manual do agente não subia
+  // a conversa na lista quando lastActionAt já existia de antes.
   await db
     .update(recoveryLeads)
-    .set({ updatedAt: new Date() })
+    .set({ updatedAt: new Date(), lastActionAt: new Date() })
     .where(eq(recoveryLeads.id, lead.id))
 
   return NextResponse.json({

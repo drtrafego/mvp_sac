@@ -336,6 +336,11 @@ export async function processInstagramComment(event: CommentEventData) {
         .update(recoveryLeads)
         .set({
           updatedAt: now,
+          // lastActionAt precisa entrar aqui: o COALESCE de ordenação do
+          // Inbox trava no primeiro valor não nulo, então a DM enviada pelo
+          // comentário automático não subia a conversa quando lastActionAt
+          // já existia de antes.
+          lastActionAt: now,
           channel: 'instagram',
           name: lead.name && !lead.name.startsWith('Instagram Direct') ? lead.name : displayName,
         })

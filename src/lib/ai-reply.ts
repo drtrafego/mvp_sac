@@ -256,6 +256,16 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
       senderName: nomeExibicaoDoBot(bot),
       agentId: bot,
     })
+
+    // Sem isto, a resposta do bot nunca bumpava lastActionAt/updatedAt:
+    // no WhatsApp a mensagem inbound anterior já tinha atualizado (mascarando
+    // o problema), mas no Instagram nem o inbound nem este outbound tocavam
+    // lastActionAt, e a conversa ficava congelada na ordenação do Inbox
+    // mesmo com a IA respondendo ativamente.
+    await db
+      .update(recoveryLeads)
+      .set({ lastActionAt: new Date(), updatedAt: new Date() })
+      .where(eq(recoveryLeads.id, lead.id))
   } catch (err) {
     console.error(`[AI Reply] erro inesperado gerando resposta pra lead=${leadId}:`, err)
   } finally {
