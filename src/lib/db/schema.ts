@@ -104,6 +104,23 @@ export const settings = pgTable('settings', {
   updatedAt: timestamp('updated_at').defaultNow(),
 })
 
+// ─── Cursores de sincronização incremental dos Agents/CRM ───────────────────
+export const syncCursors = pgTable('sync_cursors', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  source: text('source').notNull(),
+  sourceKey: text('source_key').notNull(),
+  newestSyncedAt: timestamp('newest_synced_at'),
+  newestSyncedId: text('newest_synced_id'),
+  backfillBeforeAt: timestamp('backfill_before_at'),
+  backfillBeforeId: text('backfill_before_id'),
+  lastRunAt: timestamp('last_run_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => [
+  uniqueIndex('sync_cursors_company_source_key_unique').on(table.companyId, table.source, table.sourceKey),
+])
+
 // ─── Sequências de recuperação (uma por tipo por empresa) ─────────────────────
 export const recoverySequences = pgTable('recovery_sequences', {
   id: serial('id').primaryKey(),
@@ -537,6 +554,7 @@ export const aiBridgeCalls = pgTable('ai_bridge_calls', {
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const companiesRelations = relations(companies, ({ one, many }) => ({
   settings: one(settings, { fields: [companies.id], references: [settings.companyId] }),
+  syncCursors: many(syncCursors),
   sequences: many(recoverySequences),
   leads: many(recoveryLeads),
   whatsappMessages: many(whatsappMessages),
@@ -549,6 +567,10 @@ export const companiesRelations = relations(companies, ({ one, many }) => ({
 
 export const settingsRelations = relations(settings, ({ one }) => ({
   company: one(companies, { fields: [settings.companyId], references: [companies.id] }),
+}))
+
+export const syncCursorsRelations = relations(syncCursors, ({ one }) => ({
+  company: one(companies, { fields: [syncCursors.companyId], references: [companies.id] }),
 }))
 
 export const recoverySequencesRelations = relations(recoverySequences, ({ one, many }) => ({

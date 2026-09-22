@@ -1,8 +1,28 @@
 import { db } from '@/lib/db'
-import { companies, settings, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
+import { companies, settings, syncCursors, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { queryAgentsDb, getAgentsDbUrl } from '@/lib/db/agents-db'
-import { eq, and, or, sql } from 'drizzle-orm'
+import { eq, and, sql } from 'drizzle-orm'
 import { backfillFirstContactFromMessages } from '@/lib/leads'
+
+// ─── Decisão de arquitetura: cursores reais por fonte ───────────────────────
+// Este sync roda em produção a cada 10 minutos. Antes, os blocos de fonte
+// externa usavam "ORDER BY ... DESC LIMIT 300" sem cursor; com mais de 300
+// linhas, cada cron relia a mesma janela recente e o histórico antigo nunca
+// entrava (caso real: public.outreach_convos tinha 4380 linhas, só 300
+// visíveis para sempre).
+//
+// A correção usa a tabela local sync_cursors, com uma linha por empresa +
+// fonte + chave da fonte (ex.: agent_conversations/drlucas,
+// outreach_convos/autonomia, crm_leads/public). Cada linha guarda:
+// - newest_synced_at/id: fronteira do sweep de novidades; busca linhas mais
+//   novas que a última já processada, com lote alto para o uso normal do cron.
+// - backfill_before_at/id: fronteira do backfill; a cada execução anda até
+//   300 registros para trás, até esgotar o histórico.
+//
+// O par timestamp + id é deliberado: só timestamp pode perder/duplicar páginas
+// quando muitas linhas compartilham a mesma data. A escrita local continua
+// idempotente pelos mapas de lead/telefone/e-mail e externalId das mensagens;
+// o cursor só avança depois que o lote da fonte foi processado.
 
 export interface AgentDbRow {
   id: string
@@ -25,6 +45,8 @@ export interface ConversationDbRow {
   started_at?: string | null
   ended_at?: string | null
   message_count?: number | null
+  __sync_sort_at?: string | Date | null
+  __sync_cursor_id?: string | number | null
 }
 
 export interface MessageDbRow {
@@ -61,6 +83,8 @@ export interface OutreachConvoDbRow {
   origem?: string | null
   temperatura?: string | null
   outreach_status?: string | null
+  __sync_sort_at?: string | Date | null
+  __sync_cursor_id?: string | number | null
 }
 
 export interface OutreachMsgDbRow {
@@ -74,9 +98,13 @@ export interface OutreachMsgDbRow {
 }
 
 export interface CtwaReferralDbRow {
+  id?: string | null
   phone_norm: string
   campaign_name: string | null
   ad_name: string | null
+  created_at?: string | null
+  __sync_sort_at?: string | Date | null
+  __sync_cursor_id?: string | number | null
 }
 
 export interface MetaLeadDbRow {
@@ -86,6 +114,31 @@ export interface MetaLeadDbRow {
   campaign_name: string | null
   ad_name: string | null
   platform?: string | null
+}
+
+export interface CrmLeadDbRow {
+  id: string
+  organization_id: string | null
+  whatsapp: string | null
+  email: string | null
+  name: string | null
+  company: string | null
+  notes: string | null
+  value: string | number | null
+  status: string | null
+  follow_up_date: string | null
+  follow_up_note: string | null
+  campaign_source: string | null
+  utm_source: string | null
+  utm_medium: string | null
+  utm_campaign: string | null
+  utm_content: string | null
+  utm_term: string | null
+  ai_agent: string | null
+  created_at: string | null
+  first_contact_at: string | null
+  __sync_sort_at?: string | Date | null
+  __sync_cursor_id?: string | number | null
 }
 
 export interface SyncReport {
@@ -266,17 +319,221 @@ async function loadPhoneNameMap(
 // do lado da Luana): nicho, origem, temperatura, outreach_status.
 const OUTREACH_TAG_COLUMN_CANDIDATES = ['nicho', 'origem', 'temperatura', 'outreach_status'] as const
 
-async function detectOutreachTagColumns(): Promise<Set<string>> {
+async function detectAgentsTableColumns(
+  schema: string,
+  table: string,
+  candidates: readonly string[]
+): Promise<Set<string>> {
   const rows = await queryAgentsDb<{ column_name: string }>(
     `
       select column_name
       from information_schema.columns
-      where table_schema = 'public' and table_name = 'outreach_convos'
-        and column_name = ANY($1)
+      where table_schema = $1 and table_name = $2
+        and column_name = ANY($3)
     `,
-    [OUTREACH_TAG_COLUMN_CANDIDATES as unknown as string[]]
+    [schema, table, candidates as unknown as string[]]
   )
   return new Set((rows || []).map((r) => r.column_name))
+}
+
+async function detectOutreachTagColumns(): Promise<Set<string>> {
+  return detectAgentsTableColumns('public', 'outreach_convos', OUTREACH_TAG_COLUMN_CANDIDATES)
+}
+
+const SYNC_BACKFILL_BATCH_SIZE = 300
+const SYNC_NEW_BATCH_SIZE = 5000
+const EPOCH_CURSOR_ISO = '1970-01-01T00:00:00.000Z'
+
+type SyncCursorSource = 'agent_conversations' | 'outreach_convos' | 'crm_leads' | 'ctwa_referrals'
+type SyncCursorRow = typeof syncCursors.$inferSelect
+
+interface CursorPosition {
+  at: Date
+  id: string
+}
+
+function parseCursorDate(value: string | Date | null | undefined): Date | null {
+  if (!value) return null
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function buildCursorPosition(
+  atValue: string | Date | null | undefined,
+  idValue: string | number | null | undefined
+): CursorPosition | null {
+  const at = parseCursorDate(atValue)
+  const id = idValue == null ? '' : String(idValue)
+  if (!at || !id) return null
+  return { at, id }
+}
+
+function compareCursorPositions(a: CursorPosition, b: CursorPosition): number {
+  const timeDiff = a.at.getTime() - b.at.getTime()
+  if (timeDiff !== 0) return timeDiff
+  return a.id.localeCompare(b.id)
+}
+
+function pickNewestPosition<T>(rows: T[], getPosition: (row: T) => CursorPosition | null): CursorPosition | null {
+  let newest: CursorPosition | null = null
+  for (const row of rows) {
+    const pos = getPosition(row)
+    if (pos && (!newest || compareCursorPositions(pos, newest) > 0)) newest = pos
+  }
+  return newest
+}
+
+function pickOldestPosition<T>(rows: T[], getPosition: (row: T) => CursorPosition | null): CursorPosition | null {
+  let oldest: CursorPosition | null = null
+  for (const row of rows) {
+    const pos = getPosition(row)
+    if (pos && (!oldest || compareCursorPositions(pos, oldest) < 0)) oldest = pos
+  }
+  return oldest
+}
+
+function dedupeTimedRows<T>(rows: T[], getPosition: (row: T) => CursorPosition | null): T[] {
+  const seen = new Set<string>()
+  const deduped: T[] = []
+
+  for (const row of rows) {
+    const pos = getPosition(row)
+    const key = pos ? `${pos.at.toISOString()}::${pos.id}` : null
+    if (key) {
+      if (seen.has(key)) continue
+      seen.add(key)
+    }
+    deduped.push(row)
+  }
+
+  return deduped
+}
+
+function currentCursorPosition(at: Date | null, id: string | null): CursorPosition | null {
+  return buildCursorPosition(at, id)
+}
+
+function cursorTimestampParam(value: Date | null): string | null {
+  return value ? value.toISOString() : null
+}
+
+async function getOrCreateSyncCursor(
+  companyId: number,
+  source: SyncCursorSource,
+  sourceKey: string
+): Promise<SyncCursorRow> {
+  const where = and(
+    eq(syncCursors.companyId, companyId),
+    eq(syncCursors.source, source),
+    eq(syncCursors.sourceKey, sourceKey)
+  )
+
+  let [cursor] = await db.select().from(syncCursors).where(where).limit(1)
+  if (cursor) return cursor
+
+  await db
+    .insert(syncCursors)
+    .values({ companyId, source, sourceKey })
+    .onConflictDoNothing()
+
+  ;[cursor] = await db.select().from(syncCursors).where(where).limit(1)
+  if (!cursor) {
+    throw new Error(`Não foi possível criar cursor de sync ${source}/${sourceKey} para company_id=${companyId}`)
+  }
+  return cursor
+}
+
+interface TimedSyncBatch<T> {
+  rows: T[]
+  newRows: T[]
+  backfillRows: T[]
+  markProcessed: () => Promise<void>
+}
+
+async function loadTimedSyncBatch<T>(opts: {
+  companyId: number
+  source: SyncCursorSource
+  sourceKey: string
+  getPosition: (row: T) => CursorPosition | null
+  fetchNewRows: (cursor: SyncCursorRow) => Promise<T[] | null>
+  fetchBackfillRows: (cursor: SyncCursorRow) => Promise<T[] | null>
+}): Promise<TimedSyncBatch<T> | null> {
+  const cursor = await getOrCreateSyncCursor(opts.companyId, opts.source, opts.sourceKey)
+  let newRows: T[] = []
+
+  if (cursor.newestSyncedAt) {
+    const fetched = await opts.fetchNewRows(cursor)
+    if (!fetched) return null
+    newRows = fetched
+  }
+
+  const backfillRows = await opts.fetchBackfillRows(cursor)
+  if (!backfillRows) return null
+
+  return {
+    rows: dedupeTimedRows([...newRows, ...backfillRows], opts.getPosition),
+    newRows,
+    backfillRows,
+    markProcessed: () => markTimedSyncBatchProcessed(cursor, newRows, backfillRows, opts.getPosition),
+  }
+}
+
+async function markTimedSyncBatchProcessed<T>(
+  cursor: SyncCursorRow,
+  newRows: T[],
+  backfillRows: T[],
+  getPosition: (row: T) => CursorPosition | null
+): Promise<void> {
+  const now = new Date()
+  const updateData: Partial<typeof syncCursors.$inferInsert> = {
+    lastRunAt: now,
+    updatedAt: now,
+  }
+
+  const currentNewest = currentCursorPosition(cursor.newestSyncedAt, cursor.newestSyncedId)
+  const newestFromNewRows = pickNewestPosition(newRows, getPosition)
+  const newestFromBootstrap = cursor.newestSyncedAt ? null : pickNewestPosition(backfillRows, getPosition)
+  const nextNewest = [newestFromNewRows, newestFromBootstrap]
+    .filter((pos): pos is CursorPosition => !!pos)
+    .reduce<CursorPosition | null>((best, pos) => (!best || compareCursorPositions(pos, best) > 0 ? pos : best), null)
+
+  if (nextNewest && (!currentNewest || compareCursorPositions(nextNewest, currentNewest) > 0)) {
+    updateData.newestSyncedAt = nextNewest.at
+    updateData.newestSyncedId = nextNewest.id
+  }
+
+  const oldestFromBackfill = pickOldestPosition(backfillRows, getPosition)
+  if (oldestFromBackfill) {
+    updateData.backfillBeforeAt = oldestFromBackfill.at
+    updateData.backfillBeforeId = oldestFromBackfill.id
+  }
+
+  await db.update(syncCursors).set(updateData).where(eq(syncCursors.id, cursor.id))
+}
+
+function conversationCursorPosition(row: ConversationDbRow): CursorPosition | null {
+  return buildCursorPosition(
+    row.__sync_sort_at ?? row.ended_at ?? row.started_at ?? EPOCH_CURSOR_ISO,
+    row.__sync_cursor_id ?? row.session_id
+  )
+}
+
+function outreachCursorPosition(row: OutreachConvoDbRow): CursorPosition | null {
+  return buildCursorPosition(row.__sync_sort_at ?? row.last_at ?? EPOCH_CURSOR_ISO, row.__sync_cursor_id ?? row.id)
+}
+
+function crmLeadCursorPosition(row: CrmLeadDbRow): CursorPosition | null {
+  return buildCursorPosition(
+    row.__sync_sort_at ?? row.created_at ?? row.first_contact_at ?? EPOCH_CURSOR_ISO,
+    row.__sync_cursor_id ?? row.id
+  )
+}
+
+function ctwaCursorPosition(row: CtwaReferralDbRow): CursorPosition | null {
+  return buildCursorPosition(
+    row.__sync_sort_at ?? row.created_at ?? EPOCH_CURSOR_ISO,
+    row.__sync_cursor_id ?? row.id ?? `${row.phone_norm}|${row.campaign_name || ''}|${row.ad_name || ''}`
+  )
 }
 
 export async function syncAgentsAndCompanies(): Promise<SyncReport> {
@@ -425,16 +682,47 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       companyMap.set(companySlug, company)
     }
 
-    // 3. Sincroniza Conversas e Mensagens recentes do schema do agente em BATCH
+    // 3. Sincroniza Conversas e Mensagens do schema do agente em BATCH
     const schema = agent.schema_name
     if (schema) {
       try {
-        const convs = await queryAgentsDb<ConversationDbRow>(`
-          select session_id, chat_id, channel, title, started_at, ended_at, message_count
-          from "${schema}".conversations
-          order by coalesce(ended_at, started_at) desc
-          limit 300
-        `)
+        const conversationSortExpr = `coalesce(ended_at, started_at, '${EPOCH_CURSOR_ISO}'::timestamp)`
+        const conversationIdExpr = 'session_id::text'
+        const conversationBatch = await loadTimedSyncBatch<ConversationDbRow>({
+          companyId: company.id,
+          source: 'agent_conversations',
+          sourceKey: schema,
+          getPosition: conversationCursorPosition,
+          fetchNewRows: (cursor) =>
+            queryAgentsDb<ConversationDbRow>(
+              `
+                select session_id, chat_id, channel, title, started_at, ended_at, message_count,
+                       ${conversationSortExpr} as __sync_sort_at,
+                       ${conversationIdExpr} as __sync_cursor_id
+                from "${schema}".conversations
+                where (${conversationSortExpr}, ${conversationIdExpr}) > ($1::timestamp, $2::text)
+                order by ${conversationSortExpr} asc, ${conversationIdExpr} asc
+                limit ${SYNC_NEW_BATCH_SIZE}
+              `,
+              [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
+            ),
+          fetchBackfillRows: (cursor) => {
+            const hasBackfillCursor = !!cursor.backfillBeforeAt
+            return queryAgentsDb<ConversationDbRow>(
+              `
+                select session_id, chat_id, channel, title, started_at, ended_at, message_count,
+                       ${conversationSortExpr} as __sync_sort_at,
+                       ${conversationIdExpr} as __sync_cursor_id
+                from "${schema}".conversations
+                ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamp, $2::text)` : ''}
+                order by ${conversationSortExpr} desc, ${conversationIdExpr} desc
+                limit ${SYNC_BACKFILL_BATCH_SIZE}
+              `,
+              hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
+            )
+          },
+        })
+        const convs = conversationBatch?.rows || []
 
         // Fontes melhores de nome do lead que o título da conversa (ver
         // resolveLeadName acima). Toleram schema sem essas tabelas (Gramado,
@@ -583,6 +871,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             }
           }
         }
+        await conversationBatch?.markProcessed()
       } catch (convErr) {
         details.push(`Aviso ao sincronizar conversas do schema "${schema}": ${String(convErr)}`)
       }
@@ -596,155 +885,205 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       .map((c) => `, ${c}`)
       .join('')
 
-    const outreachConvos = await queryAgentsDb<OutreachConvoDbRow>(`
-      select id, agent_slug, channel, source, lead_name, lead_handle, lead_company, status, last_at, msg_count${outreachTagSelect}
-      from public.outreach_convos
-      where agent_slug not ilike '%lucas%'
-      order by last_at desc
-      limit 300
-    `)
+    const outreachSortExpr = `coalesce(last_at, '${EPOCH_CURSOR_ISO}'::timestamp)`
+    const outreachIdExpr = 'id::text'
+    const outreachScopes = [
+      {
+        sourceKey: 'autonomia',
+        company: companyMap.get('autonomia'),
+        whereSql: "agent_slug not ilike '%lucas%' and agent_slug not ilike '%gramado%' and agent_slug not ilike '%plaza%'",
+      },
+      {
+        sourceKey: 'gramado-plaza',
+        company: companyMap.get('gramado-plaza'),
+        whereSql: "agent_slug not ilike '%lucas%' and (agent_slug ilike '%gramado%' or agent_slug ilike '%plaza%')",
+      },
+    ]
 
-    if (outreachConvos && outreachConvos.length > 0) {
-      const convoIds = outreachConvos.map(c => c.id).filter(Boolean)
-      const outreachMsgs = convoIds.length > 0 ? await queryAgentsDb<OutreachMsgDbRow>(`
-        select id, convo_id, direction, status, subject, body, sent_at
-        from public.outreach_msgs
-        where convo_id = ANY($1)
-        order by sent_at asc
-      `, [convoIds]) : []
+    for (const scope of outreachScopes) {
+      if (!scope.company) continue
 
-      const msgsByConvo = new Map<string, OutreachMsgDbRow[]>()
-      if (outreachMsgs) {
-        for (const m of outreachMsgs) {
-          if (!msgsByConvo.has(m.convo_id)) msgsByConvo.set(m.convo_id, [])
-          msgsByConvo.get(m.convo_id)!.push(m)
-        }
-      }
+      const outreachBatch = await loadTimedSyncBatch<OutreachConvoDbRow>({
+        companyId: scope.company.id,
+        source: 'outreach_convos',
+        sourceKey: scope.sourceKey,
+        getPosition: outreachCursorPosition,
+        fetchNewRows: (cursor) =>
+          queryAgentsDb<OutreachConvoDbRow>(
+            `
+              select id, agent_slug, channel, source, lead_name, lead_handle, lead_company, status, last_at, msg_count${outreachTagSelect},
+                     ${outreachSortExpr} as __sync_sort_at,
+                     ${outreachIdExpr} as __sync_cursor_id
+              from public.outreach_convos
+              where ${scope.whereSql}
+                and (${outreachSortExpr}, ${outreachIdExpr}) > ($1::timestamp, $2::text)
+              order by ${outreachSortExpr} asc, ${outreachIdExpr} asc
+              limit ${SYNC_NEW_BATCH_SIZE}
+            `,
+            [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
+          ),
+        fetchBackfillRows: (cursor) => {
+          const hasBackfillCursor = !!cursor.backfillBeforeAt
+          return queryAgentsDb<OutreachConvoDbRow>(
+            `
+              select id, agent_slug, channel, source, lead_name, lead_handle, lead_company, status, last_at, msg_count${outreachTagSelect},
+                     ${outreachSortExpr} as __sync_sort_at,
+                     ${outreachIdExpr} as __sync_cursor_id
+              from public.outreach_convos
+              where ${scope.whereSql}
+              ${hasBackfillCursor ? `and (${outreachSortExpr}, ${outreachIdExpr}) < ($1::timestamp, $2::text)` : ''}
+              order by ${outreachSortExpr} desc, ${outreachIdExpr} desc
+              limit ${SYNC_BACKFILL_BATCH_SIZE}
+            `,
+            hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
+          )
+        },
+      })
+      const outreachConvos = outreachBatch?.rows || []
 
-      for (const oc of outreachConvos) {
-        const agentSlug = (oc.agent_slug || '').toLowerCase()
-        let companySlug = 'autonomia'
-        if (agentSlug.includes('gramado') || agentSlug.includes('plaza')) {
-          companySlug = 'gramado-plaza'
-        }
+      if (outreachConvos.length > 0) {
+        const convoIds = outreachConvos.map(c => c.id).filter(Boolean)
+        const outreachMsgs = convoIds.length > 0 ? await queryAgentsDb<OutreachMsgDbRow>(`
+          select id, convo_id, direction, status, subject, body, sent_at
+          from public.outreach_msgs
+          where convo_id = ANY($1)
+          order by sent_at asc
+        `, [convoIds]) : []
 
-        const comp = companyMap.get(companySlug) || companyMap.get('autonomia')
-        if (!comp) continue
-
-        const rawHandle = (oc.lead_handle || '').trim()
-        const isEmail = rawHandle.includes('@')
-        const phone = isEmail ? rawHandle : normalizeDigits(rawHandle) || rawHandle
-        if (!phone) continue
-
-        const ch = oc.channel || (isEmail ? 'email' : 'whatsapp')
-        const ocDate = oc.last_at ? new Date(oc.last_at) : new Date()
-        const last9 = !isEmail && phone.length >= 9 ? phone.slice(-9) : phone
-
-        let leadId = isEmail
-          ? leadMap.get(`${comp.id}_${rawHandle.toLowerCase()}`)
-          : (leadMap.get(`${comp.id}_${phone}`) || leadMap.get(`${comp.id}_${last9}`))
-        const isExistingLead = !!leadId
-
-        // Tags de mineração: as 4 (nicho/origem/temperatura/outreach_status)
-        // só entram se a coluna existir na fonte (ver detectOutreachTagColumns
-        // acima). "origem" aqui é a coluna NOVA com a origem real do lead
-        // (google_places/instagram/linkedin/manual), NUNCA oc.source: essa é
-        // uma constante fixa "prospeccao" (marcador de "é conversa de
-        // prospecção" pro dashboard da Luana), sem relação com a origem real.
-        // Nunca gravar chave vazia: um valor ausente não deve apagar uma tag
-        // que já existia.
-        const miningTagsPatch: { origem?: string; nicho?: string; temperatura?: string; statusRelacionamento?: string } = {}
-        if (oc.origem) miningTagsPatch.origem = oc.origem
-        if (oc.nicho) miningTagsPatch.nicho = oc.nicho
-        if (oc.temperatura) miningTagsPatch.temperatura = oc.temperatura
-        if (oc.outreach_status) miningTagsPatch.statusRelacionamento = oc.outreach_status
-        const hasMiningTags = Object.keys(miningTagsPatch).length > 0
-
-        if (!leadId) {
-          const [newLead] = await db
-            .insert(recoveryLeads)
-            .values({
-              companyId: comp.id,
-              phone,
-              email: isEmail ? rawHandle : null,
-              name: oc.lead_name || `Lead ${phone.slice(-4)}`,
-              productName: oc.lead_company || 'Prospecção / Mineração',
-              platform: 'sac',
-              channel: ch,
-              eventType: oc.source || 'prospeccao',
-              status: oc.status === 'active' ? 'in_conversation' : 'pending',
-              trackingSource: 'mineracao_prospeccao',
-              miningTags: hasMiningTags ? miningTagsPatch : undefined,
-              createdAt: ocDate,
-              updatedAt: ocDate,
-              lastActionAt: ocDate,
-            })
-            .returning()
-
-          leadId = newLead.id
-          if (isEmail) {
-            leadMap.set(`${comp.id}_${rawHandle.toLowerCase()}`, leadId)
-          } else {
-            leadMap.set(`${comp.id}_${phone}`, leadId)
-            if (phone.length >= 9) leadMap.set(`${comp.id}_${last9}`, leadId)
+        const msgsByConvo = new Map<string, OutreachMsgDbRow[]>()
+        if (outreachMsgs) {
+          for (const m of outreachMsgs) {
+            if (!msgsByConvo.has(m.convo_id)) msgsByConvo.set(m.convo_id, [])
+            msgsByConvo.get(m.convo_id)!.push(m)
           }
-          leadsCreated++
-        } else if (hasMiningTags) {
-          // Lead já existia: faz merge (||) em cima do que já está gravado,
-          // nunca overwrite cego. Assim uma sincronização com só "origem"
-          // disponível não apaga um "nicho" já gravado numa passada anterior.
-          await db
-            .update(recoveryLeads)
-            .set({
-              miningTags: sql`COALESCE(${recoveryLeads.miningTags}, '{}'::jsonb) || ${JSON.stringify(miningTagsPatch)}::jsonb`,
-              updatedAt: new Date(),
-            })
-            .where(eq(recoveryLeads.id, leadId))
         }
 
-        const convoMsgs = msgsByConvo.get(oc.id) || []
-        const msgsToInsert: (typeof whatsappMessages.$inferInsert)[] = []
+        for (const oc of outreachConvos) {
+          const agentSlug = (oc.agent_slug || '').toLowerCase()
+          let companySlug = 'autonomia'
+          if (agentSlug.includes('gramado') || agentSlug.includes('plaza')) {
+            companySlug = 'gramado-plaza'
+          }
 
-        for (const m of convoMsgs) {
-          const externalId = `outreach_${m.id}`
-          if (existingMsgIds.has(externalId)) continue
+          const comp = companyMap.get(companySlug) || companyMap.get('autonomia')
+          if (!comp) continue
 
-          const isUser = m.direction === 'inbound'
-          msgsToInsert.push({
-            companyId: comp.id,
-            leadId: leadId,
-            phone: phone,
-            channel: ch,
-            direction: isUser ? 'inbound' : 'outbound',
-            content: m.body || m.subject || '',
-            messageType: 'text',
-            sentBy: isUser ? 'user' : 'bot',
-            externalId,
-            createdAt: m.sent_at ? new Date(m.sent_at) : (oc.last_at ? new Date(oc.last_at) : new Date()),
-          })
-          existingMsgIds.add(externalId)
-        }
+          const rawHandle = (oc.lead_handle || '').trim()
+          const isEmail = rawHandle.includes('@')
+          const phone = isEmail ? rawHandle : normalizeDigits(rawHandle) || rawHandle
+          if (!phone) continue
 
-        if (msgsToInsert.length > 0) {
-          await db.insert(whatsappMessages).values(msgsToInsert)
-          messagesImported += msgsToInsert.length
+          const ch = oc.channel || (isEmail ? 'email' : 'whatsapp')
+          const ocDate = oc.last_at ? new Date(oc.last_at) : new Date()
+          const last9 = !isEmail && phone.length >= 9 ? phone.slice(-9) : phone
 
-          // Mesmo raciocínio do bloco 3 (conversas de agente IA): lead já
-          // existente precisa de um update explícito de lastActionAt, senão
-          // o COALESCE de ordenação do Inbox ignora pra sempre a atividade
-          // nova assim que lastActionAt for preenchido uma vez.
-          if (isExistingLead) {
-            const latestMsgDate = msgsToInsert.reduce(
-              (max, m) => ((m.createdAt as Date) > max ? (m.createdAt as Date) : max),
-              msgsToInsert[0].createdAt as Date
-            )
+          let leadId = isEmail
+            ? leadMap.get(`${comp.id}_${rawHandle.toLowerCase()}`)
+            : (leadMap.get(`${comp.id}_${phone}`) || leadMap.get(`${comp.id}_${last9}`))
+          const isExistingLead = !!leadId
+
+          // Tags de mineração: as 4 (nicho/origem/temperatura/outreach_status)
+          // só entram se a coluna existir na fonte (ver detectOutreachTagColumns
+          // acima). "origem" aqui é a coluna NOVA com a origem real do lead
+          // (google_places/instagram/linkedin/manual), NUNCA oc.source: essa é
+          // uma constante fixa "prospeccao" (marcador de "é conversa de
+          // prospecção" pro dashboard da Luana), sem relação com a origem real.
+          // Nunca gravar chave vazia: um valor ausente não deve apagar uma tag
+          // que já existia.
+          const miningTagsPatch: { origem?: string; nicho?: string; temperatura?: string; statusRelacionamento?: string } = {}
+          if (oc.origem) miningTagsPatch.origem = oc.origem
+          if (oc.nicho) miningTagsPatch.nicho = oc.nicho
+          if (oc.temperatura) miningTagsPatch.temperatura = oc.temperatura
+          if (oc.outreach_status) miningTagsPatch.statusRelacionamento = oc.outreach_status
+          const hasMiningTags = Object.keys(miningTagsPatch).length > 0
+
+          if (!leadId) {
+            const [newLead] = await db
+              .insert(recoveryLeads)
+              .values({
+                companyId: comp.id,
+                phone,
+                email: isEmail ? rawHandle : null,
+                name: oc.lead_name || `Lead ${phone.slice(-4)}`,
+                productName: oc.lead_company || 'Prospecção / Mineração',
+                platform: 'sac',
+                channel: ch,
+                eventType: oc.source || 'prospeccao',
+                status: oc.status === 'active' ? 'in_conversation' : 'pending',
+                trackingSource: 'mineracao_prospeccao',
+                miningTags: hasMiningTags ? miningTagsPatch : undefined,
+                createdAt: ocDate,
+                updatedAt: ocDate,
+                lastActionAt: ocDate,
+              })
+              .returning()
+
+            leadId = newLead.id
+            if (isEmail) {
+              leadMap.set(`${comp.id}_${rawHandle.toLowerCase()}`, leadId)
+            } else {
+              leadMap.set(`${comp.id}_${phone}`, leadId)
+              if (phone.length >= 9) leadMap.set(`${comp.id}_${last9}`, leadId)
+            }
+            leadsCreated++
+          } else if (hasMiningTags) {
+            // Lead já existia: faz merge (||) em cima do que já está gravado,
+            // nunca overwrite cego. Assim uma sincronização com só "origem"
+            // disponível não apaga um "nicho" já gravado numa passada anterior.
             await db
               .update(recoveryLeads)
-              .set({ lastActionAt: latestMsgDate, updatedAt: latestMsgDate })
+              .set({
+                miningTags: sql`COALESCE(${recoveryLeads.miningTags}, '{}'::jsonb) || ${JSON.stringify(miningTagsPatch)}::jsonb`,
+                updatedAt: new Date(),
+              })
               .where(eq(recoveryLeads.id, leadId))
+          }
+
+          const convoMsgs = msgsByConvo.get(oc.id) || []
+          const msgsToInsert: (typeof whatsappMessages.$inferInsert)[] = []
+
+          for (const m of convoMsgs) {
+            const externalId = `outreach_${m.id}`
+            if (existingMsgIds.has(externalId)) continue
+
+            const isUser = m.direction === 'inbound'
+            msgsToInsert.push({
+              companyId: comp.id,
+              leadId: leadId,
+              phone: phone,
+              channel: ch,
+              direction: isUser ? 'inbound' : 'outbound',
+              content: m.body || m.subject || '',
+              messageType: 'text',
+              sentBy: isUser ? 'user' : 'bot',
+              externalId,
+              createdAt: m.sent_at ? new Date(m.sent_at) : (oc.last_at ? new Date(oc.last_at) : new Date()),
+            })
+            existingMsgIds.add(externalId)
+          }
+
+          if (msgsToInsert.length > 0) {
+            await db.insert(whatsappMessages).values(msgsToInsert)
+            messagesImported += msgsToInsert.length
+
+            // Mesmo raciocínio do bloco 3 (conversas de agente IA): lead já
+            // existente precisa de um update explícito de lastActionAt, senão
+            // o COALESCE de ordenação do Inbox ignora pra sempre a atividade
+            // nova assim que lastActionAt for preenchido uma vez.
+            if (isExistingLead) {
+              const latestMsgDate = msgsToInsert.reduce(
+                (max, m) => ((m.createdAt as Date) > max ? (m.createdAt as Date) : max),
+                msgsToInsert[0].createdAt as Date
+              )
+              await db
+                .update(recoveryLeads)
+                .set({ lastActionAt: latestMsgDate, updatedAt: latestMsgDate })
+                .where(eq(recoveryLeads.id, leadId))
+            }
           }
         }
       }
+      await outreachBatch?.markProcessed()
     }
   } catch (outreachErr) {
     details.push(`Aviso ao sincronizar prospecção: ${String(outreachErr)}`)
@@ -752,18 +1091,51 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
   // 5. Sincroniza novos Leads do CRM em BATCH
   try {
-    const crmLeads = await queryAgentsDb<any>(`
-      select id, organization_id, whatsapp, email, name, company, notes, value, status,
-             follow_up_date, follow_up_note, campaign_source, utm_source, utm_medium,
-             utm_campaign, utm_content, utm_term, ai_agent, created_at, first_contact_at
-      from public.leads
-      order by created_at desc
-      limit 300
-    `)
+    const targetComp = companyMap.get('autonomia') || companyMap.values().next().value
+    if (targetComp) {
+      const crmLeadSortExpr = `coalesce(created_at, first_contact_at, '${EPOCH_CURSOR_ISO}'::timestamp)`
+      const crmLeadIdExpr = 'id::text'
+      const crmLeadBatch = await loadTimedSyncBatch<CrmLeadDbRow>({
+        companyId: targetComp.id,
+        source: 'crm_leads',
+        sourceKey: 'public',
+        getPosition: crmLeadCursorPosition,
+        fetchNewRows: (cursor) =>
+          queryAgentsDb<CrmLeadDbRow>(
+            `
+              select id, organization_id, whatsapp, email, name, company, notes, value, status,
+                     follow_up_date, follow_up_note, campaign_source, utm_source, utm_medium,
+                     utm_campaign, utm_content, utm_term, ai_agent, created_at, first_contact_at,
+                     ${crmLeadSortExpr} as __sync_sort_at,
+                     ${crmLeadIdExpr} as __sync_cursor_id
+              from public.leads
+              where (${crmLeadSortExpr}, ${crmLeadIdExpr}) > ($1::timestamp, $2::text)
+              order by ${crmLeadSortExpr} asc, ${crmLeadIdExpr} asc
+              limit ${SYNC_NEW_BATCH_SIZE}
+            `,
+            [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
+          ),
+        fetchBackfillRows: (cursor) => {
+          const hasBackfillCursor = !!cursor.backfillBeforeAt
+          return queryAgentsDb<CrmLeadDbRow>(
+            `
+              select id, organization_id, whatsapp, email, name, company, notes, value, status,
+                     follow_up_date, follow_up_note, campaign_source, utm_source, utm_medium,
+                     utm_campaign, utm_content, utm_term, ai_agent, created_at, first_contact_at,
+                     ${crmLeadSortExpr} as __sync_sort_at,
+                     ${crmLeadIdExpr} as __sync_cursor_id
+              from public.leads
+              ${hasBackfillCursor ? `where (${crmLeadSortExpr}, ${crmLeadIdExpr}) < ($1::timestamp, $2::text)` : ''}
+              order by ${crmLeadSortExpr} desc, ${crmLeadIdExpr} desc
+              limit ${SYNC_BACKFILL_BATCH_SIZE}
+            `,
+            hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
+          )
+        },
+      })
+      const crmLeads = crmLeadBatch?.rows || []
 
-    if (crmLeads && crmLeads.length > 0) {
-      const targetComp = companyMap.get('autonomia') || companyMap.values().next().value
-      if (targetComp) {
+      if (crmLeads.length > 0) {
         const leadsToInsert: (typeof recoveryLeads.$inferInsert)[] = []
 
         for (const l of crmLeads) {
@@ -823,6 +1195,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           details.push(`${leadsToInsert.length} novos leads importados da base de CRM.`)
         }
       }
+      await crmLeadBatch?.markProcessed()
     }
   } catch (crmErr) {
     details.push(`Aviso ao sincronizar CRM leads: ${String(crmErr)}`)
@@ -830,37 +1203,80 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
   // 6. Sincroniza Referrals de Anúncios Click-to-WhatsApp (CTWA)
   try {
-    const ctwaRows = await queryAgentsDb<CtwaReferralDbRow>(`
-      select phone_norm, campaign_name, ad_name
-      from public.ctwa_referrals
-      where phone_norm is not null and length(phone_norm) >= 8
-      order by created_at desc
-      limit 200
-    `)
+    const ctwaCursorCompany = companyMap.get('autonomia') || companyMap.values().next().value
+    if (ctwaCursorCompany) {
+      const ctwaColumns = await detectAgentsTableColumns('public', 'ctwa_referrals', ['id', 'created_at'])
 
-    if (ctwaRows && ctwaRows.length > 0) {
-      let ctwaCount = 0
-      for (const r of ctwaRows) {
-        const norm = normalizeDigits(r.phone_norm)
-        if (!norm) continue
+      if (ctwaColumns.has('created_at')) {
+        const ctwaSortExpr = `coalesce(created_at, '${EPOCH_CURSOR_ISO}'::timestamp)`
+        const ctwaIdExpr = ctwaColumns.has('id')
+          ? 'id::text'
+          : "concat_ws('|', phone_norm, campaign_name, ad_name, created_at::text)"
+        const ctwaIdSelect = ctwaColumns.has('id') ? 'id,' : ''
+        const ctwaBatch = await loadTimedSyncBatch<CtwaReferralDbRow>({
+          companyId: ctwaCursorCompany.id,
+          source: 'ctwa_referrals',
+          sourceKey: 'public',
+          getPosition: ctwaCursorPosition,
+          fetchNewRows: (cursor) =>
+            queryAgentsDb<CtwaReferralDbRow>(
+              `
+                select ${ctwaIdSelect} phone_norm, campaign_name, ad_name, created_at,
+                       ${ctwaSortExpr} as __sync_sort_at,
+                       ${ctwaIdExpr} as __sync_cursor_id
+                from public.ctwa_referrals
+                where phone_norm is not null and length(phone_norm) >= 8
+                  and (${ctwaSortExpr}, ${ctwaIdExpr}) > ($1::timestamp, $2::text)
+                order by ${ctwaSortExpr} asc, ${ctwaIdExpr} asc
+                limit ${SYNC_NEW_BATCH_SIZE}
+              `,
+              [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
+            ),
+          fetchBackfillRows: (cursor) => {
+            const hasBackfillCursor = !!cursor.backfillBeforeAt
+            return queryAgentsDb<CtwaReferralDbRow>(
+              `
+                select ${ctwaIdSelect} phone_norm, campaign_name, ad_name, created_at,
+                       ${ctwaSortExpr} as __sync_sort_at,
+                       ${ctwaIdExpr} as __sync_cursor_id
+                from public.ctwa_referrals
+                where phone_norm is not null and length(phone_norm) >= 8
+                ${hasBackfillCursor ? `and (${ctwaSortExpr}, ${ctwaIdExpr}) < ($1::timestamp, $2::text)` : ''}
+                order by ${ctwaSortExpr} desc, ${ctwaIdExpr} desc
+                limit ${SYNC_BACKFILL_BATCH_SIZE}
+              `,
+              hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
+            )
+          },
+        })
+        const ctwaRows = ctwaBatch?.rows || []
 
-        const updated = await db
-          .update(recoveryLeads)
-          .set({
-            trackingSource: 'meta_ads',
-            utmCampaign: r.campaign_name || undefined,
-            updatedAt: new Date(),
-          })
-          .where(sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${norm}, 9)`)
-          .returning({ id: recoveryLeads.id })
+        if (ctwaRows.length > 0) {
+          let ctwaCount = 0
+          for (const r of ctwaRows) {
+            const norm = normalizeDigits(r.phone_norm)
+            if (!norm) continue
 
-        if (updated.length > 0) ctwaCount++
-      }
-      if (ctwaCount > 0) {
-        details.push(`${ctwaCount} leads identificados como Anúncios Meta (Janela de 72h).`)
+            const updated = await db
+              .update(recoveryLeads)
+              .set({
+                trackingSource: 'meta_ads',
+                utmCampaign: r.campaign_name || undefined,
+                updatedAt: new Date(),
+              })
+              .where(sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${norm}, 9)`)
+              .returning({ id: recoveryLeads.id })
+
+            if (updated.length > 0) ctwaCount++
+          }
+          if (ctwaCount > 0) {
+            details.push(`${ctwaCount} leads identificados como Anúncios Meta (Janela de 72h).`)
+          }
+        }
+        await ctwaBatch?.markProcessed()
       }
     }
-  } catch (ctwaErr) {
+  } catch {
     // Tabela opcional
   }
 
