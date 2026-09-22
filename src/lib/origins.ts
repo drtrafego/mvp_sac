@@ -2,6 +2,7 @@ import React from 'react'
 
 export type OriginCategory =
   | 'mineracao'
+  | 'anuncio'
   | 'meta_ads'
   | 'google_ads'
   | 'instagram'
@@ -58,17 +59,24 @@ export function normalizeOrigin(
     const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     return new RegExp(`(^|[^a-z])${escaped}`, 'i').test(combined)
   }
+  const hasAnyWordBoundary = (needles: string[]) => needles.some(hasWordBoundary)
+
+  const hasGoogleAdsSignal = () =>
+    hasAnyWordBoundary(['google_ads', 'gclid', 'adwords', 'gads', 'google'])
+
+  const hasMetaAdsSignal = () =>
+    hasAnyWordBoundary(['meta_ads', 'fb_ads', 'facebook_ads', 'meta', 'facebook', 'fb', 'anuncio', 'ads'])
 
   // Regra prioritária de proteção médica / Dr. Lucas: NUNCA é Mineração
   const isDrLucas = combined.includes('lucas') || combined.includes('clara') || combined.includes('fernandes') || combined.includes('clinica') || combined.includes('consultorio')
   if (isDrLucas) {
-    if (combined.includes('meta') || combined.includes('fb') || combined.includes('ad') || combined.includes('anuncio')) {
+    if (hasMetaAdsSignal()) {
       return {
         key: 'meta_ads_lucas',
         label: 'Meta Ads Dr. Lucas',
         shortLabel: 'Meta Ads Dr. Lucas',
-        category: 'meta_ads',
-        subcategory: 'dr_lucas',
+        category: 'anuncio',
+        subcategory: 'meta_ads',
         color: 'bg-blue-500',
         badgeColor: 'border-blue-500/30 bg-blue-500/10 text-blue-400',
         textColor: 'text-blue-400',
@@ -143,21 +151,33 @@ export function normalizeOrigin(
     }
   }
 
-  // 2. Meta Ads (Facebook / Instagram Ads / Dr. Lucas)
-  if (
-    combined.includes('fb') ||
-    combined.includes('meta') ||
-    combined.includes('facebook') ||
-    combined.includes('anuncio') ||
-    (combined.includes('ads') && !combined.includes('google'))
-  ) {
+  // 2. Anúncio (Meta Ads / Google Ads)
+  //
+  // Mantém a mesma precedência de src/lib/inbox-channel-filter.ts:
+  // mineração já venceu acima, e só depois tráfego pago vence colisões com
+  // canais orgânicos como "instagram_ads_agosto". Todas as buscas novas usam
+  // a borda à esquerda (`hasWordBoundary`), não `.includes()` solto.
+  if (hasGoogleAdsSignal() || hasMetaAdsSignal()) {
+    if (hasGoogleAdsSignal()) {
+      return {
+        key: 'google_ads',
+        label: 'Google Ads & Search',
+        shortLabel: 'Google Ads',
+        category: 'anuncio',
+        subcategory: 'google_ads',
+        color: 'bg-red-500',
+        badgeColor: 'border-red-500/30 bg-red-500/10 text-red-400',
+        textColor: 'text-red-400',
+        iconName: 'google',
+      }
+    }
     if (combined.includes('lucas')) {
       return {
         key: 'meta_ads_lucas',
         label: 'Meta Ads Dr. Lucas',
         shortLabel: 'Meta Ads Dr. Lucas',
-        category: 'meta_ads',
-        subcategory: 'dr_lucas',
+        category: 'anuncio',
+        subcategory: 'meta_ads',
         color: 'bg-blue-500',
         badgeColor: 'border-blue-500/30 bg-blue-500/10 text-blue-400',
         textColor: 'text-blue-400',
@@ -169,8 +189,8 @@ export function normalizeOrigin(
         key: 'meta_ads_instagram',
         label: 'Meta Ads — Instagram (Feed & Stories)',
         shortLabel: 'Instagram Ads',
-        category: 'meta_ads',
-        subcategory: 'instagram_ads',
+        category: 'anuncio',
+        subcategory: 'meta_ads',
         color: 'bg-pink-500',
         badgeColor: 'border-pink-500/30 bg-pink-500/10 text-pink-400',
         textColor: 'text-pink-400',
@@ -181,8 +201,8 @@ export function normalizeOrigin(
       key: 'meta_ads_geral',
       label: 'Meta Ads — Facebook & Instagram',
       shortLabel: 'Meta Ads',
-      category: 'meta_ads',
-      subcategory: 'meta_geral',
+      category: 'anuncio',
+      subcategory: 'meta_ads',
       color: 'bg-blue-500',
       badgeColor: 'border-blue-500/30 bg-blue-500/10 text-blue-400',
       textColor: 'text-blue-400',
@@ -190,22 +210,7 @@ export function normalizeOrigin(
     }
   }
 
-  // 3. Google Ads & YouTube
-  if (combined.includes('google') || combined.includes('gads') || combined.includes('youtube') || combined.includes('search')) {
-    return {
-      key: 'google_ads',
-      label: 'Google Ads & YouTube Search',
-      shortLabel: 'Google Ads',
-      category: 'google_ads',
-      subcategory: 'search',
-      color: 'bg-red-500',
-      badgeColor: 'border-red-500/30 bg-red-500/10 text-red-400',
-      textColor: 'text-red-400',
-      iconName: 'google',
-    }
-  }
-
-  // 4. Instagram Direct / Orgânico
+  // 3. Instagram Direct / Orgânico
   if (combined.includes('instagram') || combined.includes('direct') || combined.includes('ig_direct')) {
     return {
       key: 'instagram_direct',
@@ -220,7 +225,7 @@ export function normalizeOrigin(
     }
   }
 
-  // 5. E-mail Marketing / Campanhas
+  // 4. E-mail Marketing / Campanhas
   if (combined.includes('email') || combined.includes('mail') || combined.includes('newsletter') || combined.includes('brevo')) {
     return {
       key: 'email_marketing',
@@ -235,7 +240,7 @@ export function normalizeOrigin(
     }
   }
 
-  // 6. Checkouts (Hotmart, Kiwify, Greenn, Zouti)
+  // 5. Checkouts (Hotmart, Kiwify, Greenn, Zouti)
   if (combined.includes('hotmart') || p === 'hotmart') {
     return {
       key: 'checkout_hotmart',
@@ -289,7 +294,7 @@ export function normalizeOrigin(
     }
   }
 
-  // 7. Eventos & Nichos específicos
+  // 6. Eventos & Nichos específicos
   if (combined.includes('consulta') || ev === 'consulta_medica') {
     return {
       key: 'evento_consulta',
@@ -315,7 +320,7 @@ export function normalizeOrigin(
     }
   }
 
-  // 8. Padrão / Direto / Orgânico
+  // 7. Padrão / Direto / Orgânico
   if (!rawSource && !platform) {
     return {
       key: 'organico_direto',

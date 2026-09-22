@@ -1,11 +1,11 @@
 import { or, sql, type SQL } from 'drizzle-orm'
 import { recoveryLeads } from '@/lib/db/schema'
 
-// mineracao_email/mineracao_whatsapp/mineracao_instagram são o FILTRO
-// COMPOSTO: dentro do universo já classificado como 'mineracao' (categoria
-// principal, precedência mantida), filtra pela segunda dimensão (canal REAL
-// de contato do lead). Não são categorias novas no nível principal, então
-// não mexem em nenhuma regra de precedência das 4 rodadas anteriores.
+// mineracao_email/mineracao_whatsapp/mineracao_instagram e
+// anuncio_meta_ads/anuncio_google_ads são FILTROS COMPOSTOS: dentro do
+// universo já classificado pela categoria principal (precedência mantida),
+// filtram pela segunda dimensão. Não são categorias novas no nível principal,
+// então não mexem nas regras de precedência das rodadas anteriores.
 export type InboxChannelFilter =
   | 'all'
   | 'whatsapp'
@@ -15,6 +15,9 @@ export type InboxChannelFilter =
   | 'mineracao_email'
   | 'mineracao_whatsapp'
   | 'mineracao_instagram'
+  | 'anuncio'
+  | 'anuncio_meta_ads'
+  | 'anuncio_google_ads'
 
 type ChannelFields = {
   channel?: string | null
@@ -25,6 +28,7 @@ type ChannelFields = {
 
 export type ChannelClassification = {
   isMineracao: boolean
+  isAnuncio: boolean
   isEmail: boolean
   isInstagram: boolean
   isWhatsapp: boolean
@@ -35,6 +39,7 @@ export type ChannelClassification = {
 // categoria='mineracao' (porque tracking_source bateu em %prospeccao%) e
 // mineracaoSubchannel='email' (porque o contato de verdade é por e-mail).
 export type MineracaoSubchannel = 'email' | 'whatsapp' | 'instagram'
+export type AnuncioSubcategory = 'meta_ads' | 'google_ads'
 
 interface CategoryRule {
   name: string
@@ -57,7 +62,7 @@ interface CategoryRule {
  * a anterior não bateu. Tudo que não bater em nenhuma cai em 'whatsapp' (o
  * "else", nunca uma condição própria). Isso garante mutual exclusion e
  * cobertura total POR CONSTRUÇÃO: nenhum lead cai em duas abas ao mesmo
- * tempo (overlap), nenhum lead fica de fora das 4 abas (buraco).
+ * tempo (overlap), nenhum lead fica de fora das abas (buraco).
  *
  * POR QUE ESTA ORDEM ESPECÍFICA (mudar a ordem muda o resultado; documentado
  * porque já foi esquecido antes, isto é a 4ª rodada corrigindo a mesma
@@ -69,13 +74,19 @@ interface CategoryRule {
  *     "PROSPECCAO_INSTAGRAM_MINERACAO" bate em mineracao E em instagram.
  *     Testar mineracao primeiro garante que esses leads ficam em mineracao,
  *     nunca contados de novo em email/instagram.
- *  2. email ANTES de instagram, pelo mesmo motivo de colisão de texto livre:
+ *  2. anuncio DEPOIS de mineracao e ANTES de email/instagram. Depois de
+ *     preservar a prioridade histórica de prospecção fria, tráfego pago
+ *     precisa vencer colisões com canais orgânicos: "instagram_ads_agosto"
+ *     contém "instagram", mas a origem de negócio é Anúncio; "fb_ads..." ou
+ *     "meta_ads" não devem cair no else de WhatsApp só porque o contato real
+ *     acontece por WhatsApp.
+ *  3. email ANTES de instagram, pelo mesmo motivo de colisão de texto livre:
  *     "instagram_email_crosspost" bate nos dois (%instagram% e %email%).
  *     Email vence esse empate.
- *  3. instagram por último antes do else: depois de eliminar mineracao e
- *     email, o que sobrar batendo em channel/platform/trackingSource ou no
- *     prefixo "ig_" do telefone é instagram.
- *  4. whatsapp é SEMPRE o else, nunca uma condição própria. channel=
+ *  4. instagram por último antes do else: depois de eliminar mineracao,
+ *     anuncio e email, o que sobrar batendo em channel/platform/trackingSource
+ *     ou no prefixo "ig_" do telefone é instagram.
+ *  5. whatsapp é SEMPRE o else, nunca uma condição própria. channel=
  *     'whatsapp', NULL, '' ou qualquer valor não mapeado caem aqui. É o que
  *     resolve, por construção, o buraco de NULL/vazio das rodadas 1 e 2 (uma
  *     condição own de whatsapp com coluna NULL, em lógica de 3 valores,
@@ -99,6 +110,30 @@ const CATEGORY_RULES: CategoryRule[] = [
     // Origens (que já tinha 'miner') e sumia da aba Mineração do Inbox (que
     // só tinha a lista estreita). Mudou um lado, mude o outro.
     trackingIncludes: ['mineracao', 'prospeccao', 'miner', 'mining', 'places'],
+  },
+  {
+    name: 'anuncio',
+    channelEquals: 'anuncio',
+    platformEquals: 'anuncio',
+    // Lista PRECISA ficar sincronizada com src/lib/origins.ts (normalizeOrigin,
+    // bloco "2. Anúncio"). A ordem de CATEGORY_RULES mantém mineração acima
+    // desta regra: "google_places_scraper" continua Mineração, enquanto
+    // "meta_ads", "fb_ads" e "google_ads" passam a formar a aba Anúncio.
+    trackingIncludes: [
+      'meta_ads',
+      'fb_ads',
+      'facebook_ads',
+      'google_ads',
+      'gclid',
+      'adwords',
+      'gads',
+      'meta',
+      'facebook',
+      'fb',
+      'google',
+      'anuncio',
+      'ads',
+    ],
   },
   {
     name: 'email',
@@ -146,6 +181,26 @@ const MINERACAO_SUBCATEGORY_RULES: CategoryRule[] = [
     platformEquals: 'instagram',
     trackingIncludes: ['instagram', 'direct'],
     phonePrefix: 'ig_',
+  },
+]
+
+/**
+ * Sub-regras de origem paga, aplicadas SÓ dentro do universo que já bateu em
+ * CATEGORY_RULES 'anuncio'. Google vem primeiro porque termos como
+ * "google_ads" também contêm o termo genérico "ads"; se Google não vencer
+ * esse empate, cairia em Meta pelo default legado. Meta Ads é o else dentro
+ * de Anúncio porque a heurística antiga de origins.ts já tratava "ads" sem
+ * "google" como Meta/Facebook/Instagram Ads, e porque hoje o dado real
+ * confirmado chega como trackingSource='meta_ads' (CTWA e Conversions API).
+ */
+const ANUNCIO_SUBCATEGORY_RULES: CategoryRule[] = [
+  {
+    name: 'google_ads',
+    trackingIncludes: ['google_ads', 'gclid', 'adwords', 'gads', 'google'],
+  },
+  {
+    name: 'meta_ads',
+    trackingIncludes: ['meta_ads', 'fb_ads', 'facebook_ads', 'meta', 'facebook', 'fb', 'anuncio', 'ads'],
   },
 ]
 
@@ -235,15 +290,29 @@ function mineracaoSubchannelLabelSql(): SQL {
   return expr
 }
 
+// Mesmo CASE WHEN do nível principal, mas com as sub-regras de Anúncio e
+// caindo em 'meta_ads' no else (default legado para "ads" genérico).
+function anuncioSubcategoryLabelSql(): SQL {
+  let expr: SQL = sql`'meta_ads'`
+  for (let i = ANUNCIO_SUBCATEGORY_RULES.length - 1; i >= 0; i--) {
+    const rule = ANUNCIO_SUBCATEGORY_RULES[i]
+    expr = sql`case when ${ruleConditionSql(rule)} then ${rule.name} else (${expr}) end`
+  }
+  return expr
+}
+
 const MINERACAO_COMPOUND_PREFIX = 'mineracao_'
+const ANUNCIO_COMPOUND_PREFIX = 'anuncio_'
 
 /**
  * WHERE do banco pra uma aba de canal. Retorna undefined pra 'all' (ou
  * qualquer valor desconhecido): sem filtro nenhum.
  *
- * Também aceita os filtros compostos 'mineracao_email' / 'mineracao_whatsapp'
- * / 'mineracao_instagram': categoria principal 'mineracao' (a mesma condição
- * de sempre, precedência intacta) E, dentro dela, o canal real de contato.
+ * Também aceita filtros compostos:
+ * - 'mineracao_email' / 'mineracao_whatsapp' / 'mineracao_instagram':
+ *   categoria principal 'mineracao' E, dentro dela, o canal real de contato.
+ * - 'anuncio_meta_ads' / 'anuncio_google_ads': categoria principal 'anuncio'
+ *   E, dentro dela, a plataforma paga reconhecida.
  */
 export function channelWhereCondition(chFilter: string | null | undefined): SQL | undefined {
   if (chFilter && chFilter.startsWith(MINERACAO_COMPOUND_PREFIX)) {
@@ -254,7 +323,21 @@ export function channelWhereCondition(chFilter: string | null | undefined): SQL 
     return undefined
   }
 
-  if (chFilter !== 'whatsapp' && chFilter !== 'instagram' && chFilter !== 'email' && chFilter !== 'mineracao') {
+  if (chFilter && chFilter.startsWith(ANUNCIO_COMPOUND_PREFIX)) {
+    const sub = chFilter.slice(ANUNCIO_COMPOUND_PREFIX.length)
+    if (sub === 'meta_ads' || sub === 'google_ads') {
+      return sql<boolean>`(${channelLabelSql()} = 'anuncio') and (${anuncioSubcategoryLabelSql()} = ${sub})`
+    }
+    return undefined
+  }
+
+  if (
+    chFilter !== 'whatsapp' &&
+    chFilter !== 'instagram' &&
+    chFilter !== 'email' &&
+    chFilter !== 'mineracao' &&
+    chFilter !== 'anuncio'
+  ) {
     return undefined
   }
   return sql<boolean>`${channelLabelSql()} = ${chFilter}`
@@ -291,13 +374,14 @@ export function classifyChannelInMemory(fields: ChannelFields): ChannelClassific
     if (matchesRule(rule, fields)) {
       return {
         isMineracao: rule.name === 'mineracao',
+        isAnuncio: rule.name === 'anuncio',
         isEmail: rule.name === 'email',
         isInstagram: rule.name === 'instagram',
         isWhatsapp: false,
       }
     }
   }
-  return { isMineracao: false, isEmail: false, isInstagram: false, isWhatsapp: true }
+  return { isMineracao: false, isAnuncio: false, isEmail: false, isInstagram: false, isWhatsapp: true }
 }
 
 /**
@@ -318,6 +402,20 @@ export function classifyMineracaoSubchannel(fields: ChannelFields): MineracaoSub
     }
   }
   return 'whatsapp'
+}
+
+/**
+ * Complementar a classifyChannelInMemory para leads que JÁ são 'anuncio'.
+ * Google vence termos genéricos como "ads"; Meta Ads é o default dentro de
+ * Anúncio para manter o comportamento legado de tráfego pago não-Google.
+ */
+export function classifyAnuncioSubcategory(fields: ChannelFields): AnuncioSubcategory {
+  for (const rule of ANUNCIO_SUBCATEGORY_RULES) {
+    if (matchesRule(rule, fields)) {
+      return rule.name as AnuncioSubcategory
+    }
+  }
+  return 'meta_ads'
 }
 
 // Busca por telefone na caixa de texto do Inbox (client ConversationList e

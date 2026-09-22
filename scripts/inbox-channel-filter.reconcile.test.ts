@@ -6,7 +6,7 @@
 // no mesmo tracking_source). Este teste sobe um Postgres DESCARTÁVEL de
 // verdade (Docker), roda channelWhereCondition() e classifyChannelInMemory()
 // exatamente como o produto roda, e afirma pra CADA caso de borda das 4
-// rodadas: soma dos 4 buckets == total, sem overlap, sem buraco, e SQL bate
+// rodadas: soma dos buckets == total, sem overlap, sem buraco, e SQL bate
 // com memória célula por célula. Sem isso, cada rodada nova só teria
 // descoberto o problema em produção de novo.
 //
@@ -26,14 +26,16 @@ import { sql } from 'drizzle-orm'
 import { recoveryLeads } from '../src/lib/db/schema'
 import {
   channelWhereCondition,
+  classifyAnuncioSubcategory,
   classifyChannelInMemory,
   classifyMineracaoSubchannel,
+  type AnuncioSubcategory,
   type ChannelClassification,
   type MineracaoSubchannel,
 } from '../src/lib/inbox-channel-filter'
 import { normalizeOrigin } from '../src/lib/origins'
 
-type Categoria = 'mineracao' | 'email' | 'instagram' | 'whatsapp'
+type Categoria = 'mineracao' | 'anuncio' | 'email' | 'instagram' | 'whatsapp'
 
 type LeadFixture = {
   descricao: string
@@ -48,6 +50,9 @@ type LeadFixture = {
   // contato dentro do universo mineracao (a granularidade nova pedida pelo
   // Gastão). Fixtures sem esse campo não entram nos testes de subcategoria.
   esperadoSub?: MineracaoSubchannel
+  // Só preenchido quando esperado === 'anuncio': plataforma paga reconhecida
+  // dentro do universo Anúncio.
+  esperadoAnuncioSub?: AnuncioSubcategory
 }
 
 const FIXTURES: LeadFixture[] = [
@@ -72,13 +77,14 @@ const FIXTURES: LeadFixture[] = [
   },
   // ── Rodada 2: buraco de NULL/vazio em campos que apontam pra outro canal ─
   {
-    descricao: "channel=NULL, trackingSource de outro canal (instagram)",
-    origem: 'rodada 2',
+    descricao: "channel=NULL, trackingSource='instagram_ads_agosto': agora é Anúncio (Meta), não Direct orgânico",
+    origem: 'rodada 8',
     channel: null,
     platform: null,
     trackingSource: 'instagram_ads_agosto',
     phone: '5511922221111',
-    esperado: 'instagram',
+    esperado: 'anuncio',
+    esperadoAnuncioSub: 'meta_ads',
   },
   {
     descricao: "channel=NULL, platform de outro canal (mineracao)",
@@ -205,13 +211,14 @@ const FIXTURES: LeadFixture[] = [
     esperado: 'instagram',
   },
   {
-    descricao: 'lead comum de WhatsApp com tracking_source de anúncio de tráfego pago (não deve virar nenhum dos 3 outros)',
-    origem: 'controle',
+    descricao: "trackingSource='fb_ads_campanha_x': anúncio pago Meta deve cair em Anúncio > Meta Ads",
+    origem: 'rodada 8',
     channel: null,
     platform: 'hotmart',
     trackingSource: 'fb_ads_campanha_x',
     phone: '5511900006666',
-    esperado: 'whatsapp',
+    esperado: 'anuncio',
+    esperadoAnuncioSub: 'meta_ads',
   },
   {
     descricao: "channel=NULL, platform='greenn' (plataforma de venda, não é canal de conversa)",
@@ -366,12 +373,76 @@ const FIXTURES: LeadFixture[] = [
     esperado: 'whatsapp',
   },
   {
-    descricao: "trackingSource='facebook_ads_examiner_leads': 'miner' aparece como SUFIXO de 'examiner' (precedido de letra), não deve virar Mineração",
+    descricao: "trackingSource='facebook_ads_examiner_leads': 'miner' aparece como SUFIXO de 'examiner' (precedido de letra), não deve virar Mineração; deve virar Anúncio Meta",
     origem: 'rodada 7',
     channel: null,
     platform: null,
     trackingSource: 'facebook_ads_examiner_leads',
     phone: '5511900013131',
+    esperado: 'anuncio',
+    esperadoAnuncioSub: 'meta_ads',
+  },
+  // ── Rodada 8 (esta): categoria principal Anúncio com subcategorias Meta Ads
+  // e Google Ads. Dado real confirmado hoje: CTWA e Meta Conversions API já
+  // gravam trackingSource='meta_ads'. Não existe coluna gclid no schema atual
+  // nem uso real de gclid encontrado no repo; Google fica preparado via
+  // tracking_source/utm_source com "google", "google_ads" ou "gclid".
+  {
+    descricao: "trackingSource='meta_ads' (valor real gravado por CTWA e Meta Conversions API)",
+    origem: 'rodada 8',
+    channel: null,
+    platform: null,
+    trackingSource: 'meta_ads',
+    phone: '5511900014141',
+    esperado: 'anuncio',
+    esperadoAnuncioSub: 'meta_ads',
+  },
+  {
+    descricao: "trackingSource='google_ads' (estrutura pronta para UTM de Google Ads)",
+    origem: 'rodada 8',
+    channel: null,
+    platform: null,
+    trackingSource: 'google_ads',
+    phone: '5511900015151',
+    esperado: 'anuncio',
+    esperadoAnuncioSub: 'google_ads',
+  },
+  {
+    descricao: "trackingSource='google' (utm_source=google, sem coluna gclid no schema atual)",
+    origem: 'rodada 8',
+    channel: null,
+    platform: null,
+    trackingSource: 'google',
+    phone: '5511900016161',
+    esperado: 'anuncio',
+    esperadoAnuncioSub: 'google_ads',
+  },
+  {
+    descricao: "trackingSource='gclid' salvo como source textual: estrutura pronta para Google Ads",
+    origem: 'rodada 8',
+    channel: null,
+    platform: null,
+    trackingSource: 'gclid',
+    phone: '5511900017171',
+    esperado: 'anuncio',
+    esperadoAnuncioSub: 'google_ads',
+  },
+  {
+    descricao: "trackingSource='crm_parameta_interno': 'meta' aparece colado dentro de palavra maior, não deve virar Anúncio",
+    origem: 'rodada 8',
+    channel: null,
+    platform: null,
+    trackingSource: 'crm_parameta_interno',
+    phone: '5511900018181',
+    esperado: 'whatsapp',
+  },
+  {
+    descricao: "trackingSource='xgoogle_relatorio': 'google' aparece sem borda à esquerda, não deve virar Google Ads",
+    origem: 'rodada 8',
+    channel: null,
+    platform: null,
+    trackingSource: 'xgoogle_relatorio',
+    phone: '5511900019191',
     esperado: 'whatsapp',
   },
 ]
@@ -498,7 +569,7 @@ async function main() {
       )
     `
 
-    console.log(`[setup] inserindo ${FIXTURES.length} leads de fixture (todos os casos de borda das 4 rodadas)...`)
+    console.log(`[setup] inserindo ${FIXTURES.length} leads de fixture (todos os casos de borda das rodadas cobertas)...`)
     const ids: number[] = []
     for (const f of FIXTURES) {
       const [row] = await client<{ id: number }[]>`
@@ -525,8 +596,8 @@ async function main() {
         assert.equal(rows.length, 1, `lead ${id} deveria bater na condição SQL de '${f.esperado}'`)
       })
 
-      await caso(`[${f.origem}] SQL NÃO classifica "${f.descricao}" nas outras 3 categorias`, async () => {
-        const outras: Categoria[] = (['mineracao', 'email', 'instagram', 'whatsapp'] as Categoria[]).filter(
+      await caso(`[${f.origem}] SQL NÃO classifica "${f.descricao}" nas outras categorias`, async () => {
+        const outras: Categoria[] = (['mineracao', 'anuncio', 'email', 'instagram', 'whatsapp'] as Categoria[]).filter(
           c => c !== f.esperado
         )
         for (const outra of outras) {
@@ -549,11 +620,12 @@ async function main() {
     }
 
     // ── 2. Reconciliação agregada: soma dos buckets == total, sem overlap ───
-    await caso(`reconciliação agregada: soma dos 4 buckets == total (${FIXTURES.length} leads), sem overlap, sem buraco`, async () => {
+    await caso(`reconciliação agregada: soma dos 5 buckets == total (${FIXTURES.length} leads), sem overlap, sem buraco`, async () => {
       const [row] = await db
         .select({
           total: sql<number>`count(*)`,
           mineracao: sql<number>`count(*) filter (where ${channelWhereCondition('mineracao')})`,
+          anuncio: sql<number>`count(*) filter (where ${channelWhereCondition('anuncio')})`,
           email: sql<number>`count(*) filter (where ${channelWhereCondition('email')})`,
           instagram: sql<number>`count(*) filter (where ${channelWhereCondition('instagram')})`,
           whatsapp: sql<number>`count(*) filter (where ${channelWhereCondition('whatsapp')})`,
@@ -561,15 +633,15 @@ async function main() {
         .from(recoveryLeads)
 
       const total = Number(row.total)
-      const soma = Number(row.mineracao) + Number(row.email) + Number(row.instagram) + Number(row.whatsapp)
+      const soma = Number(row.mineracao) + Number(row.anuncio) + Number(row.email) + Number(row.instagram) + Number(row.whatsapp)
 
       assert.equal(total, FIXTURES.length, 'total de leads na tabela deveria ser igual ao total de fixtures')
-      assert.equal(soma, total, `soma dos 4 buckets (${soma}) deveria ser IGUAL ao total (${total}) — overlap ou buraco`)
+      assert.equal(soma, total, `soma dos 5 buckets (${soma}) deveria ser IGUAL ao total (${total}) — overlap ou buraco`)
     })
 
     // ── 3. Nenhum lead aparece em mais de um bucket (overlap direto, id a id) ─
     await caso('nenhum lead aparece em mais de uma categoria SQL ao mesmo tempo (overlap direto)', async () => {
-      const categorias: Categoria[] = ['mineracao', 'email', 'instagram', 'whatsapp']
+      const categorias: Categoria[] = ['mineracao', 'anuncio', 'email', 'instagram', 'whatsapp']
       const contagemPorId = new Map<number, string[]>()
       for (const categoria of categorias) {
         const cond = channelWhereCondition(categoria)!
@@ -596,7 +668,7 @@ async function main() {
 
     // ── 4. SQL e memória concordam célula por célula, pra TODOS os leads ────
     await caso('SQL e classifyChannelInMemory concordam célula por célula pra todos os leads', async () => {
-      const categorias: Categoria[] = ['mineracao', 'email', 'instagram', 'whatsapp']
+      const categorias: Categoria[] = ['mineracao', 'anuncio', 'email', 'instagram', 'whatsapp']
       const categoriaSqlPorId = new Map<number, Categoria>()
       for (const categoria of categorias) {
         const cond = channelWhereCondition(categoria)!
@@ -612,6 +684,8 @@ async function main() {
         const classificacao = classifyChannelInMemory(f)
         const categoriaMemoria: Categoria = classificacao.isMineracao
           ? 'mineracao'
+          : classificacao.isAnuncio
+          ? 'anuncio'
           : classificacao.isEmail
           ? 'email'
           : classificacao.isInstagram
@@ -706,7 +780,83 @@ async function main() {
         assert.fail(`overlap de subcategoria encontrado: ${detalhe}`)
       }
     })
-    // ── 8. Rodada 6: inbox-channel-filter.ts concorda com origins.ts pros
+
+    // ── 8. Subcategoria de Anúncio: caso a caso ───────────────────────────
+    const fixturesComAnuncioSub = FIXTURES.map((f, i) => ({ f, id: idByIndex.get(i)! })).filter(
+      ({ f }) => f.esperado === 'anuncio' && f.esperadoAnuncioSub !== undefined
+    )
+
+    for (const { f, id } of fixturesComAnuncioSub) {
+      const subEsperado = f.esperadoAnuncioSub!
+
+      await caso(`[${f.origem}] classifyAnuncioSubcategory classifica "${f.descricao}" como '${subEsperado}'`, () => {
+        const sub = classifyAnuncioSubcategory(f)
+        assert.equal(sub, subEsperado, `esperava sub='${subEsperado}', veio '${sub}'`)
+      })
+
+      await caso(`[${f.origem}] channelWhereCondition('anuncio_${subEsperado}') bate no lead de "${f.descricao}"`, async () => {
+        const cond = channelWhereCondition(`anuncio_${subEsperado}`)!
+        const rows = await db
+          .select({ id: recoveryLeads.id })
+          .from(recoveryLeads)
+          .where(sql`${recoveryLeads.id} = ${id} and ${cond}`)
+        assert.equal(rows.length, 1, `lead ${id} deveria bater em anuncio_${subEsperado}`)
+      })
+
+      await caso(`[${f.origem}] "${f.descricao}" NÃO bate na outra subcategoria de anuncio`, async () => {
+        const outrasSubs: AnuncioSubcategory[] = (['meta_ads', 'google_ads'] as AnuncioSubcategory[]).filter(
+          s => s !== subEsperado
+        )
+        for (const outraSub of outrasSubs) {
+          const cond = channelWhereCondition(`anuncio_${outraSub}`)!
+          const rows = await db
+            .select({ id: recoveryLeads.id })
+            .from(recoveryLeads)
+            .where(sql`${recoveryLeads.id} = ${id} and ${cond}`)
+          assert.equal(rows.length, 0, `lead ${id} NÃO deveria bater em anuncio_${outraSub}`)
+        }
+      })
+    }
+
+    await caso('reconciliação da subcategoria: soma de anuncio_meta_ads + anuncio_google_ads == anuncio', async () => {
+      const [row] = await db
+        .select({
+          anuncio: sql<number>`count(*) filter (where ${channelWhereCondition('anuncio')})`,
+          anuncioMetaAds: sql<number>`count(*) filter (where ${channelWhereCondition('anuncio_meta_ads')})`,
+          anuncioGoogleAds: sql<number>`count(*) filter (where ${channelWhereCondition('anuncio_google_ads')})`,
+        })
+        .from(recoveryLeads)
+
+      const anuncio = Number(row.anuncio)
+      const somaSub = Number(row.anuncioMetaAds) + Number(row.anuncioGoogleAds)
+
+      assert.equal(
+        somaSub,
+        anuncio,
+        `soma dos 2 sub-buckets (${somaSub}) deveria ser IGUAL ao total de anuncio (${anuncio}) — overlap ou buraco na subcategoria`
+      )
+    })
+
+    await caso('nenhum lead aparece em mais de uma subcategoria de anuncio ao mesmo tempo (overlap direto)', async () => {
+      const subs: AnuncioSubcategory[] = ['meta_ads', 'google_ads']
+      const contagemPorId = new Map<number, string[]>()
+      for (const sub of subs) {
+        const cond = channelWhereCondition(`anuncio_${sub}`)!
+        const rows = await db.select({ id: recoveryLeads.id }).from(recoveryLeads).where(cond)
+        for (const r of rows) {
+          contagemPorId.set(r.id, [...(contagemPorId.get(r.id) ?? []), sub])
+        }
+      }
+      const comOverlap = [...contagemPorId.entries()].filter(([, cats]) => cats.length > 1)
+      if (comOverlap.length > 0) {
+        const detalhe = comOverlap
+          .map(([id, cats]) => `lead ${id} (${fixtureByIndexId.get(id)?.descricao}) em [${cats.join(', ')}]`)
+          .join('; ')
+        assert.fail(`overlap de subcategoria de anuncio encontrado: ${detalhe}`)
+      }
+    })
+
+    // ── 9. Rodada 6: inbox-channel-filter.ts concorda com origins.ts pros
     // termos novos ('miner'/'mining'/'places'). É a prova direta de que as
     // duas heurísticas de texto livre, escritas à mão em arquivos separados
     // pro mesmo conceito de negócio, não divergem mais pro achado real do
@@ -740,6 +890,43 @@ async function main() {
             metaOrigins.category === 'mineracao',
             `as duas heurísticas divergiram para trackingSource='${f.trackingSource}'`
           )
+        }
+      )
+    }
+
+    // ── 10. Rodada 8: inbox-channel-filter.ts concorda com origins.ts para
+    // Anúncio e suas subcategorias Meta/Google.
+    const fixturesRodada8Anuncio = FIXTURES.map((f, i) => ({ f, id: idByIndex.get(i)! })).filter(
+      ({ f }) => f.origem === 'rodada 8' && f.esperado === 'anuncio'
+    )
+
+    for (const { f } of fixturesRodada8Anuncio) {
+      await caso(
+        `[rodada 8] normalizeOrigin (src/lib/origins.ts) classifica "${f.descricao}" como category='anuncio'`,
+        () => {
+          const meta = normalizeOrigin(f.trackingSource, null, f.platform, null, f.channel)
+          assert.equal(
+            meta.category,
+            'anuncio',
+            `normalizeOrigin deveria classificar trackingSource='${f.trackingSource}' como category='anuncio', veio '${meta.category}'`
+          )
+          assert.equal(
+            meta.subcategory,
+            f.esperadoAnuncioSub,
+            `normalizeOrigin deveria classificar trackingSource='${f.trackingSource}' como subcategory='${f.esperadoAnuncioSub}', veio '${meta.subcategory}'`
+          )
+        }
+      )
+
+      await caso(
+        `[rodada 8] classifyChannelInMemory concorda com normalizeOrigin para "${f.descricao}"`,
+        () => {
+          const classificacaoInbox = classifyChannelInMemory(f)
+          const subInbox = classifyAnuncioSubcategory(f)
+          const metaOrigins = normalizeOrigin(f.trackingSource, null, f.platform, null, f.channel)
+          assert.equal(classificacaoInbox.isAnuncio, true, 'inbox-channel-filter.ts deveria marcar isAnuncio=true')
+          assert.equal(metaOrigins.category, 'anuncio', 'origins.ts deveria marcar category=anuncio')
+          assert.equal(subInbox, metaOrigins.subcategory)
         }
       )
     }

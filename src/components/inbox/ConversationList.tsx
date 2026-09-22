@@ -14,6 +14,7 @@ import {
   MessageCircle,
   Mail,
   Pickaxe,
+  Megaphone,
   AlertCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -23,9 +24,15 @@ import {
   PlatformBadge,
   BotStatusPill,
   InstagramLogoIcon,
+  MetaInfinityIcon,
 } from './ChannelBadge'
 import { MetaWindowBadge } from './MetaWindowBadge'
-import { classifyChannelInMemory, classifyMineracaoSubchannel, matchesPhoneSearch } from '@/lib/inbox-channel-filter'
+import {
+  classifyAnuncioSubcategory,
+  classifyChannelInMemory,
+  classifyMineracaoSubchannel,
+  matchesPhoneSearch,
+} from '@/lib/inbox-channel-filter'
 
 export interface ConversationSummary {
   id: number
@@ -108,7 +115,7 @@ function formatMessageTimestamp(dateStr: string | null | undefined): { time: str
   }
 }
 
-type ChannelFilter = 'all' | 'whatsapp' | 'instagram' | 'email' | 'mineracao'
+type ChannelFilter = 'all' | 'whatsapp' | 'instagram' | 'email' | 'mineracao' | 'anuncio'
 type StatusFilter = 'all' | 'paused' | 'active' | 'unread'
 // Sub-filtro de canal REAL de contato, só relevante quando channelFilter é
 // 'mineracao': 'all' mostra tudo dentro de mineração (comportamento de
@@ -116,6 +123,7 @@ type StatusFilter = 'all' | 'paused' | 'active' | 'unread'
 // nível de aba (mesmo padrão visual já usado no filtro de Status abaixo),
 // não como abas novas na fileira principal.
 type MineracaoSubFilter = 'all' | 'email' | 'whatsapp' | 'instagram'
+type AnuncioSubFilter = 'all' | 'meta_ads' | 'google_ads'
 
 // classifyChannel é só um adaptador fino pra classifyChannelInMemory
 // (src/lib/inbox-channel-filter.ts), que é a ÚNICA fonte da verdade da
@@ -132,6 +140,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   const [search, setSearch] = useState('')
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>('all')
   const [mineracaoSubFilter, setMineracaoSubFilter] = useState<MineracaoSubFilter>('all')
+  const [anuncioSubFilter, setAnuncioSubFilter] = useState<AnuncioSubFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [refreshing, setRefreshing] = useState(false)
   const pathname = usePathname()
@@ -146,9 +155,12 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   // 'mineracao_email'/'mineracao_whatsapp'/'mineracao_instagram', que
   // channelWhereCondition (src/lib/inbox-channel-filter.ts) já sabe
   // interpretar como "mineracao E, dentro dela, este canal real".
+  // 'anuncio' segue o mesmo padrão com 'anuncio_meta_ads'/'anuncio_google_ads'.
   const effectiveChannelParam =
     channelFilter === 'mineracao' && mineracaoSubFilter !== 'all'
       ? `mineracao_${mineracaoSubFilter}`
+      : channelFilter === 'anuncio' && anuncioSubFilter !== 'all'
+      ? `anuncio_${anuncioSubFilter}`
       : channelFilter
 
   const refresh = useCallback(
@@ -206,9 +218,12 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
       mineracaoEmail: 0,
       mineracaoWhatsapp: 0,
       mineracaoInstagram: 0,
+      anuncio: 0,
+      anuncioMetaAds: 0,
+      anuncioGoogleAds: 0,
     }
     initial.forEach(c => {
-      const { isInstagram, isEmail, isMineracao, isWhatsapp } = classifyChannel(c)
+      const { isInstagram, isEmail, isMineracao, isAnuncio, isWhatsapp } = classifyChannel(c)
       if (isInstagram) initialCounts.instagram++
       else if (isEmail) initialCounts.email++
       else if (isMineracao) {
@@ -217,6 +232,11 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
         if (sub === 'email') initialCounts.mineracaoEmail++
         else if (sub === 'instagram') initialCounts.mineracaoInstagram++
         else initialCounts.mineracaoWhatsapp++
+      } else if (isAnuncio) {
+        initialCounts.anuncio++
+        const sub = classifyAnuncioSubcategory(c)
+        if (sub === 'google_ads') initialCounts.anuncioGoogleAds++
+        else initialCounts.anuncioMetaAds++
       } else if (isWhatsapp) initialCounts.whatsapp++
     })
     return initialCounts
@@ -246,6 +266,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   const selectChannelFilter = useCallback((next: ChannelFilter) => {
     setChannelFilter(next)
     if (next !== 'mineracao') setMineracaoSubFilter('all')
+    if (next !== 'anuncio') setAnuncioSubFilter('all')
   }, [])
 
   const activeId = pathname.split('/inbox/')[1]?.split('/')[0] || ''
@@ -254,13 +275,17 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
     return convs.filter(c => {
       // 1. Filtro por canal
       if (channelFilter !== 'all') {
-        const { isInstagram, isEmail, isMineracao, isWhatsapp } = classifyChannel(c)
+        const { isInstagram, isEmail, isMineracao, isAnuncio, isWhatsapp } = classifyChannel(c)
         if (channelFilter === 'instagram' && !isInstagram) return false
         if (channelFilter === 'email' && !isEmail) return false
         if (channelFilter === 'mineracao') {
           if (!isMineracao) return false
           // 1b. Dentro de mineração, sub-filtro pelo canal REAL de contato.
           if (mineracaoSubFilter !== 'all' && classifyMineracaoSubchannel(c) !== mineracaoSubFilter) return false
+        }
+        if (channelFilter === 'anuncio') {
+          if (!isAnuncio) return false
+          if (anuncioSubFilter !== 'all' && classifyAnuncioSubcategory(c) !== anuncioSubFilter) return false
         }
         if (channelFilter === 'whatsapp' && !isWhatsapp) return false
       }
@@ -281,7 +306,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
         c.lastMessage?.toLowerCase().includes(q)
       )
     })
-  }, [convs, channelFilter, mineracaoSubFilter, statusFilter, search])
+  }, [convs, channelFilter, mineracaoSubFilter, anuncioSubFilter, statusFilter, search])
 
   return (
     <aside
@@ -396,6 +421,19 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
             <Pickaxe size={12} className="text-amber-400 shrink-0" />
             Mineração ({counts.mineracao})
           </button>
+          <button
+            type="button"
+            onClick={() => selectChannelFilter('anuncio')}
+            className={cn(
+              'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
+              channelFilter === 'anuncio'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-surface-inset text-fg-subtle hover:text-fg hover:bg-surface-raised'
+            )}
+          >
+            <Megaphone size={12} className="text-blue-400 shrink-0" />
+            Anúncio ({counts.anuncio})
+          </button>
           </div>
           <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-surface-panel to-transparent" />
         </div>
@@ -456,6 +494,46 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
                   </button>
                 </>
               )}
+            </div>
+          </div>
+        )}
+
+        {channelFilter === 'anuncio' && (
+          <div className="flex items-center justify-between text-[11px] pt-1">
+            <span className="text-fg-faint font-semibold uppercase text-[10px] tracking-wider">Origem paga:</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setAnuncioSubFilter('all')}
+                className={cn(
+                  'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer',
+                  anuncioSubFilter === 'all' ? 'text-fg font-bold underline decoration-brand-ink' : 'text-fg-subtle hover:text-fg'
+                )}
+              >
+                Todos
+              </button>
+              <span className="text-fg-faint">·</span>
+              <button
+                type="button"
+                onClick={() => setAnuncioSubFilter('meta_ads')}
+                className={cn(
+                  'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
+                  anuncioSubFilter === 'meta_ads' ? 'text-blue-500 font-bold underline' : 'text-fg-subtle hover:text-blue-500'
+                )}
+              >
+                <MetaInfinityIcon size={10} /> Meta Ads ({counts.anuncioMetaAds})
+              </button>
+              <span className="text-fg-faint">·</span>
+              <button
+                type="button"
+                onClick={() => setAnuncioSubFilter('google_ads')}
+                className={cn(
+                  'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
+                  anuncioSubFilter === 'google_ads' ? 'text-red-500 font-bold underline' : 'text-fg-subtle hover:text-red-500'
+                )}
+              >
+                <Search size={10} /> Google Ads ({counts.anuncioGoogleAds})
+              </button>
             </div>
           </div>
         )}

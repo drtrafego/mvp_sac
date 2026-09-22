@@ -49,10 +49,14 @@ function InstagramIcon({ size = 14, className = '' }: { size?: number; className
 }
 
 // Origens que são identificadas por subcategoria (não têm categoria própria no lib/origins.ts):
-// hotmart/kiwify/greenn/zouti são todos category='checkout', diferenciados só pelo subcategory.
-const SUBCATEGORY_FILTERS = new Set(['hotmart', 'kiwify', 'greenn', 'zouti'])
+// hotmart/kiwify/greenn/zouti são todos category='checkout'; meta_ads/google_ads
+// são category='anuncio', diferenciados pela subcategory.
+const SUBCATEGORY_FILTERS = new Set(['hotmart', 'kiwify', 'greenn', 'zouti', 'meta_ads', 'google_ads'])
 
 function matchesSourceFilter(meta: { category: OriginCategory; subcategory?: string }, source: string): boolean {
+  if (source === 'meta_ads' || source === 'google_ads') {
+    return meta.category === 'anuncio' && meta.subcategory === source
+  }
   if (SUBCATEGORY_FILTERS.has(source)) {
     return meta.category === 'checkout' && meta.subcategory === source
   }
@@ -61,6 +65,7 @@ function matchesSourceFilter(meta: { category: OriginCategory; subcategory?: str
 
 const SOURCE_FILTER_LABELS: Record<string, string> = {
   mineracao: '⛏️ Mineração',
+  anuncio: '📣 Anúncio',
   meta_ads: '📱 Meta Ads',
   instagram: '📸 Instagram',
   hotmart: '🛒 Hotmart',
@@ -493,14 +498,14 @@ export default async function OrigensPage({ searchParams }: PageProps) {
                     <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${origem.badgeColor}`}>
                       {origem.category === 'mineracao'
                         ? '⛏️ Mineração'
-                        : origem.category === 'meta_ads'
-                        ? '📱 Meta Ads'
+                        : origem.category === 'anuncio'
+                        ? origem.subcategory === 'google_ads'
+                          ? '🔍 Anúncio · Google'
+                          : '📱 Anúncio · Meta'
                         : origem.category === 'instagram'
                         ? '📸 Instagram'
                         : origem.category === 'email'
                         ? '✉️ E-mail'
-                        : origem.category === 'google_ads'
-                        ? '🔍 Google'
                         : origem.category === 'checkout'
                         ? '🛒 Checkout'
                         : '🌐 Orgânico'}
