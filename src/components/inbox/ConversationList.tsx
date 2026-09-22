@@ -25,7 +25,7 @@ import {
   InstagramLogoIcon,
 } from './ChannelBadge'
 import { MetaWindowBadge } from './MetaWindowBadge'
-import { classifyChannelInMemory, classifyMineracaoSubchannel } from '@/lib/inbox-channel-filter'
+import { classifyChannelInMemory, classifyMineracaoSubchannel, matchesPhoneSearch } from '@/lib/inbox-channel-filter'
 
 export interface ConversationSummary {
   id: number
@@ -275,7 +275,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
       const q = search.trim().toLowerCase()
       return (
         c.name?.toLowerCase().includes(q) ||
-        c.phone.toLowerCase().includes(q) ||
+        matchesPhoneSearch(c.phone, q) ||
         c.email?.toLowerCase().includes(q) ||
         c.productName?.toLowerCase().includes(q) ||
         c.lastMessage?.toLowerCase().includes(q)

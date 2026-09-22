@@ -319,3 +319,34 @@ export function classifyMineracaoSubchannel(fields: ChannelFields): MineracaoSub
   }
   return 'whatsapp'
 }
+
+// Busca por telefone na caixa de texto do Inbox (client ConversationList e
+// server /api/inbox): ÚNICA fonte da verdade, mesmo espírito de
+// classifyChannelInMemory/channelWhereCondition acima (mesma regra nos dois
+// lados, sem heurística duplicada escrita à mão duas vezes).
+//
+// O telefone é gravado só em dígitos (ver normalizeDigits em
+// sync-agents.ts), mas quem digita no campo de busca digita do jeito
+// "natural": com espaço, parênteses, traço, ou "+55" na frente. Sem
+// normalizar dos dois lados antes do `.includes()`, qualquer pontuação no
+// texto digitado quebra a busca mesmo com o telefone certinho no banco.
+//
+// Achado real (22/09/2026, investigação Erenita/Cleide Santos, Dr. Lucas):
+// o lead existia no banco com o telefone exato (557581784614), na 3ª posição
+// de recência da empresa, mas não aparecia numa busca por telefone — a causa
+// era a falta desta normalização (o bug de nome congelado no título da
+// conversa, que também afetava essa investigação, é tratado à parte, em
+// outra frente).
+export function normalizePhoneDigits(value: string | null | undefined): string {
+  return (value || '').replace(/\D/g, '')
+}
+
+// Só considera "achou por telefone" se o termo digitado tiver pelo menos 1
+// dígito. Sem essa guarda, uma busca por nome sem nenhum dígito (ex.:
+// "Cleide") normalizaria pra string vazia, e `''.includes('')` é sempre
+// `true` — toda linha bateria em "telefone" por engano.
+export function matchesPhoneSearch(phone: string | null | undefined, term: string): boolean {
+  const termDigits = normalizePhoneDigits(term)
+  if (!termDigits) return false
+  return normalizePhoneDigits(phone).includes(termDigits)
+}
