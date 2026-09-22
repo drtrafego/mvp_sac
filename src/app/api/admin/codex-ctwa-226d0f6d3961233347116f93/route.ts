@@ -52,6 +52,8 @@ function selectList(columns: Set<string>): string {
 
   for (const column of [
     'created_at',
+    'ts',
+    'synced_at',
     'campaign_name',
     'ad_name',
     'account_name',
@@ -63,7 +65,7 @@ function selectList(columns: Set<string>): string {
     'page_id',
   ]) {
     if (!columns.has(column)) continue
-    if (column === 'created_at') {
+    if (column === 'created_at' || column === 'ts' || column === 'synced_at') {
       parts.push(`c.${quoteIdent(column)}::text as ${quoteIdent(column)}`)
     } else if (column !== 'phone_norm') {
       parts.push(`c.${quoteIdent(column)}`)
@@ -74,7 +76,20 @@ function selectList(columns: Set<string>): string {
 }
 
 function orderByCreated(columns: Set<string>): string {
-  return columns.has('created_at') ? 'order by c.created_at desc nulls last' : ''
+  if (columns.has('created_at')) return 'order by c.created_at desc nulls last'
+  if (columns.has('ts') && columns.has('synced_at')) return 'order by coalesce(c.ts, c.synced_at) desc nulls last'
+  if (columns.has('ts')) return 'order by c.ts desc nulls last'
+  if (columns.has('synced_at')) return 'order by c.synced_at desc nulls last'
+  return ''
+}
+
+function timeExpr(columns: Set<string>, prefix = ''): string | null {
+  const p = prefix ? `${prefix}.` : ''
+  if (columns.has('created_at')) return `${p}created_at`
+  if (columns.has('ts') && columns.has('synced_at')) return `coalesce(${p}ts, ${p}synced_at)`
+  if (columns.has('ts')) return `${p}ts`
+  if (columns.has('synced_at')) return `${p}synced_at`
+  return null
 }
 
 function unique(values: string[]): string[] {
@@ -137,6 +152,8 @@ export async function GET() {
       order by ordinal_position
     `)
     const columns = new Set(columnRows.map((row) => String(row.column_name)))
+    const temporalExpression = timeExpr(columns)
+    const temporalExpressionWithAlias = timeExpr(columns, 'c')
 
     if (!columns.has('phone_norm')) {
       return NextResponse.json(
@@ -152,8 +169,14 @@ export async function GET() {
       )
     }
 
-    const totalSelect = columns.has('created_at')
-      ? 'count(*)::int as total, max(created_at)::text as max_created_at'
+    const maxTemporalSelect = [
+      columns.has('created_at') ? 'max(created_at)::text as max_created_at' : null,
+      columns.has('ts') ? 'max(ts)::text as max_ts' : null,
+      columns.has('synced_at') ? 'max(synced_at)::text as max_synced_at' : null,
+      temporalExpression ? `max(${temporalExpression})::text as max_observed_at` : null,
+    ].filter(Boolean).join(', ')
+    const totalSelect = maxTemporalSelect
+      ? `count(*)::int as total, ${maxTemporalSelect}`
       : 'count(*)::int as total'
     const [summary] = await agentsSql.unsafe<Row[]>(`
       select ${totalSelect}
@@ -193,22 +216,22 @@ export async function GET() {
     let todayByCampaign: Row[] = []
     let campaignSearchRows: Row[] = []
 
-    if (columns.has('created_at')) {
+    if (temporalExpression && temporalExpressionWithAlias) {
       ;[todaySummary] = await agentsSql.unsafe<Row[]>(`
-        select count(*)::int as count, max(created_at)::text as max_created_at
+        select count(*)::int as count, max(${temporalExpression})::text as max_observed_at
         from public.ctwa_referrals
-        where created_at >= date '${TODAY}'
+        where ${temporalExpression} >= date '${TODAY}'
       `)
       ;[last24hSummary] = await agentsSql.unsafe<Row[]>(`
-        select count(*)::int as count, max(created_at)::text as max_created_at
+        select count(*)::int as count, max(${temporalExpression})::text as max_observed_at
         from public.ctwa_referrals
-        where created_at >= now() - interval '24 hours'
+        where ${temporalExpression} >= now() - interval '24 hours'
       `)
 
       recentRows = await agentsSql.unsafe<Row[]>(`
         select ${select}
         from public.ctwa_referrals c
-        order by c.created_at desc nulls last
+        ${order}
         limit 30
       `)
 
@@ -229,11 +252,11 @@ export async function GET() {
         : ''
 
       todayByCampaign = await agentsSql.unsafe<Row[]>(`
-        select count(*)::int as count, max(c.created_at)::text as last_created_at${groupSelect}
+        select count(*)::int as count, max(${temporalExpressionWithAlias})::text as last_observed_at${groupSelect}
         from public.ctwa_referrals c
-        where c.created_at >= date '${TODAY}'
+        where ${temporalExpressionWithAlias} >= date '${TODAY}'
         ${groupBy}
-        order by max(c.created_at) desc nulls last
+        order by max(${temporalExpressionWithAlias}) desc nulls last
         limit 30
       `)
     } else {
