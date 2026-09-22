@@ -290,6 +290,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
 
             let leadId = leadMap.get(`${company.id}_${cleanPhone}`) || leadMap.get(`${company.id}_${last9}`)
+            const isExistingLead = !!leadId
             const channelType = cv.channel?.includes('email')
               ? 'email'
               : cv.channel?.includes('insta')
@@ -351,6 +352,24 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             if (msgsToInsert.length > 0) {
               await db.insert(whatsappMessages).values(msgsToInsert)
               messagesImported += msgsToInsert.length
+
+              // Lead já existia (senão lastActionAt já saiu certo lá em cima,
+              // no insert): sem isto, o COALESCE de ordenação do Inbox
+              // (lastActionAt, updatedAt, createdAt) trava no valor antigo pra
+              // sempre, porque lastActionAt já preenchido nunca "libera" pro
+              // updatedAt aparecer. Usa o timestamp REAL da mensagem mais
+              // recente do lote (não now()), pra refletir quando a conversa
+              // de fato aconteceu.
+              if (isExistingLead) {
+                const latestMsgDate = msgsToInsert.reduce(
+                  (max, m) => ((m.createdAt as Date) > max ? (m.createdAt as Date) : max),
+                  msgsToInsert[0].createdAt as Date
+                )
+                await db
+                  .update(recoveryLeads)
+                  .set({ lastActionAt: latestMsgDate, updatedAt: latestMsgDate })
+                  .where(eq(recoveryLeads.id, leadId))
+              }
             }
           }
         }
@@ -414,6 +433,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         let leadId = isEmail
           ? leadMap.get(`${comp.id}_${rawHandle.toLowerCase()}`)
           : (leadMap.get(`${comp.id}_${phone}`) || leadMap.get(`${comp.id}_${last9}`))
+        const isExistingLead = !!leadId
 
         // Tags de mineração: as 4 (nicho/origem/temperatura/outreach_status)
         // só entram se a coluna existir na fonte (ver detectOutreachTagColumns
@@ -498,6 +518,21 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         if (msgsToInsert.length > 0) {
           await db.insert(whatsappMessages).values(msgsToInsert)
           messagesImported += msgsToInsert.length
+
+          // Mesmo raciocínio do bloco 3 (conversas de agente IA): lead já
+          // existente precisa de um update explícito de lastActionAt, senão
+          // o COALESCE de ordenação do Inbox ignora pra sempre a atividade
+          // nova assim que lastActionAt for preenchido uma vez.
+          if (isExistingLead) {
+            const latestMsgDate = msgsToInsert.reduce(
+              (max, m) => ((m.createdAt as Date) > max ? (m.createdAt as Date) : max),
+              msgsToInsert[0].createdAt as Date
+            )
+            await db
+              .update(recoveryLeads)
+              .set({ lastActionAt: latestMsgDate, updatedAt: latestMsgDate })
+              .where(eq(recoveryLeads.id, leadId))
+          }
         }
       }
     }

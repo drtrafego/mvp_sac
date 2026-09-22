@@ -206,7 +206,13 @@ export async function POST(req: NextRequest) {
                     // 0010 (fix de concorrência no webhook de conversão do
                     // Hermes) — mudou lá, muda aqui também.
                     targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes')`,
-                    set: { updatedAt: new Date(), channel: 'instagram' },
+                    // lastActionAt precisa entrar aqui: o COALESCE de
+                    // ordenação do Inbox (lastActionAt, updatedAt, createdAt)
+                    // trava no primeiro valor não nulo, então um lead que já
+                    // tem lastActionAt de qualquer origem anterior nunca subia
+                    // na lista quando chegava DM nova, mesmo com updatedAt
+                    // fresco.
+                    set: { updatedAt: new Date(), lastActionAt: new Date(), channel: 'instagram' },
                   })
                   .returning()
 
