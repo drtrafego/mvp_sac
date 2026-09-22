@@ -54,6 +54,7 @@ function selectList(columns: Set<string>): string {
     'created_at',
     'ts',
     'synced_at',
+    'source_id',
     'campaign_name',
     'ad_name',
     'account_name',
@@ -236,6 +237,7 @@ export async function GET() {
       const groupColumns = [
         'campaign_name',
         'ad_name',
+        'source_id',
         'account_name',
         'account_id',
         'ad_account_name',
