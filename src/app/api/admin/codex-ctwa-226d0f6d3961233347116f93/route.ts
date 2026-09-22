@@ -7,6 +7,7 @@ import postgres from 'postgres'
 
 const SUFFIXES = ['1201', '4853', '5830'] as const
 const TODAY = '2026-09-22'
+const PROBE_LABEL = 'ctwa-readonly-2026-09-22'
 
 type Row = Record<string, any>
 
@@ -263,6 +264,7 @@ export async function GET() {
 
     const response = NextResponse.json({
       ok: true,
+      probe: PROBE_LABEL,
       generatedAt: new Date().toISOString(),
       agentsDbSource: agentsSource[0],
       ctwaColumns: Array.from(columns),
