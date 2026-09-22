@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
-import { desc, eq, and, or, inArray, sql } from 'drizzle-orm'
+import { desc, eq, and, inArray, sql } from 'drizzle-orm'
 import { ConversationList, type ConversationSummary } from '@/components/inbox/ConversationList'
 import { requireCompany } from '@/lib/auth'
 
@@ -32,50 +32,75 @@ async function getConversations(companyId: number): Promise<{ conversations: Con
       .from(recoveryLeads)
       .where(eq(recoveryLeads.companyId, companyId))
       .orderBy(desc(sql`COALESCE(${recoveryLeads.lastActionAt}, ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`))
-      .limit(200)
+    // Sem .limit(): mesma ordem do Gastão aplicada em src/app/api/inbox/route.ts
+    // ("não quero limite"). Este layout é a primeira renderização da lista
+    // (useState inicial do ConversationList, depois só recebe atualização via
+    // fetch em /api/inbox), então precisa do mesmo tratamento ou o primeiro
+    // paint já vem cortado em 200.
 
     if (leads.length === 0) return { conversations: [], error: null }
 
     const leadIds = leads.map(l => l.id)
     const phones = leads.map(l => l.phone).filter((p): p is string => Boolean(p && p.trim()))
 
-    const whereConditions = [eq(whatsappMessages.companyId, companyId)]
-    if (phones.length > 0) {
-      whereConditions.push(or(inArray(whatsappMessages.leadId, leadIds), inArray(whatsappMessages.phone, phones))!)
-    } else {
-      whereConditions.push(inArray(whatsappMessages.leadId, leadIds))
-    }
-
-    // Busca as mensagens mais recentes desses leads em UMA ÚNICA consulta indexada
-    const messages = await db
-      .select({
-        id: whatsappMessages.id,
+    // Última mensagem de CADA lead via DISTINCT ON, não LIMIT fixo sobre a
+    // empresa inteira. Mesmo motivo e mesmo desenho de src/app/api/inbox/route.ts:
+    // sem limite de leads, um corte de mensagens recentes da empresa não cobre
+    // mais 1 mensagem por lead, e lead antigo ficava sem lastMessage.
+    const lastMessageByLeadId = await db
+      .selectDistinctOn([whatsappMessages.leadId], {
         leadId: whatsappMessages.leadId,
-        phone: whatsappMessages.phone,
         direction: whatsappMessages.direction,
         content: whatsappMessages.content,
         createdAt: whatsappMessages.createdAt,
       })
       .from(whatsappMessages)
-      .where(and(...whereConditions))
-      .orderBy(desc(whatsappMessages.createdAt))
-      .limit(500)
+      .where(and(eq(whatsappMessages.companyId, companyId), inArray(whatsappMessages.leadId, leadIds)))
+      .orderBy(whatsappMessages.leadId, desc(whatsappMessages.createdAt))
 
-    // Agrupa mensagens por lead_id ou telefone em memória (ultra-rápido)
-    const msgByLead = new Map<number, typeof messages[0]>()
-    const msgByPhone = new Map<string, typeof messages[0]>()
+    const lastMessageByPhone = phones.length > 0
+      ? await db
+          .selectDistinctOn([whatsappMessages.phone], {
+            phone: whatsappMessages.phone,
+            direction: whatsappMessages.direction,
+            content: whatsappMessages.content,
+            createdAt: whatsappMessages.createdAt,
+          })
+          .from(whatsappMessages)
+          .where(and(eq(whatsappMessages.companyId, companyId), inArray(whatsappMessages.phone, phones)))
+          .orderBy(whatsappMessages.phone, desc(whatsappMessages.createdAt))
+      : []
+
+    // Contagem de "não lida" por lead (ver comentário irmão em
+    // src/app/api/inbox/route.ts): COUNT/GROUP BY dedicado escopado aos leads
+    // da tela, não mais um subproduto do array de mensagens recentes.
+    const unreadRows = await db
+      .select({
+        leadId: whatsappMessages.leadId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(whatsappMessages)
+      .where(
+        and(
+          eq(whatsappMessages.companyId, companyId),
+          eq(whatsappMessages.direction, 'inbound'),
+          inArray(whatsappMessages.leadId, leadIds)
+        )
+      )
+      .groupBy(whatsappMessages.leadId)
+
+    const msgByLead = new Map<number, typeof lastMessageByLeadId[0]>()
+    const msgByPhone = new Map<string, typeof lastMessageByPhone[0]>()
     const unreadCountByLead = new Map<number, number>()
 
-    for (const m of messages) {
-      if (m.leadId && !msgByLead.has(m.leadId)) {
-        msgByLead.set(m.leadId, m)
-      }
-      if (m.phone && !msgByPhone.has(m.phone)) {
-        msgByPhone.set(m.phone, m)
-      }
-      if (m.leadId && m.direction === 'inbound') {
-        unreadCountByLead.set(m.leadId, (unreadCountByLead.get(m.leadId) || 0) + 1)
-      }
+    for (const m of lastMessageByLeadId) {
+      if (m.leadId != null) msgByLead.set(m.leadId, m)
+    }
+    for (const m of lastMessageByPhone) {
+      if (m.phone) msgByPhone.set(m.phone, m)
+    }
+    for (const r of unreadRows) {
+      if (r.leadId != null) unreadCountByLead.set(r.leadId, r.count)
     }
 
     const mapped: ConversationSummary[] = leads.map(l => {
