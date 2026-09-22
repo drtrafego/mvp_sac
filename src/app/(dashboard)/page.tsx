@@ -101,6 +101,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return s ? `/?${s}` : '/'
   }
 
+  function getInboxSourceHref(src: string) {
+    const q = new URLSearchParams()
+    q.set('source', src)
+    return `/inbox?${q.toString()}`
+  }
+
   const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats]] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
@@ -721,17 +727,24 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                   const colors = ['bg-blue-500', 'bg-cyan-400', 'bg-emerald-400', 'bg-purple-400', 'bg-amber-400']
                   const color = colors[idx % colors.length]
                   return (
-                    <div key={item.source}>
-                      <div className="flex items-center justify-between text-micro mb-1">
-                        <span className="text-fg font-medium truncate max-w-[200px]" title={item.source}>
+                    <Link
+                      key={item.source}
+                      href={getInboxSourceHref(item.source)}
+                      className="group block rounded-lg transition-colors hover:bg-surface-raised/60 focus-ring cursor-pointer"
+                      aria-label={`Ver conversas da origem ${item.source} no Inbox`}
+                    >
+                      <div className="flex items-center justify-between gap-3 text-micro mb-1 px-1">
+                        <span className="text-fg font-medium truncate max-w-[200px] group-hover:text-brand-ink transition-colors" title={item.source}>
                           {item.source}
                         </span>
-                        <span className="num font-bold text-fg">{pct}% <span className="text-fg-faint font-normal">({item.count})</span></span>
+                        <span className="num font-bold text-fg shrink-0">
+                          {pct}% <span className="text-fg-faint font-normal">({item.count})</span>
+                        </span>
                       </div>
                       <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
                         <div className={`h-full ${color} rounded-full`} style={{ width: `${pct}%` }} />
                       </div>
-                    </div>
+                    </Link>
                   )
                 })}
               </div>

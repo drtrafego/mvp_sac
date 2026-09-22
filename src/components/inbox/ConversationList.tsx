@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import {
   Search,
   RefreshCw,
@@ -33,6 +33,7 @@ import {
   classifyMineracaoSubchannel,
   matchesPhoneSearch,
 } from '@/lib/inbox-channel-filter'
+import { matchesInboxSourceFilter } from '@/lib/inbox-source-filter'
 
 export interface ConversationSummary {
   id: number
@@ -144,6 +145,9 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [refreshing, setRefreshing] = useState(false)
   const pathname = usePathname()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const sourceFilter = searchParams.get('source')?.trim() || ''
 
   // Busca no backend já filtrada pelo canal selecionado: a aba "Todos" não
   // manda parâmetro (mesmo comportamento de sempre), as abas de canal
@@ -167,8 +171,11 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
     async (silent = true) => {
       if (!silent) setRefreshing(true)
       try {
-        const qs = effectiveChannelParam !== 'all' ? `?channel=${effectiveChannelParam}` : ''
-        const res = await fetch(`/api/inbox${qs}`)
+        const params = new URLSearchParams()
+        if (effectiveChannelParam !== 'all') params.set('channel', effectiveChannelParam)
+        if (sourceFilter) params.set('source', sourceFilter)
+        const qs = params.toString()
+        const res = await fetch(`/api/inbox${qs ? `?${qs}` : ''}`)
         if (res.ok) {
           const data = await res.json()
           setConvs(data)
@@ -182,7 +189,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
         if (!silent) setRefreshing(false)
       }
     },
-    [effectiveChannelParam]
+    [effectiveChannelParam, sourceFilter]
   )
 
   // Refetch imediato ao trocar de aba (não espera o poll de 15s). O
@@ -192,10 +199,10 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   useEffect(() => {
     if (!didMountRef.current) {
       didMountRef.current = true
-      return
+      if (!sourceFilter) return
     }
     refresh(true)
-  }, [effectiveChannelParam]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [refresh, sourceFilter])
 
   useEffect(() => {
     const t = setInterval(() => refresh(true), 15_000)
@@ -244,7 +251,8 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
 
   const fetchCounts = useCallback(async () => {
     try {
-      const res = await fetch('/api/inbox/counts')
+      const qs = sourceFilter ? `?source=${encodeURIComponent(sourceFilter)}` : ''
+      const res = await fetch(`/api/inbox/counts${qs}`)
       if (res.ok) {
         const data = await res.json()
         setCounts(data)
@@ -252,7 +260,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
     } catch {
       // mantém a última contagem conhecida (calculada localmente na primeira carga)
     }
-  }, [])
+  }, [sourceFilter])
 
   useEffect(() => {
     fetchCounts() // eslint-disable-line react-hooks/set-state-in-effect -- fetch assíncrono, setState só corre depois do await, não durante o corpo do effect
@@ -269,10 +277,20 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
     if (next !== 'anuncio') setAnuncioSubFilter('all')
   }, [])
 
+  const clearSourceFilter = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('source')
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+  }, [pathname, router, searchParams])
+
   const activeId = pathname.split('/inbox/')[1]?.split('/')[0] || ''
 
   const filtered = useMemo(() => {
     return convs.filter(c => {
+      // 0. Filtro por origem recebido via /inbox?source=...
+      if (!matchesInboxSourceFilter(c, sourceFilter)) return false
+
       // 1. Filtro por canal
       if (channelFilter !== 'all') {
         const { isInstagram, isEmail, isMineracao, isAnuncio, isWhatsapp } = classifyChannel(c)
@@ -306,7 +324,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
         c.lastMessage?.toLowerCase().includes(q)
       )
     })
-  }, [convs, channelFilter, mineracaoSubFilter, anuncioSubFilter, statusFilter, search])
+  }, [convs, sourceFilter, channelFilter, mineracaoSubFilter, anuncioSubFilter, statusFilter, search])
 
   return (
     <aside
@@ -437,6 +455,23 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
           </div>
           <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-surface-panel to-transparent" />
         </div>
+
+        {sourceFilter && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-brand-solid/20 bg-brand-glow px-2.5 py-1.5 text-[11px]">
+            <span className="min-w-0 truncate font-semibold text-brand-ink" title={sourceFilter}>
+              Origem: {sourceFilter}
+            </span>
+            <button
+              type="button"
+              onClick={clearSourceFilter}
+              className="focus-ring flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-brand-ink/80 transition-colors hover:bg-surface-inset hover:text-fg cursor-pointer"
+              aria-label="Limpar filtro de origem"
+              title="Limpar filtro de origem"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
 
         {/* Sub-filtro: canal REAL de contato dentro de Mineração. Só aparece
             com a aba Mineração ativa, mesmo padrão visual do filtro de Status
@@ -609,7 +644,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
             <MessageSquare size={28} className="opacity-40" />
             <p className="text-body font-semibold text-fg-muted">Nenhuma conversa encontrada</p>
             <p className="text-micro text-fg-subtle">
-              {search || channelFilter !== 'all' || statusFilter !== 'all'
+              {search || sourceFilter || channelFilter !== 'all' || statusFilter !== 'all'
                 ? 'Tente ajustar os filtros ou termo de busca acima.'
                 : 'Novos leads e mensagens recebidas aparecerão aqui em tempo real.'}
             </p>
@@ -622,7 +657,12 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
             const timeInfo = formatMessageTimestamp(conv.lastMessageAt || conv.createdAt)
 
             return (
-              <Link key={conv.id} href={`/inbox/${conv.id}`} scroll={false} className="focus-ring block rounded-xl">
+              <Link
+                key={conv.id}
+                href={sourceFilter ? `/inbox/${conv.id}?source=${encodeURIComponent(sourceFilter)}` : `/inbox/${conv.id}`}
+                scroll={false}
+                className="focus-ring block rounded-xl"
+              >
                 <div
                   className={cn(
                     'relative flex flex-col gap-1.5 rounded-xl p-2.5 transition-all cursor-pointer border',

@@ -6,12 +6,14 @@ import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { desc, eq, sql, and, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { channelWhereCondition, matchesPhoneSearch } from '@/lib/inbox-channel-filter'
+import { isDirectOrganicSourceFilter, normalizeInboxSourceFilter } from '@/lib/inbox-source-filter'
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
   const { searchParams } = new URL(req.url)
 
   const chFilter = searchParams.get('channel') // all | whatsapp | instagram | email | mineracao | mineracao_email | mineracao_whatsapp | mineracao_instagram | anuncio | anuncio_meta_ads | anuncio_google_ads
+  const sourceFilter = normalizeInboxSourceFilter(searchParams.get('source'))
   const statusFilter = searchParams.get('status') // all | paused | active
   const q = searchParams.get('q')?.trim()
 
@@ -20,6 +22,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // fazia o WhatsApp de alta recorrência engolir as vagas e some e-mail
   // recém-criado da lista mesmo estando salvo certo no banco.
   const channelCondition = channelWhereCondition(chFilter)
+  const sourceCondition = sourceFilter
+    ? isDirectOrganicSourceFilter(sourceFilter)
+      ? sql<boolean>`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, '')) is null`
+      : sql<boolean>`(${recoveryLeads.trackingSource} ILIKE ${'%' + sourceFilter + '%'} OR ${recoveryLeads.platform} ILIKE ${'%' + sourceFilter + '%'})`
+    : undefined
+  const whereConditions = [eq(recoveryLeads.companyId, company.id)]
+  if (channelCondition) whereConditions.push(channelCondition)
+  if (sourceCondition) whereConditions.push(sourceCondition)
 
   const leads = await db
     .select({
@@ -43,11 +53,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       lastActionAt: recoveryLeads.lastActionAt,
     })
     .from(recoveryLeads)
-    .where(
-      channelCondition
-        ? and(eq(recoveryLeads.companyId, company.id), channelCondition)
-        : eq(recoveryLeads.companyId, company.id)
-    )
+    .where(and(...whereConditions))
     .orderBy(desc(sql`COALESCE(${recoveryLeads.lastActionAt}, ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`))
   // Sem .limit(): ordem explícita do Gastão ("não quero limite"). A AutonomIA
   // sozinha já passa de 2.400 leads e o corte em 200 escondia tudo que vinha

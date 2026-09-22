@@ -1,18 +1,21 @@
 export const dynamic = 'force-dynamic'
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
+import { isDirectOrganicSourceFilter, normalizeInboxSourceFilter } from '@/lib/inbox-source-filter'
 
 // Contagem real por canal (COUNT com FILTER, não em memória sobre um LIMIT).
 // A lista principal (/api/inbox) corta em 200 registros por aba de canal;
 // esta rota conta a empresa inteira, então os números da aba batem com o
 // banco mesmo quando o canal tem mais de 200 conversas.
-export async function GET(): Promise<NextResponse> {
+export async function GET(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
+  const { searchParams } = new URL(req.url)
+  const sourceFilter = normalizeInboxSourceFilter(searchParams.get('source'))
 
   const instagramCond = channelWhereCondition('instagram')!
   const emailCond = channelWhereCondition('email')!
@@ -28,6 +31,13 @@ export async function GET(): Promise<NextResponse> {
   const mineracaoInstagramCond = channelWhereCondition('mineracao_instagram')!
   const anuncioMetaAdsCond = channelWhereCondition('anuncio_meta_ads')!
   const anuncioGoogleAdsCond = channelWhereCondition('anuncio_google_ads')!
+  const sourceCondition = sourceFilter
+    ? isDirectOrganicSourceFilter(sourceFilter)
+      ? sql<boolean>`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, '')) is null`
+      : sql<boolean>`(${recoveryLeads.trackingSource} ILIKE ${'%' + sourceFilter + '%'} OR ${recoveryLeads.platform} ILIKE ${'%' + sourceFilter + '%'})`
+    : undefined
+  const whereConditions = [eq(recoveryLeads.companyId, company.id)]
+  if (sourceCondition) whereConditions.push(sourceCondition)
 
   const [row] = await db
     .select({
@@ -44,7 +54,7 @@ export async function GET(): Promise<NextResponse> {
       anuncioGoogleAds: sql<number>`count(*) filter (where ${anuncioGoogleAdsCond})`,
     })
     .from(recoveryLeads)
-    .where(eq(recoveryLeads.companyId, company.id))
+    .where(and(...whereConditions))
 
   return NextResponse.json({
     all: Number(row?.all ?? 0),
