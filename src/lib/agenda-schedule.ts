@@ -50,6 +50,18 @@ export interface AvailabilitySchedule {
   duracaoSlotMinutos: number
 }
 
+export const NATIVE_AVAILABILITY_COMPANY_SLUGS = ['drlucas', 'gramado-plaza'] as const
+export type NativeAvailabilityCompanySlug = (typeof NATIVE_AVAILABILITY_COMPANY_SLUGS)[number]
+
+export function isNativeAvailabilityCompany(slug: string): slug is NativeAvailabilityCompanySlug {
+  return NATIVE_AVAILABILITY_COMPANY_SLUGS.includes(slug as NativeAvailabilityCompanySlug)
+}
+
+export const NATIVE_AVAILABILITY_SOURCE_LABELS: Record<NativeAvailabilityCompanySlug, string> = {
+  drlucas: 'Arquivo nativo do bot (/opt/data/agenda_config.json)',
+  'gramado-plaza': 'API de reservas do Gramado Plaza',
+}
+
 export const DEFAULT_AVAILABILITY_SCHEDULE: AvailabilitySchedule = {
   segunda: { inicio: '08:00', fim: '18:00' },
   terca: { inicio: '08:00', fim: '18:00' },

@@ -6,7 +6,9 @@ import { settings } from '@/lib/db/schema'
 import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_AVAILABILITY_SCHEDULE, validateAvailabilitySchedule, type AvailabilitySchedule } from '@/lib/agenda-schedule'
+import { isNativeAvailabilityCompany } from '@/lib/agenda-schedule'
 import { maybeRefreshGoogleCalendarSync } from '@/lib/google-calendar-sync'
+import { getNativeAvailabilitySnapshot } from '@/lib/native-availability'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -22,16 +24,46 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   // seja o Dr. Lucas.
   await maybeRefreshGoogleCalendarSync({ id: context.company.id, slug: context.company.slug })
 
+  if (isNativeAvailabilityCompany(context.company.slug)) {
+    const snapshot = await getNativeAvailabilitySnapshot(context.company.id)
+    if (!snapshot) {
+      return NextResponse.json({
+        ok: false,
+        readOnly: true,
+        sourceStatus: 'unavailable',
+        error: 'O horário real do bot ainda não foi sincronizado.',
+      }, { status: 503 })
+    }
+    return NextResponse.json({
+      ok: true,
+      readOnly: true,
+      sourceStatus: 'synced',
+      schedule: snapshot.schedule,
+      source: snapshot.source,
+      sourceLabel: snapshot.sourceLabel,
+      sourceCursor: snapshot.sourceCursor,
+      capturedAt: snapshot.capturedAt.toISOString(),
+      syncedAt: snapshot.syncedAt.toISOString(),
+    })
+  }
+
   const [row] = await db.select().from(settings).where(eq(settings.companyId, context.company.id))
   const schedule = (row?.availabilitySchedule as AvailabilitySchedule | null) ?? DEFAULT_AVAILABILITY_SCHEDULE
 
-  return NextResponse.json({ ok: true, schedule })
+  return NextResponse.json({ ok: true, readOnly: false, sourceStatus: 'manual', schedule })
 }
 
 export async function PUT(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { idOrSlug } = await params
   const { error, context } = await authenticateAgentRequest(req, idOrSlug)
   if (error || !context) return error!
+
+  if (isNativeAvailabilityCompany(context.company.slug)) {
+    return NextResponse.json({
+      error: 'Horário somente leitura. Altere a configuração nativa do bot; o SAC apenas espelha o valor real.',
+      readOnly: true,
+    }, { status: 409 })
+  }
 
   try {
     const body = await req.json().catch(() => ({}))

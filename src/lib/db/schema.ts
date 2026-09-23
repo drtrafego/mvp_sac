@@ -143,6 +143,25 @@ export const appointmentMirror = pgTable('appointment_mirror', {
   index('appointment_mirror_company_date_idx').on(table.companyId, table.consultationAt),
 ])
 
+// Espelho somente leitura da grade que o bot realmente usa. A tabela é
+// separada de settings.availabilitySchedule de propósito: o valor legado e
+// editável do SAC não pode voltar a ser confundido com a fonte operacional.
+// O publicador roda no host do bot, lê a fonte nativa sem alterá-la e envia um
+// snapshot autenticado. sourceCursor torna cada passe idempotente; syncedAt
+// comprova que a fonte continuou acessível mesmo quando a grade não mudou.
+export const nativeAvailabilitySchedules = pgTable('native_availability_schedules', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull().unique(),
+  schedule: jsonb('schedule').notNull(),
+  source: text('source').notNull(),
+  sourceLabel: text('source_label').notNull(),
+  sourceCursor: text('source_cursor').notNull(),
+  capturedAt: timestamp('captured_at').notNull(),
+  syncedAt: timestamp('synced_at').defaultNow().notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
 // ─── Sequências de recuperação (uma por tipo por empresa) ─────────────────────
 export const recoverySequences = pgTable('recovery_sequences', {
   id: serial('id').primaryKey(),

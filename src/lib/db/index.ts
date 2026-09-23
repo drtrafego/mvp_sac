@@ -347,6 +347,23 @@ export function ensureSchema(client: any): Promise<void> {
             CREATE INDEX IF NOT EXISTS appointment_mirror_company_date_idx
             ON appointment_mirror (company_id, consultation_at)
           `,
+
+          // Espelho da disponibilidade operacional dos bots nativos. Nunca é
+          // lido pelos bots e portanto não controla atendimento real.
+          client`
+            CREATE TABLE IF NOT EXISTS native_availability_schedules (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE UNIQUE,
+              schedule JSONB NOT NULL,
+              source TEXT NOT NULL,
+              source_label TEXT NOT NULL,
+              source_cursor TEXT NOT NULL,
+              captured_at TIMESTAMP NOT NULL,
+              synced_at TIMESTAMP NOT NULL DEFAULT NOW(),
+              created_at TIMESTAMP DEFAULT NOW(),
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `,
         ])
 
         // ─── Idempotência contra reentrega de webhook da Meta (20/09/2026, ────
