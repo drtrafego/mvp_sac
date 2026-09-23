@@ -141,16 +141,27 @@ export function dashboardLeadStatsSelect(model: DashboardBusinessModel) {
     compareceu: sql<number>`cast(count(*) filter (where ${stage} = 'compareceu') as int)`,
     perdido: sql<number>`cast(count(*) filter (where ${stage} = 'perdido') as int)`,
 
-    recoveredCount: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${statusLower} = 'converted' and ${recoveryLeads.convertedFrom} like 'msg_%' and ${eventLower} in ('boleto','pix','carrinho_abandonado','cartao_recusado')) as int)`,
-    recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.firstContactAt} is not null and ${statusLower} = 'converted' and ${recoveryLeads.convertedFrom} like 'msg_%' and ${eventLower} in ('boleto','pix','carrinho_abandonado','cartao_recusado')), 0) as bigint)`,
-    boleto: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${eventLower} = 'boleto') as int)`,
-    pix: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${eventLower} = 'pix') as int)`,
-    carrinho: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${eventLower} = 'carrinho_abandonado') as int)`,
-    cartao: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${eventLower} = 'cartao_recusado') as int)`,
-    aprovada: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${eventLower} = 'compra_aprovada') as int)`,
-    aprovadaValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.firstContactAt} is not null and ${eventLower} = 'compra_aprovada'), 0) as bigint)`,
+    // SEM o filtro de firstContactAt: evento de checkout (boleto, pix,
+    // carrinho abandonado, cartao recusado, compra aprovada) e um webhook
+    // real de pagamento, nao uma conversa. Causa raiz encontrada ao provar
+    // esta feature contra producao (Isabela Fanini, company_id=2): NENHUMA
+    // linha de compra_aprovada dela tem first_contact_at preenchido (esse
+    // campo so e gravado por markLeadContacted, chamado pelos webhooks de
+    // WhatsApp/Instagram e pelo envio de mensagem de recuperacao, nunca
+    // pelos webhooks de checkout). Com o filtro antigo, TODO o dinheiro do
+    // funil de checkout (inclusive o card "Compra Aprovada" que ja existia)
+    // ficava zerado sempre que a empresa nao tinha conversa de WhatsApp
+    // associada ao evento, mesmo com vendas reais aprovadas na plataforma.
+    recoveredCount: sql<number>`cast(count(*) filter (where ${statusLower} = 'converted' and ${recoveryLeads.convertedFrom} like 'msg_%' and ${eventLower} in ('boleto','pix','carrinho_abandonado','cartao_recusado')) as int)`,
+    recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${statusLower} = 'converted' and ${recoveryLeads.convertedFrom} like 'msg_%' and ${eventLower} in ('boleto','pix','carrinho_abandonado','cartao_recusado')), 0) as bigint)`,
+    boleto: sql<number>`cast(count(*) filter (where ${eventLower} = 'boleto') as int)`,
+    pix: sql<number>`cast(count(*) filter (where ${eventLower} = 'pix') as int)`,
+    carrinho: sql<number>`cast(count(*) filter (where ${eventLower} = 'carrinho_abandonado') as int)`,
+    cartao: sql<number>`cast(count(*) filter (where ${eventLower} = 'cartao_recusado') as int)`,
+    aprovada: sql<number>`cast(count(*) filter (where ${eventLower} = 'compra_aprovada') as int)`,
+    aprovadaValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${eventLower} = 'compra_aprovada'), 0) as bigint)`,
 
-    directCount: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${eventLower} = 'compra_aprovada' and ${noRecoveryHistoryForPhoneSql}) as int)`,
-    directValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.firstContactAt} is not null and ${eventLower} = 'compra_aprovada' and ${noRecoveryHistoryForPhoneSql}), 0) as bigint)`,
+    directCount: sql<number>`cast(count(*) filter (where ${eventLower} = 'compra_aprovada' and ${noRecoveryHistoryForPhoneSql}) as int)`,
+    directValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${eventLower} = 'compra_aprovada' and ${noRecoveryHistoryForPhoneSql}), 0) as bigint)`,
   }
 }

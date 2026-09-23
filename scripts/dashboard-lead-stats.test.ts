@@ -128,6 +128,7 @@ async function main() {
       { id: 7, name: 'AutonomIA Teste', slug: 'autonomia-teste' },
       { id: 10, name: 'Checkout Teste', slug: 'checkout-teste' },
       { id: 11, name: 'Isabela Fanini Teste', slug: 'isabela-fanini-teste' },
+      { id: 12, name: 'Checkout Sem Conversa Teste', slug: 'checkout-sem-conversa-teste' },
     ])
 
     await test('Gramado conta status real "Reserva Confirmada" sem duplicar no funil', async () => {
@@ -355,6 +356,56 @@ async function main() {
 
       const somaDiretaRecuperada = Number(stats.directValueCents) + Number(stats.recoveredValueCents)
       assert.equal(somaDiretaRecuperada, Number(stats.aprovadaValueCents), 'direta + recuperada = total de vendas aprovadas do periodo')
+    })
+
+    await test('infoproduto: evento de checkout conta mesmo sem first_contact_at (webhook de pagamento nao e conversa)', async () => {
+      // Bug real encontrado em producao (Isabela Fanini, company_id=2): TODAS
+      // as linhas de compra_aprovada tinham first_contact_at nulo porque esse
+      // campo so e preenchido por markLeadContacted (mensagem de WhatsApp/
+      // Instagram), nunca pelos webhooks de checkout. O funil de checkout
+      // inteiro (boleto/pix/carrinho/cartao/aprovada) e a divisao
+      // direta/recuperada ficavam ZERADOS mesmo com venda real aprovada.
+      // platform: 'hotmart' em toda linha de proposito: recovery_leads_chat_
+      // company_phone_unique so permite UM lead por (company_id, phone) para
+      // platform in ('instagram','sac','hermes'), e o telefone 606 abaixo
+      // precisa de duas linhas (abandono + aprovada), exatamente como um
+      // webhook de venda de verdade grava (ver recovery_leads_txn_dedup_unique).
+      await testDb.insert(schema.recoveryLeads).values([
+        lead(12, '601', { platform: 'hotmart', eventType: 'boleto', firstContactAt: null, productValue: 3000 }),
+        lead(12, '602', { platform: 'hotmart', eventType: 'pix', firstContactAt: null, productValue: 4000 }),
+        lead(12, '603', { platform: 'hotmart', eventType: 'carrinho_abandonado', firstContactAt: null, productValue: 5000 }),
+        lead(12, '604', { platform: 'hotmart', eventType: 'cartao_recusado', firstContactAt: null, productValue: 6000 }),
+        // Venda direta real, nunca contatada por mensagem alguma.
+        lead(12, '605', { platform: 'hotmart', eventType: 'compra_aprovada', status: 'completed', firstContactAt: null, productValue: 7000 }),
+        // Venda recuperada: abandono convertido por mensagem, mas o PROPRIO
+        // registro de abandono tambem nunca teve first_contact_at preenchido.
+        lead(12, '606', {
+          platform: 'hotmart',
+          eventType: 'carrinho_abandonado',
+          status: 'converted',
+          convertedFrom: 'msg_1',
+          firstContactAt: null,
+          productValue: 8000,
+        }),
+        lead(12, '606', { platform: 'hotmart', eventType: 'compra_aprovada', status: 'completed', firstContactAt: null, productValue: 8000 }),
+      ])
+
+      const [stats] = await testDb
+        .select(dashboardLeadStatsSelect('infoproduto'))
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.companyId, 12))
+
+      assert.equal(stats.boleto, 1)
+      assert.equal(stats.pix, 1)
+      assert.equal(stats.carrinho, 2, '603 (pendente) + 606 (convertido)')
+      assert.equal(stats.cartao, 1)
+      assert.equal(stats.aprovada, 2, '605 (direta) + 606 (recuperada)')
+      assert.equal(Number(stats.aprovadaValueCents), 15000, '7000 + 8000')
+
+      assert.equal(stats.directCount, 1)
+      assert.equal(Number(stats.directValueCents), 7000)
+      assert.equal(stats.recoveredCount, 1)
+      assert.equal(Number(stats.recoveredValueCents), 8000)
     })
   } finally {
     await sql.end({ timeout: 2 })
