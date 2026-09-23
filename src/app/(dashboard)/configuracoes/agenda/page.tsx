@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, CalendarOff, Clock, Plus, RefreshCw, Save, Trash2, AlertCircle } from 'lucide-react'
+import { ArrowLeft, CalendarOff, Clock, Plus, RefreshCw, Save, Trash2, AlertCircle, LockKeyhole, Database } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -57,7 +57,11 @@ export default function AgendaConfigPage() {
   const [syncingCalendar, setSyncingCalendar] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
 
-  const [schedule, setSchedule] = useState<AvailabilitySchedule>(DEFAULT_AVAILABILITY_SCHEDULE)
+  const [schedule, setSchedule] = useState<AvailabilitySchedule | null>(null)
+  const [scheduleReadOnly, setScheduleReadOnly] = useState(false)
+  const [scheduleSourceLabel, setScheduleSourceLabel] = useState('')
+  const [scheduleSyncedAt, setScheduleSyncedAt] = useState('')
+  const [scheduleCheckedAt, setScheduleCheckedAt] = useState(0)
   const [savingSchedule, setSavingSchedule] = useState(false)
   const [scheduleSaved, setScheduleSaved] = useState(false)
   const [scheduleError, setScheduleError] = useState('')
@@ -78,7 +82,18 @@ export default function AgendaConfigPage() {
       ])
 
       if (blockedRes.ok) setBlockedDates(blockedRes.blockedDates)
-      if (scheduleRes.ok) setSchedule(scheduleRes.schedule)
+      setScheduleReadOnly(Boolean(scheduleRes.readOnly))
+      setScheduleSourceLabel(scheduleRes.sourceLabel ?? '')
+      setScheduleSyncedAt(scheduleRes.syncedAt ?? '')
+      setScheduleCheckedAt(Date.now())
+      if (scheduleRes.ok && scheduleRes.schedule) {
+        setSchedule(scheduleRes.schedule)
+      } else if (scheduleRes.readOnly) {
+        setSchedule(null)
+        setScheduleError(scheduleRes.error ?? 'O horário real do bot ainda não foi sincronizado.')
+      } else {
+        setSchedule(DEFAULT_AVAILABILITY_SCHEDULE)
+      }
       setLoading(false)
     }
     load()
@@ -144,10 +159,12 @@ export default function AgendaConfigPage() {
   }
 
   function setDayRange(day: AgendaDay, range: DayRange | null) {
-    setSchedule(s => ({ ...s, [day]: range }))
+    if (scheduleReadOnly) return
+    setSchedule(s => s ? ({ ...s, [day]: range }) : s)
   }
 
   async function handleSaveSchedule() {
+    if (!schedule || scheduleReadOnly) return
     setScheduleError('')
     setSavingSchedule(true)
     const res = await fetch(`/api/v1/companies/${companySlug}/agenda/schedule`, {
@@ -176,6 +193,10 @@ export default function AgendaConfigPage() {
     )
   }
 
+  const scheduleSyncIsStale = scheduleReadOnly && scheduleSyncedAt
+    ? scheduleCheckedAt - new Date(scheduleSyncedAt).getTime() > 30 * 60_000
+    : false
+
   return (
     <div className="max-w-[880px] flex flex-col gap-[var(--space-section)]">
       <div>
@@ -188,8 +209,8 @@ export default function AgendaConfigPage() {
         </Link>
         <h1 className="text-h1 text-fg">Agenda</h1>
         <p className="text-body text-fg-muted mt-1">
-          Bloqueie datas (férias, congresso, feriado) e defina o horário de atendimento semanal. Esta configuração
-          fica salva aqui no SAC, pronta para ser consumida pelo bot de agendamento quando a integração for feita.
+          Consulte a agenda operacional do bot e gerencie datas bloqueadas. Quando o bot possui agenda nativa, o SAC
+          mostra o horário real em modo somente leitura.
         </p>
       </div>
 
@@ -282,15 +303,42 @@ export default function AgendaConfigPage() {
       <section className="panel space-y-4 p-[var(--space-card)]">
         <div className="flex items-center gap-2">
           <Clock size={16} className="text-fg-subtle" />
-          <h2 className="text-h2 text-fg">Horário de atendimento</h2>
+          <h2 className="text-h2 text-fg">{scheduleReadOnly ? 'Horário real do bot' : 'Horário de atendimento'}</h2>
         </div>
         <Separator className="bg-line-subtle" />
-        <p className="text-body text-fg-muted">
-          Grade semanal de horário em que a agenda pode oferecer atendimento. Desmarque um dia para fechá-lo por
-          completo.
-        </p>
+        {scheduleReadOnly ? (
+          <div className="rounded-[var(--r-md)] border border-brand-solid/30 bg-brand-solid/5 p-4 space-y-2">
+            <p className="text-body text-fg flex items-center gap-2 font-medium">
+              <LockKeyhole size={15} className="text-brand-solid" />
+              Somente leitura
+            </p>
+            <p className="text-body text-fg-muted">
+              Este é o horário que o bot usa de verdade. O SAC apenas sincroniza e exibe essa fonte; alterar um campo
+              aqui não mudaria o atendimento.
+            </p>
+            {scheduleSourceLabel && (
+              <p className={`text-micro flex items-center gap-1.5 ${scheduleSyncIsStale ? 'text-st-negativo' : 'text-fg-subtle'}`}>
+                <Database size={13} /> Fonte: {scheduleSourceLabel}
+                {scheduleSyncedAt ? ` · sincronizado em ${new Date(scheduleSyncedAt).toLocaleString('pt-BR')}` : ''}
+              </p>
+            )}
+            {scheduleSyncIsStale && (
+              <p className="text-micro text-st-negativo flex items-center gap-1.5">
+                <AlertCircle size={13} /> Sincronização atrasada. Confirme a fonte nativa antes de usar este horário.
+              </p>
+            )}
+            <p className="text-micro text-fg-subtle">
+              Para mudar o horário, altere a configuração nativa do bot. A próxima sincronização atualizará este espelho.
+            </p>
+          </div>
+        ) : (
+          <p className="text-body text-fg-muted">
+            Grade semanal de horário em que a agenda pode oferecer atendimento. Desmarque um dia para fechá-lo por
+            completo.
+          </p>
+        )}
 
-        <div className="space-y-2">
+        {schedule && <div className="space-y-2">
           {AGENDA_DAYS.map(day => {
             const range = schedule[day]
             const open = range !== null
@@ -299,10 +347,11 @@ export default function AgendaConfigPage() {
                 key={day}
                 className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3"
               >
-                <label className="flex items-center gap-2 sm:w-40 shrink-0 cursor-pointer">
+                <label className={`flex items-center gap-2 sm:w-40 shrink-0 ${scheduleReadOnly ? 'cursor-default' : 'cursor-pointer'}`}>
                   <input
                     type="checkbox"
                     checked={open}
+                    disabled={scheduleReadOnly}
                     onChange={e =>
                       setDayRange(day, e.target.checked ? { inicio: '08:00', fim: '18:00' } : null)
                     }
@@ -316,6 +365,7 @@ export default function AgendaConfigPage() {
                     <Input
                       type="time"
                       value={range.inicio}
+                      disabled={scheduleReadOnly}
                       onChange={e => setDayRange(day, { inicio: e.target.value, fim: range.fim })}
                       className="bg-surface-overlay border-line-subtle h-10 lg:h-8 w-28"
                     />
@@ -323,6 +373,7 @@ export default function AgendaConfigPage() {
                     <Input
                       type="time"
                       value={range.fim}
+                      disabled={scheduleReadOnly}
                       onChange={e => setDayRange(day, { inicio: range.inicio, fim: e.target.value })}
                       className="bg-surface-overlay border-line-subtle h-10 lg:h-8 w-28"
                     />
@@ -333,14 +384,15 @@ export default function AgendaConfigPage() {
               </div>
             )
           })}
-        </div>
+        </div>}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+        {schedule && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
           <div className="space-y-1.5">
             <Label>Fuso horário</Label>
             <Input
               value={schedule.timezone}
-              onChange={e => setSchedule(s => ({ ...s, timezone: e.target.value }))}
+              disabled={scheduleReadOnly}
+              onChange={e => setSchedule(s => s ? ({ ...s, timezone: e.target.value }) : s)}
               placeholder="America/Sao_Paulo"
               className="bg-surface-inset border-line-subtle h-11 lg:h-9"
             />
@@ -352,11 +404,12 @@ export default function AgendaConfigPage() {
               min={5}
               max={480}
               value={schedule.duracaoSlotMinutos}
-              onChange={e => setSchedule(s => ({ ...s, duracaoSlotMinutos: Number(e.target.value) }))}
+              disabled={scheduleReadOnly}
+              onChange={e => setSchedule(s => s ? ({ ...s, duracaoSlotMinutos: Number(e.target.value) }) : s)}
               className="bg-surface-inset border-line-subtle h-11 lg:h-9"
             />
           </div>
-        </div>
+        </div>}
 
         {scheduleError && (
           <p className="text-micro text-st-negativo flex items-center gap-1">
@@ -365,12 +418,12 @@ export default function AgendaConfigPage() {
           </p>
         )}
 
-        <div className="pt-1">
+        {!scheduleReadOnly && schedule && <div className="pt-1">
           <Button onClick={handleSaveSchedule} disabled={savingSchedule} className="focus-ring flex h-11 items-center gap-2 bg-brand-solid text-on-accent lg:h-9">
             <Save size={15} />
             {savingSchedule ? 'Salvando...' : scheduleSaved ? 'Salvo!' : 'Salvar horário de atendimento'}
           </Button>
-        </div>
+        </div>}
       </section>
     </div>
   )
