@@ -12,6 +12,7 @@
     "db:studio": "drizzle-kit studio",
     "test:inbox-channel-filter": "tsx scripts/inbox-channel-filter.reconcile.test.ts",
     "test:inbox-phone-search": "tsx scripts/inbox-phone-search.test.ts",
+    "test:inbox-pagination": "tsx --experimental-test-module-mocks scripts/inbox-pagination-performance.test.ts",
     "test:hermes-conversion-webhook": "tsx --experimental-test-module-mocks scripts/hermes-conversion-webhook.test.ts",
     "test:sync-agents-crm-channel": "tsx --experimental-test-module-mocks scripts/sync-agents-crm-channel.test.ts",
     "test:agent-auth-key-bypass": "tsx --experimental-test-module-mocks --test scripts/agent-auth-key-bypass.test.ts",
