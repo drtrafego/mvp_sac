@@ -18,6 +18,7 @@
     "test:sync-agents-crm-channel": "tsx --experimental-test-module-mocks scripts/sync-agents-crm-channel.test.ts",
     "test:sync-drlucas-mirror": "tsx --experimental-test-module-mocks --test scripts/sync-drlucas-mirror.test.ts",
     "test:sync-agents-ctwa-multi-company": "tsx --experimental-test-module-mocks --test scripts/sync-agents-ctwa-multi-company.test.ts",
+    "test:sync-gramado-reservations": "tsx --experimental-test-module-mocks --test scripts/sync-gramado-reservations.test.ts",
     "test:agent-auth-key-bypass": "tsx --experimental-test-module-mocks --test scripts/agent-auth-key-bypass.test.ts",
     "test:agenda-google-calendar-sync": "tsx --experimental-test-module-mocks --test scripts/agenda-google-calendar-sync.test.ts",
     "test:native-availability-sync": "tsx --experimental-test-module-mocks scripts/native-availability-sync.test.ts",

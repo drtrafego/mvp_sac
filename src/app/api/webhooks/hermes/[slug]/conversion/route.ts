@@ -125,6 +125,16 @@ type HermesConversionPayload = {
   valor?: number | null
   dataReserva?: string
   horario?: string
+  acao?: 'created' | 'updated' | 'cancelled' | 'criada' | 'atualizada' | 'cancelada'
+  reservaId?: string
+  status?: string
+}
+
+function reservationAction(body: HermesConversionPayload): 'created' | 'updated' | 'cancelled' {
+  const action = (body.acao || 'created').toLowerCase()
+  if (action === 'updated' || action === 'atualizada') return 'updated'
+  if (action === 'cancelled' || action === 'cancelada') return 'cancelled'
+  return 'created'
 }
 
 async function logReceived(args: {
@@ -134,6 +144,7 @@ async function logReceived(args: {
   skipReason?: string | null
   errorMessage?: string | null
   leadId?: number | null
+  event?: string
   rawBody: unknown
   headers: Record<string, string>
 }) {
@@ -142,7 +153,7 @@ async function logReceived(args: {
       companyId: args.companyId,
       slug: args.slug,
       source: 'hermes',
-      event: 'reserva_confirmada',
+      event: args.event || 'reserva_confirmada',
       processed: args.processed,
       skipReason: args.skipReason ?? null,
       errorMessage: args.errorMessage ?? null,
@@ -221,6 +232,12 @@ export async function POST(
     return NextResponse.json({ error: 'phone é obrigatório' }, { status: 400 })
   }
   const phone = formatBrazilianPhone(phoneRaw)
+  const action = reservationAction(body)
+  const webhookEvent = action === 'cancelled'
+    ? 'reserva_cancelada'
+    : action === 'updated'
+      ? 'reserva_atualizada'
+      : 'reserva_confirmada'
 
   // FIX 4 (MÉDIO, QA 22/09/2026): phoneRaw truthy não significa telefone
   // válido — uma string tipo "N/A" passava pelo check acima. Um telefone
@@ -277,11 +294,11 @@ export async function POST(
       .values({
         companyId: company.id,
         platform: 'hermes',
-        eventType: 'reserva_confirmada',
+        eventType: webhookEvent,
         phone,
         name: body.nome || null,
         channel: 'whatsapp',
-        status: 'completed',
+        status: action === 'cancelled' ? 'cancelled' : 'completed',
         rawPayload: body,
       })
       .onConflictDoNothing({
@@ -321,18 +338,26 @@ export async function POST(
     return NextResponse.json({ error: 'Falha ao gravar lead' }, { status: 500 })
   }
 
-  // Empurra o card pro estágio "Agendado / Reserva" do Pipeline. Idempotente
+  // Criação/atualização mantém a reserva em Agendado. Cancelamento
+  // chega no mesmo endpoint, mas marca o lead como cancelado/perdido e nunca
+  // dispara uma nova conversão para a Meta.
   // (roda em toda reserva confirmada, inclusive retries) e nunca regride um
   // card que já está em 'fechado' — esse estágio final só é decisão manual
   // de quem usa o Kanban, o bot nunca sabe de fechamento de venda de verdade.
   try {
     await db
       .update(recoveryLeads)
-      .set({ pipelineStage: 'agendado', updatedAt: new Date() })
+      .set({
+        pipelineStage: action === 'cancelled' ? 'perdido' : 'agendado',
+        status: action === 'cancelled' ? 'cancelled' : 'completed',
+        updatedAt: new Date(),
+      })
       .where(
         and(
           eq(recoveryLeads.id, leadId),
-          sql`(${recoveryLeads.pipelineStage} is null or ${recoveryLeads.pipelineStage} <> 'fechado')`,
+          action === 'cancelled'
+            ? sql`true`
+            : sql`(${recoveryLeads.pipelineStage} is null or ${recoveryLeads.pipelineStage} <> 'fechado')`,
         ),
       )
   } catch (e) {
@@ -352,7 +377,7 @@ export async function POST(
   // event_id já gravado). Quando dataReserva+horario vêm válidos, o
   // event_id já é determinístico e a proteção de sempre
   // (uniqueIndex+isUniqueViolation em sendConversionEvent) já resolve.
-  let skipEventDispatch = false
+  let skipEventDispatch = action !== 'created'
   const eventId = scheduleEventId(company.id, leadId, eventTime)
   if (!eventTimeDeterministic) {
     const [recentEvent] = await db
@@ -398,7 +423,10 @@ export async function POST(
 
   await logReceived({
     companyId: company.id, slug, processed: true, leadId,
-    skipReason: skipEventDispatch ? 'schedule_event_retry_deduped' : null,
+    event: webhookEvent,
+    skipReason: action !== 'created'
+      ? `schedule_event_not_applicable_${action}`
+      : skipEventDispatch ? 'schedule_event_retry_deduped' : null,
     rawBody: body, headers: headersObj,
   })
 

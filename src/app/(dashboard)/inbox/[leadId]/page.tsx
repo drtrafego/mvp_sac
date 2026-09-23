@@ -2,8 +2,8 @@ export const dynamic = 'force-dynamic'
 
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { appointmentMirror, recoveryLeads } from '@/lib/db/schema'
-import { eq, desc, and, sql } from 'drizzle-orm'
+import { appointmentMirror, recoveryLeads, gramadoReservations } from '@/lib/db/schema'
+import { eq, desc, and, or, sql } from 'drizzle-orm'
 import { ChatWindow } from '@/components/inbox/ChatWindow'
 import { requireCompany } from '@/lib/auth'
 import { getEmailEngagement } from '@/lib/email-engagement'
@@ -52,6 +52,21 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         .limit(20)
     : []
 
+  const [reservation] = await db
+    .select()
+    .from(gramadoReservations)
+    .where(and(
+      eq(gramadoReservations.companyId, company.id),
+      or(
+        eq(gramadoReservations.leadId, id),
+        cleanPhone
+          ? sql`right(${gramadoReservations.phoneNorm}, 9) = right(${cleanPhone}, 9)`
+          : sql`false`,
+      ),
+    ))
+    .orderBy(desc(gramadoReservations.atualizadoEm), desc(gramadoReservations.data))
+    .limit(1)
+
   return (
     <ChatWindow
       lead={{
@@ -83,6 +98,18 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         agentInputTokens: lead.agentInputTokens ?? null,
         agentOutputTokens: lead.agentOutputTokens ?? null,
         agentSyncedAt: lead.agentSyncedAt?.toISOString() ?? null,
+        reservation: reservation ? {
+          id: reservation.reservaId,
+          date: reservation.data,
+          reservedTime: reservation.horarioReservado,
+          arrivalTime: reservation.horarioChegada,
+          people: reservation.pessoas,
+          totalValue: reservation.valorTotal,
+          status: reservation.status,
+          notes: reservation.observacoes,
+          unifiedTables: reservation.mesasUnificadas,
+          updatedAt: reservation.atualizadoEm?.toISOString() ?? null,
+        } : null,
       }}
       initialMessages={messagePage.messages.map(m => ({
         id: m.id,

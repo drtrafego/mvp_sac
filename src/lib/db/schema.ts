@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, bigint, numeric, text, boolean, timestamp, jsonb, uniqueIndex, index, date } from 'drizzle-orm/pg-core'
+import { pgTable, serial, integer, bigint, numeric, text, boolean, timestamp, jsonb, uniqueIndex, index, date, time } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
 
 // ─── Empresas (multi-tenant) ──────────────────────────────────────────────────
@@ -161,6 +161,36 @@ export const nativeAvailabilitySchedules = pgTable('native_availability_schedule
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
+
+// ─── Espelho operacional das reservas do Gramado Plazza ───────────────────
+// A fonte de verdade continua sendo gramadoplazza.reservas no Agents DB. Esta
+// tabela guarda o estado mais recente de cada reserva para o SAC exibir sem
+// consultar o banco remoto durante a navegação. phone_norm existe apenas para
+// resolver a reserva ao recovery_lead correto; nome e telefone cru não são
+// replicados. O upsert é idempotente por empresa + reserva_id.
+export const gramadoReservations = pgTable('gramado_reservations', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  // FK é criada em ensureSchema(); sem callback aqui porque recoveryLeads é
+  // declarado abaixo neste arquivo e a referência antecipada cairia no TDZ.
+  leadId: integer('lead_id'),
+  reservaId: text('reserva_id').notNull(),
+  phoneNorm: text('phone_norm'),
+  data: date('data').notNull(),
+  horarioReservado: time('horario_reservado'),
+  horarioChegada: time('horario_chegada'),
+  pessoas: integer('pessoas'),
+  valorTotal: numeric('valor_total', { precision: 12, scale: 2 }),
+  status: text('status').notNull(),
+  observacoes: text('observacoes'),
+  mesasUnificadas: boolean('mesas_unificadas'),
+  atualizadoEm: timestamp('atualizado_em', { withTimezone: true }),
+  syncedAt: timestamp('synced_at', { withTimezone: true }).defaultNow(),
+}, (table) => [
+  uniqueIndex('gramado_reservations_company_reserva_unique').on(table.companyId, table.reservaId),
+  index('gramado_reservations_lead_idx').on(table.companyId, table.leadId),
+  index('gramado_reservations_phone_idx').on(table.companyId, table.phoneNorm),
+])
 
 // ─── Sequências de recuperação (uma por tipo por empresa) ─────────────────────
 export const recoverySequences = pgTable('recovery_sequences', {
@@ -633,6 +663,7 @@ export const aiBridgeCalls = pgTable('ai_bridge_calls', {
 export const companiesRelations = relations(companies, ({ one, many }) => ({
   settings: one(settings, { fields: [companies.id], references: [settings.companyId] }),
   syncCursors: many(syncCursors),
+  gramadoReservations: many(gramadoReservations),
   sequences: many(recoverySequences),
   leads: many(recoveryLeads),
   whatsappMessages: many(whatsappMessages),
@@ -664,6 +695,12 @@ export const recoveryLeadsRelations = relations(recoveryLeads, ({ one, many }) =
   company: one(companies, { fields: [recoveryLeads.companyId], references: [companies.id] }),
   jobs: many(messageJobs),
   messages: many(whatsappMessages),
+  gramadoReservations: many(gramadoReservations),
+}))
+
+export const gramadoReservationsRelations = relations(gramadoReservations, ({ one }) => ({
+  company: one(companies, { fields: [gramadoReservations.companyId], references: [companies.id] }),
+  lead: one(recoveryLeads, { fields: [gramadoReservations.leadId], references: [recoveryLeads.id] }),
 }))
 
 export const messageJobsRelations = relations(messageJobs, ({ one }) => ({
