@@ -396,7 +396,10 @@ export function ConversationList({
         </div>
 
         {/* Abas Rápidas de Canal */}
-        <div className="relative">
+        <div className="relative space-y-1">
+          <span className="block text-[10px] font-semibold uppercase tracking-wider text-fg-faint">
+            Canal da conversa:
+          </span>
           <div className="flex items-center gap-1 overflow-x-auto scroll-thin pb-0.5 pt-0.5">
           <button
             type="button"
@@ -498,12 +501,14 @@ export function ConversationList({
 
         {/* Sub-filtro: canal REAL de contato dentro de Mineração. Só aparece
             com a aba Mineração ativa, mesmo padrão visual do filtro de Status
-            logo abaixo (label maiúscula + pills sublinhadas). "IG" só entra
+            logo abaixo (label maiúscula + pills sublinhadas). O texto visível
+            evita chamar esta segunda dimensão só de "canal", o que confundia
+            estes números com as conversas da fileira principal. "IG" só entra
             se o dado real trouxer volume (counts.mineracaoInstagram > 0),
             pra não oferecer um filtro que nunca teria resultado. */}
         {channelFilter === 'mineracao' && (
           <div className="flex items-center justify-between text-[11px] pt-1">
-            <span className="text-fg-faint font-semibold uppercase text-[10px] tracking-wider">Canal real:</span>
+            <span className="text-fg-faint font-semibold uppercase text-[10px] tracking-wider">Contato minerado:</span>
             <div className="flex items-center gap-1">
               <button
                 type="button"
