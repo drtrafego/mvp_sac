@@ -91,6 +91,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const isGramado = businessModel === 'gramado'
   const isLucas = businessModel === 'lucas'
   const isAgencia = businessModel === 'agencia'
+  const isInfoproduto = businessModel === 'infoproduto'
 
   function getSourceHref(src: string) {
     const q = new URLSearchParams()
@@ -187,6 +188,15 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const recoveredCount = leadStats?.recoveredCount ?? 0
   const recoveryTotal = (leadStats?.boleto ?? 0) + (leadStats?.pix ?? 0) + (leadStats?.carrinho ?? 0) + (leadStats?.cartao ?? 0)
   const conversionRate = recoveryTotal > 0 ? ((recoveredCount / recoveryTotal) * 100).toFixed(1) : '0.0'
+
+  // Venda direta: compra aprovada que nunca passou por um evento de
+  // recuperacao (boleto pendente, pix, carrinho abandonado, cartao recusado)
+  // para o mesmo telefone. Complementa "Receita Recuperada", que hoje e o
+  // UNICO numero de venda mostrado no painel do modelo infoproduto/checkout.
+  const recoveredValueCents = Number(leadStats?.recoveredValueCents ?? 0)
+  const directCount = leadStats?.directCount ?? 0
+  const directValueCents = Number(leadStats?.directValueCents ?? 0)
+  const totalApprovedValueCents = recoveredValueCents + directValueCents
 
   const kanbanLeads: KanbanLead[] = recentLeads.map((l) => {
     let stage = l.pipelineStage || 'novo_contato'
@@ -290,8 +300,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     ]
   } else {
     kpis = [
+      { label: 'Receita Total', value: formatBRL(totalApprovedValueCents), icon: DollarSign, hint: 'direta + recuperada' },
       { label: 'Leads Totais', value: String(total), icon: Users, hint: 'no período' },
-      { label: 'Recuperados', value: String(recoveredCount), icon: CheckCircle2, hint: 'pelo sistema' },
       { label: 'Conversão', value: `${conversionRate}%`, icon: TrendingUp, hint: 'de leads recuperados' },
       { label: 'Mensagens', value: String(jobStats?.sent ?? 0), icon: MessageSquare, hint: 'WhatsApp enviadas' },
     ]
@@ -549,7 +559,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       {/* 2. HERO CARD ADAPTATIVO & KPIS PRINCIPAIS */}
       <div className="rise rise-2 grid grid-cols-12 gap-[var(--space-gutter)]">
         <div
-          className="card-highlight col-span-12 lg:col-span-5 flex flex-col justify-between p-[var(--space-card)]"
+          className={cn(
+            'card-highlight col-span-12 flex flex-col justify-between p-[var(--space-card)]',
+            isInfoproduto ? 'lg:col-span-3' : 'lg:col-span-5',
+          )}
           style={{ minHeight: 'clamp(150px, 12vw, 210px)' }}
         >
           <div className="flex items-start justify-between gap-3">
@@ -590,8 +603,49 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           </div>
         </div>
 
-        {/* Quatro Métricas de Apoio Adaptativas */}
-        <div className="col-span-12 lg:col-span-7 grid grid-cols-2 gap-[var(--space-gutter)] lg:grid-cols-4">
+        {/* Vendas Diretas: compra aprovada de primeira, sem nunca ter passado
+            por carrinho abandonado / boleto pendente / cartao recusado.
+            Antes desta feature esse numero nao aparecia em lugar nenhum do
+            painel, mesmo quando havia venda direta real acontecendo. */}
+        {isInfoproduto && (
+          <div
+            className="card-highlight col-span-12 lg:col-span-3 flex flex-col justify-between p-[var(--space-card)]"
+            style={{ minHeight: 'clamp(150px, 12vw, 210px)' }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div
+                  className="flex h-7 w-7 items-center justify-center rounded-[var(--r-md)] border"
+                  style={{ background: tint('--ev-aprovada', 14), borderColor: tint('--ev-aprovada', 24) }}
+                >
+                  <ThumbsUp size={14} style={{ color: 'var(--ev-aprovada)' }} />
+                </div>
+                <p className="text-label uppercase text-fg-subtle">Vendas Diretas</p>
+              </div>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle bg-surface-raised px-2 py-0.5 rounded border border-line-subtle">
+                Sem Recuperação
+              </span>
+            </div>
+
+            <div className="mt-4">
+              <p className="num text-display text-fg">
+                {formatBRL(directValueCents)}
+              </p>
+              <p className="text-micro text-fg-subtle mt-2 flex items-center gap-1.5">
+                <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                {directCount} vendas aprovadas de primeira, sem passar pelo funil de recuperação
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Métricas de Apoio Adaptativas */}
+        <div
+          className={cn(
+            'col-span-12 grid grid-cols-2 gap-[var(--space-gutter)]',
+            isInfoproduto ? 'lg:col-span-6' : 'lg:col-span-7 lg:grid-cols-4',
+          )}
+        >
           {kpis.map(({ label, value, icon: Icon, hint }) => (
             <div
               key={label}
