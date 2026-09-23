@@ -74,7 +74,9 @@ const DEFAULT_STAGES: KanbanStage[] = [
   { id: 'em_atendimento', label: 'Em Atendimento', color: '#d95926' },
   { id: 'qualificado', label: 'Qualificado', color: '#199e70' },
   { id: 'agendado', label: 'Agendado / Reserva', color: '#9085e9' },
+  { id: 'compareceu', label: 'Compareceu', color: '#14b8a6' },
   { id: 'fechado', label: 'Fechado / Ganho', color: '#008300' },
+  { id: 'perdido', label: 'Perdido', color: '#ef4444' },
 ]
 
 function formatBRL(cents: number | null | undefined): string {
