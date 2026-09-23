@@ -49,6 +49,19 @@ export async function GET(req: NextRequest) {
       .from(recoveryLeads)
       .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.eventType, 'compra_aprovada')))
 
+    // Investiga se o filtro firstContactAt is not null (usado em TODOS os
+    // campos financeiros de dashboardLeadStatsSelect, nao so nos novos) esta
+    // zerando a empresa: quebra compra_aprovada por presenca de first_contact_at.
+    const firstContactSplit = await db
+      .select({
+        withFirstContact: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null) as int)`,
+        withoutFirstContact: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is null) as int)`,
+        valueWith: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.firstContactAt} is not null), 0) as bigint)`,
+        valueWithout: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.firstContactAt} is null), 0) as bigint)`,
+      })
+      .from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.eventType, 'compra_aprovada')))
+
     const directValueCents = Number(dashboardStats?.directValueCents ?? 0)
     const recoveredValueCents = Number(dashboardStats?.recoveredValueCents ?? 0)
     const somaDiretaRecuperadaCents = directValueCents + recoveredValueCents
@@ -70,6 +83,7 @@ export async function GET(req: NextRequest) {
         count: rawAprovada?.count ?? 0,
         valueCents: rawValueCents,
       },
+      firstContactSplitDeCompraAprovada: firstContactSplit[0],
       bate: {
         valorSomaIgualBruto: somaDiretaRecuperadaCents === rawValueCents,
         diferencaCents: somaDiretaRecuperadaCents - rawValueCents,
