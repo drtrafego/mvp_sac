@@ -133,7 +133,11 @@ async function setupRealAgentsSource(sql: ReturnType<typeof postgres>) {
       title text,
       started_at timestamp,
       ended_at timestamp,
-      message_count integer
+      message_count integer,
+      cost_usd numeric,
+      input_tokens bigint,
+      output_tokens bigint,
+      synced_at timestamptz
     )
   `
   await sql`
@@ -143,7 +147,9 @@ async function setupRealAgentsSource(sql: ReturnType<typeof postgres>) {
       role text,
       content text,
       ts timestamp,
-      platform_message_id text
+      platform_message_id text,
+      reasoning text,
+      sent_email text
     )
   `
   await sql`
@@ -232,6 +238,10 @@ async function setupRealAgentsSource(sql: ReturnType<typeof postgres>) {
       started_at: at,
       ended_at: at,
       message_count: 1,
+      cost_usd: n / 10_000,
+      input_tokens: n * 10,
+      output_tokens: n * 2,
+      synced_at: at,
     }
   })
 
@@ -242,6 +252,8 @@ async function setupRealAgentsSource(sql: ReturnType<typeof postgres>) {
     content: `Mensagem ${idx + 1}`,
     ts: conversation.ended_at,
     platform_message_id: null as string | null,
+    reasoning: idx + 1 === TOTAL_CONVERSATIONS ? 'raciocínio sincronizado' : null as string | null,
+    sent_email: idx + 1 === TOTAL_CONVERSATIONS ? 'e-mail sincronizado' : null as string | null,
   }))
 
   await sql`insert into ${sql(SOURCE_SCHEMA)}.conversations ${sql(conversations)}`
@@ -381,6 +393,13 @@ async function main() {
       from recovery_leads
       where phone = '5511999997777'
     `
+    const [syncedAuditMetadata] = await sql`
+      select l.agent_cost_usd, l.agent_input_tokens, l.agent_output_tokens, l.agent_synced_at,
+             m.reasoning, m.sent_email
+      from recovery_leads l
+      join whatsapp_messages m on m.lead_id = l.id
+      where l.phone = '5511999000500'
+    `
 
     await test('CTWA: query antiga com created_at reproduz o bug antes do fix', () => {
       assert.ok(oldCtwaBugError, 'a query antiga deveria falhar porque public.ctwa_referrals não tem created_at')
@@ -401,6 +420,12 @@ async function main() {
       assert.equal(cursors.length, 1, 'cursor de conversas deveria existir após a 1ª rodada')
       assert.ok(cursors[0].newest_synced_at, 'newest_synced_at deveria ser preenchido')
       assert.ok(cursors[0].backfill_before_at, 'backfill_before_at deveria ser preenchido')
+      assert.equal(Number(syncedAuditMetadata.agent_cost_usd), 0.05)
+      assert.equal(Number(syncedAuditMetadata.agent_input_tokens), 5_000)
+      assert.equal(Number(syncedAuditMetadata.agent_output_tokens), 1_000)
+      assert.ok(syncedAuditMetadata.agent_synced_at)
+      assert.equal(syncedAuditMetadata.reasoning, 'raciocínio sincronizado')
+      assert.equal(syncedAuditMetadata.sent_email, 'e-mail sincronizado')
     })
 
     await test('CTWA: telefone real sufixo 1201 passa a ser marcado como meta_ads', () => {

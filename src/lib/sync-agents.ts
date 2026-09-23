@@ -45,6 +45,10 @@ export interface ConversationDbRow {
   started_at?: string | null
   ended_at?: string | null
   message_count?: number | null
+  cost_usd?: string | number | null
+  input_tokens?: string | number | null
+  output_tokens?: string | number | null
+  synced_at?: string | null
   __sync_sort_at?: string | Date | null
   __sync_cursor_id?: string | number | null
 }
@@ -56,6 +60,8 @@ export interface MessageDbRow {
   content: string | null
   ts?: string | null
   platform_message_id?: string | null
+  reasoning?: string | null
+  sent_email?: string | null
 }
 
 export interface OutreachConvoDbRow {
@@ -403,7 +409,7 @@ const SYNC_BACKFILL_BATCH_SIZE = 300
 const SYNC_NEW_BATCH_SIZE = 5000
 const EPOCH_CURSOR_ISO = '1970-01-01T00:00:00.000Z'
 
-type SyncCursorSource = 'agent_conversations' | 'outreach_convos' | 'crm_leads' | 'ctwa_referrals' | 'appointments'
+type SyncCursorSource = 'agent_conversations' | 'agent_conversation_metadata' | 'outreach_convos' | 'crm_leads' | 'ctwa_referrals' | 'appointments'
 type SyncCursorRow = typeof syncCursors.$inferSelect
 
 interface CursorPosition {
@@ -534,6 +540,47 @@ async function loadTimedSyncBatch<T>(opts: {
     newRows,
     backfillRows,
     markProcessed: () => markTimedSyncBatchProcessed(cursor, newRows, backfillRows, opts.getPosition),
+  }
+}
+
+// Sweep de migração que termina de verdade: ao chegar ao começo da fonte,
+// grava um sentinela e deixa de consultar nas rodadas futuras. Usado só para
+// retropreencher metadados históricos; novidades continuam no cursor normal.
+async function loadBackfillOnlySyncBatch<T>(opts: {
+  companyId: number
+  source: SyncCursorSource
+  sourceKey: string
+  getPosition: (row: T) => CursorPosition | null
+  fetchRows: (cursor: SyncCursorRow) => Promise<T[] | null>
+}): Promise<{ rows: T[]; markProcessed: () => Promise<void> } | null> {
+  const cursor = await getOrCreateSyncCursor(opts.companyId, opts.source, opts.sourceKey)
+  if (cursor.backfillBeforeId === '__complete__') return null
+
+  const rows = await opts.fetchRows(cursor)
+  if (!rows) return null
+  if (rows.length === 0) {
+    await db.update(syncCursors).set({
+      backfillBeforeAt: new Date(0),
+      backfillBeforeId: '__complete__',
+      lastRunAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(syncCursors.id, cursor.id))
+    return null
+  }
+
+  return {
+    rows,
+    markProcessed: async () => {
+      const oldest = pickOldestPosition(rows, opts.getPosition)
+      if (!oldest) return
+      const now = new Date()
+      await db.update(syncCursors).set({
+        backfillBeforeAt: oldest.at,
+        backfillBeforeId: oldest.id,
+        lastRunAt: now,
+        updatedAt: now,
+      }).where(eq(syncCursors.id, cursor.id))
+    },
   }
 }
 
@@ -694,7 +741,18 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
   // Pre-carrega em memória os telefones e externalIds existentes para evitar N+1 queries
   const existingLeadsRows = await db
-    .select({ id: recoveryLeads.id, companyId: recoveryLeads.companyId, phone: recoveryLeads.phone, email: recoveryLeads.email, name: recoveryLeads.name })
+    .select({
+      id: recoveryLeads.id,
+      companyId: recoveryLeads.companyId,
+      phone: recoveryLeads.phone,
+      email: recoveryLeads.email,
+      name: recoveryLeads.name,
+      agentConversationId: recoveryLeads.agentConversationId,
+      agentCostUsd: recoveryLeads.agentCostUsd,
+      agentInputTokens: recoveryLeads.agentInputTokens,
+      agentOutputTokens: recoveryLeads.agentOutputTokens,
+      agentSyncedAt: recoveryLeads.agentSyncedAt,
+    })
     .from(recoveryLeads)
 
   const leadMap = new Map<string, number>()
@@ -703,8 +761,22 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   // shouldUpdateLeadName acima). Mantido em memória e atualizado localmente
   // a cada troca nesta mesma rodada, pra não precisar reler do banco.
   const leadNameMap = new Map<number, string | null>()
+  const leadConversationMetadata = new Map<number, {
+    conversationId: string | null
+    costUsd: string | null
+    inputTokens: number | null
+    outputTokens: number | null
+    syncedAt: Date | null
+  }>()
   for (const row of existingLeadsRows) {
     leadNameMap.set(row.id, row.name)
+    leadConversationMetadata.set(row.id, {
+      conversationId: row.agentConversationId,
+      costUsd: row.agentCostUsd == null ? null : String(Number(row.agentCostUsd)),
+      inputTokens: row.agentInputTokens,
+      outputTokens: row.agentOutputTokens,
+      syncedAt: row.agentSyncedAt,
+    })
     if (row.phone) {
       const clean = row.phone.replace(/\D/g, '') || row.phone
       leadMap.set(`${row.companyId}_${clean}`, row.id)
@@ -776,6 +848,30 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     const schema = agent.schema_name
     if (schema) {
       try {
+        // Alguns schemas legados (e bancos restaurados para teste) ainda não
+        // têm todos os campos de auditoria. Alias tipado mantém o sync inteiro
+        // funcionando e passa a copiar o campo automaticamente assim que ele
+        // existir na fonte.
+        const conversationMetadataColumns = await detectAgentsTableColumns(
+          schema,
+          'conversations',
+          ['cost_usd', 'input_tokens', 'output_tokens', 'synced_at']
+        )
+        const conversationMetadataSelect = [
+          conversationMetadataColumns.has('cost_usd') ? 'cost_usd' : 'null::numeric as cost_usd',
+          conversationMetadataColumns.has('input_tokens') ? 'input_tokens' : 'null::bigint as input_tokens',
+          conversationMetadataColumns.has('output_tokens') ? 'output_tokens' : 'null::bigint as output_tokens',
+          conversationMetadataColumns.has('synced_at') ? 'synced_at' : 'null::timestamptz as synced_at',
+        ].join(', ')
+        const messageMetadataColumns = await detectAgentsTableColumns(
+          schema,
+          'messages',
+          ['reasoning', 'sent_email']
+        )
+        const messageMetadataSelect = [
+          messageMetadataColumns.has('reasoning') ? 'reasoning' : 'null::text as reasoning',
+          messageMetadataColumns.has('sent_email') ? 'sent_email' : 'null::text as sent_email',
+        ].join(', ')
         const conversationSortExpr = `coalesce(ended_at, started_at, '${EPOCH_CURSOR_ISO}'::timestamp)`
         const conversationIdExpr = 'session_id::text'
         const conversationBatch = await loadTimedSyncBatch<ConversationDbRow>({
@@ -787,6 +883,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             queryAgentsDb<ConversationDbRow>(
               `
                 select session_id, chat_id, channel, title, started_at, ended_at, message_count,
+                       ${conversationMetadataSelect},
                        ${conversationSortExpr} as __sync_sort_at,
                        ${conversationIdExpr} as __sync_cursor_id
                 from "${schema}".conversations
@@ -801,6 +898,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             return queryAgentsDb<ConversationDbRow>(
               `
                 select session_id, chat_id, channel, title, started_at, ended_at, message_count,
+                       ${conversationMetadataSelect},
                        ${conversationSortExpr} as __sync_sort_at,
                        ${conversationIdExpr} as __sync_cursor_id
                 from "${schema}".conversations
@@ -812,7 +910,32 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             )
           },
         })
-        const convs = conversationBatch?.rows || []
+        const metadataBackfillBatch = await loadBackfillOnlySyncBatch<ConversationDbRow>({
+          companyId: company.id,
+          source: 'agent_conversation_metadata',
+          sourceKey: `${schema}:history-metadata-v1`,
+          getPosition: conversationCursorPosition,
+          fetchRows: (cursor) => {
+            const hasBackfillCursor = !!cursor.backfillBeforeAt
+            return queryAgentsDb<ConversationDbRow>(
+              `
+                select session_id, chat_id, channel, title, started_at, ended_at, message_count,
+                       ${conversationMetadataSelect},
+                       ${conversationSortExpr} as __sync_sort_at,
+                       ${conversationIdExpr} as __sync_cursor_id
+                from "${schema}".conversations
+                ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamp, $2::text)` : ''}
+                order by ${conversationSortExpr} desc, ${conversationIdExpr} desc
+                limit ${SYNC_BACKFILL_BATCH_SIZE}
+              `,
+              hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
+            )
+          },
+        })
+        const convs = dedupeTimedRows(
+          [...(conversationBatch?.rows || []), ...(metadataBackfillBatch?.rows || [])],
+          conversationCursorPosition
+        )
 
         // Fontes melhores que o título da conversa (ver resolveLeadName
         // acima). Toleram schema sem essas tabelas: cada loader checa a
@@ -824,7 +947,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           const sessionIds = convs.map(c => c.session_id).filter(Boolean)
 
           const msgs = sessionIds.length > 0 ? await queryAgentsDb<MessageDbRow>(`
-            select id, session_id, role, content, ts, platform_message_id
+            select id, session_id, role, content, ts, platform_message_id, ${messageMetadataSelect}
             from "${schema}".messages
             where session_id = ANY($1)
             order by ts asc
@@ -835,6 +958,32 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             for (const m of msgs) {
               if (!msgsBySession.has(m.session_id)) msgsBySession.set(m.session_id, [])
               msgsBySession.get(m.session_id)!.push(m)
+            }
+
+            // Retropreenche em lotes os metadados das mensagens que o
+            // deduplicador já conhece. Não carrega reasoning/e-mails de TODO
+            // o banco local na memória e não faz um UPDATE por mensagem.
+            const metadataRows = msgs.flatMap(m => {
+              const externalId = `agent_${schema}_${m.id || m.platform_message_id || m.session_id + '_' + m.ts}`
+              return existingMsgIds.has(externalId)
+                ? [{ externalId, reasoning: m.reasoning || null, sentEmail: m.sent_email || null }]
+                : []
+            })
+            for (let offset = 0; offset < metadataRows.length; offset += 5_000) {
+              const chunk = metadataRows.slice(offset, offset + 5_000)
+              await db.execute(sql`
+                update whatsapp_messages as local_message
+                set reasoning = source_message.reasoning,
+                    sent_email = source_message.sent_email
+                from jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb)
+                  as source_message("externalId" text, reasoning text, "sentEmail" text)
+                where local_message.company_id = ${company.id}
+                  and local_message.external_id = source_message."externalId"
+                  and (
+                    local_message.reasoning is distinct from source_message.reasoning
+                    or local_message.sent_email is distinct from source_message."sentEmail"
+                  )
+              `)
             }
           }
 
@@ -886,6 +1035,11 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                   eventType: 'atendimento_ia',
                   status: 'in_conversation',
                   trackingSource: companySlug === 'drlucas' ? 'whatsapp_sac' : 'agente_ia',
+                  agentConversationId: cv.session_id,
+                  agentCostUsd: cv.cost_usd == null ? null : String(cv.cost_usd),
+                  agentInputTokens: cv.input_tokens == null ? null : Number(cv.input_tokens),
+                  agentOutputTokens: cv.output_tokens == null ? null : Number(cv.output_tokens),
+                  agentSyncedAt: cv.synced_at ? new Date(cv.synced_at) : null,
                   createdAt: cv.started_at ? new Date(cv.started_at) : new Date(),
                   updatedAt: leadDate,
                   lastActionAt: leadDate,
@@ -896,6 +1050,13 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               leadMap.set(`${company.id}_${cleanPhone}`, leadId)
               if (cleanPhone.length >= 9) leadMap.set(`${company.id}_${last9}`, leadId)
               leadNameMap.set(leadId, newLead.name)
+              leadConversationMetadata.set(leadId, {
+                conversationId: newLead.agentConversationId,
+                costUsd: newLead.agentCostUsd == null ? null : String(Number(newLead.agentCostUsd)),
+                inputTokens: newLead.agentInputTokens,
+                outputTokens: newLead.agentOutputTokens,
+                syncedAt: newLead.agentSyncedAt,
+              })
               leadsCreated++
             } else {
               // O registro CRM escolhido pela mesma regra determinística do
@@ -936,6 +1097,37 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               }
             }
 
+            // A conversa nativa do Hermes é a fonte dos totais de custo e
+            // tokens. Só escreve quando mudou, para o cron incremental não
+            // gerar UPDATEs mortos em todas as conversas a cada rodada.
+            const nextMetadata = {
+              conversationId: cv.session_id,
+              costUsd: cv.cost_usd == null ? null : String(Number(cv.cost_usd)),
+              inputTokens: cv.input_tokens == null ? null : Number(cv.input_tokens),
+              outputTokens: cv.output_tokens == null ? null : Number(cv.output_tokens),
+              syncedAt: cv.synced_at ? new Date(cv.synced_at) : null,
+            }
+            const currentMetadata = leadConversationMetadata.get(leadId)
+            const metadataChanged = !currentMetadata
+              || currentMetadata.conversationId !== nextMetadata.conversationId
+              || currentMetadata.costUsd !== nextMetadata.costUsd
+              || currentMetadata.inputTokens !== nextMetadata.inputTokens
+              || currentMetadata.outputTokens !== nextMetadata.outputTokens
+              || currentMetadata.syncedAt?.getTime() !== nextMetadata.syncedAt?.getTime()
+            if (metadataChanged) {
+              await db
+                .update(recoveryLeads)
+                .set({
+                  agentConversationId: nextMetadata.conversationId,
+                  agentCostUsd: nextMetadata.costUsd,
+                  agentInputTokens: nextMetadata.inputTokens,
+                  agentOutputTokens: nextMetadata.outputTokens,
+                  agentSyncedAt: nextMetadata.syncedAt,
+                })
+                .where(eq(recoveryLeads.id, leadId))
+              leadConversationMetadata.set(leadId, nextMetadata)
+            }
+
             const convMsgs = msgsBySession.get(cv.session_id) || []
             const msgsToInsert: (typeof whatsappMessages.$inferInsert)[] = []
 
@@ -955,6 +1147,8 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 content: m.content || '',
                 messageType: 'text',
                 sentBy: isUser ? 'user' : 'bot',
+                reasoning: m.reasoning || null,
+                sentEmail: m.sent_email || null,
                 externalId,
                 createdAt: msgDate,
               })
@@ -986,6 +1180,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           }
         }
         await conversationBatch?.markProcessed()
+        await metadataBackfillBatch?.markProcessed()
       } catch (convErr) {
         details.push(`Aviso ao sincronizar conversas do schema "${schema}": ${String(convErr)}`)
       }

@@ -3,17 +3,18 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { whatsappMessages, recoveryLeads } from '@/lib/db/schema'
-import { eq, asc, and, or, sql } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
 import { requireCompany } from '@/lib/auth'
 import { markLeadContacted } from '@/lib/leads'
 import { getEmailEngagement } from '@/lib/email-engagement'
+import { decodeMessageCursor, INBOX_MESSAGE_PAGE_SIZE, loadInboxMessagePage } from '@/lib/inbox-messages'
 
 type Params = { params: Promise<{ leadId: string }> }
 
-export async function GET(_req: NextRequest, { params }: Params): Promise<NextResponse> {
+export async function GET(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { leadId } = await params
   const id = parseInt(leadId)
   if (isNaN(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
@@ -27,23 +28,20 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
 
   if (!lead) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
 
-  const cleanPhone = (lead.phone || '').replace(/\D/g, '')
-
-  const messages = await db
-    .select()
-    .from(whatsappMessages)
-    .where(
-      and(
-        eq(whatsappMessages.companyId, company.id),
-        or(
-          eq(whatsappMessages.leadId, id),
-          lead.phone ? eq(whatsappMessages.phone, lead.phone) : sql`false`,
-          cleanPhone ? eq(whatsappMessages.phone, cleanPhone) : sql`false`
-        )
-      )
-    )
-    .orderBy(asc(whatsappMessages.createdAt))
-    .limit(300)
+  const { searchParams } = new URL(req.url)
+  const before = searchParams.get('before')
+  if (before && !decodeMessageCursor(before)) {
+    return NextResponse.json({ error: 'Cursor inválido.' }, { status: 400 })
+  }
+  const requestedLimit = Number(searchParams.get('limit') || INBOX_MESSAGE_PAGE_SIZE)
+  const messagePage = await loadInboxMessagePage({
+    companyId: company.id,
+    leadId: id,
+    phone: lead.phone,
+    before,
+    limit: Number.isFinite(requestedLimit) ? requestedLimit : INBOX_MESSAGE_PAGE_SIZE,
+  })
+  const messages = messagePage.messages
 
   const lastInbound = [...messages].reverse().find(m => m.direction === 'inbound')
   const lastOutbound = [...messages].reverse().find(m => m.direction === 'outbound')
@@ -75,6 +73,11 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
       lastOutboundAt: lastOutbound?.createdAt?.toISOString() ?? null,
       agentDisplayName: company.agentDisplayName ?? null,
       emailEngagement: getEmailEngagement(lead.miningTags),
+      agentConversationId: lead.agentConversationId,
+      agentCostUsd: lead.agentCostUsd,
+      agentInputTokens: lead.agentInputTokens,
+      agentOutputTokens: lead.agentOutputTokens,
+      agentSyncedAt: lead.agentSyncedAt?.toISOString() ?? null,
     },
     messages: messages.map(m => ({
       id: m.id,
@@ -85,8 +88,11 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
       messageType: m.messageType ?? 'text',
       mediaUrl: m.mediaUrl ?? null,
       sentBy: m.sentBy ?? 'human',
+      reasoning: m.reasoning ?? null,
+      sentEmail: m.sentEmail ?? null,
       createdAt: m.createdAt?.toISOString() ?? null,
     })),
+    history: { hasMore: messagePage.hasMore, nextCursor: messagePage.nextCursor },
   })
 }
 

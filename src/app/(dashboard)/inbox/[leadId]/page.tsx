@@ -2,11 +2,12 @@ export const dynamic = 'force-dynamic'
 
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { appointmentMirror, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
-import { eq, asc, desc, and, or, sql } from 'drizzle-orm'
+import { appointmentMirror, recoveryLeads } from '@/lib/db/schema'
+import { eq, desc, and, sql } from 'drizzle-orm'
 import { ChatWindow } from '@/components/inbox/ChatWindow'
 import { requireCompany } from '@/lib/auth'
 import { getEmailEngagement } from '@/lib/email-engagement'
+import { loadInboxMessagePage } from '@/lib/inbox-messages'
 
 export default async function InboxChatPage({ params }: { params: Promise<{ leadId: string }> }) {
   const { leadId } = await params
@@ -25,22 +26,11 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
   const cleanPhone = (lead.phone || '').replace(/\D/g, '')
   const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
 
-  // Busca mensagens no banco local de forma rápida e indexada
-  const messages = await db
-    .select()
-    .from(whatsappMessages)
-    .where(
-      and(
-        eq(whatsappMessages.companyId, company.id),
-        or(
-          eq(whatsappMessages.leadId, id),
-          lead.phone ? eq(whatsappMessages.phone, lead.phone) : sql`false`,
-          cleanPhone ? eq(whatsappMessages.phone, cleanPhone) : sql`false`
-        )
-      )
-    )
-    .orderBy(asc(whatsappMessages.createdAt))
-    .limit(300)
+  const messagePage = await loadInboxMessagePage({
+    companyId: company.id,
+    leadId: id,
+    phone: lead.phone,
+  })
 
   const appointments = cleanPhone
     ? await db
@@ -86,8 +76,13 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         firstContactAt: lead.firstContactAt ? lead.firstContactAt.toISOString() : null,
         agentDisplayName: company.agentDisplayName ?? null,
         emailEngagement: getEmailEngagement(lead.miningTags),
+        agentConversationId: lead.agentConversationId ?? null,
+        agentCostUsd: lead.agentCostUsd ?? null,
+        agentInputTokens: lead.agentInputTokens ?? null,
+        agentOutputTokens: lead.agentOutputTokens ?? null,
+        agentSyncedAt: lead.agentSyncedAt?.toISOString() ?? null,
       }}
-      initialMessages={messages.map(m => ({
+      initialMessages={messagePage.messages.map(m => ({
         id: m.id,
         phone: m.phone,
         channel: m.channel || lead.channel || 'whatsapp',
@@ -96,6 +91,8 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         messageType: m.messageType ?? 'text',
         mediaUrl: m.mediaUrl ?? null,
         sentBy: m.sentBy ?? 'human',
+        reasoning: m.reasoning ?? null,
+        sentEmail: m.sentEmail ?? null,
         createdAt: m.createdAt?.toISOString() ?? null,
       }))}
       appointments={appointments.map(appointment => ({
@@ -105,6 +102,7 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         origin: appointment.origin,
         cancelledAt: appointment.cancelledAt?.toISOString() ?? null,
       }))}
+      initialHistory={{ hasMore: messagePage.hasMore, nextCursor: messagePage.nextCursor }}
     />
   )
 }

@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, text, boolean, timestamp, jsonb, uniqueIndex, index, date } from 'drizzle-orm/pg-core'
+import { pgTable, serial, integer, bigint, numeric, text, boolean, timestamp, jsonb, uniqueIndex, index, date } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
 
 // ─── Empresas (multi-tenant) ──────────────────────────────────────────────────
@@ -316,6 +316,14 @@ export const recoveryLeads = pgTable('recovery_leads', {
   // (função da Vercel derrubada por timeout) sem exigir liberação explícita.
   aiReplyLockAt: timestamp('ai_reply_lock_at'),
 
+  // Metadados da conversa nativa do Hermes. Ficam no painel de auditoria do
+  // Inbox e não na lista principal, para não poluir o atendimento.
+  agentConversationId: text('agent_conversation_id'),
+  agentCostUsd: numeric('agent_cost_usd', { precision: 18, scale: 8 }),
+  agentInputTokens: bigint('agent_input_tokens', { mode: 'number' }),
+  agentOutputTokens: bigint('agent_output_tokens', { mode: 'number' }),
+  agentSyncedAt: timestamp('agent_synced_at', { withTimezone: true }),
+
   // Tags estruturadas de mineração (21/09/2026): classificação/segmentação do
   // lead vinda do lado do minerador, via sync-agents.ts (Agents DB
   // intermediário, CRM_DATABASE_URL). TODOS os campos são opcionais porque o
@@ -416,8 +424,17 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
   senderName: text('sender_name'),          // 'Luana' | 'Renato' | 'Amanda Felix'
   agentId: text('agent_id'),                // 'luana' | 'renato'
   externalId: text('external_id'),
+  reasoning: text('reasoning'),
+  sentEmail: text('sent_email'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
+  // Cursor do histórico aberto: os dois índices deixam o Postgres buscar só
+  // PAGE_SIZE+1 linhas, tanto para mensagens ligadas ao lead quanto para as
+  // importadas pelo telefone antes da associação local existir.
+  index('whatsapp_messages_company_lead_created_id_idx')
+    .on(table.companyId, table.leadId, table.createdAt, table.id),
+  index('whatsapp_messages_company_phone_created_id_idx')
+    .on(table.companyId, table.phone, table.createdAt, table.id),
   // Idempotência contra reentrega de webhook da Meta (comportamento real e
   // documentado dela, não hipotético): sem isso, o mesmo evento reentregue
   // grava duas linhas inbound iguais e o generateAndSendAiReply() dispara
