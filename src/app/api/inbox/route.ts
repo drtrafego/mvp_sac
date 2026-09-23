@@ -7,6 +7,7 @@ import { desc, eq, sql, and, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { channelWhereCondition, matchesPhoneSearch } from '@/lib/inbox-channel-filter'
 import { isDirectOrganicSourceFilter, normalizeInboxSourceFilter } from '@/lib/inbox-source-filter'
+import { getEmailEngagement } from '@/lib/email-engagement'
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
@@ -51,6 +52,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       createdAt: recoveryLeads.createdAt,
       updatedAt: recoveryLeads.updatedAt,
       lastActionAt: recoveryLeads.lastActionAt,
+      miningTags: recoveryLeads.miningTags,
     })
     .from(recoveryLeads)
     .where(and(...whereConditions))
@@ -163,6 +165,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       lastInboundAt: lastMsg?.direction === 'inbound' && lastMsg.createdAt ? lastMsg.createdAt.toISOString() : null,
       lastOutboundAt: lastMsg?.direction === 'outbound' && lastMsg.createdAt ? lastMsg.createdAt.toISOString() : null,
       unread: unreadCountByLead.get(l.id) || 0,
+      emailEngagement: getEmailEngagement(l.miningTags),
     }
   })
 

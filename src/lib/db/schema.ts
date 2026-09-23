@@ -288,6 +288,17 @@ export const recoveryLeads = pgTable('recovery_leads', {
     nicho?: string
     temperatura?: string
     statusRelacionamento?: string
+    emailEngagement?: {
+      funnelStatus: string
+      lastEventType: string
+      everOpened: boolean
+      everBounced: boolean
+      everUnsubscribed: boolean
+      lastEventAt: string
+      lastStep: number | null
+      totalEventsCount: number
+      syncedAt: string
+    }
   }>(),
 
   createdAt: timestamp('created_at').defaultNow(),

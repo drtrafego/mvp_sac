@@ -5,6 +5,7 @@ import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { desc, eq, and, inArray, sql } from 'drizzle-orm'
 import { ConversationList, type ConversationSummary } from '@/components/inbox/ConversationList'
 import { requireCompany } from '@/lib/auth'
+import { getEmailEngagement } from '@/lib/email-engagement'
 
 async function getConversations(companyId: number): Promise<{ conversations: ConversationSummary[]; error: string | null }> {
   try {
@@ -28,6 +29,7 @@ async function getConversations(companyId: number): Promise<{ conversations: Con
         createdAt: recoveryLeads.createdAt,
         updatedAt: recoveryLeads.updatedAt,
         lastActionAt: recoveryLeads.lastActionAt,
+        miningTags: recoveryLeads.miningTags,
       })
       .from(recoveryLeads)
       .where(eq(recoveryLeads.companyId, companyId))
@@ -128,6 +130,7 @@ async function getConversations(companyId: number): Promise<{ conversations: Con
         lastInboundAt: lastMsg?.direction === 'inbound' && lastMsg.createdAt ? lastMsg.createdAt.toISOString() : null,
         lastOutboundAt: lastMsg?.direction === 'outbound' && lastMsg.createdAt ? lastMsg.createdAt.toISOString() : null,
         unread: unreadCountByLead.get(l.id) || 0,
+        emailEngagement: getEmailEngagement(l.miningTags),
       }
     })
 

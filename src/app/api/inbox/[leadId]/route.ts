@@ -10,6 +10,7 @@ import { sendBrevoEmail } from '@/lib/email/brevo'
 import { requireCompany } from '@/lib/auth'
 import { queryAgentsDb } from '@/lib/db/agents-db'
 import { markLeadContacted } from '@/lib/leads'
+import { getEmailEngagement } from '@/lib/email-engagement'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -71,6 +72,7 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
       lastInboundAt: lastInbound?.createdAt?.toISOString() ?? null,
       lastOutboundAt: lastOutbound?.createdAt?.toISOString() ?? null,
       agentDisplayName: company.agentDisplayName ?? null,
+      emailEngagement: getEmailEngagement(lead.miningTags),
     },
     messages: messages.map(m => ({
       id: m.id,
