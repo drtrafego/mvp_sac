@@ -7,7 +7,6 @@ import {
   Search,
   RefreshCw,
   MessageSquare,
-  Filter,
   X,
   Bot,
   UserCog,
@@ -20,14 +19,12 @@ import {
 import { cn } from '@/lib/utils'
 import {
   ChannelIcon,
-  ChannelBadge,
   PlatformBadge,
   BotStatusPill,
   InstagramLogoIcon,
   MetaInfinityIcon,
   EmailEngagementBadge,
 } from './ChannelBadge'
-import type { EmailEngagement } from '@/lib/email-engagement'
 import { MetaWindowBadge } from './MetaWindowBadge'
 import {
   classifyAnuncioSubcategory,
@@ -36,34 +33,8 @@ import {
   matchesPhoneSearch,
 } from '@/lib/inbox-channel-filter'
 import { matchesInboxSourceFilter } from '@/lib/inbox-source-filter'
-
-export interface ConversationSummary {
-  id: number
-  phone: string
-  name: string | null
-  email?: string | null
-  eventType: string
-  status: string | null
-  productName: string | null
-  productValue?: number | null
-  platform?: string | null
-  channel?: string | null
-  botPaused?: boolean
-  botPausedAt?: string | null
-  botPausedBy?: string | null
-  trackingSource?: string | null
-  utmCampaign?: string | null
-  allOrigins?: string[]
-  allEventTypes?: string[]
-  lastMessage: string | null
-  lastDirection: string | null
-  lastMessageAt: string | null
-  lastInboundAt?: string | null
-  lastOutboundAt?: string | null
-  createdAt?: string | null
-  unread: number
-  emailEngagement?: EmailEngagement | null
-}
+import type { ConversationSummary, InboxPage } from '@/lib/inbox-conversations'
+export type { ConversationSummary } from '@/lib/inbox-conversations'
 
 function formatMessageTimestamp(dateStr: string | null | undefined): { time: string; full: string; relative: string } {
   if (!dateStr) return { time: '', full: '', relative: '' }
@@ -138,15 +109,30 @@ function classifyChannel(c: Pick<ConversationSummary, 'channel' | 'platform' | '
   return classifyChannelInMemory(c)
 }
 
-export function ConversationList({ initial, initialError = null }: { initial: ConversationSummary[]; initialError?: string | null }) {
+export function ConversationList({
+  initial,
+  initialCursor = null,
+  initialHasMore = false,
+  initialError = null,
+}: {
+  initial: ConversationSummary[]
+  initialCursor?: string | null
+  initialHasMore?: boolean
+  initialError?: string | null
+}) {
   const [convs, setConvs] = useState<ConversationSummary[]>(initial)
+  const [nextCursor, setNextCursor] = useState<string | null>(initialCursor)
+  const [hasMore, setHasMore] = useState(initialHasMore)
   const [error, setError] = useState<string | null>(initialError)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>('all')
   const [mineracaoSubFilter, setMineracaoSubFilter] = useState<MineracaoSubFilter>('all')
   const [anuncioSubFilter, setAnuncioSubFilter] = useState<AnuncioSubFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [refreshing, setRefreshing] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const requestSequence = useRef(0)
   const pathname = usePathname()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -170,30 +156,64 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
       ? `anuncio_${anuncioSubFilter}`
       : channelFilter
 
-  const refresh = useCallback(
-    async (silent = true) => {
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(timeout)
+  }, [search])
+
+  const fetchPage = useCallback(
+    async ({
+      silent = true,
+      cursor = null,
+      append = false,
+      merge = false,
+    }: { silent?: boolean; cursor?: string | null; append?: boolean; merge?: boolean } = {}) => {
+      const requestId = ++requestSequence.current
       if (!silent) setRefreshing(true)
+      if (append) setLoadingMore(true)
       try {
         const params = new URLSearchParams()
         if (effectiveChannelParam !== 'all') params.set('channel', effectiveChannelParam)
         if (sourceFilter) params.set('source', sourceFilter)
+        if (statusFilter !== 'all') params.set('status', statusFilter)
+        if (debouncedSearch) params.set('q', debouncedSearch)
+        if (cursor) params.set('cursor', cursor)
         const qs = params.toString()
         const res = await fetch(`/api/inbox${qs ? `?${qs}` : ''}`)
+        if (requestId !== requestSequence.current) return
         if (res.ok) {
-          const data = await res.json()
-          setConvs(data)
+          const data: InboxPage = await res.json()
+          setConvs(current => {
+            if (!append && !merge) return data.conversations
+            const incomingIds = new Set(data.conversations.map(conversation => conversation.id))
+            const currentIds = new Set(current.map(conversation => conversation.id))
+            return merge
+              ? [...data.conversations, ...current.filter(conversation => !incomingIds.has(conversation.id))]
+              : [...current, ...data.conversations.filter(conversation => !currentIds.has(conversation.id))]
+          })
+          if (!merge) {
+            setNextCursor(data.nextCursor)
+            setHasMore(data.hasMore)
+          }
           setError(null)
         } else {
           setError('Erro ao sincronizar conversas com o servidor.')
         }
       } catch {
+        if (requestId !== requestSequence.current) return
         setError('Falha de rede ao buscar conversas.')
       } finally {
         if (!silent) setRefreshing(false)
+        if (append) setLoadingMore(false)
       }
     },
-    [effectiveChannelParam, sourceFilter]
+    [debouncedSearch, effectiveChannelParam, sourceFilter, statusFilter]
   )
+
+  const refresh = useCallback((silent = true) => fetchPage({ silent }), [fetchPage])
+  const loadMore = useCallback(() => {
+    if (nextCursor && !loadingMore) fetchPage({ cursor: nextCursor, append: true })
+  }, [fetchPage, loadingMore, nextCursor])
 
   // Refetch imediato ao trocar de aba (não espera o poll de 15s). O
   // carregamento inicial já veio do Server Component com "Todos", então pula
@@ -208,9 +228,9 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
   }, [refresh, sourceFilter])
 
   useEffect(() => {
-    const t = setInterval(() => refresh(true), 15_000)
+    const t = setInterval(() => fetchPage({ merge: true }), 15_000)
     return () => clearInterval(t)
-  }, [refresh])
+  }, [fetchPage])
 
   // Contagem por aba: vem de /api/inbox/counts (COUNT real no banco, empresa
   // inteira). O cálculo local abaixo é só o palpite inicial antes do fetch
@@ -653,7 +673,8 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
             </p>
           </div>
         ) : (
-          filtered.map(conv => {
+          <>
+          {filtered.map(conv => {
             const isActive = String(conv.id) === activeId
             const displayName = conv.name || conv.phone
             const initials = displayName.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
@@ -732,7 +753,18 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
                 </div>
               </Link>
             )
-          })
+          })}
+          {hasMore && (
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="focus-ring mt-2 flex h-9 w-full items-center justify-center rounded-xl border border-line-subtle bg-surface-inset text-micro font-bold text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg disabled:cursor-wait disabled:opacity-60"
+            >
+              {loadingMore ? 'Carregando…' : 'Carregar mais conversas'}
+            </button>
+          )}
+          </>
         )}
       </div>
     </aside>
