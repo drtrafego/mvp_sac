@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { User, Bot, UserCog, FileText, Image as ImageIcon, Volume2, CheckCheck } from 'lucide-react'
+import { User, Bot, UserCog, FileText, Volume2, Brain, Mail } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { cleanMessage } from '@/lib/clean-content'
 import { ChannelIcon } from './ChannelBadge'
@@ -15,6 +15,8 @@ export interface InboxMessage {
   messageType?: string | null
   mediaUrl?: string | null
   sentBy?: string | null
+  reasoning?: string | null
+  sentEmail?: string | null
   createdAt: string | null
 }
 
@@ -195,6 +197,36 @@ export function MessageBubble({
               : '💬 [Mensagem sem texto]'}
           </p>
         ) : null}
+
+        {(message.reasoning || message.sentEmail) && (
+          <details className="mt-2 border-t border-line-subtle/70 pt-1.5 text-[11px]">
+            <summary className="cursor-pointer select-none text-fg-faint hover:text-fg-subtle">
+              Detalhes técnicos
+            </summary>
+            <div className="mt-2 space-y-2">
+              {message.reasoning && (
+                <div className="rounded-lg bg-surface-base/70 p-2">
+                  <span className="mb-1 flex items-center gap-1 font-bold uppercase tracking-wide text-fg-subtle">
+                    <Brain className="size-3" /> Raciocínio
+                  </span>
+                  <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-fg-muted scroll-thin">
+                    {message.reasoning}
+                  </p>
+                </div>
+              )}
+              {message.sentEmail && (
+                <div className="rounded-lg bg-surface-base/70 p-2">
+                  <span className="mb-1 flex items-center gap-1 font-bold uppercase tracking-wide text-fg-subtle">
+                    <Mail className="size-3" /> E-mail enviado
+                  </span>
+                  <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-fg-muted scroll-thin">
+                    {message.sentEmail}
+                  </p>
+                </div>
+              )}
+            </div>
+          </details>
+        )}
       </div>
     </div>
   )

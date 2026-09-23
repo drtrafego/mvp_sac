@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import {
   ArrowLeft,
   RefreshCw,
@@ -15,6 +15,8 @@ import {
   Bot,
   UserCog,
   CalendarDays,
+  ChevronUp,
+  Database,
 } from 'lucide-react'
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
@@ -51,6 +53,11 @@ export interface ChatLead {
   // resolvido ainda; a UI cai no fallback genérico "Bot IA" (22/09/2026).
   agentDisplayName?: string | null
   emailEngagement?: EmailEngagement | null
+  agentConversationId?: string | null
+  agentCostUsd?: string | null
+  agentInputTokens?: number | null
+  agentOutputTokens?: number | null
+  agentSyncedAt?: string | null
 }
 
 export interface MirroredAppointment {
@@ -70,16 +77,21 @@ export function ChatWindow({
   lead,
   initialMessages,
   appointments = [],
+  initialHistory,
 }: {
   lead: ChatLead
   initialMessages: InboxMessage[]
   appointments?: MirroredAppointment[]
+  initialHistory: { hasMore: boolean; nextCursor: string | null }
 }) {
   const [messages, setMessages] = useState<InboxMessage[]>(initialMessages)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
+  const [hasMoreHistory, setHasMoreHistory] = useState(initialHistory.hasMore)
+  const [historyCursor, setHistoryCursor] = useState(initialHistory.nextCursor)
+  const [loadingHistory, setLoadingHistory] = useState(false)
 
   // Controle de Pausa do Bot
   const [botPaused, setBotPaused] = useState(lead.botPaused)
@@ -88,6 +100,10 @@ export function ChatWindow({
 
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const loadingHistoryRef = useRef(false)
+  const didInitialScrollRef = useRef(false)
+  const shouldScrollToBottomRef = useRef(true)
+  const prependScrollHeightRef = useRef<number | null>(null)
 
   const refresh = useCallback(
     async (silent = false) => {
@@ -96,7 +112,19 @@ export function ChatWindow({
         const res = await fetch(`/api/inbox/${lead.id}`)
         if (res.ok) {
           const data = await res.json()
-          if (data.messages) setMessages(data.messages)
+          if (data.messages) {
+            const container = messagesContainerRef.current
+            shouldScrollToBottomRef.current = !!container
+              && container.scrollHeight - container.scrollTop - container.clientHeight < 120
+            setMessages(prev => {
+              const merged = new Map(prev.map(message => [message.id, message]))
+              for (const message of data.messages as InboxMessage[]) merged.set(message.id, message)
+              return [...merged.values()].sort((a, b) => {
+                const timeDiff = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+                return timeDiff || a.id - b.id
+              })
+            })
+          }
           if (data.lead && typeof data.lead.botPaused === 'boolean') {
             setBotPaused(data.lead.botPaused)
           }
@@ -111,15 +139,65 @@ export function ChatWindow({
   )
 
   useEffect(() => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
-    }
+    if (!shouldScrollToBottomRef.current || !messagesContainerRef.current) return
+    messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+    shouldScrollToBottomRef.current = false
+    didInitialScrollRef.current = true
+  }, [messages])
+
+  // Preserva exatamente a mensagem que estava no topo quando um lote antigo
+  // é prependado. useLayoutEffect roda depois do DOM novo e antes do paint,
+  // evitando salto visual e uma segunda paginação disparada pelo scrollTop=0.
+  useLayoutEffect(() => {
+    const previousHeight = prependScrollHeightRef.current
+    const container = messagesContainerRef.current
+    if (previousHeight == null || !container) return
+    container.scrollTop += container.scrollHeight - previousHeight
+    prependScrollHeightRef.current = null
   }, [messages])
 
   useEffect(() => {
     const t = setInterval(() => refresh(true), 12_000)
     return () => clearInterval(t)
   }, [refresh])
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!historyCursor || !hasMoreHistory || loadingHistoryRef.current) return
+    const container = messagesContainerRef.current
+    const previousHeight = container?.scrollHeight ?? 0
+    loadingHistoryRef.current = true
+    setLoadingHistory(true)
+    try {
+      const res = await fetch(`/api/inbox/${lead.id}?before=${encodeURIComponent(historyCursor)}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const older = (data.messages || []) as InboxMessage[]
+      prependScrollHeightRef.current = previousHeight
+      setMessages(prev => {
+        const merged = new Map(older.map(message => [message.id, message]))
+        for (const message of prev) merged.set(message.id, message)
+        return [...merged.values()].sort((a, b) => {
+          const timeDiff = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+          return timeDiff || a.id - b.id
+        })
+      })
+      setHasMoreHistory(Boolean(data.history?.hasMore))
+      setHistoryCursor(data.history?.nextCursor ?? null)
+    } finally {
+      loadingHistoryRef.current = false
+      setLoadingHistory(false)
+    }
+  }, [hasMoreHistory, historyCursor, lead.id])
+
+  const handleMessagesScroll = useCallback(() => {
+    const container = messagesContainerRef.current
+    if (
+      didInitialScrollRef.current
+      && container
+      && container.scrollHeight > container.clientHeight
+      && container.scrollTop < 120
+    ) loadOlderMessages()
+  }, [loadOlderMessages])
 
   async function handleToggleBotPause() {
     if (pauseLoading) return
@@ -161,6 +239,7 @@ export function ChatWindow({
       })
       if (res.ok) {
         const msg: InboxMessage = await res.json()
+        shouldScrollToBottomRef.current = true
         setMessages(prev => [...prev, msg])
       }
     } catch {
@@ -293,7 +372,24 @@ export function ChatWindow({
         <MetaWindowBanner lead={lead} />
 
         {/* 2. Área de Mensagens */}
-        <div ref={messagesContainerRef} className="scroll-thin flex-1 overflow-y-auto bg-surface-base px-4 py-4 min-h-0">
+        <div
+          ref={messagesContainerRef}
+          onScroll={handleMessagesScroll}
+          className="scroll-thin flex-1 overflow-y-auto bg-surface-base px-4 py-4 min-h-0"
+        >
+          {(hasMoreHistory || loadingHistory) && (
+            <div className="flex justify-center pb-3">
+              <button
+                type="button"
+                onClick={loadOlderMessages}
+                disabled={loadingHistory}
+                className="inline-flex items-center gap-1.5 rounded-full border border-line-subtle bg-surface-panel px-3 py-1.5 text-[11px] font-semibold text-fg-muted shadow-xs hover:text-fg disabled:opacity-60"
+              >
+                {loadingHistory ? <Loader2 size={12} className="animate-spin" /> : <ChevronUp size={12} />}
+                {loadingHistory ? 'Carregando…' : 'Carregar mensagens anteriores'}
+              </button>
+            </div>
+          )}
           <MessageList messages={messages} contactName={lead.name} agentName={agentLabel} />
         </div>
 
@@ -462,6 +558,40 @@ export function ChatWindow({
           })()}
 
           {/* Informações de Compra & Produto */}
+          {(lead.agentConversationId || lead.agentCostUsd || lead.agentInputTokens != null || lead.agentOutputTokens != null || lead.agentSyncedAt) && (
+            <div className="space-y-2">
+              <h4 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-fg-subtle">
+                <Database size={12} /> Auditoria IA
+              </h4>
+              <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2 text-micro">
+                <div className="flex justify-between gap-3">
+                  <span className="text-fg-faint">Custo estimado:</span>
+                  <span className="font-mono text-fg">{lead.agentCostUsd ? `US$ ${Number(lead.agentCostUsd).toFixed(6)}` : '—'}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-fg-faint">Tokens entrada:</span>
+                  <span className="font-mono text-fg">{lead.agentInputTokens?.toLocaleString('pt-BR') ?? '—'}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-fg-faint">Tokens saída:</span>
+                  <span className="font-mono text-fg">{lead.agentOutputTokens?.toLocaleString('pt-BR') ?? '—'}</span>
+                </div>
+                {lead.agentSyncedAt && (
+                  <div className="border-t border-line-subtle pt-2">
+                    <span className="text-fg-faint block uppercase text-[9px]">Sincronizado:</span>
+                    <span className="font-mono text-[10px] text-fg-muted">{new Date(lead.agentSyncedAt).toLocaleString('pt-BR')}</span>
+                  </div>
+                )}
+                {lead.agentConversationId && (
+                  <div>
+                    <span className="text-fg-faint block uppercase text-[9px]">Sessão Hermes:</span>
+                    <span className="block truncate font-mono text-[10px] text-fg-muted" title={lead.agentConversationId}>{lead.agentConversationId}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2">
             <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">CRM & Venda</h4>
             <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2 text-micro">
