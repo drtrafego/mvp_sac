@@ -36,7 +36,6 @@ const PROVIDER_OPTIONS: Record<string, string> = {
 
 interface SettingsData {
   companySlug: string
-  agentDisplayName: string
   webhookUrlToken?: string | null
   hotmartWebhookToken: string
   hotmartClientId: string
@@ -84,6 +83,7 @@ interface SettingsData {
     showApiDocs?: boolean
     showWebhooksLog?: boolean
     showBiblioteca?: boolean
+    showAgente?: boolean
   } | null
 }
 
@@ -104,7 +104,6 @@ interface MembersData {
 
 const defaults: SettingsData = {
   companySlug: '',
-  agentDisplayName: '',
   webhookUrlToken: null,
   hotmartWebhookToken: '',
   hotmartClientId: '',
@@ -757,7 +756,6 @@ export default function ConfiguracoesPage() {
       .then(r => r.json())
       .then(data => setForm({
         companySlug: data.companySlug ?? '',
-        agentDisplayName: data.agentDisplayName ?? '',
         webhookUrlToken: data.webhookUrlToken ?? null,
         hotmartWebhookToken: data.hotmartWebhookToken ?? '',
         hotmartClientId: data.hotmartClientId ?? '',
@@ -798,14 +796,10 @@ export default function ConfiguracoesPage() {
 
   async function handleSave() {
     setSaving(true)
-    const { agentDisplayName, ...otherSettings } = form
     await fetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...otherSettings,
-        ...(agentDisplayName.trim() ? { agentDisplayName } : {}),
-      }),
+      body: JSON.stringify(form),
     })
     setSaving(false)
     setSaved(true)
@@ -827,29 +821,11 @@ export default function ConfiguracoesPage() {
       {/* Pausar Tudo */}
       {slug && <PausarTudoSection slug={slug} />}
 
-      <section className="panel p-[var(--space-card)] space-y-3">
-        <p className="text-label uppercase text-fg-subtle">Bot de atendimento</p>
-        <div className="space-y-1.5">
-          <Label htmlFor="agent-display-name">Nome do bot</Label>
-          <Input
-            id="agent-display-name"
-            value={form.agentDisplayName}
-            onChange={e => set('agentDisplayName', e.target.value)}
-            placeholder="Ex.: Clara"
-            maxLength={80}
-            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
-          />
-          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
-            Este nome aparece nas conversas e, depois de salvo, tem precedência sobre o nome sincronizado automaticamente.
-          </p>
-        </div>
-      </section>
-
       {/* Equipe */}
       <EquipeSection />
 
-      {/* Agenda: bloqueios de data e horário de atendimento */}
-      <Link href="/configuracoes/agenda" className="focus-ring block">
+      {/* Agente: nome do bot, agenda e follow-up (consolidados na aba Agente) */}
+      <Link href="/agente" className="focus-ring block">
         <section className="panel p-[var(--space-card)] flex items-center justify-between gap-3 hover:bg-surface-raised transition-colors cursor-pointer">
           <div className="flex items-center gap-3">
             <div
@@ -862,9 +838,9 @@ export default function ConfiguracoesPage() {
               <CalendarClock size={16} className="text-brand-ink" />
             </div>
             <div>
-              <h2 className="text-h2 text-fg">Agenda</h2>
+              <h2 className="text-h2 text-fg">Agente</h2>
               <p className="text-body text-fg-muted mt-0.5">
-                Bloqueie datas (férias, congresso) e defina o horário semanal de atendimento.
+                Nome do bot, horário de atendimento, bloqueios de agenda e status do follow-up.
               </p>
             </div>
           </div>
@@ -906,6 +882,7 @@ export default function ConfiguracoesPage() {
                     showConfiguracoes: true,
                     showWebhooksLog: false,
                     showBiblioteca: false,
+                    showAgente: true,
                   },
                 }))
               }}
@@ -934,6 +911,7 @@ export default function ConfiguracoesPage() {
                     showConfiguracoes: true,
                     showWebhooksLog: true,
                     showBiblioteca: true,
+                    showAgente: true,
                   },
                 }))
               }}
@@ -1060,6 +1038,7 @@ export default function ConfiguracoesPage() {
               </span>
               <div className="space-y-2">
                 {[
+                  { key: 'showAgente', label: 'Agente (cérebro do bot)' },
                   { key: 'showConfiguracoes', label: 'Configurações' },
                   { key: 'showApiDocs', label: 'Documentação da API do SAC' },
                   { key: 'showBiblioteca', label: 'Biblioteca de Modelos & Prompts' },
