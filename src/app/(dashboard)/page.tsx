@@ -40,7 +40,7 @@ import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
-import { dashboardLeadStatsSelect, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
+import { dashboardLeadStatsSelect, gramadoDashboardCardCounts, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
 
 function splitMoney(cents: number): { inteiro: string; centavos: string } {
   const [inteiro, centavos] = (cents / 100)
@@ -171,6 +171,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const fechadosCount = leadStats?.fechadosTotal ?? 0
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
   const qualificadosCount = leadStats?.qualificadosTotal ?? 0
+  const gramadoCardCounts = gramadoDashboardCardCounts(leadStats)
 
   const recoveredCount = leadStats?.recoveredCount ?? 0
   const recoveryTotal = (leadStats?.boleto ?? 0) + (leadStats?.pix ?? 0) + (leadStats?.carrinho ?? 0) + (leadStats?.cartao ?? 0)
@@ -292,8 +293,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       { label: 'Interesse em Reserva', count: leadStats?.novoContato ?? total, icon: Utensils, color: '--ev-carrinho', desc: 'Novos clientes' },
       { label: 'Data Consultada', count: leadStats?.qualificado ?? 0, icon: Calendar, color: '--ev-pix', desc: 'Horário & disponibilidade' },
       { label: 'Cardápio / Pacote', count: leadStats?.proposta ?? 0, icon: Receipt, color: '--ev-boleto', desc: 'Valores informados' },
-      { label: 'Reserva Confirmada', count: leadStats?.fechado ?? fechadosCount, icon: CheckCircle2, color: '--st-positivo', desc: 'Mesa garantida' },
-      { label: 'Compareceu', count: leadStats?.compareceu ?? 0, icon: PartyPopper, color: '--brand', desc: 'Cliente no restaurante' },
+      { label: 'Reserva Confirmada', count: gramadoCardCounts.reservaConfirmada, icon: CheckCircle2, color: '--st-positivo', desc: 'Mesa garantida' },
+      { label: 'Compareceu', count: gramadoCardCounts.compareceu, icon: PartyPopper, color: '--brand', desc: 'Cliente no restaurante' },
     ]
   } else if (isLucas) {
     funnelCards = [
