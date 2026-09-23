@@ -171,6 +171,10 @@ export const recoveryLeads = pgTable('recovery_leads', {
   phone: text('phone').notNull(),
   name: text('name'),
   email: text('email'),
+  // Metadados do contato no CRM nativo dos agentes. Diferem de productName:
+  // company é a empresa do lead e notes são as observações livres do CRM.
+  company: text('company'),
+  notes: text('notes'),
   cpfCnpj: text('cpf_cnpj'),
 
   // Localização

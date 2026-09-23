@@ -8,7 +8,6 @@ import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
 import { requireCompany } from '@/lib/auth'
-import { queryAgentsDb } from '@/lib/db/agents-db'
 import { markLeadContacted } from '@/lib/leads'
 import { getEmailEngagement } from '@/lib/email-engagement'
 
@@ -56,6 +55,8 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
       phone: lead.phone,
       name: lead.name,
       email: lead.email,
+      company: lead.company,
+      notes: lead.notes,
       channel: lead.channel || 'whatsapp',
       platform: lead.platform,
       eventType: lead.eventType,
@@ -68,6 +69,7 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
       trackingSource: lead.trackingSource,
       utmCampaign: lead.utmCampaign,
       createdAt: lead.createdAt,
+      firstContactAt: lead.firstContactAt,
       lastMessageAt: lastMsg?.createdAt?.toISOString() ?? null,
       lastInboundAt: lastInbound?.createdAt?.toISOString() ?? null,
       lastOutboundAt: lastOutbound?.createdAt?.toISOString() ?? null,

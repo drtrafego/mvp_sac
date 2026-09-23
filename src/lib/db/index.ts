@@ -28,6 +28,11 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS responsible_agent text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS last_action_by text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS last_action_at timestamp DEFAULT NOW()`,
+          // Metadados preservados do crm_leads nativo dos agentes. As outras
+          // colunas da mesma carga (email, product_value e first_contact_at)
+          // já fazem parte do schema base de recovery_leads.
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS company text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS notes text`,
 
           // whatsapp_messages
           client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS channel text DEFAULT 'whatsapp'`,
