@@ -42,6 +42,7 @@ import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
 import { dashboardLeadStatsSelect, gramadoDashboardCardCounts, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
 import { hasDashboardOrigin, loadDashboardOriginPills } from '@/lib/dashboard/origin-pills'
+import { inferPipelineStage } from '@/lib/pipeline-stage'
 
 function splitMoney(cents: number): { inteiro: string; centavos: string } {
   const [inteiro, centavos] = (cents / 100)
@@ -76,22 +77,24 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
   const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter, sourceFilter)
 
-  // Decisão de negócio: lead só conta no número principal depois de ser
-  // ABORDADO de verdade (mensagem real trocada). Sem isso ele existe no banco
-  // mas fica de fora de "Leads Captados" / "Total de Contatos" e aparece só
-  // no card separado de "Aguardando Abordagem".
-  const contactedWhere = and(baseWhere, isNotNull(recoveryLeads.firstContactAt))
-  const notContactedWhere = and(baseWhere, isNull(recoveryLeads.firstContactAt))
-
-  const rangeDurationMs = toDate.getTime() - fromDate.getTime()
-  const prevFrom = new Date(fromDate.getTime() - rangeDurationMs)
-
   // 1. Identificar modelo de negócio da empresa
   const businessModel = resolveDashboardBusinessModel(company.slug)
   const isGramado = businessModel === 'gramado'
   const isLucas = businessModel === 'lucas'
   const isAgencia = businessModel === 'agencia'
   const isInfoproduto = businessModel === 'infoproduto'
+
+  // Decisão de negócio: lead só conta no número principal depois de ser
+  // ABORDADO de verdade (mensagem real trocada). Sem isso ele existe no banco
+  // mas fica de fora de "Leads Captados" / "Total de Contatos" e aparece só
+  // no card separado de "Aguardando Abordagem". Só faz sentido pra quem tem
+  // conversa 1:1 humana: infoproduto nasce de webhook de checkout e o evento
+  // já é o fato de negócio real (ver src/lib/dashboard/lead-stats.ts).
+  const contactedWhere = businessModel === 'infoproduto' ? baseWhere : and(baseWhere, isNotNull(recoveryLeads.firstContactAt))
+  const notContactedWhere = and(baseWhere, isNull(recoveryLeads.firstContactAt))
+
+  const rangeDurationMs = toDate.getTime() - fromDate.getTime()
+  const prevFrom = new Date(fromDate.getTime() - rangeDurationMs)
 
   function getSourceHref(src: string) {
     const q = new URLSearchParams()
@@ -199,18 +202,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const totalApprovedValueCents = recoveredValueCents + directValueCents
 
   const kanbanLeads: KanbanLead[] = recentLeads.map((l) => {
-    let stage = l.pipelineStage || 'novo_contato'
-    if (!l.pipelineStage) {
-      if (l.status === 'converted' || l.eventType === 'compra_aprovada') {
-        stage = 'fechado'
-      } else if (l.status === 'in_progress') {
-        stage = 'em_atendimento'
-      } else if (l.eventType === 'pix' || l.eventType === 'boleto') {
-        stage = 'qualificado'
-      } else if (l.priority && l.priority > 1) {
-        stage = 'agendado'
-      }
-    }
+    const stage = inferPipelineStage(l)
 
     return {
       id: l.id,

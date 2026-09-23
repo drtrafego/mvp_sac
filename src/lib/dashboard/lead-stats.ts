@@ -120,15 +120,28 @@ export function dashboardLeadStatsSelect(model: DashboardBusinessModel) {
   const stage = dashboardFunnelStageSql(model)
   const won = dashboardBusinessWonSql(model)
 
+  // Gate de "abordado de verdade" (first_contact_at): faz sentido para os
+  // negocios com conversa 1:1 humana (gramado/lucas/agencia), onde o lead so
+  // deve contar no numero principal depois de trocar mensagem real. Pra
+  // infoproduto o lead nasce de webhook de checkout (Hotmart/Kiwify/Greenn/
+  // Zouti), que nunca chama markLeadContacted, entao first_contact_at fica
+  // nulo mesmo com evento de negocio real acontecendo. Sem este gate,
+  // "Leads Totais" (e o resto do funil de conversa: Aguardando Abordagem,
+  // Responderam, Avancaram) ficava zerado pra QUALQUER empresa infoproduto,
+  // igual ao bug ja corrigido abaixo pro funil de checkout propriamente dito
+  // (boleto/pix/carrinho/cartao/aprovada), medido na Isabela Fanini
+  // (company_id=2): 100% dos 35 leads do periodo com first_contact_at nulo.
+  const contactGate = model === 'infoproduto' ? sql`true` : sql`${recoveryLeads.firstContactAt} is not null`
+
   return {
-    total: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null) as int)`,
-    aguardandoAbordagem: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and (${statusLower} in ('pending', 'new', 'aguardando') or ${recoveryLeads.status} is null)) as int)`,
+    total: sql<number>`cast(count(*) filter (where ${contactGate}) as int)`,
+    aguardandoAbordagem: sql<number>`cast(count(*) filter (where ${contactGate} and (${statusLower} in ('pending', 'new', 'aguardando') or ${recoveryLeads.status} is null)) as int)`,
 
     // Funil de engajamento equivalente ao painel nativo do Hermes: conta pelo
     // historico REAL de mensagens (whatsapp_messages), independente do
     // pipeline_stage do CRM. "Avancou" = 4+ mensagens trocadas na conversa.
-    respondeuTotal: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${leadRespondedExistsSql}) as int)`,
-    avancouTotal: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${leadMessageCountSql} >= 4) as int)`,
+    respondeuTotal: sql<number>`cast(count(*) filter (where ${contactGate} and ${leadRespondedExistsSql}) as int)`,
+    avancouTotal: sql<number>`cast(count(*) filter (where ${contactGate} and ${leadMessageCountSql} >= 4) as int)`,
     fechadosTotal: sql<number>`cast(count(*) filter (where ${won}) as int)`,
     valorFechadoCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${won}), 0) as bigint)`,
     qualificadosTotal: sql<number>`cast(count(*) filter (where ${stage} in ('qualificado', 'agendado', 'proposta', 'fechado', 'compareceu')) as int)`,
