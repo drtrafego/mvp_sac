@@ -127,6 +127,7 @@ async function main() {
       { id: 6, name: 'Gramado Engajamento Teste', slug: 'gramado-engajamento-teste' },
       { id: 7, name: 'AutonomIA Teste', slug: 'autonomia-teste' },
       { id: 10, name: 'Checkout Teste', slug: 'checkout-teste' },
+      { id: 11, name: 'Isabela Fanini Teste', slug: 'isabela-fanini-teste' },
     ])
 
     await test('Gramado conta status real "Reserva Confirmada" sem duplicar no funil', async () => {
@@ -281,6 +282,79 @@ async function main() {
 
       const conversionRate = stats.total > 0 ? (stats.fechadosTotal / stats.total) * 100 : 0
       assert.equal(conversionRate.toFixed(1), '50.0')
+    })
+    await test('infoproduto: venda direta e venda recuperada nao se misturam, e a soma bate com o total aprovado', async () => {
+      await testDb.insert(schema.recoveryLeads).values([
+        // Venda direta: compra aprovada de primeira, telefone nunca teve
+        // nenhum evento de carrinho abandonado / boleto / pix / cartao
+        // recusado nesta empresa.
+        lead(11, '501', {
+          platform: 'hotmart',
+          eventType: 'compra_aprovada',
+          status: 'completed',
+          firstContactAt: NOW,
+          productValue: 15000,
+        }),
+
+        // Venda recuperada: o MESMO telefone abandonou o carrinho antes (linha
+        // marcada como convertida via mensagem do sistema) e so depois a
+        // compra foi aprovada (segunda linha, mesmo valor do pedido).
+        lead(11, '502', {
+          platform: 'hotmart',
+          eventType: 'carrinho_abandonado',
+          status: 'converted',
+          convertedFrom: 'msg_2',
+          firstContactAt: NOW,
+          productValue: 8000,
+        }),
+        lead(11, '502', {
+          platform: 'hotmart',
+          eventType: 'compra_aprovada',
+          status: 'completed',
+          firstContactAt: NOW,
+          productValue: 8000,
+        }),
+
+        // Pegadinha temporal: MESMO telefone de uma venda direta (503) abandona
+        // um carrinho DEPOIS de ja ter comprado (compra as 12h, abandono as
+        // 13h, de um pedido totalmente diferente). Sem o corte por created_at
+        // <= data da aprovacao, essa venda direta seria classificada por
+        // engano como "recuperada", so porque compartilha o telefone com um
+        // abandono que aconteceu DEPOIS dela.
+        lead(11, '503', {
+          platform: 'hotmart',
+          eventType: 'compra_aprovada',
+          status: 'completed',
+          firstContactAt: NOW,
+          productValue: 5000,
+          createdAt: NOW,
+        }),
+        lead(11, '503', {
+          platform: 'hotmart',
+          eventType: 'carrinho_abandonado',
+          status: 'pending',
+          firstContactAt: NOW,
+          productValue: 5000,
+          createdAt: new Date(NOW.getTime() + 60 * 60_000),
+        }),
+      ])
+
+      const [stats] = await testDb
+        .select(dashboardLeadStatsSelect('infoproduto'))
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.companyId, 11))
+
+      assert.equal(stats.aprovada, 3, 'as tres linhas de compra_aprovada contam no total de aprovadas')
+      assert.equal(Number(stats.aprovadaValueCents), 28000, '15000 (direta) + 8000 (recuperada) + 5000 (direta com abandono POSTERIOR)')
+
+      assert.equal(stats.directCount, 2, 'venda direta conta 501 e 503 (o abandono de 503 aconteceu DEPOIS da compra, nao antes)')
+      assert.equal(Number(stats.directValueCents), 20000, '15000 + 5000: o abandono posterior de 503 nao pode contaminar a venda direta')
+
+      assert.equal(stats.recoveredCount, 1, 'so a linha de abandono convertida por mensagem conta como recuperada')
+      assert.equal(Number(stats.recoveredValueCents), 8000, 'receita recuperada nao inclui a venda direta')
+
+      const somaDiretaRecuperada = Number(stats.directValueCents) + Number(stats.recoveredValueCents)
+      assert.equal(somaDiretaRecuperada, Number(stats.aprovadaValueCents), 'direta + recuperada = total de vendas aprovadas do periodo')
     })
   } finally {
     await sql.end({ timeout: 2 })
