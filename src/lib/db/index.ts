@@ -33,6 +33,8 @@ export function ensureSchema(client: any): Promise<void> {
           // já fazem parte do schema base de recovery_leads.
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS company text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS notes text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS adset_name text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ad_name text`,
 
           // whatsapp_messages
           client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS channel text DEFAULT 'whatsapp'`,

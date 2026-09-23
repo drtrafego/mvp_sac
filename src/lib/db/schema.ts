@@ -255,6 +255,11 @@ export const recoveryLeads = pgTable('recovery_leads', {
   utmContent: text('utm_content'),
   utmTerm: text('utm_term'),
   utmPlacement: text('utm_placement'),
+  // Nomes resolvidos do referral Click-to-WhatsApp. IDs Meta continuam nos
+  // campos abaixo; estes nomes preservam exatamente o que o usuário precisa
+  // enxergar no SAC sem depender de uma nova chamada à Marketing API.
+  adsetName: text('adset_name'),
+  adName: text('ad_name'),
   metaCampaignId: text('meta_campaign_id'),
   metaAdsetId: text('meta_adset_id'),
   metaAdId: text('meta_ad_id'),

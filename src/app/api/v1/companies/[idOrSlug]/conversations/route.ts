@@ -44,6 +44,8 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       botPaused: recoveryLeads.botPaused,
       trackingSource: recoveryLeads.trackingSource,
       utmCampaign: recoveryLeads.utmCampaign,
+      adsetName: recoveryLeads.adsetName,
+      adName: recoveryLeads.adName,
       createdAt: recoveryLeads.createdAt,
     })
     .from(recoveryLeads)

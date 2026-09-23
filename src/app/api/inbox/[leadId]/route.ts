@@ -66,6 +66,8 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       botPausedBy: lead.botPausedBy,
       trackingSource: lead.trackingSource,
       utmCampaign: lead.utmCampaign,
+      adsetName: lead.adsetName,
+      adName: lead.adName,
       createdAt: lead.createdAt,
       firstContactAt: lead.firstContactAt,
       lastMessageAt: lastMsg?.createdAt?.toISOString() ?? null,
