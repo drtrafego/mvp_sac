@@ -6,7 +6,6 @@ import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { eq, asc, and, or, sql } from 'drizzle-orm'
 import { ChatWindow } from '@/components/inbox/ChatWindow'
 import { requireCompany } from '@/lib/auth'
-import { queryAgentsDb } from '@/lib/db/agents-db'
 import { getEmailEngagement } from '@/lib/email-engagement'
 
 export default async function InboxChatPage({ params }: { params: Promise<{ leadId: string }> }) {
@@ -24,7 +23,6 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
   if (!lead) notFound()
 
   const cleanPhone = (lead.phone || '').replace(/\D/g, '')
-  const last8 = cleanPhone.length >= 8 ? cleanPhone.slice(-8) : cleanPhone
 
   // Busca mensagens no banco local de forma rápida e indexada
   const messages = await db
@@ -50,6 +48,8 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         phone: lead.phone,
         name: lead.name ?? null,
         email: lead.email ?? null,
+        company: lead.company ?? null,
+        notes: lead.notes ?? null,
         eventType: lead.eventType,
         status: lead.status ?? null,
         productName: lead.productName ?? null,
@@ -62,6 +62,7 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         trackingSource: lead.trackingSource ?? null,
         utmCampaign: lead.utmCampaign ?? null,
         createdAt: lead.createdAt ? lead.createdAt.toISOString() : null,
+        firstContactAt: lead.firstContactAt ? lead.firstContactAt.toISOString() : null,
         agentDisplayName: company.agentDisplayName ?? null,
         emailEngagement: getEmailEngagement(lead.miningTags),
       }}

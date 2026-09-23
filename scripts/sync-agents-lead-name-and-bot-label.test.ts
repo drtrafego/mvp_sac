@@ -153,15 +153,6 @@ const MSGS_FIXTURE = [
   { id: 5, session_id: 's-gramado-1', role: 'user', content: 'Oi', ts: '2026-09-20T14:00:00Z' },
 ]
 
-// crm_leads.name: Gabriel e Andre com nome bom, "Lead 7979" placeholder
-// (descartado pela regex), Cleide com nome RUIM (o crm captura errado).
-const CRM_LEADS_FIXTURE = [
-  { name: 'Gabriel Carvalho', phone: '5511900000001' },
-  { name: 'Andre Rabelo', phone: '5511900000002' },
-  { name: 'Lead 7979', phone: '5511900000003' },
-  { name: 'Resposta De Cleide', phone: '5511900000004' },
-]
-
 // agendamentos.nome: só a Cleide tem (nome real dito na hora de marcar
 // consulta), cobertura baixa de propósito (é o caso real da investigação).
 const AGENDAMENTOS_FIXTURE = [
@@ -180,6 +171,35 @@ async function main() {
 
   const sql = postgres(disposable.url)
   const testDb = drizzle(sql, { schema })
+
+  // A consulta de crm_leads roda de verdade neste Postgres (não em array):
+  // duas linhas compartilham o mesmo telefone e foram inseridas na ordem
+  // inversa da prioridade esperada. Isso prova que o ORDER BY, não a ordem
+  // física/acidental, faz o registro mais recente vencer.
+  await sql`create schema drlucas`
+  await sql`
+    create table drlucas.crm_leads (
+      id text primary key,
+      name text,
+      phone text,
+      email text,
+      notes text,
+      company text,
+      value numeric,
+      first_contact_at timestamp,
+      created_at timestamp
+    )
+  `
+  await sql`
+    insert into drlucas.crm_leads
+      (id, name, phone, email, notes, company, value, first_contact_at, created_at)
+    values
+      ('z-old', 'Nome Antigo', '5511900000001', 'antigo@example.test', 'nota antiga', 'Empresa Antiga', 10, null, '2026-09-01T10:00:00Z'),
+      ('a-new', 'Gabriel Carvalho', '5511900000001', 'novo@example.test', 'nota mais recente', 'Empresa Nova', 123.45, '2026-09-19T09:00:00Z', '2026-09-19T08:00:00Z'),
+      ('andre', 'Andre Rabelo', '5511900000002', null, null, null, null, null, '2026-09-18T10:00:00Z'),
+      ('placeholder', 'Lead 7979', '5511900000003', null, null, null, null, null, '2026-09-18T11:00:00Z'),
+      ('cleide', 'Resposta De Cleide', '5511900000004', null, null, null, null, null, '2026-09-18T12:00:00Z')
+  `
 
   // Estado mutável simulando o Agents DB entre as duas rodadas de sync deste
   // teste. node:test só permite mock.module() UMA vez por specifier (uma 2ª
@@ -218,7 +238,7 @@ async function main() {
           return msgsAtivas.filter(m => sessionIds.includes(m.session_id))
         }
         if (query.includes('from "drlucas".agendamentos')) return agendamentosAtivos
-        if (query.includes('from "drlucas".crm_leads')) return CRM_LEADS_FIXTURE
+        if (query.includes('from "drlucas".crm_leads')) return sql.unsafe(query)
         // gramado_plaza não tem agendamentos/crm_leads: tableExists já
         // devolve false acima, então essas duas queries nem deveriam ser
         // chamadas pra esse schema; se forem, devolver vazio é seguro.
@@ -302,6 +322,11 @@ async function main() {
     await test('caso 1: Gabriel Carvalho vem do crm_leads (sem agendamento)', () => {
       assert.ok(leadGabriel, 'lead do Gabriel deveria existir')
       assert.equal(leadGabriel!.name, 'Gabriel Carvalho')
+      assert.equal(leadGabriel!.email, 'novo@example.test')
+      assert.equal(leadGabriel!.company, 'Empresa Nova')
+      assert.equal(leadGabriel!.notes, 'nota mais recente')
+      assert.equal(leadGabriel!.productValue, 12345)
+      assert.equal(leadGabriel!.firstContactAt?.toISOString(), '2026-09-19T09:00:00.000Z')
     })
 
     await test('caso 2: Andre Rabelo vem do crm_leads (sem agendamento)', () => {

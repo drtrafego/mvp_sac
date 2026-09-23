@@ -11,13 +11,9 @@ import {
   Info,
   X,
   ExternalLink,
-  DollarSign,
-  Tag,
-  Clock,
   Sparkles,
   Bot,
   UserCog,
-  CheckCircle2,
 } from 'lucide-react'
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
@@ -31,6 +27,8 @@ export interface ChatLead {
   phone: string
   name: string | null
   email: string | null
+  company: string | null
+  notes: string | null
   eventType: string
   status: string | null
   productName: string | null
@@ -43,6 +41,7 @@ export interface ChatLead {
   trackingSource: string | null
   utmCampaign: string | null
   createdAt: string | null
+  firstContactAt: string | null
   lastMessageAt?: string | null
   lastInboundAt?: string | null
   lastOutboundAt?: string | null
@@ -408,8 +407,12 @@ export function ChatWindow({
 
           {/* Informações de Compra & Produto */}
           <div className="space-y-2">
-            <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">Produto & Venda</h4>
+            <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">CRM & Venda</h4>
             <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2 text-micro">
+              <div>
+                <span className="text-fg-faint block uppercase text-[9px]">Empresa:</span>
+                <span className="text-fg font-semibold">{lead.company || '—'}</span>
+              </div>
               <div>
                 <span className="text-fg-faint block uppercase text-[9px]">Produto:</span>
                 <span className="text-fg font-semibold">{lead.productName || 'Não especificado'}</span>
@@ -425,6 +428,16 @@ export function ChatWindow({
               <div>
                 <span className="text-fg-faint block uppercase text-[9px]">Plataforma:</span>
                 <span className="text-fg capitalize">{lead.platform || 'Checkout'}</span>
+              </div>
+              <div>
+                <span className="text-fg-faint block uppercase text-[9px]">Primeiro contato:</span>
+                <span className="text-fg">
+                  {lead.firstContactAt ? new Date(lead.firstContactAt).toLocaleString('pt-BR') : '—'}
+                </span>
+              </div>
+              <div>
+                <span className="text-fg-faint block uppercase text-[9px]">Observações:</span>
+                <p className="text-fg whitespace-pre-wrap break-words">{lead.notes || '—'}</p>
               </div>
             </div>
           </div>

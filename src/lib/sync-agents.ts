@@ -256,55 +256,88 @@ interface AgendamentoDbRow {
   telefone_norm: string | null
 }
 
-interface CrmLeadNameDbRow {
+export interface NativeCrmLeadDbRow {
+  id: string
   name: string | null
   phone: string | null
+  email: string | null
+  notes: string | null
+  company: string | null
+  value: string | number | null
+  first_contact_at: string | null
+  created_at: string | null
 }
 
-// Mapa telefone (dígitos limpos, chave cheia + últimos 9) -> nome, pras duas
-// fontes melhores do bloco 3. Só consulta quando a tabela existe no schema.
+// Mapa telefone (dígitos limpos, chave cheia + últimos 9) -> nome da agenda.
+// Só consulta quando a tabela existe no schema.
 async function loadPhoneNameMap(
   schema: string,
-  table: 'agendamentos' | 'crm_leads'
+  table: 'agendamentos'
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>()
   const exists = await tableExistsInAgentsDb(schema, table)
   if (!exists) return map
 
-  const rows =
-    table === 'agendamentos'
-      ? await queryAgentsDb<AgendamentoDbRow>(`
-          select nome, telefone, telefone_norm
-          from "${schema}".agendamentos
-          where nome is not null and trim(nome) <> ''
-        `)
-      : await queryAgentsDb<CrmLeadNameDbRow>(`
-          select name, phone
-          from "${schema}".crm_leads
-          where name is not null and trim(name) <> ''
-        `)
+  const rows = await queryAgentsDb<AgendamentoDbRow>(`
+    select nome, telefone, telefone_norm
+    from "${schema}".agendamentos
+    where nome is not null and trim(nome) <> ''
+  `)
 
   for (const r of rows || []) {
-    const rawName = table === 'agendamentos' ? (r as AgendamentoDbRow).nome : (r as CrmLeadNameDbRow).name
+    const rawName = r.nome
     const name = (rawName || '').trim()
     if (!name) continue
 
-    const rawPhone =
-      table === 'agendamentos'
-        ? (r as AgendamentoDbRow).telefone_norm || (r as AgendamentoDbRow).telefone
-        : (r as CrmLeadNameDbRow).phone
+    const rawPhone = r.telefone_norm || r.telefone
     const norm = normalizeDigits(rawPhone)
     if (!norm) continue
     const last9 = norm.length >= 9 ? norm.slice(-9) : norm
 
-    // Primeira ocorrência por telefone vence (não há orderBy garantido de
-    // "mais recente" nas duas tabelas); suficiente para o propósito de achar
-    // UM nome de verdade por telefone.
     if (!map.has(norm)) map.set(norm, name)
     if (!map.has(last9)) map.set(last9, name)
   }
 
   return map
+}
+
+// Registro mais recente do CRM por telefone. A regra de desempate é explícita
+// e estável: created_at mais novo vence; em timestamps iguais (ou nulos), o
+// maior id vence. Como o mapa mantém a primeira ocorrência, a ordenação da
+// query define deterministicamente nome e todos os metadados como um conjunto.
+async function loadNativeCrmLeadMap(schema: string): Promise<Map<string, NativeCrmLeadDbRow>> {
+  const map = new Map<string, NativeCrmLeadDbRow>()
+  const exists = await tableExistsInAgentsDb(schema, 'crm_leads')
+  if (!exists) return map
+
+  const rows = await queryAgentsDb<NativeCrmLeadDbRow>(`
+    select id, name, phone, email, notes, company, value, first_contact_at, created_at
+    from "${schema}".crm_leads
+    where phone is not null and trim(phone) <> ''
+    order by created_at desc nulls last, id::text desc
+  `)
+
+  for (const row of rows || []) {
+    const norm = normalizeDigits(row.phone)
+    if (!norm) continue
+    const last9 = norm.length >= 9 ? norm.slice(-9) : norm
+    if (!map.has(norm)) map.set(norm, row)
+    if (!map.has(last9)) map.set(last9, row)
+  }
+
+  return map
+}
+
+function crmValueInCents(value: string | number | null | undefined): number | undefined {
+  if (value == null || value === '') return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : undefined
+}
+
+function validDate(value: string | null | undefined): Date | undefined {
+  if (!value) return undefined
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : date
 }
 
 // Tags de mineração (21/09/2026): nicho, origem, temperatura e status de
@@ -736,12 +769,11 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         })
         const convs = conversationBatch?.rows || []
 
-        // Fontes melhores de nome do lead que o título da conversa (ver
-        // resolveLeadName acima). Toleram schema sem essas tabelas (Gramado,
-        // AutonomIA): loadPhoneNameMap checa a existência antes de consultar
-        // e devolve mapa vazio, sem derrubar o bloco.
+        // Fontes melhores que o título da conversa (ver resolveLeadName
+        // acima). Toleram schema sem essas tabelas: cada loader checa a
+        // existência antes de consultar e devolve mapa vazio.
         const agendamentoNameByPhone = await loadPhoneNameMap(schema, 'agendamentos')
-        const crmNameByPhone = await loadPhoneNameMap(schema, 'crm_leads')
+        const crmLeadByPhone = await loadNativeCrmLeadMap(schema)
 
         if (convs && convs.length > 0) {
           const sessionIds = convs.map(c => c.session_id).filter(Boolean)
@@ -766,6 +798,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             if (!rawPhone) continue
             const cleanPhone = normalizeDigits(rawPhone) || rawPhone
             const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
+            const crmLead = crmLeadByPhone.get(cleanPhone) || crmLeadByPhone.get(last9)
 
             let leadId = leadMap.get(`${company.id}_${cleanPhone}`) || leadMap.get(`${company.id}_${last9}`)
             const isExistingLead = !!leadId
@@ -786,7 +819,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const fallbackName = `Atendimento ${cleanPhone.slice(-4)}`
             const resolvedName = resolveLeadName({
               agendamentoName: agendamentoNameByPhone.get(cleanPhone) || agendamentoNameByPhone.get(last9),
-              crmName: crmNameByPhone.get(cleanPhone) || crmNameByPhone.get(last9),
+              crmName: crmLead?.name,
               title: cv.title,
               fallback: fallbackName,
             })
@@ -798,6 +831,11 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                   companyId: company.id,
                   phone: cleanPhone,
                   name: resolvedName.name,
+                  email: crmLead?.email?.trim().toLowerCase() || undefined,
+                  company: crmLead?.company || undefined,
+                  notes: crmLead?.notes || undefined,
+                  productValue: crmValueInCents(crmLead?.value),
+                  firstContactAt: validDate(crmLead?.first_contact_at),
                   platform: 'sac',
                   channel: channelType,
                   eventType: 'atendimento_ia',
@@ -815,6 +853,25 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               leadNameMap.set(leadId, newLead.name)
               leadsCreated++
             } else {
+              // O registro CRM escolhido pela mesma regra determinística do
+              // nome também enriquece leads já existentes. Campos ausentes na
+              // fonte não apagam dados que chegaram de outro canal.
+              if (crmLead) {
+                const crmPatch: Partial<typeof recoveryLeads.$inferInsert> = {}
+                const crmEmail = crmLead.email?.trim().toLowerCase()
+                const crmValue = crmValueInCents(crmLead.value)
+                const crmFirstContactAt = validDate(crmLead.first_contact_at)
+                if (crmEmail) crmPatch.email = crmEmail
+                if (crmLead.company) crmPatch.company = crmLead.company
+                if (crmLead.notes) crmPatch.notes = crmLead.notes
+                if (crmValue !== undefined) crmPatch.productValue = crmValue
+                if (crmFirstContactAt) crmPatch.firstContactAt = crmFirstContactAt
+                if (Object.keys(crmPatch).length > 0) {
+                  await db.update(recoveryLeads).set(crmPatch).where(eq(recoveryLeads.id, leadId))
+                  if (crmEmail) leadMap.set(`${company.id}_${crmEmail}`, leadId)
+                }
+              }
+
               // Lead já existe: só sobrescreve o nome se a fonte calculada
               // agora for de prioridade MAIOR OU IGUAL à que provavelmente
               // gerou o valor salvo (ver inferStoredLeadNameSource /
