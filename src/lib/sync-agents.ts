@@ -924,14 +924,10 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       companyMap.set(companySlug, company)
     }
 
-    // Persiste o nome de persona do bot (ex.: "Clara" pro Dr. Lucas) pra UI
-    // do Inbox parar de mostrar "Bot IA" genérico (22/09/2026). agent.name é
-    // a fonte de verdade única (não existe tela de edição manual ainda), por
-    // isso SEMPRE sincroniza, sem checar valor anterior: não há "edição do
-    // usuário" pra proteger, e um nome desatualizado aqui é sempre pior que
-    // o nome atual do Agents DB. Só grava quando muda, pra não gerar updates
-    // (e updatedAt) à toa em toda rodada de sync.
-    if (agent.name && agent.name.trim() && company.agentDisplayName !== agent.name.trim()) {
+    // Persiste o nome nativo enquanto não houver um override salvo em
+    // Configurações. Depois de uma edição manual, o nome escolhido pelo usuário
+    // tem precedência e não é revertido pelo cron.
+    if (!company.agentDisplayNameManual && agent.name && agent.name.trim() && company.agentDisplayName !== agent.name.trim()) {
       const newAgentDisplayName = agent.name.trim()
       await db
         .update(companies)

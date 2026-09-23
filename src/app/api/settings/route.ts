@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { settings } from '@/lib/db/schema'
+import { companies, settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
 import { mask } from '@/lib/settings-mask'
@@ -24,6 +24,20 @@ function resolveSecret(bodyVal: string | undefined, existingVal: string | null |
   if (!bodyVal) return existingVal ?? null
   if (bodyVal.startsWith('****')) return existingVal ?? null
   return bodyVal
+}
+
+const AGENT_DISPLAY_NAME_MAX_LENGTH = 80
+
+function parseAgentDisplayName(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') throw new Error('O nome do bot deve ser um texto.')
+
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error('O nome do bot não pode ficar vazio.')
+  if (trimmed.length > AGENT_DISPLAY_NAME_MAX_LENGTH) {
+    throw new Error(`O nome do bot deve ter no máximo ${AGENT_DISPLAY_NAME_MAX_LENGTH} caracteres.`)
+  }
+  return trimmed
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -103,7 +117,23 @@ export async function GET(): Promise<NextResponse> {
 export async function PUT(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
   const body = await req.json()
+  let agentDisplayName: string | undefined
+  try {
+    agentDisplayName = parseAgentDisplayName(body.agentDisplayName)
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Nome do bot inválido.' },
+      { status: 400 },
+    )
+  }
   const [existing] = await db.select().from(settings).where(eq(settings.companyId, company.id))
+
+  if (agentDisplayName !== undefined) {
+    await db
+      .update(companies)
+      .set({ agentDisplayName, agentDisplayNameManual: true, updatedAt: new Date() })
+      .where(eq(companies.id, company.id))
+  }
 
   if (existing) {
     const [updated] = await db
@@ -143,7 +173,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       })
       .where(eq(settings.id, existing.id))
       .returning()
-    return NextResponse.json(updated)
+    return NextResponse.json({ ...updated, agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
   }
 
   const [created] = await db
@@ -183,5 +213,5 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       updatedAt: new Date(),
     })
     .returning()
-  return NextResponse.json(created)
+  return NextResponse.json({ ...created, agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
 }
