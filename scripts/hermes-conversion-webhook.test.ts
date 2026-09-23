@@ -469,6 +469,34 @@ async function main() {
     })
 
     // ── JSON inválido -> 400, auditado ──────────────────────────────────
+    await test('atualização e cancelamento chegam ao SAC sem duplicar conversão Meta', async () => {
+      const phone = '11933332222'
+      const formattedPhone = '5511933332222'
+      const callsBefore = sendConversionCalls.length
+
+      const updateResponse = await POST(makeRequest('gramado-plaza-teste', {
+        phone, acao: 'updated', reservaId: 'reserva-sintetica-1', status: 'pendente',
+        dataReserva: '2026-09-30', horario: '20:30',
+      }), { params: Promise.resolve({ slug: 'gramado-plaza-teste' }) })
+      assert.equal(updateResponse.status, 200)
+      assert.equal(sendConversionCalls.length, callsBefore)
+
+      const cancelResponse = await POST(makeRequest('gramado-plaza-teste', {
+        phone, acao: 'cancelled', reservaId: 'reserva-sintetica-1', status: 'cancelou',
+      }), { params: Promise.resolve({ slug: 'gramado-plaza-teste' }) })
+      assert.equal(cancelResponse.status, 200)
+      assert.equal(sendConversionCalls.length, callsBefore)
+
+      const [lead] = await testDb.select().from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.phone, formattedPhone))
+      assert.equal(lead.pipelineStage, 'perdido')
+      assert.equal(lead.status, 'cancelled')
+
+      const logs = await testDb.select().from(schema.webhookReceived)
+      assert.ok(logs.some(log => log.event === 'reserva_atualizada'))
+      assert.ok(logs.some(log => log.event === 'reserva_cancelada'))
+    })
+
     await test('JSON inválido -> 400', async () => {
       const url = 'https://sac.example.com/api/webhooks/hermes/gramado-plaza-teste/conversion'
       const req = new RealNextRequest(url, {

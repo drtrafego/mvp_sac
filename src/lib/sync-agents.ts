@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { appointmentMirror, companies, settings, syncCursors, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
+import { appointmentMirror, companies, settings, syncCursors, recoveryLeads, whatsappMessages, gramadoReservations } from '@/lib/db/schema'
 import { queryAgentsDb, getAgentsDbUrl } from '@/lib/db/agents-db'
 import { eq, and, sql, type SQL } from 'drizzle-orm'
 import { backfillFirstContactFromMessages } from '@/lib/leads'
@@ -165,10 +165,38 @@ export interface AppointmentDbRow {
   __sync_cursor_id?: string | number | null
 }
 
+export interface GramadoReservationDbRow {
+  reserva_id: string
+  data: string
+  horario_reservado: string | null
+  horario_chegada: string | null
+  telefone_norm: string | null
+  pessoas: number | null
+  valor_total: string | number | null
+  status: string
+  observacoes: string | null
+  mesas_unificadas: boolean | null
+  atualizado_em: string | null
+  criado_em: string | null
+  sincronizado_em: string | null
+  __sync_sort_at?: string | Date | null
+  __sync_cursor_id?: string | number | null
+}
+
 interface NativeCrmStateDbRow {
   id: string
   column_id: string
   column_title: string
+  phone: string | null
+  status: string | null
+  follow_up_date: string | null
+  follow_up_note: string | null
+}
+
+interface GramadoCrmLeadDbRow {
+  id: string
+  column_id: string | null
+  column_title: string | null
   phone: string | null
   status: string | null
   follow_up_date: string | null
@@ -411,7 +439,7 @@ const SYNC_BACKFILL_BATCH_SIZE = 300
 const SYNC_NEW_BATCH_SIZE = 5000
 const EPOCH_CURSOR_ISO = '1970-01-01T00:00:00.000Z'
 
-type SyncCursorSource = 'agent_conversations' | 'agent_conversation_metadata' | 'outreach_convos' | 'crm_leads' | 'ctwa_referrals' | 'appointments'
+type SyncCursorSource = 'agent_conversations' | 'agent_conversation_metadata' | 'outreach_convos' | 'crm_leads' | 'ctwa_referrals' | 'appointments' | 'gramado_reservas'
 type SyncCursorRow = typeof syncCursors.$inferSelect
 
 interface CursorPosition {
@@ -658,6 +686,28 @@ function nativePipelineStage(title: string): string {
   return known[normalized] || normalized.replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'novo_contato'
 }
 
+function gramadoReservationCursorPosition(row: GramadoReservationDbRow): CursorPosition | null {
+  return buildCursorPosition(
+    row.__sync_sort_at ?? row.atualizado_em ?? row.sincronizado_em ?? row.criado_em ?? EPOCH_CURSOR_ISO,
+    row.__sync_cursor_id ?? row.reserva_id
+  )
+}
+
+function gramadoPipelineStage(value: string | null | undefined): string {
+  const normalized = (value || '').trim().toLocaleLowerCase('pt-BR')
+  if (normalized.includes('reserva confirmada')) return 'agendado'
+  if (normalized.includes('perdido')) return 'perdido'
+  if (normalized.includes('novo contato')) return 'novo_contato'
+  return normalized.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'novo_contato'
+}
+
+function gramadoLeadStatus(value: string | null | undefined): string {
+  const normalized = (value || '').trim().toLocaleLowerCase('pt-BR')
+  if (normalized.includes('reserva confirmada')) return 'completed'
+  if (normalized.includes('perdido')) return 'lost'
+  return 'in_conversation'
+}
+
 function ctwaTsToDate(value: string | number | null | undefined): Date | null {
   if (value == null || value === '') return null
   const epoch = Number(value)
@@ -783,6 +833,10 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       agentInputTokens: recoveryLeads.agentInputTokens,
       agentOutputTokens: recoveryLeads.agentOutputTokens,
       agentSyncedAt: recoveryLeads.agentSyncedAt,
+      status: recoveryLeads.status,
+      pipelineStage: recoveryLeads.pipelineStage,
+      followUpDate: recoveryLeads.followUpDate,
+      followUpNote: recoveryLeads.followUpNote,
     })
     .from(recoveryLeads)
 
@@ -799,6 +853,12 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     outputTokens: number | null
     syncedAt: Date | null
   }>()
+  const leadOperationalMap = new Map<number, {
+    status: string | null
+    pipelineStage: string | null
+    followUpDate: Date | null
+    followUpNote: string | null
+  }>()
   for (const row of existingLeadsRows) {
     leadNameMap.set(row.id, row.name)
     leadConversationMetadata.set(row.id, {
@@ -807,6 +867,12 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       inputTokens: row.agentInputTokens,
       outputTokens: row.agentOutputTokens,
       syncedAt: row.agentSyncedAt,
+    })
+    leadOperationalMap.set(row.id, {
+      status: row.status,
+      pipelineStage: row.pipelineStage,
+      followUpDate: row.followUpDate,
+      followUpNote: row.followUpNote,
     })
     if (row.phone) {
       const clean = row.phone.replace(/\D/g, '') || row.phone
@@ -1095,6 +1161,12 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 outputTokens: newLead.agentOutputTokens,
                 syncedAt: newLead.agentSyncedAt,
               })
+              leadOperationalMap.set(leadId, {
+                status: newLead.status,
+                pipelineStage: newLead.pipelineStage,
+                followUpDate: newLead.followUpDate,
+                followUpNote: newLead.followUpNote,
+              })
               leadsCreated++
             } else {
               // O registro CRM escolhido pela mesma regra determinística do
@@ -1333,6 +1405,157 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           }
         } catch (mirrorErr) {
           details.push(`Aviso ao sincronizar agenda/CRM nativo do Dr. Lucas: ${String(mirrorErr)}`)
+        }
+      }
+
+      // 3.1. Gramado: espelho operacional de reservas e estado nativo do CRM.
+      // Reservas usam cursor por atualizado_em + reserva_id: uma alteração
+      // de status/horário entra como novidade mesmo quando a reserva foi criada
+      // meses atrás. crm_leads não possui updated_at na fonte real, portanto
+      // seu conjunto pequeno é reconciliado por estado a cada rodada.
+      if (schema === 'gramadoplazza' && companySlug === 'gramado-plaza') {
+        try {
+          const reservationSortExpr = `coalesce(atualizado_em, sincronizado_em, criado_em, '${EPOCH_CURSOR_ISO}'::timestamptz)`
+          const reservationIdExpr = 'reserva_id::text'
+          const selectReservationColumns = `
+            reserva_id, data, horario_reservado, horario_chegada, telefone_norm,
+            pessoas, valor_total, status, observacoes, mesas_unificadas,
+            atualizado_em, criado_em, sincronizado_em,
+            ${reservationSortExpr} as __sync_sort_at,
+            ${reservationIdExpr} as __sync_cursor_id
+          `
+          const reservationBatch = await loadTimedSyncBatch<GramadoReservationDbRow>({
+            companyId: company.id,
+            source: 'gramado_reservas',
+            sourceKey: schema,
+            getPosition: gramadoReservationCursorPosition,
+            fetchNewRows: (cursor) => queryAgentsDb<GramadoReservationDbRow>(
+              `
+                select ${selectReservationColumns}
+                from "${schema}".reservas
+                where (${reservationSortExpr}, ${reservationIdExpr}) > ($1::timestamptz, $2::text)
+                order by ${reservationSortExpr} asc, ${reservationIdExpr} asc
+                limit ${SYNC_NEW_BATCH_SIZE}
+              `,
+              [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
+            ),
+            fetchBackfillRows: (cursor) => {
+              const hasBackfillCursor = !!cursor.backfillBeforeAt
+              return queryAgentsDb<GramadoReservationDbRow>(
+                `
+                  select ${selectReservationColumns}
+                  from "${schema}".reservas
+                  ${hasBackfillCursor ? `where (${reservationSortExpr}, ${reservationIdExpr}) < ($1::timestamptz, $2::text)` : ''}
+                  order by ${reservationSortExpr} desc, ${reservationIdExpr} desc
+                  limit ${SYNC_BACKFILL_BATCH_SIZE}
+                `,
+                hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
+              )
+            },
+          })
+
+          for (const reservation of reservationBatch?.rows || []) {
+            const phoneNorm = normalizeDigits(reservation.telefone_norm)
+            const last9 = phoneNorm.length >= 9 ? phoneNorm.slice(-9) : phoneNorm
+            const leadId = phoneNorm
+              ? leadMap.get(`${company.id}_${phoneNorm}`) || leadMap.get(`${company.id}_${last9}`) || null
+              : null
+            const atualizadoEm = parseCursorDate(
+              reservation.atualizado_em || reservation.sincronizado_em || reservation.criado_em
+            )
+            const values: typeof gramadoReservations.$inferInsert = {
+              companyId: company.id,
+              leadId,
+              reservaId: String(reservation.reserva_id),
+              phoneNorm: phoneNorm || null,
+              data: String(reservation.data).slice(0, 10),
+              horarioReservado: reservation.horario_reservado,
+              horarioChegada: reservation.horario_chegada,
+              pessoas: reservation.pessoas,
+              valorTotal: reservation.valor_total == null ? null : String(reservation.valor_total),
+              status: reservation.status,
+              observacoes: reservation.observacoes,
+              mesasUnificadas: reservation.mesas_unificadas,
+              atualizadoEm,
+              syncedAt: new Date(),
+            }
+
+            await db
+              .insert(gramadoReservations)
+              .values(values)
+              .onConflictDoUpdate({
+                target: [gramadoReservations.companyId, gramadoReservations.reservaId],
+                set: {
+                  leadId: values.leadId,
+                  phoneNorm: values.phoneNorm,
+                  data: values.data,
+                  horarioReservado: values.horarioReservado,
+                  horarioChegada: values.horarioChegada,
+                  pessoas: values.pessoas,
+                  valorTotal: values.valorTotal,
+                  status: values.status,
+                  observacoes: values.observacoes,
+                  mesasUnificadas: values.mesasUnificadas,
+                  atualizadoEm: values.atualizadoEm,
+                  syncedAt: values.syncedAt,
+                },
+              })
+          }
+          await reservationBatch?.markProcessed()
+          if (reservationBatch?.rows.length) {
+            details.push(`${reservationBatch.rows.length} reservas do Gramado reconciliadas.`)
+          }
+
+          const nativeCrmLeads = await queryAgentsDb<GramadoCrmLeadDbRow>(`
+            select l.id, l.column_id, c.title as column_title, l.phone, l.status,
+                   l.follow_up_date, l.follow_up_note
+            from "${schema}".crm_leads l
+            left join "${schema}".crm_columns c on c.id = l.column_id
+          `)
+
+          let nativeCrmUpdates = 0
+          for (const nativeLead of nativeCrmLeads || []) {
+            const phone = normalizeDigits(nativeLead.phone)
+            if (!phone) continue
+            const last9 = phone.length >= 9 ? phone.slice(-9) : phone
+            const leadId = leadMap.get(`${company.id}_${phone}`) || leadMap.get(`${company.id}_${last9}`)
+            if (!leadId) continue
+
+            const sourceStage = nativeLead.column_title || nativeLead.status
+            const next = {
+              pipelineStage: gramadoPipelineStage(sourceStage),
+              status: gramadoLeadStatus(nativeLead.status || nativeLead.column_title),
+              followUpDate: nativeLead.follow_up_date ? new Date(nativeLead.follow_up_date) : null,
+              followUpNote: nativeLead.follow_up_note || null,
+            }
+            const current = leadOperationalMap.get(leadId)
+            const currentFollowUpMs = current?.followUpDate?.getTime() ?? null
+            const nextFollowUpMs = next.followUpDate && !Number.isNaN(next.followUpDate.getTime())
+              ? next.followUpDate.getTime()
+              : null
+            if (
+              current?.pipelineStage === next.pipelineStage &&
+              current?.status === next.status &&
+              currentFollowUpMs === nextFollowUpMs &&
+              current?.followUpNote === next.followUpNote
+            ) continue
+
+            await db.update(recoveryLeads).set({
+              pipelineStage: next.pipelineStage,
+              status: next.status,
+              followUpDate: nextFollowUpMs == null ? null : next.followUpDate,
+              followUpNote: next.followUpNote,
+              updatedAt: new Date(),
+            }).where(eq(recoveryLeads.id, leadId))
+            leadOperationalMap.set(leadId, {
+              ...next,
+              followUpDate: nextFollowUpMs == null ? null : next.followUpDate,
+            })
+            nativeCrmUpdates++
+          }
+          if (nativeCrmUpdates) details.push(`${nativeCrmUpdates} leads do Gramado atualizados pelo CRM nativo.`)
+        } catch (reservationErr) {
+          details.push(`Aviso ao sincronizar reservas/CRM do Gramado: ${String(reservationErr)}`)
         }
       }
     }

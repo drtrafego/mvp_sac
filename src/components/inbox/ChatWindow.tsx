@@ -60,6 +60,18 @@ export interface ChatLead {
   agentInputTokens?: number | null
   agentOutputTokens?: number | null
   agentSyncedAt?: string | null
+  reservation?: {
+    id: string
+    date: string
+    reservedTime: string | null
+    arrivalTime: string | null
+    people: number | null
+    totalValue: string | null
+    status: string
+    notes: string | null
+    unifiedTables: boolean | null
+    updatedAt: string | null
+  } | null
 }
 
 export interface MirroredAppointment {
@@ -593,6 +605,55 @@ export function ChatWindow({
               </div>
             </div>
           )}
+
+          {lead.reservation && (() => {
+            const isCancelled = lead.reservation.status.toLocaleLowerCase('pt-BR').includes('cancel')
+            const statusLabel = isCancelled ? 'Cancelada' : lead.reservation.status.replace(/_/g, ' ')
+            const value = lead.reservation.totalValue == null
+              ? 'Não informado'
+              : Number(lead.reservation.totalValue).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+            const date = new Date(`${lead.reservation.date}T12:00:00`).toLocaleDateString('pt-BR')
+            const time = lead.reservation.reservedTime?.slice(0, 5) || 'Não informado'
+            return (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">Reserva real</h4>
+                  <span className={cn(
+                    'text-[10px] font-bold px-2 py-0.5 rounded-full border capitalize',
+                    isCancelled
+                      ? 'bg-red-500/10 text-red-500 border-red-500/30'
+                      : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
+                  )}>
+                    {statusLabel}
+                  </span>
+                </div>
+                <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 grid grid-cols-2 gap-3 text-micro">
+                  <div>
+                    <span className="text-fg-faint block uppercase text-[9px]">Data</span>
+                    <span className="text-fg font-semibold">{date}</span>
+                  </div>
+                  <div>
+                    <span className="text-fg-faint block uppercase text-[9px]">Horário</span>
+                    <span className="text-fg font-semibold">{time}</span>
+                  </div>
+                  <div>
+                    <span className="text-fg-faint block uppercase text-[9px]">Pessoas</span>
+                    <span className="text-fg font-semibold">{lead.reservation.people ?? 'Não informado'}</span>
+                  </div>
+                  <div>
+                    <span className="text-fg-faint block uppercase text-[9px]">Valor</span>
+                    <span className="text-brand-ink font-bold font-mono">{value}</span>
+                  </div>
+                  {lead.reservation.notes && (
+                    <div className="col-span-2">
+                      <span className="text-fg-faint block uppercase text-[9px]">Observações</span>
+                      <span className="text-fg whitespace-pre-wrap">{lead.reservation.notes}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
 
           <div className="space-y-2">
             <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">CRM & Venda</h4>
