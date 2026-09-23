@@ -98,11 +98,17 @@ export default async function OrigensPage({ searchParams }: PageProps) {
   const contactCondition = businessModel === 'infoproduto' ? undefined : isNotNull(recoveryLeads.firstContactAt)
   const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter, contactCondition)
 
+  // Espelho do gate acima: infoproduto não tem o conceito de "aguardando
+  // abordagem por WhatsApp" (achado do @qa na revisão do PR irmão — toda
+  // venda de checkout tem first_contact_at nulo por definição, então sem
+  // este gate o card contaria vendas JÁ APROVADAS como não abordadas).
+  const notContactedCondition = businessModel === 'infoproduto' ? sql`false` : isNull(recoveryLeads.firstContactAt)
+
   const [[awaitingRow], rawOrigensRows] = await Promise.all([
     db
       .select({ total: sql<number>`cast(count(*) as int)` })
       .from(recoveryLeads)
-      .where(and(eq(recoveryLeads.companyId, cid), dateFilter, isNull(recoveryLeads.firstContactAt))),
+      .where(and(eq(recoveryLeads.companyId, cid), dateFilter, notContactedCondition)),
     db
       .select({
         rawSource: recoveryLeads.trackingSource,

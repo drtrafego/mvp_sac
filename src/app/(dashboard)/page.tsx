@@ -91,7 +91,11 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   // conversa 1:1 humana: infoproduto nasce de webhook de checkout e o evento
   // já é o fato de negócio real (ver src/lib/dashboard/lead-stats.ts).
   const contactedWhere = businessModel === 'infoproduto' ? baseWhere : and(baseWhere, isNotNull(recoveryLeads.firstContactAt))
-  const notContactedWhere = and(baseWhere, isNull(recoveryLeads.firstContactAt))
+  // Espelho do gate acima: infoproduto não tem o conceito de "aguardando
+  // abordagem por WhatsApp" (achado do @qa na revisão do PR — toda venda de
+  // checkout tem first_contact_at nulo por definição, então sem este gate
+  // "Aguardando Abordagem" contaria vendas JÁ APROVADAS como não abordadas).
+  const notContactedWhere = businessModel === 'infoproduto' ? sql`false` : and(baseWhere, isNull(recoveryLeads.firstContactAt))
 
   const rangeDurationMs = toDate.getTime() - fromDate.getTime()
   const prevFrom = new Date(fromDate.getTime() - rangeDurationMs)
