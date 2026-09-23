@@ -373,7 +373,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         {/* Canais e Plataformas Conectadas (100% Clicáveis) */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line-subtle text-micro text-fg-subtle">
           <Link href="/canais" className="font-semibold text-fg hover:text-brand-ink transition-colors flex items-center gap-1 cursor-pointer">
-            Canais Ativos:
+            Canais ativos das conversas:
           </Link>
           <Link href="/canais" className="inline-flex items-center gap-1 bg-surface-raised border border-line-subtle px-2 py-0.5 rounded text-fg-muted hover:text-fg hover:border-brand-solid/40 transition-colors cursor-pointer">
             <MessageSquare size={12} className="text-emerald-400" /> WhatsApp Oficial
