@@ -750,6 +750,37 @@ export function realCampaignSource(value: string | null | undefined): string | n
   return source
 }
 
+// Usado só pelo bloco 4 (mineração), pra decidir se o trackingSource atual de
+// um lead que a mineração confirma ter abordado (existe em outreach_convos)
+// precisa ser corrigido pra 'mineracao_prospeccao'. Mesma lista de palavras
+// de origins.ts (normalizeOrigin, bloco "1. Mineração") e
+// inbox-channel-filter.ts (CATEGORY_RULES 'mineracao'): se mudar lá, mudar
+// aqui também (já divergiu uma vez em produção, ver comentários nesses dois
+// arquivos). Só dois casos são protegidos contra a correção (a atribuição já
+// é mineração, ou já é um anúncio pago real e mais específico, ex.: CTWA);
+// qualquer outro valor (inclusive defaults genéricos como 'agente_ia'/
+// 'atendimento_ia' do bloco 3, ou um nativo do CRM tipo 'nina_outreach' do
+// bloco 5) é sobrescrito, porque a fonte de verdade aqui É o outreach_convos
+// da mineração, mais confiável que um default genérico de outro bloco.
+function hasMineracaoWordBoundary(value: string | null | undefined, needle: string): boolean {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^a-z])${escaped}`, 'i').test(value || '')
+}
+
+export function needsMineracaoTrackingSourceFix(currentTrackingSource: string | null | undefined): boolean {
+  const alreadyMineracao = ['mineracao', 'prospeccao', 'miner', 'mining', 'places'].some((needle) =>
+    hasMineracaoWordBoundary(currentTrackingSource, needle)
+  )
+  if (alreadyMineracao) return false
+
+  const alreadyRealAds = ['meta_ads', 'fb_ads', 'facebook_ads', 'google_ads', 'gclid', 'adwords', 'gads'].some(
+    (needle) => hasMineracaoWordBoundary(currentTrackingSource, needle)
+  )
+  if (alreadyRealAds) return false
+
+  return true
+}
+
 export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   const details: string[] = []
   let companiesCreated = 0
@@ -828,6 +859,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       phone: recoveryLeads.phone,
       email: recoveryLeads.email,
       name: recoveryLeads.name,
+      trackingSource: recoveryLeads.trackingSource,
       agentConversationId: recoveryLeads.agentConversationId,
       agentCostUsd: recoveryLeads.agentCostUsd,
       agentInputTokens: recoveryLeads.agentInputTokens,
@@ -846,6 +878,20 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   // shouldUpdateLeadName acima). Mantido em memória e atualizado localmente
   // a cada troca nesta mesma rodada, pra não precisar reler do banco.
   const leadNameMap = new Map<number, string | null>()
+  // trackingSource atualmente salvo por lead (id -> trackingSource), usado só
+  // pelo bloco 4 (mineração) pra decidir se um lead que a mineração confirma
+  // ter abordado (existe em outreach_convos) precisa ter a origem corrigida
+  // pra mineração (ver needsMineracaoTrackingSourceFix abaixo). Bug real
+  // encontrado em produção (23/09/2026, diagnóstico ad-hoc): quando o mesmo
+  // telefone aparece primeiro no bloco 3 (agent_conversations, trackingSource
+  // fixo 'agente_ia') ou no bloco 5 (crm_leads, pode reatribuir pra um valor
+  // nativo tipo 'nina_outreach'), o lead nasce com isExistingLead=true na hora
+  // em que o bloco 4 processa a mesma pessoa via outreach_convos — e o branch
+  // de lead já existente do bloco 4 só fazia merge de miningTags, nunca
+  // corrigia trackingSource. Resultado: o lead ficava pra sempre fora da aba
+  // Mineração (origins.ts / inbox-channel-filter.ts), mesmo a mineração tendo
+  // esse contato confirmado em outreach_convos.
+  const leadTrackingSourceMap = new Map<number, string | null>()
   const leadConversationMetadata = new Map<number, {
     conversationId: string | null
     costUsd: string | null
@@ -861,6 +907,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   }>()
   for (const row of existingLeadsRows) {
     leadNameMap.set(row.id, row.name)
+    leadTrackingSourceMap.set(row.id, row.trackingSource)
     leadConversationMetadata.set(row.id, {
       conversationId: row.agentConversationId,
       costUsd: row.agentCostUsd == null ? null : String(Number(row.agentCostUsd)),
@@ -1704,18 +1751,38 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               leadMap.set(`${comp.id}_${phone}`, leadId)
               if (phone.length >= 9) leadMap.set(`${comp.id}_${last9}`, leadId)
             }
+            leadTrackingSourceMap.set(leadId, 'mineracao_prospeccao')
             leadsCreated++
-          } else if (hasMiningTags) {
-            // Lead já existia: faz merge (||) em cima do que já está gravado,
-            // nunca overwrite cego. Assim uma sincronização com só "origem"
-            // disponível não apaga um "nicho" já gravado numa passada anterior.
-            await db
-              .update(recoveryLeads)
-              .set({
-                miningTags: sql`COALESCE(${recoveryLeads.miningTags}, '{}'::jsonb) || ${JSON.stringify(miningTagsPatch)}::jsonb`,
-                updatedAt: new Date(),
-              })
-              .where(eq(recoveryLeads.id, leadId))
+          } else {
+            // Lead já existia (criado antes por outro bloco, ex.: bloco 3 via
+            // agent_conversations, ou bloco 5 via crm_leads). Bug real
+            // confirmado em produção (23/09/2026, 40 leads da AutonomIA): o
+            // bloco 3 roda ANTES deste bloco 4 no mesmo agente e cria o lead
+            // primeiro com trackingSource genérico ('agente_ia') ou o bloco 5
+            // depois reatribui pra um valor nativo do CRM ('nina_outreach');
+            // como este branch só fazia merge de miningTags, o lead ficava
+            // pra sempre fora da aba Mineração mesmo estando confirmado em
+            // outreach_convos. needsMineracaoTrackingSourceFix só poupa quem
+            // já é mineração ou já tem atribuição de anúncio pago real (mais
+            // específica); todo o resto é corrigido pra mineracao_prospeccao,
+            // porque outreach_convos é a fonte de verdade de quem a mineração
+            // abordou de fato, independente da pessoa já ter respondido.
+            const updatePatch: { miningTags?: SQL; trackingSource?: string; updatedAt: Date } = {
+              updatedAt: new Date(),
+            }
+            if (hasMiningTags) {
+              // Merge (||) em cima do que já está gravado, nunca overwrite
+              // cego: uma sincronização com só "origem" disponível não pode
+              // apagar um "nicho" já gravado numa passada anterior.
+              updatePatch.miningTags = sql`COALESCE(${recoveryLeads.miningTags}, '{}'::jsonb) || ${JSON.stringify(miningTagsPatch)}::jsonb`
+            }
+            if (needsMineracaoTrackingSourceFix(leadTrackingSourceMap.get(leadId))) {
+              updatePatch.trackingSource = 'mineracao_prospeccao'
+            }
+            if (updatePatch.miningTags !== undefined || updatePatch.trackingSource !== undefined) {
+              await db.update(recoveryLeads).set(updatePatch).where(eq(recoveryLeads.id, leadId))
+              if (updatePatch.trackingSource) leadTrackingSourceMap.set(leadId, updatePatch.trackingSource)
+            }
           }
 
           const convoMsgs = msgsByConvo.get(oc.id) || []
