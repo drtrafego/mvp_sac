@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import path from 'node:path'
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
-import { eq } from 'drizzle-orm'
+import { eq, and, isNull, sql as drizzleSql } from 'drizzle-orm'
 import * as schema from '../src/lib/db/schema'
 import { dashboardLeadStatsSelect, gramadoDashboardCardCounts } from '../src/lib/dashboard/lead-stats'
 
@@ -129,6 +129,8 @@ async function main() {
       { id: 10, name: 'Checkout Teste', slug: 'checkout-teste' },
       { id: 11, name: 'Isabela Fanini Teste', slug: 'isabela-fanini-teste' },
       { id: 12, name: 'Checkout Sem Conversa Teste', slug: 'checkout-sem-conversa-teste' },
+      { id: 13, name: 'Isabela Fanini Teste 2', slug: 'isabela-fanini-teste-2' },
+      { id: 14, name: 'Isabela Fanini Teste 3', slug: 'isabela-fanini-teste-3' },
     ])
 
     await test('Gramado conta status real "Reserva Confirmada" sem duplicar no funil', async () => {
@@ -406,6 +408,92 @@ async function main() {
       assert.equal(Number(stats.directValueCents), 7000)
       assert.equal(stats.recoveredCount, 1)
       assert.equal(Number(stats.recoveredValueCents), 8000)
+    })
+
+    await test('infoproduto: "Leads Totais" e "fechadosTotal" tambem nao podem depender de first_contact_at (o fix acima so cobre o funil de checkout)', async () => {
+      // O fix de boleto/pix/carrinho/cartao/aprovada acima nao mexe em
+      // `total`/`aguardandoAbordagem`/`respondeuTotal`/`avancouTotal`: sao
+      // campos do funil de CONVERSA, que continuam corretos pra gramado/
+      // lucas/agencia. Mas pra infoproduto "total" e o KPI "Leads Totais" do
+      // dashboard, e ele tambem exigia first_contact_at is not null, entao
+      // ficava zerado pelo MESMO motivo (webhook de checkout nunca chama
+      // markLeadContacted). Reproduz o cenario real da Isabela Fanini
+      // (company_id=2): 100% dos leads do periodo sem first_contact_at.
+      await testDb.insert(schema.recoveryLeads).values([
+        lead(13, '701', { platform: 'hotmart', status: 'completed', eventType: 'compra_aprovada', firstContactAt: null, productValue: 43604 }),
+        lead(13, '702', { platform: 'hotmart', status: 'completed', eventType: 'compra_aprovada', firstContactAt: null, productValue: 19700 }),
+        lead(13, '703', { platform: 'kiwify', status: 'pending', eventType: 'carrinho_abandonado', firstContactAt: null }),
+        lead(13, '704', { platform: 'kiwify', status: 'pending', eventType: 'carrinho_abandonado', firstContactAt: null }),
+        lead(13, '705', { platform: 'greenn', status: 'pending', eventType: 'pix', firstContactAt: null, productValue: 11400 }),
+        lead(13, '706', { platform: 'zouti', status: 'pending', eventType: 'boleto', firstContactAt: null }),
+        // Um lead que POR ACASO foi contatado (ex.: sequencia de recuperacao
+        // ativa que rodou): deve continuar contando tambem, sem duplicar.
+        lead(13, '707', { platform: 'hotmart', status: 'pending', eventType: 'cartao_recusado', firstContactAt: NOW }),
+      ])
+
+      const [stats] = await testDb
+        .select(dashboardLeadStatsSelect('infoproduto'))
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.companyId, 13))
+
+      assert.equal(stats.total, 7, '"Leads Totais" conta TODO evento de checkout, contatado ou nao')
+      assert.equal(stats.fechadosTotal, 2, 'compra_aprovada conta como negocio ganho independente de contato')
+
+      // Contraste de controle: o MESMO gate continua valendo para modelos
+      // conversacionais (gramado/lucas/agencia), onde "abordado de verdade"
+      // ainda e a regra certa. Reaproveita os leads da empresa 7 (agencia)
+      // que ja tem 1 lead sem first_contact_at (407): ele TEM que continuar
+      // fora do total, senao a mudanca acima regrediu pra outro modelo.
+      const [agenciaStats] = await testDb
+        .select(dashboardLeadStatsSelect('agencia'))
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.companyId, 7))
+      assert.equal(agenciaStats.total, 6, 'agencia continua exigindo first_contact_at (nao regrediu)')
+    })
+
+    await test('infoproduto: "Aguardando Abordagem" nao pode contar venda ja aprovada como nao abordada (achado do @qa na revisao do PR)', async () => {
+      // Bug encontrado pelo @qa: o fix do contactGate corrigiu quem CONTA
+      // como contatado, mas a query IRMA (quem NAO foi contatado, que
+      // alimenta o card "Aguardando Abordagem" no dashboard e em /origens)
+      // continuava sem gate. Como TODO lead de infoproduto tem
+      // first_contact_at nulo por definicao (webhook de checkout nunca
+      // chama markLeadContacted), o card contava ate venda JA APROVADA como
+      // "aguardando abordagem". Reproduz a mesma condicao usada em
+      // src/app/(dashboard)/page.tsx (notContactedWhere) e
+      // src/app/(dashboard)/origens/page.tsx (notContactedCondition).
+      await testDb.insert(schema.recoveryLeads).values([
+        lead(14, '801', { platform: 'hotmart', status: 'completed', eventType: 'compra_aprovada', firstContactAt: null, productValue: 10000 }),
+        lead(14, '802', { platform: 'hotmart', status: 'completed', eventType: 'compra_aprovada', firstContactAt: null, productValue: 20000 }),
+        lead(14, '803', { platform: 'kiwify', status: 'pending', eventType: 'carrinho_abandonado', firstContactAt: null }),
+        lead(14, '804', { platform: 'kiwify', status: 'pending', eventType: 'boleto', firstContactAt: null }),
+        lead(14, '805', { platform: 'greenn', status: 'pending', eventType: 'pix', firstContactAt: null }),
+      ])
+
+      const baseWhere = eq(schema.recoveryLeads.companyId, 14)
+
+      // Mesma logica de src/app/(dashboard)/page.tsx: businessModel==='infoproduto' -> sql`false`.
+      const [infoprodutoAwaiting] = await testDb
+        .select({ total: drizzleSql<number>`cast(count(*) as int)` })
+        .from(schema.recoveryLeads)
+        .where(and(baseWhere, drizzleSql`false`))
+      assert.equal(infoprodutoAwaiting.total, 0, 'infoproduto nao tem "aguardando abordagem por WhatsApp": nenhuma linha deve contar, nem as pendentes')
+
+      // Controle: SEM o fix (isNull puro, como o codigo estava antes), as 5
+      // linhas contariam, inclusive as 2 compra_aprovada ja fechadas —
+      // prova que o bug era real antes desta correcao.
+      const [semFix] = await testDb
+        .select({ total: drizzleSql<number>`cast(count(*) as int)` })
+        .from(schema.recoveryLeads)
+        .where(and(baseWhere, isNull(schema.recoveryLeads.firstContactAt)))
+      assert.equal(semFix.total, 5, 'confirma que SEM o gate o card ficaria inflado com vendas ja aprovadas (bug real que o @qa achou)')
+
+      // Contraste: modelo conversacional (agencia) continua usando isNull
+      // puro, sem regressao — reaproveita empresa 7.
+      const [agenciaAwaiting] = await testDb
+        .select({ total: drizzleSql<number>`cast(count(*) as int)` })
+        .from(schema.recoveryLeads)
+        .where(and(eq(schema.recoveryLeads.companyId, 7), isNull(schema.recoveryLeads.firstContactAt)))
+      assert.equal(agenciaAwaiting.total, 1, 'agencia continua contando "aguardando abordagem" normalmente (nao regrediu)')
     })
   } finally {
     await sql.end({ timeout: 2 })

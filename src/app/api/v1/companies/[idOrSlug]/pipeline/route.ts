@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
+import { inferPipelineStage } from '@/lib/pipeline-stage'
 import { eq, desc } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
@@ -35,7 +36,11 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   }
 
   for (const l of leads) {
-    const stageKey = l.pipelineStage || 'novo_contato'
+    // Mesma inferência usada no Kanban (pipeline_stage explícito > eventType
+    // de checkout > status). Antes desta correção, esta rota ignorava
+    // eventType e jogava TODA venda aprovada (compra_aprovada) sem
+    // pipeline_stage em "novo_contato", escondendo vendas reais do funil.
+    const stageKey = inferPipelineStage(l)
     if (!columns[stageKey]) {
       columns[stageKey] = { stage: stageKey, totalValue: 0, count: 0, leads: [] }
     }

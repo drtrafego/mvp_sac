@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { normalizeOrigin, type OriginCategory } from '@/lib/origins'
+import { resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
 
 interface PageProps {
   searchParams: Promise<{ from?: string; to?: string; period?: string; source?: string }>
@@ -88,15 +89,26 @@ export default async function OrigensPage({ searchParams }: PageProps) {
 
   const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
   // Mesma decisão de negócio do dashboard: só conta quem já foi ABORDADO de
-  // verdade (mensagem real trocada). Lead sem first_contact_at existe no
-  // banco mas fica fora de todo total/breakdown desta página.
-  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter, isNotNull(recoveryLeads.firstContactAt))
+  // verdade (mensagem real trocada) — mas só faz sentido pra quem tem
+  // conversa 1:1 humana (gramado/lucas/agencia). Infoproduto nasce de
+  // webhook de checkout e o evento já é o fato de negócio real, com ou sem
+  // WhatsApp de recuperação configurado (ver src/lib/dashboard/lead-stats.ts
+  // pro mesmo bug/fix no dashboard principal).
+  const businessModel = resolveDashboardBusinessModel(company.slug)
+  const contactCondition = businessModel === 'infoproduto' ? undefined : isNotNull(recoveryLeads.firstContactAt)
+  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter, contactCondition)
+
+  // Espelho do gate acima: infoproduto não tem o conceito de "aguardando
+  // abordagem por WhatsApp" (achado do @qa na revisão do PR irmão — toda
+  // venda de checkout tem first_contact_at nulo por definição, então sem
+  // este gate o card contaria vendas JÁ APROVADAS como não abordadas).
+  const notContactedCondition = businessModel === 'infoproduto' ? sql`false` : isNull(recoveryLeads.firstContactAt)
 
   const [[awaitingRow], rawOrigensRows] = await Promise.all([
     db
       .select({ total: sql<number>`cast(count(*) as int)` })
       .from(recoveryLeads)
-      .where(and(eq(recoveryLeads.companyId, cid), dateFilter, isNull(recoveryLeads.firstContactAt))),
+      .where(and(eq(recoveryLeads.companyId, cid), dateFilter, notContactedCondition)),
     db
       .select({
         rawSource: recoveryLeads.trackingSource,

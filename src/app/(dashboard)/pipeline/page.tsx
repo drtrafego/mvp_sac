@@ -8,6 +8,7 @@ import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
 import { GitCommit, Bot, Sparkles, Columns3 } from 'lucide-react'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
+import { inferPipelineStage } from '@/lib/pipeline-stage'
 import { Suspense } from 'react'
 
 interface PageProps {
@@ -35,18 +36,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
 
   // Mapear eventos e status para as etapas do Pipeline
   const leads: KanbanLead[] = rawLeads.map((l) => {
-    let stage = l.pipelineStage || 'novo_contato'
-    if (!l.pipelineStage) {
-      if (l.status === 'converted' || l.eventType === 'compra_aprovada') {
-        stage = 'fechado'
-      } else if (l.status === 'in_progress') {
-        stage = 'em_atendimento'
-      } else if (l.eventType === 'pix' || l.eventType === 'boleto') {
-        stage = 'qualificado'
-      } else if (l.priority && l.priority > 1) {
-        stage = 'agendado'
-      }
-    }
+    const stage = inferPipelineStage(l)
 
     return {
       id: l.id,
