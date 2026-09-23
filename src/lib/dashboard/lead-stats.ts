@@ -3,6 +3,19 @@ import { recoveryLeads } from '../db/schema'
 
 export type DashboardBusinessModel = 'gramado' | 'lucas' | 'agencia' | 'infoproduto'
 
+export function gramadoDashboardCardCounts(stats: { fechadosTotal?: number | null } | null | undefined) {
+  const businessWon = stats?.fechadosTotal ?? 0
+
+  // O funil executivo do Gramado e cumulativo: uma reserva ganha continua
+  // contando em Reserva Confirmada e em Compareceu. A origem historica so
+  // consegue materializar esses registros como pipeline_stage='agendado',
+  // portanto os dois cards devem consumir a metrica central de negocio ganho.
+  return {
+    reservaConfirmada: businessWon,
+    compareceu: businessWon,
+  }
+}
+
 const statusLower = sql`lower(coalesce(${recoveryLeads.status}, ''))`
 const stageLower = sql`lower(coalesce(${recoveryLeads.pipelineStage}, ''))`
 const eventLower = sql`lower(coalesce(${recoveryLeads.eventType}, ''))`

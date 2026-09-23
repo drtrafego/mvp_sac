@@ -6,7 +6,7 @@ import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { eq } from 'drizzle-orm'
 import * as schema from '../src/lib/db/schema'
-import { dashboardLeadStatsSelect } from '../src/lib/dashboard/lead-stats'
+import { dashboardLeadStatsSelect, gramadoDashboardCardCounts } from '../src/lib/dashboard/lead-stats'
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const CONTAINER_NAME = 'dashboard_lead_stats_test'
@@ -144,6 +144,10 @@ async function main() {
       assert.equal(stats.fechado, 4)
       assert.equal(stats.compareceu, 1)
       assert.equal(stats.perdido, 1)
+
+      const cards = gramadoDashboardCardCounts(stats)
+      assert.equal(cards.reservaConfirmada, 5, 'Reserva Confirmada deve incluir pipeline_stage=agendado')
+      assert.equal(cards.compareceu, 5, 'Compareceu deve usar a mesma metrica cumulativa de negocio ganho')
     })
 
     await test('Dr. Lucas usa pipeline agendado como consulta agendada e nao como novo contato', async () => {
