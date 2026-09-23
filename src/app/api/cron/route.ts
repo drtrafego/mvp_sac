@@ -72,7 +72,20 @@ function interpolate(text: string | null | undefined, lead: {
     .replace(/\{afiliado\}/gi, lead.affiliateCode ?? '')
 }
 
+// O Vercel Cron só aciona rota por GET (mesmo padrão de /api/cron/sync-agents).
+// Esta rota nasceu só com POST e por isso NUNCA foi ligada a nenhum agendador:
+// achado em 23/09/2026, 7 dias de log da Vercel com zero chamadas aqui, contra
+// 147 do sync-agents no mesmo período. GET e POST chamam a mesma lógica; POST
+// continua existindo para disparo manual/teste com o mesmo CRON_SECRET.
+export async function GET(req: NextRequest): Promise<NextResponse> {
+  return dispatchPendingJobs(req)
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  return dispatchPendingJobs(req)
+}
+
+async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
   const cronSecret = process.env.CRON_SECRET
   if (!cronSecret) {
     return NextResponse.json({ error: 'CRON_SECRET não configurado' }, { status: 500 })
