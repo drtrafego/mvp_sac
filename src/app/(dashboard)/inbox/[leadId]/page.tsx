@@ -82,6 +82,8 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         botPausedBy: lead.botPausedBy ?? null,
         trackingSource: lead.trackingSource ?? null,
         utmCampaign: lead.utmCampaign ?? null,
+        adsetName: lead.adsetName ?? null,
+        adName: lead.adName ?? null,
         createdAt: lead.createdAt ? lead.createdAt.toISOString() : null,
         firstContactAt: lead.firstContactAt ? lead.firstContactAt.toISOString() : null,
         agentDisplayName: company.agentDisplayName ?? null,

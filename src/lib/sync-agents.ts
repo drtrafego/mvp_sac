@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { appointmentMirror, companies, settings, syncCursors, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { queryAgentsDb, getAgentsDbUrl } from '@/lib/db/agents-db'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and, sql, type SQL } from 'drizzle-orm'
 import { backfillFirstContactFromMessages } from '@/lib/leads'
 
 // ─── Decisão de arquitetura: cursores reais por fonte ───────────────────────
@@ -101,6 +101,7 @@ export interface CtwaReferralDbRow {
   id?: string | null
   phone_norm: string
   campaign_name: string | null
+  adset_name: string | null
   ad_name: string | null
   created_at?: string | null
   ts?: string | number | null
@@ -122,6 +123,7 @@ export interface CrmLeadDbRow {
   id: string
   organization_id: string | null
   whatsapp: string | null
+  phone?: string | null
   email: string | null
   name: string | null
   company: string | null
@@ -622,8 +624,33 @@ function ctwaTsToDate(value: string | number | null | undefined): Date | null {
 function ctwaCursorPosition(row: CtwaReferralDbRow): CursorPosition | null {
   return buildCursorPosition(
     row.__sync_sort_at ?? ctwaTsToDate(row.ts) ?? row.synced_at ?? row.created_at ?? EPOCH_CURSOR_ISO,
-    row.__sync_cursor_id ?? row.id ?? `${row.phone_norm}|${row.campaign_name || ''}|${row.ad_name || ''}`
+    row.__sync_cursor_id ?? row.id ?? `${row.phone_norm}|${row.campaign_name || ''}|${row.adset_name || ''}|${row.ad_name || ''}`
   )
+}
+
+// campaign_source também é usado pelo CRM para valores puramente técnicos.
+// Só promovemos ao campo de origem quando a fonte nativa realmente acrescenta
+// informação; assim um sync novo não troca uma atribuição real por outro
+// "whatsapp_sac"/"agente_ia" genérico.
+const GENERIC_CAMPAIGN_SOURCES = new Set([
+  'whatsapp',
+  'whatsapp_sac',
+  'agente_ia',
+  'atendimento',
+  'atendimento_ia',
+  'sac',
+  'direct',
+  'direto',
+  'organic',
+  'organico',
+  'orgânico',
+])
+
+export function realCampaignSource(value: string | null | undefined): string | null {
+  const source = (value || '').trim()
+  if (!source || GENERIC_CAMPAIGN_SOURCES.has(source.toLowerCase())) return null
+  if (/^(ad|ads|an[uú]ncio|ctwa)$/i.test(source)) return 'meta_ads'
+  return source
 }
 
 export async function syncAgentsAndCompanies(): Promise<SyncReport> {
@@ -643,6 +670,10 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   ]
 
   const companyMap = new Map<string, typeof companies.$inferSelect>()
+  const agentScopes = new Map<string, {
+    company: typeof companies.$inferSelect
+    schema: string
+  }>()
 
   for (const def of defaultCompanies) {
     let [comp] = await db.select().from(companies).where(eq(companies.slug, def.slug)).limit(1)
@@ -770,6 +801,13 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         .where(eq(companies.id, company.id))
       company.agentDisplayName = newAgentDisplayName
       companyMap.set(companySlug, company)
+    }
+
+    if (agent.schema_name) {
+      agentScopes.set(`${company.id}:${agent.schema_name}`, {
+        company,
+        schema: agent.schema_name,
+      })
     }
 
     // 3. Sincroniza Conversas e Mensagens do schema do agente em BATCH
@@ -1316,123 +1354,160 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     details.push(`Aviso ao sincronizar prospecção: ${String(outreachErr)}`)
   }
 
-  // 5. Sincroniza novos Leads do CRM em BATCH
-  try {
-    const targetComp = companyMap.get('autonomia') || companyMap.values().next().value
-    if (targetComp) {
-      const crmLeadSortExpr = `coalesce(created_at, first_contact_at, '${EPOCH_CURSOR_ISO}'::timestamp)`
+  // 5. Sincroniza o CRM nativo de CADA schema de agente. Antes este bloco lia
+  // public.leads e atribuía tudo à AutonomIA; a fonte real é
+  // <schema-do-agente>.crm_leads. Além de importar novos registros, enriquece
+  // leads já criados pelo bloco de conversas com campaign_source/UTMs reais.
+  for (const scope of agentScopes.values()) {
+    try {
+      const crmColumns = await detectAgentsTableColumns(scope.schema, 'crm_leads', [
+        'id', 'organization_id', 'whatsapp', 'phone', 'email', 'name', 'company', 'notes', 'value', 'status',
+        'follow_up_date', 'follow_up_note', 'campaign_source', 'utm_source', 'utm_medium', 'utm_campaign',
+        'utm_content', 'utm_term', 'ai_agent', 'created_at', 'first_contact_at',
+      ])
+      if (!crmColumns.has('id') || (!crmColumns.has('whatsapp') && !crmColumns.has('phone'))) continue
+
+      const col = (name: string, fallback = 'null::text') => crmColumns.has(name) ? name : `${fallback} as ${name}`
+      const phoneExpr = crmColumns.has('whatsapp') ? 'whatsapp' : 'phone'
+      const sortParts = [
+        crmColumns.has('created_at') ? 'created_at' : null,
+        crmColumns.has('first_contact_at') ? 'first_contact_at' : null,
+        `'${EPOCH_CURSOR_ISO}'::timestamp`,
+      ].filter((part): part is string => !!part)
+      const crmLeadSortExpr = `coalesce(${sortParts.join(', ')})`
       const crmLeadIdExpr = 'id::text'
+      const selectColumns = [
+        'id::text as id',
+        col('organization_id'),
+        `${phoneExpr} as whatsapp`,
+        col('email'), col('name'), col('company'), col('notes'), col('value', 'null::numeric'), col('status'),
+        col('follow_up_date', 'null::timestamp'), col('follow_up_note'), col('campaign_source'), col('utm_source'),
+        col('utm_medium'), col('utm_campaign'), col('utm_content'), col('utm_term'), col('ai_agent'),
+        col('created_at', 'null::timestamp'), col('first_contact_at', 'null::timestamp'),
+        `${crmLeadSortExpr} as __sync_sort_at`,
+        `${crmLeadIdExpr} as __sync_cursor_id`,
+      ].join(', ')
+      const sourceTable = `"${scope.schema.replace(/"/g, '""')}".crm_leads`
       const crmLeadBatch = await loadTimedSyncBatch<CrmLeadDbRow>({
-        companyId: targetComp.id,
+        companyId: scope.company.id,
         source: 'crm_leads',
-        sourceKey: 'public',
+        sourceKey: scope.schema,
         getPosition: crmLeadCursorPosition,
-        fetchNewRows: (cursor) =>
-          queryAgentsDb<CrmLeadDbRow>(
-            `
-              select id, organization_id, whatsapp, email, name, company, notes, value, status,
-                     follow_up_date, follow_up_note, campaign_source, utm_source, utm_medium,
-                     utm_campaign, utm_content, utm_term, ai_agent, created_at, first_contact_at,
-                     ${crmLeadSortExpr} as __sync_sort_at,
-                     ${crmLeadIdExpr} as __sync_cursor_id
-              from public.leads
-              where (${crmLeadSortExpr}, ${crmLeadIdExpr}) > ($1::timestamp, $2::text)
-              order by ${crmLeadSortExpr} asc, ${crmLeadIdExpr} asc
-              limit ${SYNC_NEW_BATCH_SIZE}
-            `,
-            [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
-          ),
+        fetchNewRows: (cursor) => queryAgentsDb<CrmLeadDbRow>(
+          `select ${selectColumns} from ${sourceTable}
+           where (${crmLeadSortExpr}, ${crmLeadIdExpr}) > ($1::timestamp, $2::text)
+           order by ${crmLeadSortExpr} asc, ${crmLeadIdExpr} asc limit ${SYNC_NEW_BATCH_SIZE}`,
+          [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
+        ),
         fetchBackfillRows: (cursor) => {
           const hasBackfillCursor = !!cursor.backfillBeforeAt
           return queryAgentsDb<CrmLeadDbRow>(
-            `
-              select id, organization_id, whatsapp, email, name, company, notes, value, status,
-                     follow_up_date, follow_up_note, campaign_source, utm_source, utm_medium,
-                     utm_campaign, utm_content, utm_term, ai_agent, created_at, first_contact_at,
-                     ${crmLeadSortExpr} as __sync_sort_at,
-                     ${crmLeadIdExpr} as __sync_cursor_id
-              from public.leads
-              ${hasBackfillCursor ? `where (${crmLeadSortExpr}, ${crmLeadIdExpr}) < ($1::timestamp, $2::text)` : ''}
-              order by ${crmLeadSortExpr} desc, ${crmLeadIdExpr} desc
-              limit ${SYNC_BACKFILL_BATCH_SIZE}
-            `,
+            `select ${selectColumns} from ${sourceTable}
+             ${hasBackfillCursor ? `where (${crmLeadSortExpr}, ${crmLeadIdExpr}) < ($1::timestamp, $2::text)` : ''}
+             order by ${crmLeadSortExpr} desc, ${crmLeadIdExpr} desc limit ${SYNC_BACKFILL_BATCH_SIZE}`,
             hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
           )
         },
       })
-      const crmLeads = crmLeadBatch?.rows || []
 
-      if (crmLeads.length > 0) {
-        const leadsToInsert: (typeof recoveryLeads.$inferInsert)[] = []
+      let insertedFromScope = 0
+      let attributedFromScope = 0
+      for (const l of crmLeadBatch?.rows || []) {
+        const rawPhone = (l.whatsapp || l.phone || '').trim()
+        const cleanPhone = normalizeDigits(rawPhone) || rawPhone
+        const email = l.email ? l.email.trim().toLowerCase() : null
+        if (!cleanPhone && !email) continue
 
-        for (const l of crmLeads) {
-          const rawPhone = (l.whatsapp || '').trim()
-          const cleanPhone = normalizeDigits(rawPhone) || rawPhone
-          const email = l.email ? l.email.trim().toLowerCase() : null
-          if (!cleanPhone && !email) continue
+        const last9 = cleanPhone && cleanPhone.length >= 9 ? cleanPhone.slice(-9) : null
+        const existingId = (cleanPhone && leadMap.get(`${scope.company.id}_${cleanPhone}`)) ||
+          (last9 && leadMap.get(`${scope.company.id}_${last9}`)) ||
+          (email && leadMap.get(`${scope.company.id}_${email}`))
+        const nativeSource = realCampaignSource(l.campaign_source) || realCampaignSource(l.utm_source)
 
-          const last9 = cleanPhone && cleanPhone.length >= 9 ? cleanPhone.slice(-9) : null
-          const existingId = (cleanPhone && leadMap.get(`${targetComp.id}_${cleanPhone}`)) ||
-                             (last9 && leadMap.get(`${targetComp.id}_${last9}`)) ||
-                             (email && leadMap.get(`${targetComp.id}_${email}`))
-
-          if (!existingId) {
-            const leadDate = l.created_at ? new Date(l.created_at) : (l.first_contact_at ? new Date(l.first_contact_at) : new Date())
-            const prodVal = l.value ? Math.round(Number(l.value) * 100) : null
-            const stage = l.status === 'converted' ? 'fechado' : (l.follow_up_date ? 'agendado' : 'qualificado')
-
-            leadsToInsert.push({
-              companyId: targetComp.id,
-              phone: cleanPhone || email || '',
-              email: email || undefined,
-              name: l.name || l.company || ('Contato ' + (cleanPhone ? cleanPhone.slice(-4) : '')),
-              productName: l.company || l.notes || 'Agente 24h / CRM',
-              productValue: prodVal,
-              platform: 'sac',
-              channel: cleanPhone ? 'whatsapp' : 'email',
-              eventType: l.campaign_source || 'prospeccao',
-              status: l.status === 'converted' ? 'converted' : 'in_conversation',
-              pipelineStage: stage,
-              trackingSource: l.campaign_source || l.utm_source || 'mineracao_prospeccao',
-              utmMedium: l.utm_medium,
-              utmCampaign: l.utm_campaign,
-              utmContent: l.utm_content,
-              utmTerm: l.utm_term,
-              responsibleAgent: l.ai_agent || 'Nina',
-              followUpDate: l.follow_up_date ? new Date(l.follow_up_date) : undefined,
-              followUpNote: l.follow_up_note,
-              // Só marca como abordado se o CRM de origem confirma o primeiro contato.
-              // Sem essa confirmação o lead entra no banco (aparece na lista), mas fica
-              // de fora da contagem principal até uma mensagem de verdade ser trocada.
-              firstContactAt: l.first_contact_at ? new Date(l.first_contact_at) : undefined,
-              createdAt: leadDate,
-              updatedAt: leadDate,
-              lastActionAt: leadDate,
-            })
-
-            if (cleanPhone) leadMap.set(`${targetComp.id}_${cleanPhone}`, -1)
-            if (last9) leadMap.set(`${targetComp.id}_${last9}`, -1)
-            if (email) leadMap.set(`${targetComp.id}_${email}`, -1)
-            leadsCreated++
+        if (existingId && existingId > 0) {
+          const attributionPatch: Omit<Partial<typeof recoveryLeads.$inferInsert>,
+            'trackingSource' | 'utmMedium' | 'utmCampaign' | 'utmContent' | 'utmTerm'> & {
+            trackingSource?: string | SQL
+            utmMedium?: string | SQL
+            utmCampaign?: string | SQL
+            utmContent?: string | SQL
+            utmTerm?: string | SQL
+          } = {}
+          if (nativeSource) {
+            attributionPatch.trackingSource = sql`case
+              when coalesce(trim(${recoveryLeads.trackingSource}), '') = ''
+                or lower(trim(${recoveryLeads.trackingSource})) in
+                  ('whatsapp', 'whatsapp_sac', 'agente_ia', 'atendimento', 'atendimento_ia', 'sac', 'direct', 'direto', 'organic', 'organico', 'orgânico')
+              then ${nativeSource}
+              else ${recoveryLeads.trackingSource}
+            end`
           }
+          if (l.utm_medium) attributionPatch.utmMedium = sql`coalesce(nullif(${recoveryLeads.utmMedium}, ''), ${l.utm_medium})`
+          if (l.utm_campaign) attributionPatch.utmCampaign = sql`coalesce(nullif(${recoveryLeads.utmCampaign}, ''), ${l.utm_campaign})`
+          if (l.utm_content) attributionPatch.utmContent = sql`coalesce(nullif(${recoveryLeads.utmContent}, ''), ${l.utm_content})`
+          if (l.utm_term) attributionPatch.utmTerm = sql`coalesce(nullif(${recoveryLeads.utmTerm}, ''), ${l.utm_term})`
+          if (Object.keys(attributionPatch).length > 0) {
+            attributionPatch.updatedAt = new Date()
+            await db.update(recoveryLeads).set(attributionPatch).where(eq(recoveryLeads.id, existingId))
+            attributedFromScope++
+          }
+          continue
         }
+        if (existingId) continue
 
-        if (leadsToInsert.length > 0) {
-          await db.insert(recoveryLeads).values(leadsToInsert)
-          details.push(`${leadsToInsert.length} novos leads importados da base de CRM.`)
-        }
+        const leadDate = l.created_at ? new Date(l.created_at) : (l.first_contact_at ? new Date(l.first_contact_at) : new Date())
+        const prodVal = l.value ? Math.round(Number(l.value) * 100) : null
+        const stage = l.status === 'converted' ? 'fechado' : (l.follow_up_date ? 'agendado' : 'qualificado')
+        const isOutreachCompany = scope.company.slug === 'autonomia'
+        const [newLead] = await db.insert(recoveryLeads).values({
+          companyId: scope.company.id,
+          phone: cleanPhone || email || '',
+          email: email || undefined,
+          name: l.name || l.company || ('Contato ' + (cleanPhone ? cleanPhone.slice(-4) : '')),
+          productName: l.company || l.notes || 'Agente 24h / CRM',
+          productValue: prodVal,
+          platform: 'sac',
+          channel: cleanPhone ? 'whatsapp' : 'email',
+          eventType: nativeSource || (isOutreachCompany ? 'prospeccao' : 'atendimento_ia'),
+          status: l.status === 'converted' ? 'converted' : 'in_conversation',
+          pipelineStage: stage,
+          trackingSource: nativeSource || (isOutreachCompany ? 'mineracao_prospeccao' : undefined),
+          utmMedium: l.utm_medium,
+          utmCampaign: l.utm_campaign,
+          utmContent: l.utm_content,
+          utmTerm: l.utm_term,
+          responsibleAgent: l.ai_agent || scope.company.agentDisplayName || undefined,
+          followUpDate: l.follow_up_date ? new Date(l.follow_up_date) : undefined,
+          followUpNote: l.follow_up_note,
+          firstContactAt: l.first_contact_at ? new Date(l.first_contact_at) : undefined,
+          createdAt: leadDate,
+          updatedAt: leadDate,
+          lastActionAt: leadDate,
+        }).returning({ id: recoveryLeads.id })
+
+        if (cleanPhone) leadMap.set(`${scope.company.id}_${cleanPhone}`, newLead.id)
+        if (last9) leadMap.set(`${scope.company.id}_${last9}`, newLead.id)
+        if (email) leadMap.set(`${scope.company.id}_${email}`, newLead.id)
+        leadsCreated++
+        insertedFromScope++
+      }
+      if (insertedFromScope > 0 || attributedFromScope > 0) {
+        details.push(`${scope.company.name}: ${insertedFromScope} leads de CRM importados e ${attributedFromScope} origens nativas atualizadas.`)
       }
       await crmLeadBatch?.markProcessed()
+    } catch (crmErr) {
+      details.push(`Aviso ao sincronizar CRM de ${scope.company.name}/${scope.schema}: ${String(crmErr)}`)
     }
-  } catch (crmErr) {
-    details.push(`Aviso ao sincronizar CRM leads: ${String(crmErr)}`)
   }
 
-  // 6. Sincroniza Referrals de Anúncios Click-to-WhatsApp (CTWA)
+  // 6. Sincroniza Referrals de Anúncios Click-to-WhatsApp (CTWA) para cada
+  // empresa com agente ativo. A tabela é global, portanto o vínculo seguro é
+  // telefone + tenant + proximidade de 72h do primeiro contato; telefone sem
+  // company_id (comportamento antigo) contaminava tenants homônimos.
   try {
-    const ctwaCursorCompany = companyMap.get('autonomia') || companyMap.values().next().value
-    if (ctwaCursorCompany) {
-      const ctwaColumns = await detectAgentsTableColumns('public', 'ctwa_referrals', ['id', 'ts', 'synced_at'])
+    const ctwaCompanies = new Map(Array.from(agentScopes.values()).map((scope) => [scope.company.id, scope.company]))
+    if (ctwaCompanies.size > 0) {
+      const ctwaColumns = await detectAgentsTableColumns('public', 'ctwa_referrals', ['id', 'ts', 'synced_at', 'adset_name'])
 
       if (ctwaColumns.has('ts') || ctwaColumns.has('synced_at')) {
         const ctwaSortCandidates = [
@@ -1446,6 +1521,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const ctwaFallbackIdParts = [
           'phone_norm',
           'campaign_name',
+          ctwaColumns.has('adset_name') ? 'adset_name' : null,
           'ad_name',
           ctwaColumns.has('ts') ? 'ts::text' : null,
           ctwaColumns.has('synced_at') ? 'synced_at::text' : null,
@@ -1455,73 +1531,72 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           ctwaColumns.has('id') ? 'id' : null,
           'phone_norm',
           'campaign_name',
+          ctwaColumns.has('adset_name') ? 'adset_name' : 'null::text as adset_name',
           'ad_name',
           ctwaColumns.has('ts') ? 'ts' : null,
           ctwaColumns.has('synced_at') ? 'synced_at' : null,
           `${ctwaSortExpr} as __sync_sort_at`,
           `${ctwaCursorIdExpr} as __sync_cursor_id`,
         ].filter((column): column is string => !!column).join(', ')
-        const ctwaBatch = await loadTimedSyncBatch<CtwaReferralDbRow>({
-          companyId: ctwaCursorCompany.id,
-          source: 'ctwa_referrals',
-          sourceKey: 'public',
-          getPosition: ctwaCursorPosition,
-          fetchNewRows: (cursor) =>
-            queryAgentsDb<CtwaReferralDbRow>(
-              `
-                select ${ctwaSelectColumns}
-                from public.ctwa_referrals
-                where phone_norm is not null and length(phone_norm) >= 8
-                  and (${ctwaSortExpr}, ${ctwaCursorIdExpr}) > ($1::timestamp, $2::text)
-                order by ${ctwaSortExpr} asc, ${ctwaCursorIdExpr} asc
-                limit ${SYNC_NEW_BATCH_SIZE}
-              `,
+        for (const company of ctwaCompanies.values()) {
+          const ctwaBatch = await loadTimedSyncBatch<CtwaReferralDbRow>({
+            companyId: company.id,
+            source: 'ctwa_referrals',
+            sourceKey: 'public',
+            getPosition: ctwaCursorPosition,
+            fetchNewRows: (cursor) => queryAgentsDb<CtwaReferralDbRow>(
+              `select ${ctwaSelectColumns} from public.ctwa_referrals
+               where phone_norm is not null and length(phone_norm) >= 8
+                 and (${ctwaSortExpr}, ${ctwaCursorIdExpr}) > ($1::timestamp, $2::text)
+               order by ${ctwaSortExpr} asc, ${ctwaCursorIdExpr} asc limit ${SYNC_NEW_BATCH_SIZE}`,
               [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
             ),
-          fetchBackfillRows: (cursor) => {
-            const hasBackfillCursor = !!cursor.backfillBeforeAt
-            return queryAgentsDb<CtwaReferralDbRow>(
-              `
-                select ${ctwaSelectColumns}
-                from public.ctwa_referrals
-                where phone_norm is not null and length(phone_norm) >= 8
-                ${hasBackfillCursor ? `and (${ctwaSortExpr}, ${ctwaCursorIdExpr}) < ($1::timestamp, $2::text)` : ''}
-                order by ${ctwaSortExpr} desc, ${ctwaCursorIdExpr} desc
-                limit ${SYNC_BACKFILL_BATCH_SIZE}
-              `,
-              hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
-            )
-          },
-        })
-        const ctwaRows = ctwaBatch?.rows || []
+            fetchBackfillRows: (cursor) => {
+              const hasBackfillCursor = !!cursor.backfillBeforeAt
+              return queryAgentsDb<CtwaReferralDbRow>(
+                `select ${ctwaSelectColumns} from public.ctwa_referrals
+                 where phone_norm is not null and length(phone_norm) >= 8
+                 ${hasBackfillCursor ? `and (${ctwaSortExpr}, ${ctwaCursorIdExpr}) < ($1::timestamp, $2::text)` : ''}
+                 order by ${ctwaSortExpr} desc, ${ctwaCursorIdExpr} desc limit ${SYNC_BACKFILL_BATCH_SIZE}`,
+                hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
+              )
+            },
+          })
 
-        if (ctwaRows.length > 0) {
           let ctwaCount = 0
-          for (const r of ctwaRows) {
+          for (const r of ctwaBatch?.rows || []) {
             const norm = normalizeDigits(r.phone_norm)
-            if (!norm) continue
+            const referralAt = parseCursorDate(r.__sync_sort_at) || ctwaTsToDate(r.ts) || parseCursorDate(r.synced_at)
+            if (!norm || !referralAt) continue
+            const referralWindowStart = new Date(referralAt.getTime() - 72 * 60 * 60 * 1000)
+            const referralWindowEnd = new Date(referralAt.getTime() + 72 * 60 * 60 * 1000)
 
-            const updated = await db
-              .update(recoveryLeads)
-              .set({
-                trackingSource: 'meta_ads',
-                utmCampaign: r.campaign_name || undefined,
-                updatedAt: new Date(),
-              })
-              .where(sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${norm}, 9)`)
-              .returning({ id: recoveryLeads.id })
+            const updated = await db.update(recoveryLeads).set({
+              trackingSource: 'meta_ads',
+              utmCampaign: r.campaign_name || undefined,
+              adsetName: r.adset_name || undefined,
+              adName: r.ad_name || undefined,
+              updatedAt: new Date(),
+            }).where(and(
+              eq(recoveryLeads.companyId, company.id),
+              sql`right(regexp_replace(${recoveryLeads.phone}, '[^0-9]', '', 'g'), 9) = right(${norm}, 9)`,
+              sql`coalesce(${recoveryLeads.firstContactAt}, ${recoveryLeads.createdAt}) between ${referralWindowStart.toISOString()}::timestamp and ${referralWindowEnd.toISOString()}::timestamp`
+            )).returning({ id: recoveryLeads.id })
 
-            if (updated.length > 0) ctwaCount++
+            if (updated.length > 0) ctwaCount += updated.length
           }
           if (ctwaCount > 0) {
-            details.push(`${ctwaCount} leads identificados como Anúncios Meta (Janela de 72h).`)
+            details.push(`${company.name}: ${ctwaCount} leads identificados como Anúncios Meta (janela de 72h).`)
           }
+          await ctwaBatch?.markProcessed()
         }
-        await ctwaBatch?.markProcessed()
       }
     }
-  } catch {
-    // Tabela opcional
+  } catch (ctwaErr) {
+    const cause = ctwaErr && typeof ctwaErr === 'object' && 'cause' in ctwaErr
+      ? String((ctwaErr as { cause?: unknown }).cause)
+      : ''
+    details.push(`Aviso ao sincronizar CTWA: ${String(ctwaErr)}${cause ? `; causa: ${cause}` : ''}`)
   }
 
   // 7. Backfill de abordagem real: todo lead que ganhou mensagem de verdade

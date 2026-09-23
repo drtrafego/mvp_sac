@@ -111,8 +111,8 @@ function applyRealSchema(databaseUrl: string) {
   })
 }
 
-// Fixtures de public.leads (CRM/Agents DB), no formato cru que
-// queryAgentsDb('select ... from public.leads ...') devolveria.
+// Fixtures de autonomia.crm_leads (CRM/Agents DB), no formato normalizado que
+// o SELECT dinâmico por schema devolve.
 const CRM_LEADS_FIXTURE = [
   {
     id: 'crm-1',
@@ -204,13 +204,13 @@ async function main() {
   // schema-per-tenant). Mockamos por conteúdo da query (substring), igual um
   // fake de banco em memória: cada bloco de sync-agents.ts manda uma query
   // reconhecível (public.agents, information_schema.columns,
-  // public.outreach_convos, public.outreach_msgs, public.leads,
+  // public.outreach_convos, public.outreach_msgs, <schema>.crm_leads,
   // public.ctwa_referrals). Blocos não relevantes pro bug (agentes/outreach/
   // ctwa) devolvem vazio, então só o bloco 5 (CRM) tem efeito neste teste.
   mock.module('@/lib/db/agents-db', {
     namedExports: {
       getAgentsDbUrl: async () => 'postgres://fake-agents-db-url/test',
-      queryAgentsDb: async (query: string) => {
+      queryAgentsDb: async (query: string, params: unknown[] = []) => {
         if (query.includes('from public.agents')) {
           return [
             {
@@ -219,15 +219,24 @@ async function main() {
               org_slug: 'autonomia',
               org_name: 'AutonomIA',
               slug: 'autonomia',
-              schema_name: null, // sem schema -> pula o bloco 3 (conversas do agente)
+              schema_name: 'autonomia',
               name: 'Nina',
             },
           ]
         }
-        if (query.includes('information_schema.columns')) return []
+        if (query.includes('information_schema.tables')) return [{ exists: false }]
+        if (query.includes('information_schema.columns')) {
+          const table = params[1]
+          if (table !== 'crm_leads') return []
+          return [
+            'id', 'organization_id', 'whatsapp', 'email', 'name', 'company', 'notes', 'value', 'status',
+            'follow_up_date', 'follow_up_note', 'campaign_source', 'utm_source', 'utm_medium', 'utm_campaign',
+            'utm_content', 'utm_term', 'ai_agent', 'created_at', 'first_contact_at',
+          ].map(column_name => ({ column_name }))
+        }
         if (query.includes('from public.outreach_convos')) return []
         if (query.includes('from public.outreach_msgs')) return []
-        if (query.includes('from public.leads')) return CRM_LEADS_FIXTURE
+        if (query.includes('from "autonomia".crm_leads')) return CRM_LEADS_FIXTURE
         if (query.includes('from public.ctwa_referrals')) return []
         return []
       },

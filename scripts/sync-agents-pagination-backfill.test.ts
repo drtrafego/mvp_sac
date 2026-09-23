@@ -372,7 +372,7 @@ async function main() {
     const report1 = await syncAgentsAndCompanies()
     const counts1 = await localCounts(sql)
     const [ctwaLead1201AfterSync] = await sql`
-      select tracking_source, utm_campaign
+      select tracking_source, utm_campaign, adset_name, ad_name
       from recovery_leads
       where phone = ${CTWA_1201_PHONE}
     `
@@ -407,6 +407,8 @@ async function main() {
       assert.ok(ctwaLead1201AfterSync, 'lead 1201 deveria existir no banco local de teste')
       assert.equal(ctwaLead1201AfterSync.tracking_source, 'meta_ads')
       assert.equal(ctwaLead1201AfterSync.utm_campaign, CTWA_1201_CAMPAIGN)
+      assert.equal(ctwaLead1201AfterSync.adset_name, '[ENG] [WHATSAPP] [BR] Advantage+ 23/09')
+      assert.equal(ctwaLead1201AfterSync.ad_name, CTWA_1201_AD)
       assert.ok(
         report1.details.some((detail: string) => detail.includes('leads identificados como Anúncios Meta')),
         'relatório deveria registrar atualização CTWA'

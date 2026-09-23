@@ -24,6 +24,8 @@ export interface ConversationSummary {
   botPausedBy?: string | null
   trackingSource?: string | null
   utmCampaign?: string | null
+  adsetName?: string | null
+  adName?: string | null
   allOrigins?: string[]
   allEventTypes?: string[]
   lastMessage: string | null
@@ -148,6 +150,8 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
       botPausedBy: recoveryLeads.botPausedBy,
       trackingSource: recoveryLeads.trackingSource,
       utmCampaign: recoveryLeads.utmCampaign,
+      adsetName: recoveryLeads.adsetName,
+      adName: recoveryLeads.adName,
       createdAt: recoveryLeads.createdAt,
       updatedAt: recoveryLeads.updatedAt,
       miningTags: recoveryLeads.miningTags,
@@ -221,6 +225,8 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
       botPausedBy: lead.botPausedBy,
       trackingSource: lead.trackingSource,
       utmCampaign: lead.utmCampaign,
+      adsetName: lead.adsetName,
+      adName: lead.adName,
       createdAt: lead.createdAt?.toISOString() ?? null,
       lastMessage: lastMessage?.content ?? null,
       lastDirection: lastMessage?.direction ?? null,

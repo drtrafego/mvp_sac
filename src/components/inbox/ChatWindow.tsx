@@ -41,6 +41,8 @@ export interface ChatLead {
   botPausedBy: string | null
   trackingSource: string | null
   utmCampaign: string | null
+  adsetName: string | null
+  adName: string | null
   createdAt: string | null
   firstContactAt: string | null
   lastMessageAt?: string | null
@@ -530,7 +532,7 @@ export function ChatWindow({
           </div>
 
           {/* Rastreamento & UTMs */}
-          {(lead.trackingSource || lead.utmCampaign) && (
+          {(lead.trackingSource || lead.utmCampaign || lead.adsetName || lead.adName) && (
             <div className="space-y-2">
               <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">Rastreamento UTM</h4>
               <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-1.5 text-micro font-mono">
@@ -544,6 +546,18 @@ export function ChatWindow({
                   <div>
                     <span className="text-fg-faint text-[9px] block">UTM Campaign:</span>
                     <span className="text-fg">{lead.utmCampaign}</span>
+                  </div>
+                )}
+                {lead.adsetName && (
+                  <div>
+                    <span className="text-fg-faint text-[9px] block">Conjunto de anúncios:</span>
+                    <span className="text-fg">{lead.adsetName}</span>
+                  </div>
+                )}
+                {lead.adName && (
+                  <div>
+                    <span className="text-fg-faint text-[9px] block">Anúncio:</span>
+                    <span className="text-fg">{lead.adName}</span>
                   </div>
                 )}
               </div>
