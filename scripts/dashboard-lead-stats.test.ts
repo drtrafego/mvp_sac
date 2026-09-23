@@ -8,6 +8,17 @@ import { eq } from 'drizzle-orm'
 import * as schema from '../src/lib/db/schema'
 import { dashboardLeadStatsSelect, gramadoDashboardCardCounts } from '../src/lib/dashboard/lead-stats'
 
+function whatsappMsg(companyId: number, leadId: number, direction: 'inbound' | 'outbound', minutesAfterNow: number) {
+  return {
+    companyId,
+    leadId,
+    phone: '5599999999999',
+    direction,
+    content: direction === 'inbound' ? 'oi, quero saber mais' : 'claro, posso ajudar',
+    createdAt: new Date(NOW.getTime() + minutesAfterNow * 60_000),
+  }
+}
+
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const CONTAINER_NAME = 'dashboard_lead_stats_test'
 const NOW = new Date('2026-09-22T12:00:00.000Z')
@@ -113,6 +124,8 @@ async function main() {
     await testDb.insert(schema.companies).values([
       { id: 3, name: 'Dr. Lucas', slug: 'drlucas' },
       { id: 4, name: 'Gramado Plaza', slug: 'gramado-plaza' },
+      { id: 6, name: 'Gramado Engajamento Teste', slug: 'gramado-engajamento-teste' },
+      { id: 7, name: 'AutonomIA Teste', slug: 'autonomia-teste' },
       { id: 10, name: 'Checkout Teste', slug: 'checkout-teste' },
     ])
 
@@ -189,6 +202,85 @@ async function main() {
       assert.equal(stats.fechado, 2)
       assert.equal(Number(stats.valorFechadoCents), 22000)
       assert.equal(stats.novoContato, 1)
+    })
+
+    await test('funil de engajamento (Responderam/Avançaram) bate com o historico real de mensagens, nao com o CRM', async () => {
+      const inserted = await testDb
+        .insert(schema.recoveryLeads)
+        .values([
+          lead(6, '301', { status: 'Novo Contato', firstContactAt: NOW }), // A: sem mensagem alguma
+          lead(6, '302', { status: 'Novo Contato', firstContactAt: NOW }), // B: respondeu, nao avancou
+          lead(6, '303', { status: 'Novo Contato', firstContactAt: NOW }), // C: respondeu e avancou (4+ msgs)
+          lead(6, '304', { status: 'Novo Contato', firstContactAt: NOW }), // D: 3 msgs so outbound, nao respondeu
+          lead(6, '305', { status: 'Novo Contato', firstContactAt: null }), // E: nunca abordado, fora do total
+        ])
+        .returning({ id: schema.recoveryLeads.id, phone: schema.recoveryLeads.phone })
+
+      const byPhoneSuffix = (suffix: string) =>
+        inserted.find(l => l.phone.endsWith(suffix.padStart(7, '0')))!.id
+
+      const leadB = byPhoneSuffix('302')
+      const leadC = byPhoneSuffix('303')
+      const leadD = byPhoneSuffix('304')
+      const leadE = byPhoneSuffix('305')
+
+      await testDb.insert(schema.whatsappMessages).values([
+        whatsappMsg(6, leadB, 'inbound', 1),
+
+        whatsappMsg(6, leadC, 'outbound', 1),
+        whatsappMsg(6, leadC, 'inbound', 2),
+        whatsappMsg(6, leadC, 'outbound', 3),
+        whatsappMsg(6, leadC, 'inbound', 4),
+
+        whatsappMsg(6, leadD, 'outbound', 1),
+        whatsappMsg(6, leadD, 'outbound', 2),
+        whatsappMsg(6, leadD, 'outbound', 3),
+
+        // Lead nunca abordado (firstContactAt nulo): mesmo com 5 mensagens
+        // presas a ele por engano, nao pode vazar para o funil de engajamento.
+        whatsappMsg(6, leadE, 'inbound', 1),
+        whatsappMsg(6, leadE, 'inbound', 2),
+        whatsappMsg(6, leadE, 'inbound', 3),
+        whatsappMsg(6, leadE, 'inbound', 4),
+        whatsappMsg(6, leadE, 'inbound', 5),
+      ])
+
+      const [stats] = await testDb
+        .select(dashboardLeadStatsSelect('gramado'))
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.companyId, 6))
+
+      assert.equal(stats.total, 4, 'total conta so quem foi abordado (A, B, C, D)')
+      assert.equal(stats.respondeuTotal, 2, 'so B e C mandaram mensagem inbound')
+      assert.equal(stats.avancouTotal, 1, 'so C chegou a 4+ mensagens na conversa')
+    })
+
+    await test('agencia: taxa de conversao (agendado+fechado / conversas iniciadas) bate com o painel nativo', async () => {
+      await testDb.insert(schema.recoveryLeads).values([
+        lead(7, '401', { pipelineStage: 'contrato_fechado', firstContactAt: NOW, productValue: 500000 }),
+        lead(7, '402', { pipelineStage: 'contrato_fechado', firstContactAt: NOW, productValue: 300000 }),
+        lead(7, '403', { pipelineStage: 'reuniao_agendada', firstContactAt: NOW }),
+        lead(7, '404', { pipelineStage: 'em_atendimento', firstContactAt: NOW }),
+        lead(7, '405', { pipelineStage: 'em_atendimento', firstContactAt: NOW }),
+        lead(7, '406', { status: 'Perdido', firstContactAt: NOW }),
+        lead(7, '407', { pipelineStage: 'novo_contato', firstContactAt: null }), // fora do total
+      ])
+
+      const [stats] = await testDb
+        .select(dashboardLeadStatsSelect('agencia'))
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.companyId, 7))
+
+      assert.equal(stats.total, 6)
+      assert.equal(stats.fechadosTotal, 3, 'agendado (1) + fechado (2) contam como negocio ganho na agencia')
+      assert.equal(stats.agendado, 1)
+      assert.equal(stats.fechado, 2)
+      assert.equal(stats.qualificado, 2)
+      assert.equal(stats.perdido, 1)
+      assert.equal(Number(stats.valorFechadoCents), 800000)
+
+      const conversionRate = stats.total > 0 ? (stats.fechadosTotal / stats.total) * 100 : 0
+      assert.equal(conversionRate.toFixed(1), '50.0')
     })
   } finally {
     await sql.end({ timeout: 2 })
