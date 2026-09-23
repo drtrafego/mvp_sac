@@ -93,8 +93,29 @@ async function main() {
         getCurrentUser: async () => null,
       },
     })
+    mock.module('@/lib/agent-auth', {
+      namedExports: {
+        authenticateAgentRequest: async () => {
+          const [company] = await database
+            .select()
+            .from(schema.companies)
+            .where(eq(schema.companies.id, seededCompany.id))
+          return {
+            context: {
+              company,
+              isAdmin: true,
+              isSuperAdmin: true,
+              isAgentApiKey: true,
+              agentId: 'renato',
+              agentName: 'Renato',
+            },
+          }
+        },
+      },
+    })
 
     const { GET, PUT } = await import('../src/app/api/settings/route')
+    const { GET: agentGet, PATCH: agentPatch } = await import('../src/app/api/v1/companies/[idOrSlug]/settings/route')
     const { NextRequest } = await import('next/server')
 
     await test('salva e relê o nome editado pelo mesmo fluxo de /api/settings', async () => {
@@ -132,6 +153,24 @@ async function main() {
 
       const reread = await (await GET()).json()
       assert.equal(reread.agentDisplayName, 'Clara Editada')
+    })
+
+    await test('a API v1 de settings também salva e relê o override manual', async () => {
+      const routeContext = { params: Promise.resolve({ idOrSlug: 'empresa-teste' }) }
+      const patchResponse = await agentPatch(new NextRequest('http://localhost/api/v1/companies/empresa-teste/settings', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agentDisplayName: '  Nome via API  ' }),
+      }), routeContext)
+      assert.equal(patchResponse.status, 200)
+      assert.equal((await patchResponse.json()).company.agentDisplayName, 'Nome via API')
+
+      const getResponse = await agentGet(
+        new NextRequest('http://localhost/api/v1/companies/empresa-teste/settings'),
+        routeContext,
+      )
+      assert.equal(getResponse.status, 200)
+      assert.equal((await getResponse.json()).company.agentDisplayName, 'Nome via API')
     })
   } finally {
     await sql.end({ timeout: 2 })

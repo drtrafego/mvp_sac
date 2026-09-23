@@ -2,10 +2,11 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { settings } from '@/lib/db/schema'
+import { companies, settings } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq } from 'drizzle-orm'
 import { mask } from '@/lib/settings-mask'
+import { parseAgentDisplayName } from '@/lib/agent-display-name'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -44,7 +45,12 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
 
   return NextResponse.json({
     ok: true,
-    company: { id: context.company.id, slug: context.company.slug, name: context.company.name },
+    company: {
+      id: context.company.id,
+      slug: context.company.slug,
+      name: context.company.name,
+      agentDisplayName: context.company.agentDisplayName ?? '',
+    },
     settings: maskedSettings,
   })
 }
@@ -54,8 +60,18 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
   const { error, context } = await authenticateAgentRequest(req, idOrSlug)
   if (error || !context) return error!
 
+  const body = await req.json()
+  let agentDisplayName: string | undefined
   try {
-    const body = await req.json()
+    agentDisplayName = parseAgentDisplayName(body.agentDisplayName)
+  } catch (validationError) {
+    return NextResponse.json(
+      { error: validationError instanceof Error ? validationError.message : 'Nome do bot inválido.' },
+      { status: 400 },
+    )
+  }
+
+  try {
     const allowedKeys = [
       'whatsappProvider',
       'metaPhoneNumberId',
@@ -92,6 +108,13 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       if (body[k] !== undefined) updateData[k] = body[k]
     }
 
+    if (agentDisplayName !== undefined) {
+      await db
+        .update(companies)
+        .set({ agentDisplayName, agentDisplayNameManual: true, updatedAt: new Date() })
+        .where(eq(companies.id, context.company.id))
+    }
+
     // Upsert em settings
     const [existing] = await db.select().from(settings).where(eq(settings.companyId, context.company.id))
     if (!existing) {
@@ -101,7 +124,16 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     }
 
     const [updated] = await db.select().from(settings).where(eq(settings.companyId, context.company.id))
-    return NextResponse.json({ ok: true, settings: updated })
+    return NextResponse.json({
+      ok: true,
+      company: {
+        id: context.company.id,
+        slug: context.company.slug,
+        name: context.company.name,
+        agentDisplayName: agentDisplayName ?? context.company.agentDisplayName ?? '',
+      },
+      settings: updated,
+    })
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Erro ao atualizar configurações' }, { status: 500 })
   }
