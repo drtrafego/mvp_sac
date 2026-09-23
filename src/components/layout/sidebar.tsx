@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Fragment } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
 import {
   Activity,
@@ -125,49 +125,60 @@ export const apiOficialNav = [
   { label: 'Follow-up', href: '/api-followup' },
 ]
 
+// Os 4 checkouts (Hotmart/Kiwify/Greenn/Zouti) compartilham as MESMAS 5 telas
+// genéricas de recuperação (/carrinho, /boleto, /pix, /cartao-recusado,
+// /compra-aprovada). Sem ?platform=, clicar em "Boleto Kiwify" abria a
+// mesma tela que "Boleto Bancário" (Hotmart), misturando lead de plataforma
+// nenhuma com todas as outras. ?platform= é lido pela SequencePage
+// (src/components/recovery/sequence-page.tsx) e filtra via coluna `platform`
+// de recovery_leads (valor exato gravado por cada webhook, não texto livre).
 export const hotmartNav = [
-  { label: 'Carrinho abandonado', href: '/carrinho' },
-  { label: 'Boleto Bancário', href: '/boleto' },
-  { label: 'Pix Pendente', href: '/pix' },
-  { label: 'Cartão recusado', href: '/cartao-recusado' },
-  { label: 'Compra aprovada', href: '/compra-aprovada' },
+  { label: 'Carrinho abandonado', href: '/carrinho?platform=hotmart' },
+  { label: 'Boleto Bancário', href: '/boleto?platform=hotmart' },
+  { label: 'Pix Pendente', href: '/pix?platform=hotmart' },
+  { label: 'Cartão recusado', href: '/cartao-recusado?platform=hotmart' },
+  { label: 'Compra aprovada', href: '/compra-aprovada?platform=hotmart' },
 ]
 
 export const kiwifyNav = [
-  { label: 'Carrinho Kiwify', href: '/carrinho' },
-  { label: 'Boleto Kiwify', href: '/boleto' },
-  { label: 'Pix Kiwify', href: '/pix' },
-  { label: 'Cartão Kiwify', href: '/cartao-recusado' },
-  { label: 'Compra aprovada', href: '/compra-aprovada' },
+  { label: 'Carrinho Kiwify', href: '/carrinho?platform=kiwify' },
+  { label: 'Boleto Kiwify', href: '/boleto?platform=kiwify' },
+  { label: 'Pix Kiwify', href: '/pix?platform=kiwify' },
+  { label: 'Cartão Kiwify', href: '/cartao-recusado?platform=kiwify' },
+  { label: 'Compra aprovada', href: '/compra-aprovada?platform=kiwify' },
 ]
 
 export const greennNav = [
-  { label: 'Carrinho Greenn', href: '/carrinho' },
-  { label: 'Boleto Greenn', href: '/boleto' },
-  { label: 'Pix Greenn', href: '/pix' },
-  { label: 'Cartão Greenn', href: '/cartao-recusado' },
-  { label: 'Compra aprovada', href: '/compra-aprovada' },
+  { label: 'Carrinho Greenn', href: '/carrinho?platform=greenn' },
+  { label: 'Boleto Greenn', href: '/boleto?platform=greenn' },
+  { label: 'Pix Greenn', href: '/pix?platform=greenn' },
+  { label: 'Cartão Greenn', href: '/cartao-recusado?platform=greenn' },
+  { label: 'Compra aprovada', href: '/compra-aprovada?platform=greenn' },
 ]
 
 export const zoutiNav = [
-  { label: 'Carrinho Zouti', href: '/carrinho' },
-  { label: 'Boleto Zouti', href: '/boleto' },
-  { label: 'Pix Zouti', href: '/pix' },
-  { label: 'Cartão Zouti', href: '/cartao-recusado' },
-  { label: 'Compra aprovada', href: '/compra-aprovada' },
+  { label: 'Carrinho Zouti', href: '/carrinho?platform=zouti' },
+  { label: 'Boleto Zouti', href: '/boleto?platform=zouti' },
+  { label: 'Pix Zouti', href: '/pix?platform=zouti' },
+  { label: 'Cartão Zouti', href: '/cartao-recusado?platform=zouti' },
+  { label: 'Compra aprovada', href: '/compra-aprovada?platform=zouti' },
 ]
 
+// ?channel= é o mesmo param que o Inbox já manda pro backend
+// (effectiveChannelParam em ConversationList.tsx); ?source= é o mesmo lido
+// por /leads (page.tsx) e /origens (matchesSourceFilter), reaproveitando a
+// classificação única de src/lib/inbox-channel-filter.ts e src/lib/origins.ts.
 export const instagramNav = [
   { label: 'Comentário → DM', href: '/comentarios-instagram' },
-  { label: 'Conversas Direct', href: '/inbox' },
-  { label: 'Leads Instagram', href: '/leads' },
-  { label: 'Performance Direct', href: '/origens' },
+  { label: 'Conversas Direct', href: '/inbox?channel=instagram' },
+  { label: 'Leads Instagram', href: '/leads?source=instagram' },
+  { label: 'Performance Direct', href: '/origens?source=instagram' },
 ]
 
 export const mineracaoNav = [
-  { label: 'Leads Minerados', href: '/leads' },
-  { label: 'Canais de Mineração', href: '/origens' },
-  { label: 'Pipeline Prospecção', href: '/pipeline' },
+  { label: 'Leads Minerados', href: '/leads?source=mineracao' },
+  { label: 'Canais de Mineração', href: '/origens?source=mineracao' },
+  { label: 'Pipeline Prospecção', href: '/pipeline?source=mineracao' },
 ]
 
 export const ajustesNav = [
@@ -252,9 +263,24 @@ export function SidebarNavContent({
   sidebarConfig?: SidebarMenuConfig | null
 }) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
 
-  const isActive = (href: string) =>
-    href === '/' ? pathname === '/' : pathname.startsWith(href)
+  // Agora que instagramNav/mineracaoNav/hotmartNav/kiwifyNav/greennNav/zoutiNav
+  // levam ?channel=/?source=/?platform= (mesmo destino de rota, filtro
+  // diferente), comparar só o pathname faria 4 itens de menu diferentes
+  // (ex.: "Boleto Hotmart" e "Boleto Kiwify", mesmo /boleto) acenderem juntos.
+  // Sem query no href, comportamento idêntico ao de antes (só pathname).
+  const isActive = (href: string) => {
+    const [hrefPath, hrefQuery] = href.split('?')
+    if (hrefPath === '/') return pathname === '/' && !hrefQuery
+    if (!pathname.startsWith(hrefPath)) return false
+    if (!hrefQuery) return true
+    const hrefParams = new URLSearchParams(hrefQuery)
+    for (const [key, value] of hrefParams) {
+      if (searchParams.get(key) !== value) return false
+    }
+    return true
+  }
 
   // Estado de recolhimento de cada seção da sidebar
   const [sectionsOpen, setSectionsOpen] = useState<{ [key: string]: boolean }>({
@@ -292,7 +318,13 @@ export function SidebarNavContent({
     if (apiOficialNav.some(item => isActive(item.href))) {
       setSectionsOpen(prev => ({ ...prev, api_oficial: true }))
     }
-    if (hotmartNav.some(item => isActive(item.href))) {
+    // Pathname puro (ignora ?platform=) de propósito: as 5 telas de
+    // recuperação são compartilhadas pelas 4 plataformas, então estar em
+    // QUALQUER uma delas (independente de qual platform está selecionado)
+    // deve abrir as 4 seções, exatamente como antes de hotmartNav/kiwifyNav/
+    // greennNav/zoutiNav ganharem ?platform=. Usar isActive aqui (que agora
+    // exige o platform bater) faria só a seção da plataforma-alvo abrir.
+    if (hotmartNav.some(item => pathname.startsWith(item.href.split('?')[0]))) {
       setSectionsOpen(prev => ({ ...prev, hotmart: true, kiwify: true, greenn: true, zouti: true }))
     }
     if (ajustesNav.some(item => isActive(item.href))) {

@@ -120,23 +120,54 @@ export function ConversationList({
   initialHasMore?: boolean
   initialError?: string | null
 }) {
+  const pathname = usePathname()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const sourceFilter = searchParams.get('source')?.trim() || ''
+
+  // Estado inicial das abas lido de /inbox?channel=X (mandado pelo menu
+  // lateral, ex.: instagramNav → "Conversas Direct" → /inbox?channel=instagram
+  // em src/components/layout/sidebar.tsx). Sem isto, o link só filtrava a
+  // BUSCA no backend (effectiveChannelParam já mandava ?channel= pro
+  // /api/inbox) mas a aba visível continuava travada em "Todos": o usuário
+  // clicava em "Conversas Direct" e via a lista inteira sem indicação de
+  // filtro nenhum, parecendo estar na aba errada. Só a carga inicial lê a
+  // URL; depois disso quem manda é o clique na aba (mesmo comportamento de
+  // sempre, sem sincronizar de volta pra URL a cada troca).
+  const initialChannelParam = searchParams.get('channel')?.trim() || ''
+  const initialChannelFilter: ChannelFilter = initialChannelParam.startsWith('mineracao')
+    ? 'mineracao'
+    : initialChannelParam.startsWith('anuncio')
+    ? 'anuncio'
+    : initialChannelParam === 'whatsapp' || initialChannelParam === 'instagram' || initialChannelParam === 'email'
+    ? initialChannelParam
+    : 'all'
+  const initialMineracaoSub = initialChannelParam.startsWith('mineracao_')
+    ? initialChannelParam.slice('mineracao_'.length)
+    : ''
+  const initialAnuncioSub = initialChannelParam.startsWith('anuncio_')
+    ? initialChannelParam.slice('anuncio_'.length)
+    : ''
+
   const [convs, setConvs] = useState<ConversationSummary[]>(initial)
   const [nextCursor, setNextCursor] = useState<string | null>(initialCursor)
   const [hasMore, setHasMore] = useState(initialHasMore)
   const [error, setError] = useState<string | null>(initialError)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [channelFilter, setChannelFilter] = useState<ChannelFilter>('all')
-  const [mineracaoSubFilter, setMineracaoSubFilter] = useState<MineracaoSubFilter>('all')
-  const [anuncioSubFilter, setAnuncioSubFilter] = useState<AnuncioSubFilter>('all')
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>(initialChannelFilter)
+  const [mineracaoSubFilter, setMineracaoSubFilter] = useState<MineracaoSubFilter>(
+    initialMineracaoSub === 'email' || initialMineracaoSub === 'whatsapp' || initialMineracaoSub === 'instagram'
+      ? initialMineracaoSub
+      : 'all'
+  )
+  const [anuncioSubFilter, setAnuncioSubFilter] = useState<AnuncioSubFilter>(
+    initialAnuncioSub === 'meta_ads' || initialAnuncioSub === 'google_ads' ? initialAnuncioSub : 'all'
+  )
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [refreshing, setRefreshing] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const requestSequence = useRef(0)
-  const pathname = usePathname()
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const sourceFilter = searchParams.get('source')?.trim() || ''
 
   // Busca no backend já filtrada pelo canal selecionado: a aba "Todos" não
   // manda parâmetro (mesmo comportamento de sempre), as abas de canal
@@ -216,13 +247,18 @@ export function ConversationList({
   }, [fetchPage, loadingMore, nextCursor])
 
   // Refetch imediato ao trocar de aba (não espera o poll de 15s). O
-  // carregamento inicial já veio do Server Component com "Todos", então pula
-  // a primeira execução pra não duplicar aquela mesma busca.
+  // carregamento inicial já veio do Server Component com "Todos" (loadInboxPage
+  // em src/app/(dashboard)/inbox/layout.tsx não recebe ?channel=/?source=),
+  // então pula a primeira execução pra não duplicar aquela busca... A MENOS
+  // que a própria URL já tenha chegado com um filtro (deep link do menu
+  // lateral, ex.: /inbox?channel=instagram): aí a lista "Todos" do servidor
+  // não bate com a aba já selecionada, e É PRECISO buscar de novo na hora.
   const didMountRef = useRef(false)
+  const hasDeepLinkFilterRef = useRef(Boolean(sourceFilter) || initialChannelFilter !== 'all')
   useEffect(() => {
     if (!didMountRef.current) {
       didMountRef.current = true
-      if (!sourceFilter) return
+      if (!hasDeepLinkFilterRef.current) return
     }
     refresh(true)
   }, [refresh, sourceFilter])
