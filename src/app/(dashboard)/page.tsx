@@ -175,6 +175,14 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
   const qualificadosCount = leadStats?.qualificadosTotal ?? 0
   const gramadoCardCounts = gramadoDashboardCardCounts(leadStats)
+  const respondeuCount = leadStats?.respondeuTotal ?? 0
+  const avancouCount = leadStats?.avancouTotal ?? 0
+
+  // Taxa de conversao "oficial" do negocio: mesma definicao do painel nativo
+  // do Hermes (quem agendou/reservou dividido por quem iniciou conversa no
+  // periodo). Uma unica formula, reutilizada no card de agendamento abaixo e
+  // nos KPIs adaptativos, para nunca divergir do numero mostrado ao Gastao.
+  const agendamentoConversionRate = total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'
 
   const recoveredCount = leadStats?.recoveredCount ?? 0
   const recoveryTotal = (leadStats?.boleto ?? 0) + (leadStats?.pix ?? 0) + (leadStats?.carrinho ?? 0) + (leadStats?.cartao ?? 0)
@@ -324,6 +332,37 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       { label: 'Compra Aprovada', count: leadStats?.aprovada ?? 0, icon: PartyPopper, color: '--ev-aprovada', desc: 'Venda confirmada' },
     ]
   }
+
+  // 5. Funil de Conversao & Agendamento (equivalente ao painel nativo do
+  // Hermes: Conversas iniciadas -> Responderam -> Avancaram -> Agendaram ->
+  // Compareceram), vocabulario adaptado por modelo de negocio. So faz
+  // sentido para os negocios com conversa 1:1 + agenda real (gramado, lucas,
+  // agencia); infoproduto usa o funil de checkout que ja existe acima.
+  const showAgendamentoFunnel = isGramado || isLucas || isAgencia
+  let agendamentoLabel = 'Agendado'
+  let compareceuLabel = 'Compareceu'
+  let compareceuCount = fechadosCount
+  if (isGramado) {
+    agendamentoLabel = 'Reservaram'
+    compareceuLabel = 'Compareceram'
+    compareceuCount = gramadoCardCounts.compareceu
+  } else if (isLucas) {
+    agendamentoLabel = 'Agendaram Consulta'
+    compareceuLabel = 'Compareceram (Procedimento)'
+    compareceuCount = leadStats?.fechado ?? fechadosCount
+  } else if (isAgencia) {
+    agendamentoLabel = 'Reunião Agendada'
+    compareceuLabel = 'Contrato Fechado'
+    compareceuCount = leadStats?.fechado ?? fechadosCount
+  }
+
+  const agendamentoFunnelSteps = [
+    { label: 'Conversas Iniciadas', count: total, icon: MessageSquare, desc: 'iniciaram atendimento no período' },
+    { label: 'Responderam', count: respondeuCount, icon: ThumbsUp, desc: 'leads que enviaram ao menos 1 mensagem' },
+    { label: 'Avançaram', count: avancouCount, icon: ArrowUpRight, desc: 'conversa com 4+ mensagens' },
+    { label: agendamentoLabel, count: fechadosCount, icon: Calendar, desc: 'chegaram a agendar/reservar' },
+    { label: compareceuLabel, count: compareceuCount, icon: PartyPopper, desc: 'etapa final do funil' },
+  ]
 
   const sentJobs = jobStats?.sent ?? 0
   const failedJobs = jobStats?.failed ?? 0
@@ -571,6 +610,54 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           ))}
         </div>
       </div>
+
+      {/* 2.5 Conversão & Agendamento (comparável ao painel nativo do Hermes) */}
+      {showAgendamentoFunnel && (
+        <div className="rise rise-2 flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <p className="text-label uppercase text-fg-subtle font-bold flex items-center gap-1.5">
+              <Sparkles size={13} className="text-brand-ink" />
+              Conversão & Agendamento no Período
+            </p>
+            <span className="text-micro text-fg-subtle">Comparável ao painel nativo</span>
+          </div>
+          <div className="grid grid-cols-12 gap-[var(--space-gutter)]">
+            <div
+              className="card-highlight col-span-12 md:col-span-3 flex flex-col justify-between p-[var(--space-card)]"
+              style={{ minHeight: 'clamp(120px, 9vw, 150px)' }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-label uppercase text-fg-subtle">Taxa de Conversão</p>
+                <TrendingUp size={13} className="text-brand-ink shrink-0" />
+              </div>
+              <div className="mt-3">
+                <p className="num text-metric text-brand-ink">{agendamentoConversionRate}%</p>
+                <p className="text-micro text-fg-faint mt-1">
+                  {fechadosCount} {agendamentoLabel.toLowerCase()} de {total} conversas iniciadas
+                </p>
+              </div>
+            </div>
+
+            <div className="col-span-12 md:col-span-9 grid grid-cols-2 gap-[var(--space-gutter)] sm:grid-cols-3 lg:grid-cols-5">
+              {agendamentoFunnelSteps.map(({ label, count: stepCount, icon: Icon, desc }) => (
+                <div
+                  key={label}
+                  className="card bg-surface-raised p-3.5 flex flex-col justify-between border border-line-subtle rounded-xl"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-micro uppercase text-fg-subtle font-semibold leading-tight">{label}</span>
+                    <Icon size={13} className="text-fg-faint shrink-0" />
+                  </div>
+                  <div className="mt-2">
+                    <span className="num text-metric-sm font-bold text-fg block">{stepCount}</span>
+                    <span className="text-[10px] text-fg-faint mt-0.5 block">{desc}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 3. Etapas do Fechamento / Funil Adaptativo */}
       <div className="rise rise-3 flex flex-col gap-2">

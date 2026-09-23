@@ -1,5 +1,5 @@
 import { sql, type SQL } from 'drizzle-orm'
-import { recoveryLeads } from '../db/schema'
+import { recoveryLeads, whatsappMessages } from '../db/schema'
 
 export type DashboardBusinessModel = 'gramado' | 'lucas' | 'agencia' | 'infoproduto'
 
@@ -19,6 +19,22 @@ export function gramadoDashboardCardCounts(stats: { fechadosTotal?: number | nul
 const statusLower = sql`lower(coalesce(${recoveryLeads.status}, ''))`
 const stageLower = sql`lower(coalesce(${recoveryLeads.pipelineStage}, ''))`
 const eventLower = sql`lower(coalesce(${recoveryLeads.eventType}, ''))`
+
+// Subqueries correlacionadas (uma linha por lead, sem join que multiplica
+// contagem): usadas para reproduzir o funil de ENGAJAMENTO do painel nativo
+// do Hermes ("Responderam", "Avançaram") a partir do historico real de
+// mensagens em whatsapp_messages, nunca do status/pipeline_stage do CRM.
+const leadRespondedExistsSql = sql`exists (
+  select 1 from ${whatsappMessages}
+  where ${whatsappMessages.leadId} = ${recoveryLeads.id}
+    and ${whatsappMessages.companyId} = ${recoveryLeads.companyId}
+    and ${whatsappMessages.direction} = 'inbound'
+)`
+const leadMessageCountSql = sql`(
+  select count(*) from ${whatsappMessages}
+  where ${whatsappMessages.leadId} = ${recoveryLeads.id}
+    and ${whatsappMessages.companyId} = ${recoveryLeads.companyId}
+)`
 
 export function resolveDashboardBusinessModel(slug: string): DashboardBusinessModel {
   if (slug.includes('gramado')) return 'gramado'
@@ -88,6 +104,12 @@ export function dashboardLeadStatsSelect(model: DashboardBusinessModel) {
   return {
     total: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null) as int)`,
     aguardandoAbordagem: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and (${statusLower} in ('pending', 'new', 'aguardando') or ${recoveryLeads.status} is null)) as int)`,
+
+    // Funil de engajamento equivalente ao painel nativo do Hermes: conta pelo
+    // historico REAL de mensagens (whatsapp_messages), independente do
+    // pipeline_stage do CRM. "Avancou" = 4+ mensagens trocadas na conversa.
+    respondeuTotal: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${leadRespondedExistsSql}) as int)`,
+    avancouTotal: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is not null and ${leadMessageCountSql} >= 4) as int)`,
     fechadosTotal: sql<number>`cast(count(*) filter (where ${won}) as int)`,
     valorFechadoCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${won}), 0) as bigint)`,
     qualificadosTotal: sql<number>`cast(count(*) filter (where ${stage} in ('qualificado', 'agendado', 'proposta', 'fechado', 'compareceu')) as int)`,
