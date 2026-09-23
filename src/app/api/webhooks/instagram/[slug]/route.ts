@@ -110,7 +110,15 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       const messagingList = (entry.messaging as Record<string, unknown>[]) ?? []
       for (const item of messagingList) {
         const sender = item.sender as { id?: string } | undefined
-        const message = item.message as { mid?: string; text?: string } | undefined
+        const message = item.message as { mid?: string; text?: string; is_echo?: boolean } | undefined
+        // ‼️ 23/09/2026: ECO da própria conta (mesma causa raiz da rota
+        // global, um nível acima) — a Meta reenvia toda mensagem que A
+        // PRÓPRIA conta manda pelo mesmo webhook de "messaging".
+        const ownAccountIds = [companySettingsForSecret?.instagramAccountId, companySettingsForSecret?.instagramPageId].filter(Boolean)
+        if (message?.is_echo || (sender?.id && ownAccountIds.includes(sender.id))) {
+          console.log(`[Instagram Webhook] eco da própria conta ignorado, sender=${sender?.id}`)
+          continue
+        }
         if (sender?.id && message?.text) {
           try {
             // Idempotência contra reentrega de webhook da Meta: reentrega é

@@ -174,7 +174,17 @@ export async function POST(req: NextRequest) {
           // [slug] já usa).
           for (const item of messagingList) {
             const sender = item.sender as { id?: string } | undefined
-            const message = item.message as { mid?: string; text?: string } | undefined
+            const message = item.message as { mid?: string; text?: string; is_echo?: boolean } | undefined
+            // ‼️ 23/09/2026: ECO da própria conta. A Meta reenvia, pelo mesmo
+            // webhook de "messaging", toda mensagem que A PRÓPRIA conta manda
+            // (is_echo=true, ou sender.id igual ao ID da página/conta). Sem
+            // filtrar isso, a resposta da Nina virava um "cliente novo"
+            // escrevendo pra ela mesma — confirmado ao vivo: sender.id bateu
+            // exatamente com o instagramAccountId configurado.
+            if (message?.is_echo || (sender?.id && sender.id === pageId)) {
+              console.log(`[Instagram Webhook Global] eco da própria conta ignorado, sender=${sender?.id}`)
+              continue
+            }
             if (sender?.id && message?.text) {
               try {
                 // Idempotência contra reentrega de webhook da Meta: reentrega é
