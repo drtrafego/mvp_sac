@@ -43,6 +43,45 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // SSO do portal: o cliente.casaldotrafego.com abre o SAC com ?__st=<base64>, que
+  // carrega a sessão Stack do portal no formato legado (stack-access e
+  // stack-refresh-<projeto>). Sem isto, só entrava quem já tinha logado direto no
+  // SAC antes; os demais caíam na tela de login dentro do iframe, onde o Google
+  // é bloqueado. Mesmo receptor do CRM (mvp_crm/src/middleware.ts).
+  const stParam = request.nextUrl.searchParams.get('__st')
+  if (stParam) {
+    try {
+      const decoded = JSON.parse(Buffer.from(stParam, 'base64').toString())
+      const cleanUrl = new URL(request.url)
+      cleanUrl.searchParams.delete('__st')
+      const response = NextResponse.redirect(cleanUrl)
+
+      if (typeof decoded.a === 'string') {
+        response.cookies.set('stack-access', decoded.a, {
+          path: '/',
+          httpOnly: false,
+          secure: true,
+          sameSite: 'lax',
+          maxAge: 60 * 60 * 24,
+        })
+      }
+      // Só aceita o nome de cookie de refresh do Stack, nunca um nome arbitrário vindo da URL.
+      // httpOnly false: o SDK client só aceita a sessão se enxergar o refresh token em document.cookie.
+      if (typeof decoded.rn === 'string' && /^stack-refresh-[\w-]+$/.test(decoded.rn) && typeof decoded.rv === 'string') {
+        response.cookies.set(decoded.rn, decoded.rv, {
+          path: '/',
+          httpOnly: false,
+          secure: true,
+          sameSite: 'lax',
+          maxAge: 60 * 60 * 24 * 30,
+        })
+      }
+      return response
+    } catch (e) {
+      console.error('[SSO] __st inválido:', e)
+    }
+  }
+
   // Se a rota for da API de Agente (/api/agent/...) e ALLOWED_IPS estiver configurada, valida o IP do agente
   if (pathname.startsWith('/api/agent/')) {
     if (!isIpAllowed(request)) {
