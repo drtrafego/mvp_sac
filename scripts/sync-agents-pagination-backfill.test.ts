@@ -8,10 +8,12 @@
 // Este teste usa Postgres Docker real para o banco local e para a fonte dos
 // agentes. O mock de queryAgentsDb executa as queries reais contra tabelas de
 // fonte criadas no Postgres; não devolve fixture filtrada em memória. Roda a
-// sync 3 vezes simulando o cron:
+// sync 4 vezes simulando o cron:
 //   1. importa as 300 conversas mais recentes e grava os cursores.
 //   2. importa as 200 conversas antigas restantes via backfill.
 //   3. não duplica nada.
+//   4. uma conversa existente recebe mensagem nova; o sync atualiza os
+//      metadados antigos e importa a novidade antes de avançar o cursor.
 //
 // Uso: npx tsx --experimental-test-module-mocks --test scripts/sync-agents-pagination-backfill.test.ts
 
@@ -470,6 +472,40 @@ async function main() {
       assert.equal(counts3.distinctPhones, TOTAL_CONVERSATIONS)
       assert.equal(counts3.distinctMessageExternalIds, TOTAL_CONVERSATIONS)
       assert.equal(counts3.duplicateMessages, 0)
+    })
+
+    const newMessageAt = '2026-09-02T00:00:00.000Z'
+    await sql`
+      update ${sql(SOURCE_SCHEMA)}.conversations
+      set ended_at = ${newMessageAt}, message_count = 2
+      where session_id = 'session-500'
+    `
+    await sql`
+      insert into ${sql(SOURCE_SCHEMA)}.messages (
+        id, session_id, role, content, ts, platform_message_id, reasoning, sent_email
+      ) values (
+        501, 'session-500', 'assistant', 'Mensagem nova depois do cursor',
+        ${newMessageAt}, null, null, null
+      )
+    `
+
+    const report4 = await syncAgentsAndCompanies()
+    const counts4 = await localCounts(sql)
+    const [conversationCursorAfterNewMessage] = await sql`
+      select newest_synced_at, newest_synced_id
+      from sync_cursors
+      where source = 'agent_conversations' and source_key = ${SOURCE_SCHEMA}
+    `
+
+    await test('4ª execução importa mensagem nova de conversa existente e avança o cursor', () => {
+      assert.equal(report4.ok, true)
+      assert.equal(report4.messagesImported, 1)
+      assert.equal(counts4.leads, TOTAL_CONVERSATIONS)
+      assert.equal(counts4.messages, TOTAL_CONVERSATIONS + 1)
+      assert.equal(counts4.distinctMessageExternalIds, TOTAL_CONVERSATIONS + 1)
+      assert.equal(counts4.duplicateMessages, 0)
+      assert.equal(new Date(conversationCursorAfterNewMessage.newest_synced_at).toISOString(), newMessageAt)
+      assert.equal(conversationCursorAfterNewMessage.newest_synced_id, 'session-500')
     })
 
     await sql`drop table public.ctwa_referrals`
