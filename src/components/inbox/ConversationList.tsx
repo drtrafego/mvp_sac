@@ -25,7 +25,9 @@ import {
   BotStatusPill,
   InstagramLogoIcon,
   MetaInfinityIcon,
+  EmailEngagementBadge,
 } from './ChannelBadge'
+import type { EmailEngagement } from '@/lib/email-engagement'
 import { MetaWindowBadge } from './MetaWindowBadge'
 import {
   classifyAnuncioSubcategory,
@@ -60,6 +62,7 @@ export interface ConversationSummary {
   lastOutboundAt?: string | null
   createdAt?: string | null
   unread: number
+  emailEngagement?: EmailEngagement | null
 }
 
 function formatMessageTimestamp(dateStr: string | null | undefined): { time: string; full: string; relative: string } {
@@ -701,6 +704,7 @@ export function ConversationList({ initial, initialError = null }: { initial: Co
                       eventType={conv.eventType}
                     />
                     <MetaWindowBadge lead={conv} />
+                    <EmailEngagementBadge engagement={conv.emailEngagement} />
                     {conv.botPaused && (
                       <BotStatusPill paused={true} compact />
                     )}

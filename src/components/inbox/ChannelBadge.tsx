@@ -15,6 +15,7 @@ import {
   Pickaxe,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type { EmailEngagement } from '@/lib/email-engagement'
 
 export type ChannelType = 'whatsapp' | 'whatsapp_official' | 'whatsapp_uazapi' | 'instagram' | 'email' | 'mineracao' | string
 
@@ -142,6 +143,48 @@ export function ChannelBadge({
     >
       <MessageCircle size={11} className="shrink-0" />
       <span>WhatsApp</span>
+    </span>
+  )
+}
+
+const EMAIL_ENGAGEMENT_LABELS: Record<string, { label: string; color: string }> = {
+  unsubscribed: { label: 'descadastrado', color: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400' },
+  blocked: { label: 'bloqueado', color: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400' },
+  bounce: { label: 'não entregue', color: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400' },
+  error: { label: 'erro', color: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400' },
+  opened: { label: 'aberto', color: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+  delivered: { label: 'entregue', color: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400' },
+  loadedbyproxy: { label: 'entregue', color: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400' },
+  sent: { label: 'enviado', color: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' },
+  deferred: { label: 'adiado', color: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400' },
+}
+
+export function EmailEngagementBadge({
+  engagement,
+  className,
+}: {
+  engagement?: EmailEngagement | null
+  className?: string
+}) {
+  if (!engagement?.funnelStatus) return null
+
+  const status = engagement.funnelStatus.trim().toLowerCase()
+  const mapped = EMAIL_ENGAGEMENT_LABELS[status] ?? {
+    label: status.replace(/[_-]/g, ' '),
+    color: 'border-line-subtle bg-surface-raised text-fg-subtle',
+  }
+
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold',
+        mapped.color,
+        className
+      )}
+      title={`Engajamento de e-mail: ${mapped.label}`}
+    >
+      <Mail size={11} className="shrink-0" />
+      <span>E-mail: {mapped.label}</span>
     </span>
   )
 }

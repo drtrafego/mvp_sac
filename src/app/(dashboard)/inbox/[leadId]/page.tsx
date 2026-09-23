@@ -7,6 +7,7 @@ import { eq, asc, and, or, sql } from 'drizzle-orm'
 import { ChatWindow } from '@/components/inbox/ChatWindow'
 import { requireCompany } from '@/lib/auth'
 import { queryAgentsDb } from '@/lib/db/agents-db'
+import { getEmailEngagement } from '@/lib/email-engagement'
 
 export default async function InboxChatPage({ params }: { params: Promise<{ leadId: string }> }) {
   const { leadId } = await params
@@ -62,6 +63,7 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         utmCampaign: lead.utmCampaign ?? null,
         createdAt: lead.createdAt ? lead.createdAt.toISOString() : null,
         agentDisplayName: company.agentDisplayName ?? null,
+        emailEngagement: getEmailEngagement(lead.miningTags),
       }}
       initialMessages={messages.map(m => ({
         id: m.id,

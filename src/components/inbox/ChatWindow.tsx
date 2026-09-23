@@ -21,9 +21,10 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
-import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill } from './ChannelBadge'
+import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill, EmailEngagementBadge } from './ChannelBadge'
 import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { cn } from '@/lib/utils'
+import type { EmailEngagement } from '@/lib/email-engagement'
 
 export interface ChatLead {
   id: number
@@ -49,6 +50,7 @@ export interface ChatLead {
   // de companies.agentDisplayName via sync-agents.ts. Nulo = nenhum agente
   // resolvido ainda; a UI cai no fallback genérico "Bot IA" (22/09/2026).
   agentDisplayName?: string | null
+  emailEngagement?: EmailEngagement | null
 }
 
 function formatBRL(centavos: number | null | undefined) {
@@ -215,6 +217,7 @@ export function ChatWindow({
                 </span>
                 <ChannelBadge channel={lead.channel} />
                 <PlatformBadge platform={lead.platform || lead.trackingSource} eventType={lead.eventType} />
+                <EmailEngagementBadge engagement={lead.emailEngagement} />
               </div>
               <p className="truncate text-[11px] text-fg-subtle font-mono mt-0.5">
                 {lead.phone}
