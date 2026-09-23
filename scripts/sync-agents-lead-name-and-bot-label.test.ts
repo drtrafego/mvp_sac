@@ -125,7 +125,7 @@ const AGENTS_FIXTURE = [
     org_name: 'Dr. Lucas',
     slug: 'drlucas',
     schema_name: 'drlucas',
-    name: 'Clara', // BUG 2: nome de persona do bot, hoje descartado
+    name: 'Clara', // BUG 2: nome de persona do bot antes era descartado
   },
   {
     id: 'agent-gramado',
@@ -403,6 +403,25 @@ async function main() {
     const leadGabrielDepois = await getLeadByPhone('5511900000001')
     await test('idempotência: nome que já está correto não é reescrito à toa numa 2ª rodada', () => {
       assert.equal(leadGabrielDepois!.name, 'Gabriel Carvalho')
+    })
+
+    const [companyDrLucas] = await testDb.select().from(schema.companies).where(eq(schema.companies.slug, 'drlucas'))
+    await testDb
+      .update(schema.companies)
+      .set({ agentDisplayName: 'Dra. Clara', agentDisplayNameManual: true })
+      .where(eq(schema.companies.id, companyDrLucas!.id))
+    AGENTS_FIXTURE[0].name = 'Clara Nativa Renomeada'
+
+    const report3 = await syncAgentsAndCompanies()
+    assert.equal(report3.ok, true, `3ª sync deveria ter rodado ok: ${report3.message}`)
+
+    await test('override manual do nome do bot não é sobrescrito pelo sync automático', async () => {
+      const [companyAfterSync] = await testDb
+        .select()
+        .from(schema.companies)
+        .where(eq(schema.companies.id, companyDrLucas!.id))
+      assert.equal(companyAfterSync.agentDisplayName, 'Dra. Clara')
+      assert.equal(companyAfterSync.agentDisplayNameManual, true)
     })
   } finally {
     await sql.end({ timeout: 2 })

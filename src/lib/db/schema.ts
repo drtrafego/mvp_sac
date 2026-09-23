@@ -10,14 +10,14 @@ export const companies = pgTable('companies', {
   plan: text('plan').default('free'),
   inviteToken: text('invite_token').unique(),              // token para convite de cliente
   // Nome de persona do bot de atendimento desta empresa (ex.: "Clara" pro Dr.
-  // Lucas), 22/09/2026. Vem de public.agents.name no Agents DB e é sincronizado
-  // sozinho em toda rodada de sync-agents.ts (bloco 2), sempre sobrescrevendo:
-  // não existe tela pra editar isto manualmente ainda, então não há valor
-  // "do usuário" pra proteger, e o Agents DB é a fonte de verdade única do
-  // nome do agente. Nulo = nenhum agente resolvido ainda pra esta empresa; a
+  // Lucas), 22/09/2026. Por padrão vem de public.agents.name no Agents DB. Uma
+  // edição manual em Configurações passa a ter precedência sobre o sync; o
+  // booleano abaixo registra essa escolha sem confundir nomes sincronizados
+  // antigos com overrides do usuário. Nulo = nenhum agente resolvido ainda; a
   // UI cai no fallback genérico "Bot IA" (ver MessageBubble/ChannelBadge/
   // ChatWindow) em vez de quebrar.
   agentDisplayName: text('agent_display_name'),
+  agentDisplayNameManual: boolean('agent_display_name_manual').notNull().default(false),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 })

@@ -86,6 +86,7 @@ export function ensureSchema(client: any): Promise<void> {
           // Ver comentário completo em src/lib/db/schema.ts (companies.agentDisplayName)
           // e drizzle/0012_companies_agent_display_name.sql (documental).
           client`ALTER TABLE companies ADD COLUMN IF NOT EXISTS agent_display_name text`,
+          client`ALTER TABLE companies ADD COLUMN IF NOT EXISTS agent_display_name_manual boolean NOT NULL DEFAULT false`,
 
           // agent_activity_logs
           client`

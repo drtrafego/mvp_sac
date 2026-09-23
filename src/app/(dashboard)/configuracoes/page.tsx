@@ -798,10 +798,14 @@ export default function ConfiguracoesPage() {
 
   async function handleSave() {
     setSaving(true)
+    const { agentDisplayName, ...otherSettings } = form
     await fetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify({
+        ...otherSettings,
+        ...(agentDisplayName.trim() ? { agentDisplayName } : {}),
+      }),
     })
     setSaving(false)
     setSaved(true)
@@ -823,11 +827,22 @@ export default function ConfiguracoesPage() {
       {/* Pausar Tudo */}
       {slug && <PausarTudoSection slug={slug} />}
 
-      <section className="panel p-[var(--space-card)]">
+      <section className="panel p-[var(--space-card)] space-y-3">
         <p className="text-label uppercase text-fg-subtle">Bot de atendimento</p>
-        <p className="text-body text-fg mt-1">
-          Nome do bot: <span className="font-semibold">{form.agentDisplayName || 'Não definido'}</span>
-        </p>
+        <div className="space-y-1.5">
+          <Label htmlFor="agent-display-name">Nome do bot</Label>
+          <Input
+            id="agent-display-name"
+            value={form.agentDisplayName}
+            onChange={e => set('agentDisplayName', e.target.value)}
+            placeholder="Ex.: Clara"
+            maxLength={80}
+            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Este nome aparece nas conversas e, depois de salvo, tem precedência sobre o nome sincronizado automaticamente.
+          </p>
+        </div>
       </section>
 
       {/* Equipe */}

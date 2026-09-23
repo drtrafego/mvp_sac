@@ -26,7 +26,8 @@
     "test:dashboard-origin-pills": "tsx scripts/dashboard-origin-pills.test.ts",
     "test:inbox-source-filter": "tsx scripts/inbox-source-filter.test.ts",
     "test:inbox-email-engagement": "tsx --experimental-test-module-mocks --test scripts/inbox-email-engagement.test.ts",
-    "test:channel-badge-origin": "tsx scripts/channel-badge-origin.test.tsx"
+    "test:channel-badge-origin": "tsx scripts/channel-badge-origin.test.tsx",
+    "test:settings-agent-display-name": "tsx --experimental-test-module-mocks --test scripts/settings-agent-display-name.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
