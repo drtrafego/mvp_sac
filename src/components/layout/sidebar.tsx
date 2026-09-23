@@ -171,6 +171,7 @@ export const mineracaoNav = [
 ]
 
 export const ajustesNav = [
+  { label: 'Agente', href: '/agente', icon: Bot, key: 'agente' },
   { label: 'Configuração', href: '/configuracoes', icon: Settings, key: 'configuracoes' },
   { label: 'Documentação API', href: '/api-docs', icon: Code2, key: 'apiDocs' },
   { label: 'Webhooks Log', href: '/webhooks-log', icon: Webhook, key: 'webhooks' },
@@ -205,6 +206,7 @@ export interface SidebarMenuConfig {
   showMineracao?: boolean
 
   // Ajustes
+  showAgente?: boolean
   showConfiguracoes?: boolean
   showWebhooksLog?: boolean
   showBiblioteca?: boolean
@@ -322,6 +324,7 @@ export function SidebarNavContent({
   const showInstagram = sidebarConfig?.showInstagram !== undefined ? sidebarConfig.showInstagram : !!activeConnections?.instagram
   const showMineracao = sidebarConfig?.showMineracao !== undefined ? sidebarConfig.showMineracao : !!activeConnections?.mineracao
 
+  const showAgente = sidebarConfig?.showAgente !== undefined ? sidebarConfig.showAgente : true
   const showWebhooksLog = sidebarConfig?.showWebhooksLog !== undefined ? sidebarConfig.showWebhooksLog : true
   const showBiblioteca = sidebarConfig?.showBiblioteca !== undefined ? sidebarConfig.showBiblioteca : true
   const showConfiguracoes = sidebarConfig?.showConfiguracoes !== undefined ? sidebarConfig.showConfiguracoes : true
@@ -847,6 +850,7 @@ export function SidebarNavContent({
           <div className="space-y-0.5">
             {ajustesNav
               .filter(item => {
+                if (item.key === 'agente') return showAgente
                 if (item.key === 'configuracoes') return showConfiguracoes
                 if (item.key === 'apiDocs') return showApiDocs
                 if (item.key === 'webhooks') return showWebhooksLog

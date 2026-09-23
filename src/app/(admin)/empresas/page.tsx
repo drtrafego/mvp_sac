@@ -480,6 +480,7 @@ function EditCompanyForm({
         showWebhooksLog: false,
         showBiblioteca: false,
         showConfiguracoes: true,
+        showAgente: true,
       })
     } else {
       setSidebarConfig({
@@ -498,6 +499,7 @@ function EditCompanyForm({
         showWebhooksLog: true,
         showBiblioteca: true,
         showConfiguracoes: true,
+        showAgente: true,
       })
     }
   }
@@ -562,6 +564,7 @@ function EditCompanyForm({
         { key: 'showBiblioteca', label: 'Biblioteca de Mídia' },
         { key: 'showApiDocs', label: 'Documentação da API' },
         { key: 'showConfiguracoes', label: 'Configurações' },
+        { key: 'showAgente', label: 'Agente (cérebro do bot)' },
       ],
     },
   ]
