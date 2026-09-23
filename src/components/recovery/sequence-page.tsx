@@ -24,7 +24,8 @@ import {
   Layers,
   Settings,
   BarChart3,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Target
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
@@ -40,6 +41,19 @@ import { cn } from '@/lib/utils'
 
 const CONTROL_H = 'h-[var(--control-lg)] lg:h-[var(--control-md)]'
 const FIELD = 'bg-surface-inset border-line-subtle placeholder:text-fg-faint focus-ring'
+
+// Rótulos do badge de "Filtrando por plataforma" (?platform=), mandado pelo
+// menu lateral (hotmartNav/kiwifyNav/greennNav/zoutiNav em
+// src/components/layout/sidebar.tsx). As 5 telas de recuperação
+// (/carrinho, /boleto, /pix, /cartao-recusado, /compra-aprovada) são
+// COMPARTILHADAS pelas 4 plataformas de checkout; sem este filtro, "Boleto
+// Kiwify" mostrava o mesmo lead de Hotmart/Greenn/Zouti misturado.
+const PLATFORM_FILTER_LABELS: Record<string, string> = {
+  hotmart: '🛒 Hotmart',
+  kiwify: '🛒 Kiwify',
+  greenn: '🛒 Greenn',
+  zouti: '🛒 Zouti',
+}
 
 const MESSAGE_TYPE_OPTIONS: Record<string, string> = {
   text: 'Texto',
@@ -215,6 +229,7 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
     from: searchParams.get('from') ?? undefined,
     to: searchParams.get('to') ?? undefined,
   })
+  const platformFilter = searchParams.get('platform')?.trim() || ''
 
   const isRecovery = ['boleto', 'pix', 'carrinho_abandonado', 'cartao_recusado'].includes(eventType)
 
@@ -232,18 +247,22 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
     setLeadsLoading(true)
     let url = `/api/leads?event_type=${eventType}&limit=200&from=${fromDateStr}&to=${toDateStr}`
     if (product) url += `&product=${encodeURIComponent(product)}`
+    if (platformFilter) url += `&platform=${encodeURIComponent(platformFilter)}`
     fetch(url)
       .then(r => r.json())
       .then(data => setLeads(Array.isArray(data) ? data : []))
       .catch(() => setLeads([]))
       .finally(() => setLeadsLoading(false))
-  }, [eventType])
+  }, [eventType, platformFilter])
 
   useEffect(() => {
+    const productsUrl = platformFilter
+      ? `/api/leads?event_type=${eventType}&products_only=true&platform=${encodeURIComponent(platformFilter)}`
+      : `/api/leads?event_type=${eventType}&products_only=true`
     Promise.all([
       fetch(`/api/sequences/${eventType}`).then((r) => r.json()),
       fetch('/api/settings').then((r) => r.json()),
-      fetch(`/api/leads?event_type=${eventType}&products_only=true`).then((r) => r.json()),
+      fetch(productsUrl).then((r) => r.json()),
     ]).then(([seqData, settingsData, products]) => {
       setAvailableProducts(Array.isArray(products) ? products : [])
       setSequence(seqData.sequence)
@@ -260,7 +279,7 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
           .catch(() => {})
       }
     }).finally(() => setLoading(false))
-  }, [eventType])
+  }, [eventType, platformFilter])
 
   useEffect(() => {
     fetchLeads(from, to, selectedProduct)
@@ -508,6 +527,14 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
             </span>
           </div>
           <p className="mt-1 text-body text-fg-muted">{description}</p>
+          {platformFilter && (
+            <div className="flex items-center gap-2 text-micro mt-2">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">
+                <Target size={12} />
+                Filtrando por plataforma: {PLATFORM_FILTER_LABELS[platformFilter] ?? platformFilter} ({leads.length} leads)
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Botões de Alternância de Abas (Vendas vs Configuração) */}

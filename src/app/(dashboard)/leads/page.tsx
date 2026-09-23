@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Search, RefreshCw, Inbox, X, UploadCloud, Download, UserPlus } from 'lucide-react'
+import { Search, RefreshCw, Inbox, X, UploadCloud, Download, UserPlus, Target } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
@@ -84,6 +84,18 @@ const eventDot: Record<string, string> = {
   carrinho_abandonado: 'text-ev-carrinho',
   cartao_recusado: 'text-ev-cartao',
   compra_aprovada: 'text-ev-aprovada',
+}
+
+// Rótulos amigáveis pro badge de "Filtrando por origem" (?source=). Mesmos
+// valores usados no menu lateral (instagramNav/mineracaoNav, ver
+// src/components/layout/sidebar.tsx) e no filtro real de /origens
+// (SOURCE_FILTER_LABELS em src/app/(dashboard)/origens/page.tsx).
+const SOURCE_FILTER_LABELS: Record<string, string> = {
+  instagram: '📸 Instagram',
+  mineracao: '⛏️ Mineração',
+  whatsapp: '💬 WhatsApp',
+  email: '✉️ E-mail',
+  anuncio: '📣 Anúncio',
 }
 
 const paymentLabels: Record<string, string> = {
@@ -248,8 +260,26 @@ export default function LeadsPage() {
         search.trim() ? ' para a busca atual' : ` na página ${page + 1}`
       }`
 
+  const clearSourceHref = (() => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('source')
+    const qs = params.toString()
+    return qs ? `/leads?${qs}` : '/leads'
+  })()
+
   return (
     <div className="space-y-5">
+      {sourceParam && (
+        <div className="flex items-center gap-2 text-micro">
+          <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">
+            <Target size={12} />
+            Filtrando por origem: {SOURCE_FILTER_LABELS[sourceParam] ?? sourceParam}
+          </span>
+          <Link href={clearSourceHref} className="text-fg-subtle hover:text-fg underline underline-offset-2">
+            Limpar filtro
+          </Link>
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-h1 text-fg">Leads</h1>

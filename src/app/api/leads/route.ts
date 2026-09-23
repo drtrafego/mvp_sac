@@ -4,6 +4,7 @@ import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs } from 
 import { eq, desc, and, gte, lte, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { getDateRange } from '@/lib/date-utils'
+import { channelWhereCondition } from '@/lib/inbox-channel-filter'
 
 function cleanPhone(raw: string): string {
   let digits = raw.replace(/\D/g, '')
@@ -33,6 +34,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const status = searchParams.get('status')
   const product = searchParams.get('product')
   const source = searchParams.get('source')
+  const platform = searchParams.get('platform')
   const limitParam = searchParams.get('limit')
   const limit = limitParam === 'all' || limitParam === '0' || limitParam === '-1'
     ? undefined
@@ -46,6 +48,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (searchParams.get('products_only') === 'true') {
     const conditions = [eq(recoveryLeads.companyId, company.id)]
     if (eventType) conditions.push(eq(recoveryLeads.eventType, eventType))
+    if (platform) conditions.push(eq(recoveryLeads.platform, platform))
     const rows = await db
       .selectDistinct({ productName: recoveryLeads.productName })
       .from(recoveryLeads)
@@ -67,8 +70,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
   }
   if (source) {
-    conditions.push(sql`${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'}`)
+    // channelWhereCondition é a ÚNICA fonte da verdade de classificação de
+    // canal (src/lib/inbox-channel-filter.ts, mesma usada em /api/inbox e
+    // no Inbox em memória) — reaproveitada aqui em vez de duplicar a
+    // heurística com um ILIKE de texto livre, que não pegava sinônimo real
+    // (ex.: "Minerador" do CRM não bate em ILIKE '%mineracao%', mas bate na
+    // regra de borda de palavra 'miner' de channelWhereCondition).
+    // Retorna undefined pra valor desconhecido: cai no ILIKE de texto livre
+    // como fallback, preservando o comportamento antigo pra source arbitrário.
+    const knownChannelCondition = channelWhereCondition(source)
+    conditions.push(knownChannelCondition ?? sql`${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'}`)
   }
+  if (platform) conditions.push(eq(recoveryLeads.platform, platform))
   if (product) conditions.push(eq(recoveryLeads.productName, product))
   if (fromDate) conditions.push(gte(recoveryLeads.createdAt, fromDate))
   conditions.push(lte(recoveryLeads.createdAt, toDate))
