@@ -73,10 +73,15 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
   }
 
   // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem.
-  // Empresa já foi resolvida pelo slug acima: se ela tiver App Secret próprio, usa o dela;
-  // senão cai no META_APP_SECRET compartilhado de hoje.
+  // Empresa já foi resolvida pelo slug acima. ‼️ 23/09/2026: o app do Instagram
+  // tem App Secret PRÓPRIO, diferente do app principal (WhatsApp) — mesma
+  // causa raiz corrigida na rota global (route.ts um nível acima).
   const [companySettingsForSecret] = await db.select().from(settings).where(eq(settings.companyId, company.id))
-  const secret = companySettingsForSecret?.metaAppSecret || process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
+  const secret =
+    companySettingsForSecret?.instagramAppSecret ||
+    process.env.INSTAGRAM_APP_SECRET ||
+    companySettingsForSecret?.metaAppSecret ||
+    process.env.META_APP_SECRET
   if (!secret) {
     console.error("[Instagram Webhook] Nenhum App Secret configurado (nem da empresa, nem o compartilhado), recusando requisição")
     return NextResponse.json({ error: "meta_app_secret_not_configured" }, { status: 503 })

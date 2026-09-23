@@ -77,6 +77,13 @@ export const settings = pgTable('settings', {
   instagramAccessToken: text('instagram_access_token'),
   instagramVerifyToken: text('instagram_verify_token'),
   instagramPageId: text('instagram_page_id'),
+  // ‼️ 23/09/2026: o app do Instagram (Instagram API with Instagram Login,
+  // sem Página do Facebook) tem App ID e App Secret PRÓPRIOS, diferentes do
+  // app principal usado pro WhatsApp. O webhook estava usando metaAppSecret
+  // (secret do app de WhatsApp) pra validar a assinatura x-hub-signature-256
+  // do Instagram, e por isso rejeitava com 401 TODO evento real da Meta
+  // (confirmado ao vivo: 401 no exato segundo que uma mensagem real chegou).
+  instagramAppSecret: text('instagram_app_secret'),
   // Supabase (Centralização dos Agentes IA)
   supabaseDatabaseUrl: text('supabase_database_url'),
   // Credenciais & Segurança dos Agentes IA (Bia - Amanda & Luana - Gastão)

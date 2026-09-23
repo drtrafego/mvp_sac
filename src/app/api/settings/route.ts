@@ -67,6 +67,7 @@ export async function GET(): Promise<NextResponse> {
       instagramAccessToken: '',
       instagramVerifyToken: '',
       instagramPageId: '',
+      instagramAppSecret: '',
     })
   }
 
@@ -97,6 +98,7 @@ export async function GET(): Promise<NextResponse> {
     instagramAccessToken: mask(row.instagramAccessToken),
     instagramVerifyToken: row.instagramVerifyToken ?? '',
     instagramPageId: row.instagramPageId ?? '',
+    instagramAppSecret: mask(row.instagramAppSecret),
     sidebarConfig: row.sidebarConfig ?? null,
   })
 }
@@ -155,6 +157,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
         instagramAccessToken: resolveSecret(body.instagramAccessToken, existing.instagramAccessToken),
         instagramVerifyToken: body.instagramVerifyToken ?? existing.instagramVerifyToken,
         instagramPageId: body.instagramPageId ?? existing.instagramPageId,
+        instagramAppSecret: resolveSecret(body.instagramAppSecret, existing.instagramAppSecret),
         sidebarConfig: body.sidebarConfig !== undefined ? body.sidebarConfig : existing.sidebarConfig,
         updatedAt: new Date(),
       })
@@ -196,6 +199,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       instagramAccessToken: body.instagramAccessToken || null,
       instagramVerifyToken: body.instagramVerifyToken || null,
       instagramPageId: body.instagramPageId || null,
+      instagramAppSecret: body.instagramAppSecret || null,
       sidebarConfig: body.sidebarConfig ?? null,
       updatedAt: new Date(),
     })

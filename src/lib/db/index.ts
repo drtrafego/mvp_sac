@@ -61,6 +61,7 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS instagram_access_token text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS instagram_verify_token text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS instagram_page_id text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS instagram_app_secret text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS kiwify_webhook_token text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS uazapi_base_url text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS uazapi_instance_token text`,

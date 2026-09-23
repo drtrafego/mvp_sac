@@ -66,6 +66,7 @@ interface SettingsData {
   instagramAccessToken: string
   instagramVerifyToken: string
   instagramPageId: string
+  instagramAppSecret: string
   sidebarConfig?: {
     showVisaoGeral?: boolean
     showConversas?: boolean
@@ -134,6 +135,7 @@ const defaults: SettingsData = {
   instagramAccessToken: '',
   instagramVerifyToken: '',
   instagramPageId: '',
+  instagramAppSecret: '',
 }
 
 function SecretInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
@@ -786,6 +788,7 @@ export default function ConfiguracoesPage() {
         instagramAccessToken: data.instagramAccessToken ?? '',
         instagramVerifyToken: data.instagramVerifyToken ?? '',
         instagramPageId: data.instagramPageId ?? '',
+        instagramAppSecret: data.instagramAppSecret ?? '',
         sidebarConfig: data.sidebarConfig ?? null,
       }))
   }, [])
@@ -1424,6 +1427,18 @@ export default function ConfiguracoesPage() {
           />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
             Token secreto definido por você para validação do webhook no portal Meta for Developers.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Chave Secreta do App do Instagram (App Secret)</Label>
+          <SecretInput
+            value={form.instagramAppSecret}
+            onChange={v => set('instagramAppSecret', v)}
+            placeholder="ex: 1b5a7f9b6c6054312a81def36"
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Chave secreta do APP DO INSTAGRAM (Meta for Developers &gt; Configurações da API com login empresarial no Instagram &gt; &quot;Chave secreta do app&quot;) — diferente da chave secreta do app principal do WhatsApp. Sem isso, o webhook recebe a mensagem da Meta mas recusa por assinatura inválida (401).
           </p>
         </div>
       </section>

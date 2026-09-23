@@ -92,9 +92,14 @@ export async function POST(req: NextRequest) {
   }
 
   // Validação da assinatura x-hub-signature-256 da Meta: falha fechada, nunca aceita sem checagem.
-  // Se a empresa (achada pelo Instagram Account ID/Page ID do payload) tiver App Secret próprio,
-  // usa o dela; senão cai no META_APP_SECRET compartilhado de hoje.
+  // ‼️ 23/09/2026: o app do Instagram (Instagram API with Instagram Login, sem
+  // Página do Facebook) tem App Secret PRÓPRIO, diferente do app principal
+  // (WhatsApp). Usar metaAppSecret aqui rejeitava TODO webhook real do
+  // Instagram com 401, mesmo com tudo mais configurado certo. Ordem: secret
+  // do Instagram da empresa > secret do Instagram global > secret do app
+  // principal da empresa (compat) > secret do app principal global (compat).
   let companySecret: string | null = null
+  let companyMetaSecret: string | null = null
   const pageIdForSecret = extractFirstPageIdForSecret(rawBody)
   if (pageIdForSecret) {
     let [matchedForSecret] = await db.select().from(settings).where(eq(settings.instagramAccountId, pageIdForSecret)).limit(1)
@@ -102,9 +107,14 @@ export async function POST(req: NextRequest) {
       const [byPageId] = await db.select().from(settings).where(eq(settings.instagramPageId, pageIdForSecret)).limit(1)
       matchedForSecret = byPageId
     }
-    companySecret = matchedForSecret?.metaAppSecret ?? null
+    companySecret = matchedForSecret?.instagramAppSecret ?? null
+    companyMetaSecret = matchedForSecret?.metaAppSecret ?? null
   }
-  const secret = companySecret || process.env.META_APP_SECRET || process.env.INSTAGRAM_APP_SECRET
+  const secret =
+    companySecret ||
+    process.env.INSTAGRAM_APP_SECRET ||
+    companyMetaSecret ||
+    process.env.META_APP_SECRET
   if (!secret) {
     console.error("[Instagram Webhook] Nenhum App Secret configurado (nem da empresa, nem o compartilhado), recusando requisição")
     return NextResponse.json({ error: "meta_app_secret_not_configured" }, { status: 503 })
