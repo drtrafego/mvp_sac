@@ -14,6 +14,7 @@ import {
   Sparkles,
   Bot,
   UserCog,
+  CalendarDays,
 } from 'lucide-react'
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
@@ -52,6 +53,14 @@ export interface ChatLead {
   emailEngagement?: EmailEngagement | null
 }
 
+export interface MirroredAppointment {
+  nativeId: string
+  consultationAt: string
+  status: string
+  origin: string | null
+  cancelledAt: string | null
+}
+
 function formatBRL(centavos: number | null | undefined) {
   if (centavos == null) return 'R$ 0,00'
   return (centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -60,9 +69,11 @@ function formatBRL(centavos: number | null | undefined) {
 export function ChatWindow({
   lead,
   initialMessages,
+  appointments = [],
 }: {
   lead: ChatLead
   initialMessages: InboxMessage[]
+  appointments?: MirroredAppointment[]
 }) {
   const [messages, setMessages] = useState<InboxMessage[]>(initialMessages)
   const [text, setText] = useState('')
@@ -356,6 +367,51 @@ export function ChatWindow({
               </p>
             )}
           </div>
+
+          {/* Consultas reais espelhadas da agenda nativa do Dr. Lucas */}
+          {appointments.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-fg-subtle">
+                <CalendarDays size={13} /> Consultas
+              </h4>
+              <div className="rounded-xl border border-line-subtle bg-surface-inset divide-y divide-line-subtle">
+                {appointments.map(appointment => {
+                  const cancelled = Boolean(appointment.cancelledAt) || appointment.status.toLowerCase().includes('cancel')
+                  return (
+                    <div key={appointment.nativeId} className="p-3 space-y-1.5 text-micro">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-fg font-semibold">
+                          {new Date(appointment.consultationAt).toLocaleString('pt-BR', {
+                            timeZone: 'America/Sao_Paulo',
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                          })}
+                        </span>
+                        <span className={cn(
+                          'rounded-full border px-2 py-0.5 text-[10px] font-bold capitalize',
+                          cancelled
+                            ? 'border-red-500/30 bg-red-500/10 text-red-500'
+                            : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'
+                        )}>
+                          {appointment.status}
+                        </span>
+                      </div>
+                      {appointment.origin && <p className="text-fg-faint">Origem: {appointment.origin.replace(/_/g, ' ')}</p>}
+                      {appointment.cancelledAt && (
+                        <p className="text-red-500">
+                          Cancelada em {new Date(appointment.cancelledAt).toLocaleString('pt-BR', {
+                            timeZone: 'America/Sao_Paulo',
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                          })}
+                        </p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Janela de Atendimento Meta Cloud API */}
           {(() => {

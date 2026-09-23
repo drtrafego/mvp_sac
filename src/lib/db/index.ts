@@ -319,6 +319,34 @@ export function ensureSchema(client: any): Promise<void> {
             CREATE INDEX IF NOT EXISTS sync_cursors_source_lookup_idx
             ON sync_cursors (source, source_key)
           `,
+          client`
+            CREATE TABLE IF NOT EXISTS appointment_mirror (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              native_id TEXT NOT NULL,
+              name TEXT NOT NULL,
+              phone TEXT,
+              phone_norm TEXT,
+              consultation_at TIMESTAMPTZ NOT NULL,
+              status TEXT NOT NULL,
+              origin TEXT,
+              cancelled_at TIMESTAMPTZ,
+              source_synced_at TIMESTAMPTZ NOT NULL,
+              mirrored_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+          `,
+          client`
+            CREATE UNIQUE INDEX IF NOT EXISTS appointment_mirror_company_native_unique
+            ON appointment_mirror (company_id, native_id)
+          `,
+          client`
+            CREATE INDEX IF NOT EXISTS appointment_mirror_company_phone_idx
+            ON appointment_mirror (company_id, phone_norm)
+          `,
+          client`
+            CREATE INDEX IF NOT EXISTS appointment_mirror_company_date_idx
+            ON appointment_mirror (company_id, consultation_at)
+          `,
         ])
 
         // ─── Idempotência contra reentrega de webhook da Meta (20/09/2026, ────

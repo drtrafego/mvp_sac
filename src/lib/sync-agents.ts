@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { companies, settings, syncCursors, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
+import { appointmentMirror, companies, settings, syncCursors, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { queryAgentsDb, getAgentsDbUrl } from '@/lib/db/agents-db'
 import { eq, and, sql } from 'drizzle-orm'
 import { backfillFirstContactFromMessages } from '@/lib/leads'
@@ -141,6 +141,30 @@ export interface CrmLeadDbRow {
   first_contact_at: string | null
   __sync_sort_at?: string | Date | null
   __sync_cursor_id?: string | number | null
+}
+
+export interface AppointmentDbRow {
+  id: string
+  nome: string
+  telefone: string | null
+  telefone_norm: string | null
+  data_consulta: string
+  status: string
+  origem: string | null
+  cancelado_em: string | null
+  synced_at: string
+  __sync_sort_at?: string | Date | null
+  __sync_cursor_id?: string | number | null
+}
+
+interface NativeCrmStateDbRow {
+  id: string
+  column_id: string
+  column_title: string
+  phone: string | null
+  status: string | null
+  follow_up_date: string | null
+  follow_up_note: string | null
 }
 
 export interface SyncReport {
@@ -379,7 +403,7 @@ const SYNC_BACKFILL_BATCH_SIZE = 300
 const SYNC_NEW_BATCH_SIZE = 5000
 const EPOCH_CURSOR_ISO = '1970-01-01T00:00:00.000Z'
 
-type SyncCursorSource = 'agent_conversations' | 'outreach_convos' | 'crm_leads' | 'ctwa_referrals'
+type SyncCursorSource = 'agent_conversations' | 'outreach_convos' | 'crm_leads' | 'ctwa_referrals' | 'appointments'
 type SyncCursorRow = typeof syncCursors.$inferSelect
 
 interface CursorPosition {
@@ -562,6 +586,27 @@ function crmLeadCursorPosition(row: CrmLeadDbRow): CursorPosition | null {
     row.__sync_sort_at ?? row.created_at ?? row.first_contact_at ?? EPOCH_CURSOR_ISO,
     row.__sync_cursor_id ?? row.id
   )
+}
+
+function appointmentCursorPosition(row: AppointmentDbRow): CursorPosition | null {
+  return buildCursorPosition(row.__sync_sort_at ?? row.synced_at, row.__sync_cursor_id ?? row.id)
+}
+
+function nativePipelineStage(title: string): string {
+  const normalized = title
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+
+  const known: Record<string, string> = {
+    'novo contato': 'novo_contato',
+    atendimento: 'em_atendimento',
+    'consulta agendada': 'agendado',
+    compareceu: 'compareceu',
+    perdido: 'perdido',
+  }
+  return known[normalized] || normalized.replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'novo_contato'
 }
 
 function ctwaTsToDate(value: string | number | null | undefined): Date | null {
@@ -943,6 +988,119 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         await conversationBatch?.markProcessed()
       } catch (convErr) {
         details.push(`Aviso ao sincronizar conversas do schema "${schema}": ${String(convErr)}`)
+      }
+
+      // Espelho da agenda e estado do CRM nativo do Dr. Lucas. Este fluxo é
+      // estritamente Agents DB -> SAC: nenhuma query de escrita toca o schema
+      // do bot. A agenda tem synced_at e usa o mesmo cursor bidirecional das
+      // demais fontes. crm_leads não tem updated_at; como seus campos são
+      // mutáveis, a reconciliação completa (hoje < 200 linhas) é necessária
+      // para não perder mudanças de coluna/follow-up em registros antigos.
+      if (companySlug === 'drlucas') {
+        try {
+          if (await tableExistsInAgentsDb(schema, 'agendamentos')) {
+            const appointmentSortExpr = 'synced_at'
+            const appointmentIdExpr = 'id::text'
+            const appointmentBatch = await loadTimedSyncBatch<AppointmentDbRow>({
+              companyId: company.id,
+              source: 'appointments',
+              sourceKey: schema,
+              getPosition: appointmentCursorPosition,
+              fetchNewRows: (cursor) =>
+                queryAgentsDb<AppointmentDbRow>(
+                  `
+                    select id, nome, telefone, telefone_norm, data_consulta, status,
+                           origem, cancelado_em, synced_at,
+                           ${appointmentSortExpr} as __sync_sort_at,
+                           ${appointmentIdExpr} as __sync_cursor_id
+                    from "${schema}".agendamentos
+                    where (${appointmentSortExpr}, ${appointmentIdExpr}) > ($1::timestamptz, $2::text)
+                    order by ${appointmentSortExpr} asc, ${appointmentIdExpr} asc
+                    limit ${SYNC_NEW_BATCH_SIZE}
+                  `,
+                  [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
+                ),
+              fetchBackfillRows: (cursor) => {
+                const hasBackfillCursor = !!cursor.backfillBeforeAt
+                return queryAgentsDb<AppointmentDbRow>(
+                  `
+                    select id, nome, telefone, telefone_norm, data_consulta, status,
+                           origem, cancelado_em, synced_at,
+                           ${appointmentSortExpr} as __sync_sort_at,
+                           ${appointmentIdExpr} as __sync_cursor_id
+                    from "${schema}".agendamentos
+                    ${hasBackfillCursor ? `where (${appointmentSortExpr}, ${appointmentIdExpr}) < ($1::timestamptz, $2::text)` : ''}
+                    order by ${appointmentSortExpr} desc, ${appointmentIdExpr} desc
+                    limit ${SYNC_BACKFILL_BATCH_SIZE}
+                  `,
+                  hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
+                )
+              },
+            })
+
+            for (const appointment of appointmentBatch?.rows || []) {
+              const sourceSyncedAt = new Date(appointment.synced_at)
+              const consultationAt = new Date(appointment.data_consulta)
+              if (Number.isNaN(sourceSyncedAt.getTime()) || Number.isNaN(consultationAt.getTime())) continue
+
+              const values = {
+                companyId: company.id,
+                nativeId: appointment.id,
+                name: appointment.nome,
+                phone: appointment.telefone,
+                phoneNorm: normalizeDigits(appointment.telefone_norm || appointment.telefone) || null,
+                consultationAt,
+                status: appointment.status,
+                origin: appointment.origem,
+                cancelledAt: appointment.cancelado_em ? new Date(appointment.cancelado_em) : null,
+                sourceSyncedAt,
+                mirroredAt: new Date(),
+              }
+              await db
+                .insert(appointmentMirror)
+                .values(values)
+                .onConflictDoUpdate({
+                  target: [appointmentMirror.companyId, appointmentMirror.nativeId],
+                  set: values,
+                })
+            }
+            await appointmentBatch?.markProcessed()
+            if (appointmentBatch?.rows.length) {
+              details.push(`${appointmentBatch.rows.length} consultas do Dr. Lucas espelhadas.`)
+            }
+          }
+
+          if (await tableExistsInAgentsDb(schema, 'crm_leads')) {
+            const nativeCrmLeads = await queryAgentsDb<NativeCrmStateDbRow>(`
+              select l.id, l.column_id, c.title as column_title, l.phone, l.status,
+                     l.follow_up_date, l.follow_up_note
+              from "${schema}".crm_leads l
+              join "${schema}".crm_columns c on c.id = l.column_id
+            `)
+            let reconciled = 0
+            for (const nativeLead of nativeCrmLeads || []) {
+              const cleanPhone = normalizeDigits(nativeLead.phone)
+              if (!cleanPhone) continue
+              const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
+              const leadId = leadMap.get(`${company.id}_${cleanPhone}`) || leadMap.get(`${company.id}_${last9}`)
+              if (!leadId || leadId < 1) continue
+
+              await db
+                .update(recoveryLeads)
+                .set({
+                  pipelineStage: nativePipelineStage(nativeLead.column_title),
+                  status: nativeLead.status,
+                  followUpDate: nativeLead.follow_up_date ? new Date(nativeLead.follow_up_date) : null,
+                  followUpNote: nativeLead.follow_up_note,
+                })
+                .where(and(eq(recoveryLeads.id, leadId), eq(recoveryLeads.companyId, company.id)))
+              reconciled++
+            }
+            if (reconciled) details.push(`${reconciled} leads do Dr. Lucas reconciliados com o CRM nativo.`)
+          }
+        } catch (mirrorErr) {
+          details.push(`Aviso ao sincronizar agenda/CRM nativo do Dr. Lucas: ${String(mirrorErr)}`)
+        }
       }
     }
   }

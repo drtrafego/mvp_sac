@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, text, boolean, timestamp, jsonb, uniqueIndex, date } from 'drizzle-orm/pg-core'
+import { pgTable, serial, integer, text, boolean, timestamp, jsonb, uniqueIndex, index, date } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
 
 // ─── Empresas (multi-tenant) ──────────────────────────────────────────────────
@@ -119,6 +119,28 @@ export const syncCursors = pgTable('sync_cursors', {
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => [
   uniqueIndex('sync_cursors_company_source_key_unique').on(table.companyId, table.source, table.sourceKey),
+])
+
+// ─── Espelho somente-leitura da agenda nativa dos agentes ────────────────────────────
+// O SAC nunca escreve de volta no schema do bot. nativeId identifica a linha
+// na fonte e sourceSyncedAt é o cursor de alteração mantido por ela.
+export const appointmentMirror = pgTable('appointment_mirror', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  nativeId: text('native_id').notNull(),
+  name: text('name').notNull(),
+  phone: text('phone'),
+  phoneNorm: text('phone_norm'),
+  consultationAt: timestamp('consultation_at', { withTimezone: true }).notNull(),
+  status: text('status').notNull(),
+  origin: text('origin'),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  sourceSyncedAt: timestamp('source_synced_at', { withTimezone: true }).notNull(),
+  mirroredAt: timestamp('mirrored_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('appointment_mirror_company_native_unique').on(table.companyId, table.nativeId),
+  index('appointment_mirror_company_phone_idx').on(table.companyId, table.phoneNorm),
+  index('appointment_mirror_company_date_idx').on(table.companyId, table.consultationAt),
 ])
 
 // ─── Sequências de recuperação (uma por tipo por empresa) ─────────────────────

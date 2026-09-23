@@ -2,8 +2,8 @@ export const dynamic = 'force-dynamic'
 
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
-import { eq, asc, and, or, sql } from 'drizzle-orm'
+import { appointmentMirror, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
+import { eq, asc, desc, and, or, sql } from 'drizzle-orm'
 import { ChatWindow } from '@/components/inbox/ChatWindow'
 import { requireCompany } from '@/lib/auth'
 import { getEmailEngagement } from '@/lib/email-engagement'
@@ -23,6 +23,7 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
   if (!lead) notFound()
 
   const cleanPhone = (lead.phone || '').replace(/\D/g, '')
+  const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
 
   // Busca mensagens no banco local de forma rápida e indexada
   const messages = await db
@@ -40,6 +41,26 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
     )
     .orderBy(asc(whatsappMessages.createdAt))
     .limit(300)
+
+  const appointments = cleanPhone
+    ? await db
+        .select({
+          nativeId: appointmentMirror.nativeId,
+          consultationAt: appointmentMirror.consultationAt,
+          status: appointmentMirror.status,
+          origin: appointmentMirror.origin,
+          cancelledAt: appointmentMirror.cancelledAt,
+        })
+        .from(appointmentMirror)
+        .where(
+          and(
+            eq(appointmentMirror.companyId, company.id),
+            sql`right(${appointmentMirror.phoneNorm}, 9) = ${last9}`,
+          )
+        )
+        .orderBy(desc(appointmentMirror.consultationAt))
+        .limit(20)
+    : []
 
   return (
     <ChatWindow
@@ -76,6 +97,13 @@ export default async function InboxChatPage({ params }: { params: Promise<{ lead
         mediaUrl: m.mediaUrl ?? null,
         sentBy: m.sentBy ?? 'human',
         createdAt: m.createdAt?.toISOString() ?? null,
+      }))}
+      appointments={appointments.map(appointment => ({
+        nativeId: appointment.nativeId,
+        consultationAt: appointment.consultationAt.toISOString(),
+        status: appointment.status,
+        origin: appointment.origin,
+        cancelledAt: appointment.cancelledAt?.toISOString() ?? null,
       }))}
     />
   )
