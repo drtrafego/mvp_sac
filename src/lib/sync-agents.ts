@@ -1078,7 +1078,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               await db.execute(sql`
                 update whatsapp_messages as local_message
                 set reasoning = source_message.reasoning,
-                    sent_email = source_message.sent_email
+                    sent_email = source_message."sentEmail"
                 from jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb)
                   as source_message("externalId" text, reasoning text, "sentEmail" text)
                 where local_message.company_id = ${company.id}
