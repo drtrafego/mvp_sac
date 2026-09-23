@@ -211,8 +211,24 @@ export function parseOriginItem(raw: string | null | undefined): OriginItem | nu
     }
   }
 
-  // 2. Meta Ads
-  if (norm.includes('meta') || norm.includes('facebook') || norm.includes('fb') || (norm.includes('ads') && !norm.includes('google'))) {
+  // 2. Anúncio (Google Ads / Meta Ads)
+  // Google precisa vencer antes do sinal genérico "ads"/"anúncio".
+  if (norm.includes('google') || norm.includes('gclid') || norm.includes('adwords') || norm.includes('gads')) {
+    return {
+      key: 'google_ads',
+      label: 'Google Ads',
+      color: 'border-red-500/30 bg-red-500/10 text-red-500 dark:text-red-400',
+    }
+  }
+
+  if (
+    norm.includes('meta') ||
+    norm.includes('facebook') ||
+    norm.includes('fb') ||
+    norm.includes('anuncio') ||
+    norm.includes('anúncio') ||
+    (norm.includes('ads') && !norm.includes('google'))
+  ) {
     const label = norm.includes('lucas') ? 'Meta Ads Dr. Lucas' : norm.includes('insta') ? 'Instagram Ads' : 'Meta Ads'
     return {
       key: 'meta_ads',
@@ -313,13 +329,9 @@ export function parseOriginItem(raw: string | null | undefined): OriginItem | nu
     return { key: 'aprovada', label: 'Aprovada', color: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' }
   }
 
-  // Genérico formatado
-  const cleaned = raw.replace(/[_-]/g, ' ').trim()
-  return {
-    key: norm,
-    label: cleaned.charAt(0).toUpperCase() + cleaned.slice(1),
-    color: 'border-line-subtle bg-surface-raised text-fg-subtle',
-  }
+  // Valores externos desconhecidos não devem vazar como texto cru na UI.
+  // Sem outra origem reconhecida, PlatformBadge usa o fallback seguro "SAC".
+  return null
 }
 
 export function PlatformBadge({
