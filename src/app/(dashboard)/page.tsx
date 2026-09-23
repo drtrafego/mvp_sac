@@ -41,6 +41,7 @@ import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
 import { dashboardLeadStatsSelect, gramadoDashboardCardCounts, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
+import { hasDashboardOrigin, loadDashboardOriginPills } from '@/lib/dashboard/origin-pills'
 
 function splitMoney(cents: number): { inteiro: string; centavos: string } {
   const [inteiro, centavos] = (cents / 100)
@@ -107,7 +108,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return `/inbox?${q.toString()}`
   }
 
-  const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats]] = await Promise.all([
+  const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats], originPills] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
       .from(recoveryLeads)
@@ -164,6 +165,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       .select({ total: count() })
       .from(recoveryLeads)
       .where(notContactedWhere),
+
+    loadDashboardOriginPills(db, cid),
   ])
 
   const total = leadStats?.total ?? 0
@@ -392,7 +395,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           <Link href="/origens" className="font-semibold text-fg hover:text-brand-ink transition-colors cursor-pointer">
             Origens:
           </Link>
-          {isAgencia && (
+          {hasDashboardOrigin(originPills, 'mineracao') && (
             <Link
               href={getSourceHref('mineracao')}
               className={cn(
@@ -405,30 +408,51 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               <span>⛏️ Mineração</span>
             </Link>
           )}
-          <Link
-            href={getSourceHref('meta_ads')}
-            className={cn(
-              'text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
-              currentSource === 'meta_ads'
-                ? 'bg-blue-500 text-white border-blue-400 shadow-xs'
-                : 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/20'
-            )}
-          >
-            Meta Ads
-          </Link>
-          <Link
-            href={getSourceHref('instagram')}
-            className={cn(
-              'text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
-              currentSource === 'instagram'
-                ? 'bg-pink-500 text-white border-pink-400 shadow-xs'
-                : 'text-pink-400 bg-pink-500/10 border-pink-500/20 hover:bg-pink-500/20'
-            )}
-          >
-            Instagram
-          </Link>
-          {!isGramado && !isLucas && (
-            <>
+          {hasDashboardOrigin(originPills, 'anuncio') && (
+            <span className="inline-flex items-center gap-1 rounded border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-bold text-violet-300">
+              <span>📣 Anúncio</span>
+              {originPills.anuncioSubcategories.has('meta_ads') && (
+                <Link
+                  href={getSourceHref('meta_ads')}
+                  className={cn(
+                    'rounded border px-1.5 py-px transition-all cursor-pointer',
+                    currentSource === 'meta_ads'
+                      ? 'bg-blue-500 text-white border-blue-400 shadow-xs'
+                      : 'text-blue-400 bg-blue-500/10 border-blue-500/20 hover:bg-blue-500/20'
+                  )}
+                >
+                  Meta Ads
+                </Link>
+              )}
+              {originPills.anuncioSubcategories.has('google_ads') && (
+                <Link
+                  href={getSourceHref('google_ads')}
+                  className={cn(
+                    'rounded border px-1.5 py-px transition-all cursor-pointer',
+                    currentSource === 'google_ads'
+                      ? 'bg-red-500 text-white border-red-400 shadow-xs'
+                      : 'text-red-400 bg-red-500/10 border-red-500/20 hover:bg-red-500/20'
+                  )}
+                >
+                  Google Ads
+                </Link>
+              )}
+            </span>
+          )}
+          {hasDashboardOrigin(originPills, 'instagram') && (
+            <Link
+              href={getSourceHref('instagram')}
+              className={cn(
+                'text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
+                currentSource === 'instagram'
+                  ? 'bg-pink-500 text-white border-pink-400 shadow-xs'
+                  : 'text-pink-400 bg-pink-500/10 border-pink-500/20 hover:bg-pink-500/20'
+              )}
+            >
+              Instagram
+            </Link>
+          )}
+          {hasDashboardOrigin(originPills, 'hotmart') && (
               <Link
                 href={getSourceHref('hotmart')}
                 className={cn(
@@ -440,6 +464,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               >
                 Hotmart
               </Link>
+          )}
+          {hasDashboardOrigin(originPills, 'kiwify') && (
               <Link
                 href={getSourceHref('kiwify')}
                 className={cn(
@@ -451,7 +477,32 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               >
                 Kiwify
               </Link>
-            </>
+          )}
+          {hasDashboardOrigin(originPills, 'greenn') && (
+            <Link
+              href={getSourceHref('greenn')}
+              className={cn(
+                'text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
+                currentSource === 'greenn'
+                  ? 'bg-emerald-500 text-white border-emerald-400 shadow-xs'
+                  : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/20'
+              )}
+            >
+              Greenn
+            </Link>
+          )}
+          {hasDashboardOrigin(originPills, 'zouti') && (
+            <Link
+              href={getSourceHref('zouti')}
+              className={cn(
+                'text-[10px] font-bold px-2 py-0.5 rounded transition-all cursor-pointer border',
+                currentSource === 'zouti'
+                  ? 'bg-purple-500 text-white border-purple-400 shadow-xs'
+                  : 'text-purple-400 bg-purple-500/10 border-purple-500/20 hover:bg-purple-500/20'
+              )}
+            >
+              Zouti
+            </Link>
           )}
         </div>
       </div>

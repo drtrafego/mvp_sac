@@ -17,6 +17,7 @@
     "test:agent-auth-key-bypass": "tsx --experimental-test-module-mocks --test scripts/agent-auth-key-bypass.test.ts",
     "test:agenda-google-calendar-sync": "tsx --experimental-test-module-mocks --test scripts/agenda-google-calendar-sync.test.ts",
     "test:dashboard-lead-stats": "tsx scripts/dashboard-lead-stats.test.ts",
+    "test:dashboard-origin-pills": "tsx scripts/dashboard-origin-pills.test.ts",
     "test:inbox-source-filter": "tsx scripts/inbox-source-filter.test.ts",
     "test:inbox-email-engagement": "tsx --experimental-test-module-mocks --test scripts/inbox-email-engagement.test.ts"
   },
