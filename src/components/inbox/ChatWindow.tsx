@@ -17,6 +17,7 @@ import {
   CalendarDays,
   ChevronUp,
   Database,
+  Pencil,
 } from 'lucide-react'
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
@@ -106,6 +107,11 @@ export function ChatWindow({
   const [hasMoreHistory, setHasMoreHistory] = useState(initialHistory.hasMore)
   const [historyCursor, setHistoryCursor] = useState(initialHistory.nextCursor)
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [leadName, setLeadName] = useState(lead.name)
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [editingName, setEditingName] = useState(lead.name ?? '')
+  const [savingName, setSavingName] = useState(false)
+  const [nameError, setNameError] = useState<string | null>(null)
 
   // Controle de Pausa do Bot
   const [botPaused, setBotPaused] = useState(lead.botPaused)
@@ -114,6 +120,7 @@ export function ChatWindow({
 
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
   const loadingHistoryRef = useRef(false)
   const didInitialScrollRef = useRef(false)
   const shouldScrollToBottomRef = useRef(true)
@@ -142,6 +149,9 @@ export function ChatWindow({
           if (data.lead && typeof data.lead.botPaused === 'boolean') {
             setBotPaused(data.lead.botPaused)
           }
+          if (data.lead && 'name' in data.lead) {
+            setLeadName(data.lead.name ?? null)
+          }
         }
       } catch {
         /* silencioso */
@@ -158,6 +168,20 @@ export function ChatWindow({
     shouldScrollToBottomRef.current = false
     didInitialScrollRef.current = true
   }, [messages])
+
+  useEffect(() => {
+    setLeadName(lead.name)
+    setEditingName(lead.name ?? '')
+    setIsEditingName(false)
+    setNameError(null)
+  }, [lead.id, lead.name])
+
+  useEffect(() => {
+    if (isEditingName) {
+      nameInputRef.current?.focus()
+      nameInputRef.current?.select()
+    }
+  }, [isEditingName])
 
   // Preserva exatamente a mensagem que estava no topo quando um lote antigo
   // é prependado. useLayoutEffect roda depois do DOM novo e antes do paint,
@@ -240,6 +264,61 @@ export function ChatWindow({
     }
   }
 
+  function startEditingName() {
+    if (savingName) return
+    setEditingName(leadName ?? '')
+    setNameError(null)
+    setIsEditingName(true)
+  }
+
+  function cancelEditingName() {
+    setEditingName(leadName ?? '')
+    setIsEditingName(false)
+    setNameError(null)
+  }
+
+  async function saveLeadName() {
+    if (savingName) return
+    const nextName = editingName.trim()
+    const previousName = leadName
+
+    if (!nextName) {
+      setEditingName(previousName ?? '')
+      setIsEditingName(false)
+      setNameError('Nome obrigatório')
+      return
+    }
+
+    if (nextName === (previousName ?? '').trim()) {
+      setIsEditingName(false)
+      setNameError(null)
+      return
+    }
+
+    setLeadName(nextName)
+    setIsEditingName(false)
+    setNameError(null)
+    setSavingName(true)
+
+    try {
+      const res = await fetch(`/api/leads/${lead.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nextName }),
+      })
+
+      if (!res.ok) throw new Error('Falha ao salvar o nome')
+      const data = await res.json()
+      setLeadName(data.lead?.name ?? nextName)
+    } catch {
+      setLeadName(previousName)
+      setEditingName(previousName ?? '')
+      setNameError('Não foi possível salvar')
+    } finally {
+      setSavingName(false)
+    }
+  }
+
   async function handleSend() {
     if (!text.trim() || sending) return
     setSending(true)
@@ -263,14 +342,24 @@ export function ChatWindow({
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+  function handleComposerKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
   }
 
-  const displayName = lead.name || lead.phone
+  function handleNameKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      saveLeadName()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      cancelEditingName()
+    }
+  }
+
+  const displayName = leadName || lead.phone
   const initials = displayName.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
   // Fallback genérico preservado quando a empresa ainda não tem nome de
   // agente resolvido (companies.agentDisplayName nulo), pra nunca quebrar a
@@ -315,13 +404,42 @@ export function ChatWindow({
 
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="truncate text-body font-bold text-fg leading-tight">
-                  {displayName}
-                </span>
+                {isEditingName ? (
+                  <input
+                    ref={nameInputRef}
+                    value={editingName}
+                    onChange={e => setEditingName(e.target.value)}
+                    onBlur={saveLeadName}
+                    onKeyDown={handleNameKeyDown}
+                    disabled={savingName}
+                    aria-label="Nome do lead"
+                    className="focus-ring min-w-0 max-w-[220px] rounded-md border border-line-subtle bg-surface-inset px-1.5 py-0.5 text-body font-bold leading-tight text-fg outline-none disabled:opacity-60"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={startEditingName}
+                    disabled={savingName}
+                    title="Editar nome"
+                    className="group inline-flex min-w-0 max-w-[220px] items-center gap-1 text-left text-body font-bold leading-tight text-fg disabled:opacity-60"
+                  >
+                    <span className="truncate">{displayName}</span>
+                    {savingName ? (
+                      <Loader2 size={12} className="shrink-0 animate-spin text-fg-subtle" />
+                    ) : (
+                      <Pencil size={12} className="shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+                    )}
+                  </button>
+                )}
                 <ChannelBadge channel={lead.channel} />
                 <PlatformBadge platform={lead.platform || lead.trackingSource} eventType={lead.eventType} />
                 <EmailEngagementBadge engagement={lead.emailEngagement} />
               </div>
+              {nameError && (
+                <p className="mt-0.5 text-[10px] font-medium text-red-500">
+                  {nameError}
+                </p>
+              )}
               <p className="truncate text-[11px] text-fg-subtle font-mono mt-0.5">
                 {lead.phone}
                 {lead.productName ? <span className="text-fg-muted font-sans font-medium"> · {lead.productName}</span> : null}
@@ -404,7 +522,7 @@ export function ChatWindow({
               </button>
             </div>
           )}
-          <MessageList messages={messages} contactName={lead.name} agentName={agentLabel} />
+          <MessageList messages={messages} contactName={leadName} agentName={agentLabel} />
         </div>
 
         {/* 3. Área de Envio da Mensagem */}
@@ -414,7 +532,7 @@ export function ChatWindow({
               ref={textareaRef}
               value={text}
               onChange={e => setText(e.target.value)}
-              onKeyDown={handleKeyDown}
+              onKeyDown={handleComposerKeyDown}
               placeholder={`Responder ${displayName} via ${channelLabel}... (Enter para enviar, Shift+Enter para quebra de linha)`}
               rows={1}
               className="focus-ring flex-1 resize-none rounded-xl border border-line-subtle bg-surface-inset px-4 py-2.5 text-body text-fg placeholder:text-fg-subtle outline-none max-h-32 overflow-y-auto scroll-thin leading-relaxed"
