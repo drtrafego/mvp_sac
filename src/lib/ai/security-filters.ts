@@ -36,6 +36,8 @@ export function textoDeRecusa(erro?: string | null): string {
     case 'antecedencia_insuficiente':
       return 'Esse já ficou em cima da hora pra eu garantir direito. Me escolhe outro dos que te mandei que eu registro na hora.'
     case 'horario_ocupado':
+    case 'horario_invalido':
+    case 'slot_invalido':
     case 'data_e_feriado':
     case 'data_bloqueada':
       return 'Opa, esse horário acabou de sair da agenda. Me fala outro dos que te passei que eu registro na hora pra você.'
