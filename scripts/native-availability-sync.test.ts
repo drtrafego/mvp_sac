@@ -53,11 +53,11 @@ async function startPostgres(): Promise<{ url: string; stop: () => void }> {
 }
 
 const lucasSchedule = {
-  segunda: { inicio: '08:00', fim: '11:45' },
-  terca: { inicio: '08:00', fim: '11:45' },
-  quarta: { inicio: '08:00', fim: '11:45' },
-  quinta: { inicio: '08:00', fim: '11:45' },
-  sexta: { inicio: '08:00', fim: '12:30' },
+  segunda: [{ inicio: '08:00', fim: '11:45' }],
+  terca: [{ inicio: '08:00', fim: '11:45' }],
+  quarta: [{ inicio: '08:00', fim: '11:45' }],
+  quinta: [{ inicio: '08:00', fim: '11:45' }],
+  sexta: [{ inicio: '08:00', fim: '12:30' }],
   sabado: null,
   domingo: null,
   timezone: '-03:00',

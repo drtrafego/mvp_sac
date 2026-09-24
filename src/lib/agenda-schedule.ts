@@ -39,13 +39,13 @@ export interface DayRange {
 }
 
 export interface AvailabilitySchedule {
-  segunda: DayRange | null
-  terca: DayRange | null
-  quarta: DayRange | null
-  quinta: DayRange | null
-  sexta: DayRange | null
-  sabado: DayRange | null
-  domingo: DayRange | null
+  segunda: DayRange[] | null
+  terca: DayRange[] | null
+  quarta: DayRange[] | null
+  quinta: DayRange[] | null
+  sexta: DayRange[] | null
+  sabado: DayRange[] | null
+  domingo: DayRange[] | null
   timezone: string
   duracaoSlotMinutos: number
 }
@@ -63,22 +63,49 @@ export const NATIVE_AVAILABILITY_SOURCE_LABELS: Record<NativeAvailabilityCompany
 }
 
 export const DEFAULT_AVAILABILITY_SCHEDULE: AvailabilitySchedule = {
-  segunda: { inicio: '08:00', fim: '18:00' },
-  terca: { inicio: '08:00', fim: '18:00' },
-  quarta: { inicio: '08:00', fim: '18:00' },
-  quinta: { inicio: '08:00', fim: '18:00' },
-  sexta: { inicio: '08:00', fim: '18:00' },
+  segunda: [{ inicio: '08:00', fim: '18:00' }],
+  terca: [{ inicio: '08:00', fim: '18:00' }],
+  quarta: [{ inicio: '08:00', fim: '18:00' }],
+  quinta: [{ inicio: '08:00', fim: '18:00' }],
+  sexta: [{ inicio: '08:00', fim: '18:00' }],
   sabado: null,
   domingo: null,
   timezone: 'America/Sao_Paulo',
   duracaoSlotMinutos: 30,
 }
 
-export function isValidDayRange(value: unknown): value is DayRange | null {
-  if (value === null) return true
+export function isValidDayRange(value: unknown): value is DayRange {
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
   return AGENDA_TIME_RE.test(String(v.inicio)) && AGENDA_TIME_RE.test(String(v.fim)) && String(v.inicio) < String(v.fim)
+}
+
+export function isValidDayRangeList(value: unknown): value is DayRange[] | null {
+  return validateDayRangeList(value).ok
+}
+
+function validateDayRangeList(value: unknown): { ok: true } | { ok: false; error: string } {
+  if (value === null) return { ok: true }
+  if (!Array.isArray(value)) return { ok: false, error: 'use uma lista de intervalos ou null' }
+  if (value.length === 0) return { ok: true }
+  if (value.length > 8) return { ok: false, error: 'use no máximo 8 intervalos por dia' }
+
+  const ranges: DayRange[] = []
+  for (const [index, range] of value.entries()) {
+    if (!isValidDayRange(range)) {
+      return { ok: false, error: `intervalo ${index + 1} deve ter inicio/fim em HH:MM e inicio menor que fim` }
+    }
+    ranges.push(range)
+  }
+
+  const ordered = [...ranges].sort((a, b) => a.inicio.localeCompare(b.inicio))
+  for (let i = 1; i < ordered.length; i++) {
+    if (ordered[i - 1].fim > ordered[i].inicio) {
+      return { ok: false, error: 'intervalos não podem se sobrepor' }
+    }
+  }
+
+  return { ok: true }
 }
 
 export function validateAvailabilitySchedule(
@@ -94,10 +121,14 @@ export function validateAvailabilitySchedule(
       schedule[day] = DEFAULT_AVAILABILITY_SCHEDULE[day]
       continue
     }
-    if (!isValidDayRange(value)) {
-      return { ok: false, error: `Horário inválido para "${day}". Use { inicio: "HH:MM", fim: "HH:MM" } ou null.` }
+    const rangeValidation = validateDayRangeList(value)
+    if (!rangeValidation.ok) {
+      return {
+        ok: false,
+        error: `Horário inválido para "${day}": ${rangeValidation.error}. Use [{ inicio: "HH:MM", fim: "HH:MM" }] ou null.`,
+      }
     }
-    schedule[day] = value
+    schedule[day] = Array.isArray(value) && value.length === 0 ? null : value as DayRange[]
   }
 
   const timezone =

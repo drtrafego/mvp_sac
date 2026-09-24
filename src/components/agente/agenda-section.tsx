@@ -162,9 +162,40 @@ export function AgendaSection() {
     }
   }
 
-  function setDayRange(day: AgendaDay, range: DayRange | null) {
+  function setDayRanges(day: AgendaDay, ranges: DayRange[] | null) {
     if (scheduleReadOnly) return
-    setSchedule(s => s ? ({ ...s, [day]: range }) : s)
+    setSchedule(s => s ? ({ ...s, [day]: ranges && ranges.length > 0 ? ranges : null }) : s)
+  }
+
+  function addDayRange(day: AgendaDay) {
+    if (scheduleReadOnly) return
+    setSchedule(s => {
+      if (!s) return s
+      const ranges = s[day] ?? []
+      return { ...s, [day]: [...ranges, { inicio: '08:00', fim: '18:00' }] }
+    })
+  }
+
+  function removeDayRange(day: AgendaDay, index: number) {
+    if (scheduleReadOnly) return
+    setSchedule(s => {
+      if (!s) return s
+      const ranges = (s[day] ?? []).filter((_, i) => i !== index)
+      return { ...s, [day]: ranges.length > 0 ? ranges : null }
+    })
+  }
+
+  function updateDayRange(day: AgendaDay, index: number, field: keyof DayRange, value: string) {
+    if (scheduleReadOnly) return
+    setSchedule(s => {
+      if (!s) return s
+      const ranges = s[day]
+      if (!ranges) return s
+      return {
+        ...s,
+        [day]: ranges.map((range, i) => i === index ? { ...range, [field]: value } : range),
+      }
+    })
   }
 
   async function handleSaveSchedule() {
@@ -329,12 +360,12 @@ export function AgendaSection() {
 
         {schedule && <div className="space-y-2">
           {AGENDA_DAYS.map(day => {
-            const range = schedule[day]
-            const open = range !== null
+            const ranges = schedule[day]
+            const open = ranges !== null && ranges.length > 0
             return (
               <div
                 key={day}
-                className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3"
+                className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3"
               >
                 <label className={`flex items-center gap-2 sm:w-40 shrink-0 ${scheduleReadOnly ? 'cursor-default' : 'cursor-pointer'}`}>
                   <input
@@ -342,7 +373,7 @@ export function AgendaSection() {
                     checked={open}
                     disabled={scheduleReadOnly}
                     onChange={e =>
-                      setDayRange(day, e.target.checked ? { inicio: '08:00', fim: '18:00' } : null)
+                      setDayRanges(day, e.target.checked ? [{ inicio: '08:00', fim: '18:00' }] : null)
                     }
                     className="h-4 w-4 rounded border-line-default text-brand-solid focus:ring-brand-solid"
                   />
@@ -350,22 +381,47 @@ export function AgendaSection() {
                 </label>
 
                 {open ? (
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="time"
-                      value={range.inicio}
-                      disabled={scheduleReadOnly}
-                      onChange={e => setDayRange(day, { inicio: e.target.value, fim: range.fim })}
-                      className="bg-surface-overlay border-line-subtle h-10 lg:h-8 w-28"
-                    />
-                    <span className="text-micro text-fg-subtle">até</span>
-                    <Input
-                      type="time"
-                      value={range.fim}
-                      disabled={scheduleReadOnly}
-                      onChange={e => setDayRange(day, { inicio: range.inicio, fim: e.target.value })}
-                      className="bg-surface-overlay border-line-subtle h-10 lg:h-8 w-28"
-                    />
+                  <div className="flex flex-1 flex-col gap-2">
+                    {ranges.map((range, index) => (
+                      <div key={index} className="flex flex-wrap items-center gap-2">
+                        <Input
+                          type="time"
+                          value={range.inicio}
+                          disabled={scheduleReadOnly}
+                          onChange={e => updateDayRange(day, index, 'inicio', e.target.value)}
+                          className="bg-surface-overlay border-line-subtle h-10 lg:h-8 w-28"
+                        />
+                        <span className="text-micro text-fg-subtle">até</span>
+                        <Input
+                          type="time"
+                          value={range.fim}
+                          disabled={scheduleReadOnly}
+                          onChange={e => updateDayRange(day, index, 'fim', e.target.value)}
+                          className="bg-surface-overlay border-line-subtle h-10 lg:h-8 w-28"
+                        />
+                        {!scheduleReadOnly && (
+                          <button
+                            type="button"
+                            onClick={() => removeDayRange(day, index)}
+                            className="focus-ring text-fg-subtle hover:text-st-negativo transition-colors p-3 lg:p-1 shrink-0"
+                            title="Remover intervalo"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {!scheduleReadOnly && (
+                      <Button
+                        type="button"
+                        onClick={() => addDayRange(day)}
+                        variant="outline"
+                        className="focus-ring h-9 w-fit gap-1.5 border-line-subtle text-fg-subtle"
+                      >
+                        <Plus size={13} />
+                        Adicionar intervalo
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <span className="text-micro text-fg-faint italic">Fechado</span>
