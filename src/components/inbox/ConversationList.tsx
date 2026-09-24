@@ -444,7 +444,7 @@ export function ConversationList({
               'px-2.5 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'all'
                 ? 'bg-brand-solid text-on-accent shadow-xs'
-                : 'bg-surface-inset text-fg-subtle hover:text-fg hover:bg-surface-raised'
+                : 'bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised'
             )}
           >
             Todos ({counts.all})
@@ -456,7 +456,7 @@ export function ConversationList({
               'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'whatsapp'
                 ? 'bg-emerald-500 text-white shadow-xs'
-                : 'bg-surface-inset text-fg-subtle hover:text-fg hover:bg-surface-raised'
+                : 'bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised'
             )}
           >
             <MessageCircle size={12} className="text-emerald-400 shrink-0" />
@@ -469,7 +469,7 @@ export function ConversationList({
               'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'instagram'
                 ? 'bg-pink-600 text-white shadow-xs'
-                : 'bg-surface-inset text-fg-subtle hover:text-fg hover:bg-surface-raised'
+                : 'bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised'
             )}
           >
             <InstagramLogoIcon size={12} className="text-pink-400 shrink-0" />
@@ -482,7 +482,7 @@ export function ConversationList({
               'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'email'
                 ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-surface-inset text-fg-subtle hover:text-fg hover:bg-surface-raised'
+                : 'bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised'
             )}
           >
             <Mail size={12} className="text-indigo-400 shrink-0" />
@@ -495,7 +495,7 @@ export function ConversationList({
               'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
               channelFilter === 'mineracao'
                 ? 'bg-amber-600 text-white shadow-xs'
-                : 'bg-surface-inset text-fg-subtle hover:text-fg hover:bg-surface-raised'
+                : 'bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised'
             )}
           >
             <Pickaxe size={12} className="text-amber-400 shrink-0" />
@@ -551,7 +551,7 @@ export function ConversationList({
                 onClick={() => setMineracaoSubFilter('all')}
                 className={cn(
                   'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer',
-                  mineracaoSubFilter === 'all' ? 'text-fg font-bold underline decoration-brand-ink' : 'text-fg-subtle hover:text-fg'
+                  mineracaoSubFilter === 'all' ? 'text-fg font-bold underline decoration-brand-ink' : 'text-fg-muted hover:text-fg'
                 )}
               >
                 Todos
@@ -562,7 +562,7 @@ export function ConversationList({
                 onClick={() => setMineracaoSubFilter('whatsapp')}
                 className={cn(
                   'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
-                  mineracaoSubFilter === 'whatsapp' ? 'text-emerald-500 font-bold underline' : 'text-fg-subtle hover:text-emerald-500'
+                  mineracaoSubFilter === 'whatsapp' ? 'text-emerald-500 font-bold underline' : 'text-fg-muted hover:text-emerald-500'
                 )}
               >
                 <MessageCircle size={10} /> WhatsApp ({counts.mineracaoWhatsapp})
@@ -573,7 +573,7 @@ export function ConversationList({
                 onClick={() => setMineracaoSubFilter('email')}
                 className={cn(
                   'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
-                  mineracaoSubFilter === 'email' ? 'text-indigo-500 font-bold underline' : 'text-fg-subtle hover:text-indigo-500'
+                  mineracaoSubFilter === 'email' ? 'text-indigo-500 font-bold underline' : 'text-fg-muted hover:text-indigo-500'
                 )}
               >
                 <Mail size={10} /> E-mail ({counts.mineracaoEmail})
@@ -586,7 +586,7 @@ export function ConversationList({
                     onClick={() => setMineracaoSubFilter('instagram')}
                     className={cn(
                       'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
-                      mineracaoSubFilter === 'instagram' ? 'text-pink-500 font-bold underline' : 'text-fg-subtle hover:text-pink-500'
+                      mineracaoSubFilter === 'instagram' ? 'text-pink-500 font-bold underline' : 'text-fg-muted hover:text-pink-500'
                     )}
                   >
                     <InstagramLogoIcon size={10} /> Instagram ({counts.mineracaoInstagram})
@@ -645,7 +645,7 @@ export function ConversationList({
               onClick={() => setStatusFilter('all')}
               className={cn(
                 'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer',
-                statusFilter === 'all' ? 'text-fg font-bold underline decoration-brand-ink' : 'text-fg-subtle hover:text-fg'
+                statusFilter === 'all' ? 'text-fg font-bold underline decoration-brand-ink' : 'text-fg-muted hover:text-fg'
               )}
             >
               Todos
@@ -655,7 +655,7 @@ export function ConversationList({
               onClick={() => setStatusFilter('paused')}
               className={cn(
                 'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
-                statusFilter === 'paused' ? 'text-amber-500 font-bold underline' : 'text-fg-subtle hover:text-amber-500'
+                statusFilter === 'paused' ? 'text-amber-500 font-bold underline' : 'text-fg-muted hover:text-amber-500'
               )}
             >
               <UserCog size={10} /> Pausados
@@ -665,7 +665,7 @@ export function ConversationList({
               onClick={() => setStatusFilter('active')}
               className={cn(
                 'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer flex items-center gap-0.5',
-                statusFilter === 'active' ? 'text-emerald-500 font-bold underline' : 'text-fg-subtle hover:text-emerald-500'
+                statusFilter === 'active' ? 'text-emerald-500 font-bold underline' : 'text-fg-muted hover:text-emerald-500'
               )}
             >
               <Bot size={10} /> Bot Ativo
@@ -675,7 +675,7 @@ export function ConversationList({
               onClick={() => setStatusFilter('unread')}
               className={cn(
                 'px-1.5 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer',
-                statusFilter === 'unread' ? 'text-brand-ink font-bold underline' : 'text-fg-subtle hover:text-fg'
+                statusFilter === 'unread' ? 'text-brand-ink font-bold underline' : 'text-fg-muted hover:text-fg'
               )}
             >
               Não lidos
