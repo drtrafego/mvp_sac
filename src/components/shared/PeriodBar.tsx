@@ -21,13 +21,29 @@ export default function PeriodBar({ from, to, children }: Props) {
   const searchParams = useSearchParams();
 
   const fromD = new Date(from + "T12:00:00");
+  const iso = (x: Date) =>
+    `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
 
   const goMonth = (delta: number) => {
     const d = new Date(fromD.getFullYear(), fromD.getMonth() + delta, 1);
     const inicio = new Date(d.getFullYear(), d.getMonth(), 1);
     const fim = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-    const iso = (x: Date) =>
-      `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+    const params = new URLSearchParams(searchParams ? searchParams.toString() : "");
+    params.set("from", iso(inicio));
+    params.set("to", iso(fim));
+    params.delete("month");
+    params.delete("year");
+    params.delete("period");
+    router.push(`${pathname}?${params.toString()}`);
+  };
+
+  const goDay = (delta: number) => {
+    const toD = new Date(to + "T12:00:00");
+    const durationDays = Math.round((toD.getTime() - fromD.getTime()) / (1000 * 60 * 60 * 24));
+    const inicio = new Date(fromD);
+    inicio.setDate(inicio.getDate() + delta);
+    const fim = new Date(inicio);
+    fim.setDate(fim.getDate() + durationDays);
     const params = new URLSearchParams(searchParams ? searchParams.toString() : "");
     params.set("from", iso(inicio));
     params.set("to", iso(fim));
@@ -62,7 +78,23 @@ export default function PeriodBar({ from, to, children }: Props) {
         </div>
 
         {/* Modal de Calendário Duplo e Presets */}
-        <DateRangePicker from={from} to={to} />
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => goDay(-1)}
+            className="text-fg-subtle hover:text-fg flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            title="Dia anterior"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <DateRangePicker from={from} to={to} />
+          <button
+            onClick={() => goDay(1)}
+            className="text-fg-subtle hover:text-fg flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            title="Próximo dia"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
       </div>
 
       {children && <div className="sm:ml-auto">{children}</div>}
