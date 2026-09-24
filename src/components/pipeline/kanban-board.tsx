@@ -961,39 +961,22 @@ export function KanbanBoard({
                   </div>
                 </div>
 
-                {/* Linha 4: Etapa do Pipeline & Agente IA */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-micro font-bold text-fg mb-1">
-                      Etapa do Pipeline
-                    </label>
-                    <select
-                      value={modalStage}
-                      onChange={(e) => setModalStage(e.target.value)}
-                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid cursor-pointer"
-                    >
-                      {stages.map((st) => (
-                        <option key={st.id} value={st.id} className="bg-surface-panel text-fg">
-                          {st.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-micro font-bold text-fg mb-1">
-                      Agente IA Responsável
-                    </label>
-                    <select
-                      value={modalResponsibleAgent}
-                      onChange={(e) => setModalResponsibleAgent(e.target.value)}
-                      className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid cursor-pointer"
-                    >
-                      <option value="" className="bg-surface-panel text-fg">Sem Agente Vinculado</option>
-                      <option value="Bia" className="bg-surface-panel text-fg">✨ Bia (Amanda)</option>
-                      <option value="Luana" className="bg-surface-panel text-fg">✨ Luana (Gastão)</option>
-                    </select>
-                  </div>
+                {/* Linha 4: Etapa do Pipeline */}
+                <div>
+                  <label className="block text-micro font-bold text-fg mb-1">
+                    Etapa do Pipeline
+                  </label>
+                  <select
+                    value={modalStage}
+                    onChange={(e) => setModalStage(e.target.value)}
+                    className="w-full bg-surface-inset border border-line-subtle rounded-xl px-3 py-2 text-body text-fg focus:outline-none focus:border-brand-solid cursor-pointer"
+                  >
+                    {stages.map((st) => (
+                      <option key={st.id} value={st.id} className="bg-surface-panel text-fg">
+                        {st.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Bloco de Follow-up / Lembrete de Retorno com Atalhos */}
