@@ -111,7 +111,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       const messagingList = (entry.messaging as Record<string, unknown>[]) ?? []
       for (const item of messagingList) {
         const sender = item.sender as { id?: string } | undefined
-        const message = item.message as { mid?: string; text?: string; is_echo?: boolean } | undefined
+        const message = item.message as {
+          mid?: string
+          text?: string
+          is_echo?: boolean
+          attachments?: Array<{ type?: string; payload?: Record<string, unknown> }>
+          referral?: Record<string, unknown>
+        } | undefined
         // ‼️ 23/09/2026: ECO da própria conta (mesma causa raiz da rota
         // global, um nível acima) — a Meta reenvia toda mensagem que A
         // PRÓPRIA conta manda pelo mesmo webhook de "messaging".
@@ -120,6 +126,52 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           console.log(`[Instagram Webhook] eco da própria conta ignorado, sender=${sender?.id}`)
           continue
         }
+
+        // ‼️ Checagem de anexo/partilha (24/09/2026): quando alguém compartilha post/reel
+        // ou manda mídia, a Meta manda `attachments`. Se tiver anexos, ignoramos o processamento
+        // de IA (não é pergunta/conversa de texto, mesmo que venha legenda do post).
+        const hasAttachments = Boolean(
+          message?.attachments && Array.isArray(message.attachments) && message.attachments.length > 0
+        )
+        if (hasAttachments) {
+          const types = (message?.attachments || []).map((a) => a.type || 'unknown').join(', ')
+          console.log(`[Instagram Webhook] anexo/partilha ignorado para IA (types=${types}), slug=${slug}, mid=${message?.mid}`)
+          continue
+        }
+
+        // ‼️ Checagem de origem por anúncio (Instagram Ad / Click to Direct)
+        const referral = (item.referral || message?.referral) as {
+          ref?: string
+          ad_id?: string
+          source?: string
+          type?: string
+          ads_context_data?: {
+            ad_id?: string
+            ad_title?: string
+            photo_url?: string
+            video_url?: string
+            post_id?: string
+          }
+          campaign_id?: string
+          adset_id?: string
+          adset_name?: string
+        } | undefined
+
+        const isAd = Boolean(
+          referral && (
+            referral.source === 'ADS' ||
+            referral.ad_id ||
+            referral.ads_context_data?.ad_id
+          )
+        )
+        const metaAdId = referral?.ad_id || referral?.ads_context_data?.ad_id || null
+        const adName = referral?.ads_context_data?.ad_title || null
+        const metaCampaignId = referral?.campaign_id || null
+        const metaAdsetId = referral?.adset_id || null
+        const adsetName = referral?.adset_name || null
+
+        const trackingSource = isAd ? 'instagram_ad' : 'instagram_direct'
+
         if (sender?.id && message?.text) {
           try {
             // Idempotência contra reentrega de webhook da Meta: reentrega é
@@ -171,7 +223,12 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 phone: igPhone,
                 name: leadName,
                 status: 'in_conversation',
-                trackingSource: 'instagram_direct',
+                trackingSource,
+                ...(metaAdId ? { metaAdId: String(metaAdId) } : {}),
+                ...(adName ? { adName: String(adName) } : {}),
+                ...(metaCampaignId ? { metaCampaignId: String(metaCampaignId) } : {}),
+                ...(metaAdsetId ? { metaAdsetId: String(metaAdsetId) } : {}),
+                ...(adsetName ? { adsetName: String(adsetName) } : {}),
               })
               .onConflictDoUpdate({
                 target: [recoveryLeads.companyId, recoveryLeads.phone],
@@ -187,7 +244,21 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 // primeiro valor não nulo, então um lead que já tem
                 // lastActionAt de qualquer origem anterior nunca subia na
                 // lista quando chegava DM nova, mesmo com updatedAt fresco.
-                set: { updatedAt: new Date(), lastActionAt: new Date(), channel: 'instagram' },
+                set: {
+                  updatedAt: new Date(),
+                  lastActionAt: new Date(),
+                  channel: 'instagram',
+                  ...(isAd
+                    ? {
+                        trackingSource: 'instagram_ad',
+                        ...(metaAdId ? { metaAdId: String(metaAdId) } : {}),
+                        ...(adName ? { adName: String(adName) } : {}),
+                        ...(metaCampaignId ? { metaCampaignId: String(metaCampaignId) } : {}),
+                        ...(metaAdsetId ? { metaAdsetId: String(metaAdsetId) } : {}),
+                        ...(adsetName ? { adsetName: String(adsetName) } : {}),
+                      }
+                    : {}),
+                },
               })
               .returning()
 

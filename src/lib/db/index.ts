@@ -19,6 +19,7 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_paused_at timestamp`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_paused_by text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_paused_all boolean DEFAULT false`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_paused_channel text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS converted_by_job_id integer`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS converted_from text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS priority integer DEFAULT 0`,

@@ -30,6 +30,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       // ação em massa pra "Despausar Tudo" não reverter uma decisão humana
       // tomada depois do pause-all (ver pause-all/route.ts).
       botPausedAll: false,
+      botPausedChannel: null,
       lastActionBy: `${context.agentName} (Agente IA)`,
       lastActionAt: new Date(),
       updatedAt: new Date(),

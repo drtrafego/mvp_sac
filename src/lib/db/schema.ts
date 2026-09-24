@@ -325,6 +325,7 @@ export const recoveryLeads = pgTable('recovery_leads', {
   botPausedAt: timestamp('bot_paused_at'),
   botPausedBy: text('bot_paused_by'),
   botPausedAll: boolean('bot_paused_all').default(false), // true só quando o PAUSAR TUDO da empresa foi quem pausou este lead.
+  botPausedChannel: text('bot_paused_channel'), // 'whatsapp' | 'instagram' | 'email' quando uma pausa em massa por canal pausou este lead.
 
   // Estado do gate de seguidor do Instagram Comment-to-DM (24/09/2026, ver
   // comentário completo em instagramCommentAutomations.requireFollowCheck).

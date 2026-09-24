@@ -133,6 +133,7 @@ const CATEGORY_RULES: CategoryRule[] = [
       'google',
       'anuncio',
       'ads',
+      'instagram_ad',
     ],
   },
   {

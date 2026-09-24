@@ -71,6 +71,7 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       // ação em massa pra "Despausar Tudo" não reverter uma decisão humana
       // tomada depois do pause-all (ver pause-all/route.ts).
       updateData.botPausedAll = false
+      updateData.botPausedChannel = null
     }
     if (body.botPausedBy !== undefined) updateData.botPausedBy = body.botPausedBy
     if (body.botPaused !== undefined && body.botPaused) updateData.botPausedAt = new Date()

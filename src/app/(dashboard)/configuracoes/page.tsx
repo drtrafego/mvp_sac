@@ -393,11 +393,21 @@ interface PauseAllCounts {
   pausedIndividually: number
 }
 
+interface ChannelCounts {
+  total: number
+  active: number
+  paused: number
+  pausedByChannel: number
+  pausedIndividually: number
+}
+
 function PausarTudoSection({ slug }: { slug: string }) {
   const [counts, setCounts] = useState<PauseAllCounts | null>(null)
+  const [channelCounts, setChannelCounts] = useState<Record<string, ChannelCounts> | null>(null)
   const [loadingCounts, setLoadingCounts] = useState(true)
   const [reason, setReason] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmTarget, setConfirmTarget] = useState<'all' | 'whatsapp' | 'instagram'>('all')
   const [confirmAction, setConfirmAction] = useState<'pause' | 'unpause' | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -406,15 +416,25 @@ function PausarTudoSection({ slug }: { slug: string }) {
   const fetchCounts = useCallback(async () => {
     if (!slug) return
     try {
-      const res = await fetch(`/api/v1/companies/${slug}/pause-all`)
-      if (!res.ok) return
-      const json = await res.json()
-      setCounts({
-        total: json.total ?? 0,
-        paused: json.paused ?? 0,
-        pausedByMassAction: json.pausedByMassAction ?? 0,
-        pausedIndividually: json.pausedIndividually ?? 0,
-      })
+      const [allRes, chanRes] = await Promise.all([
+        fetch(`/api/v1/companies/${slug}/pause-all`),
+        fetch(`/api/v1/companies/${slug}/pause-channel`),
+      ])
+      if (allRes.ok) {
+        const json = await allRes.json()
+        setCounts({
+          total: json.total ?? 0,
+          paused: json.paused ?? 0,
+          pausedByMassAction: json.pausedByMassAction ?? 0,
+          pausedIndividually: json.pausedIndividually ?? 0,
+        })
+      }
+      if (chanRes.ok) {
+        const chanJson = await chanRes.json()
+        if (chanJson.channels) {
+          setChannelCounts(chanJson.channels)
+        }
+      }
     } catch {
       // silencioso: contadores voltam na próxima tentativa
     } finally {
@@ -428,9 +448,10 @@ function PausarTudoSection({ slug }: { slug: string }) {
     return () => clearInterval(interval)
   }, [fetchCounts])
 
-  function openConfirm(action: 'pause' | 'unpause') {
+  function openConfirm(target: 'all' | 'whatsapp' | 'instagram', action: 'pause' | 'unpause') {
     setError('')
     setFeedback('')
+    setConfirmTarget(target)
     setConfirmAction(action)
     setConfirmOpen(true)
   }
@@ -441,31 +462,55 @@ function PausarTudoSection({ slug }: { slug: string }) {
     setError('')
     setFeedback('')
 
-    const body: Record<string, unknown> = { action: confirmAction }
-    if (confirmAction === 'pause') {
-      body.confirm = true
-      if (reason.trim()) body.reason = reason.trim()
-    }
-
     try {
-      const res = await fetch(`/api/v1/companies/${slug}/pause-all`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      const json = await res.json()
-
-      if (!res.ok) {
-        setError(json.error || 'Erro ao processar a ação.')
-        setSubmitting(false)
-        return
+      if (confirmTarget === 'all') {
+        const body: Record<string, unknown> = { action: confirmAction }
+        if (confirmAction === 'pause') {
+          body.confirm = true
+          if (reason.trim()) body.reason = reason.trim()
+        }
+        const res = await fetch(`/api/v1/companies/${slug}/pause-all`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const json = await res.json()
+        if (!res.ok) {
+          setError(json.error || 'Erro ao processar a ação.')
+          setSubmitting(false)
+          return
+        }
+        setFeedback(
+          confirmAction === 'pause'
+            ? `Atendimento pausado para todos os canais (${json.affected} lead(s)).`
+            : `Atendimento reativado para todos os canais (${json.affected} lead(s)).`
+        )
+      } else {
+        const body: Record<string, unknown> = {
+          action: confirmAction,
+          channel: confirmTarget,
+          confirm: true,
+        }
+        if (reason.trim()) body.reason = reason.trim()
+        const res = await fetch(`/api/v1/companies/${slug}/pause-channel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const json = await res.json()
+        if (!res.ok) {
+          setError(json.error || 'Erro ao processar a ação por canal.')
+          setSubmitting(false)
+          return
+        }
+        const targetLabel = confirmTarget === 'whatsapp' ? 'WhatsApp' : 'Instagram'
+        setFeedback(
+          confirmAction === 'pause'
+            ? `Bot pausado no canal ${targetLabel} (${json.affected} lead(s)).`
+            : `Bot reativado no canal ${targetLabel} (${json.affected} lead(s)).`
+        )
       }
 
-      setFeedback(
-        confirmAction === 'pause'
-          ? `Atendimento pausado para ${json.affected} lead(s).`
-          : `Atendimento reativado para ${json.affected} lead(s).`
-      )
       setReason('')
       setConfirmOpen(false)
       await fetchCounts()
@@ -477,71 +522,190 @@ function PausarTudoSection({ slug }: { slug: string }) {
   }
 
   const activeCount = counts ? counts.total - counts.paused : 0
+  const wa = channelCounts?.whatsapp || { total: 0, active: 0, paused: 0, pausedByChannel: 0, pausedIndividually: 0 }
+  const ig = channelCounts?.instagram || { total: 0, active: 0, paused: 0, pausedByChannel: 0, pausedIndividually: 0 }
+
+  const targetTitle =
+    confirmTarget === 'all'
+      ? confirmAction === 'pause'
+        ? 'Pausar todo o atendimento?'
+        : 'Reativar todo o atendimento?'
+      : confirmAction === 'pause'
+      ? `Pausar atendimento do ${confirmTarget === 'whatsapp' ? 'WhatsApp' : 'Instagram'}?`
+      : `Reativar atendimento do ${confirmTarget === 'whatsapp' ? 'WhatsApp' : 'Instagram'}?`
 
   return (
     <section className="panel space-y-4 p-[var(--space-card)]">
       <div className="flex items-center gap-2">
         <PauseCircle size={16} className="text-st-negativo" />
-        <h2 className="text-h2 text-fg">Pausar todo o atendimento</h2>
+        <h2 className="text-h2 text-fg">Pausar atendimento (por canal ou geral)</h2>
       </div>
       <Separator className="bg-line-subtle" />
       <p className="text-body text-fg-muted">
-        Pausa o bot de IA em todos os leads da empresa de uma vez. Quem já estava pausado individualmente
-        por decisão humana antes desta ação continua como estava. Ao reativar, só volta quem esta mesma
-        ação em massa pausou, uma pausa individual feita depois não é revertida por engano.
+        Controle o bot de IA de forma isolada por canal (apenas WhatsApp ou apenas Instagram) ou para a empresa inteira.
+        Pausas manuais feitas individualmente por atendentes continuam preservadas e nunca são sobrescritas.
       </p>
 
-      {/* Contadores ao vivo */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
-          <p className="text-micro text-fg-subtle uppercase">Ativos</p>
-          <p className="num text-h2 text-st-positivo">{loadingCounts ? '—' : activeCount}</p>
+      {/* Seção por Canal */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+        {/* Card WhatsApp */}
+        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+              <h3 className="text-body font-semibold text-fg">WhatsApp</h3>
+            </div>
+            <span className="text-micro text-fg-subtle">
+              Total: {loadingCounts ? '—' : wa.total}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="p-2 rounded bg-surface border border-line-subtle">
+              <p className="text-micro text-fg-subtle uppercase">Ativos</p>
+              <p className="num text-body font-bold text-st-positivo">{loadingCounts ? '—' : wa.active}</p>
+            </div>
+            <div className="p-2 rounded bg-surface border border-line-subtle">
+              <p className="text-micro text-fg-subtle uppercase">Pausa Canal</p>
+              <p className="num text-body font-bold text-st-atencao">{loadingCounts ? '—' : wa.pausedByChannel}</p>
+            </div>
+            <div className="p-2 rounded bg-surface border border-line-subtle">
+              <p className="text-micro text-fg-subtle uppercase">Individual</p>
+              <p className="num text-body font-bold text-fg">{loadingCounts ? '—' : wa.pausedIndividually}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <Button
+              size="sm"
+              onClick={() => openConfirm('whatsapp', 'pause')}
+              disabled={loadingCounts || wa.active === 0}
+              className="flex-1 focus-ring h-9 bg-st-negativo text-white hover:bg-st-negativo/90"
+            >
+              <PauseCircle size={14} />
+              Pausar WhatsApp
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => openConfirm('whatsapp', 'unpause')}
+              disabled={loadingCounts || wa.pausedByChannel === 0}
+              variant="outline"
+              className="flex-1 focus-ring h-9 border-line-default"
+            >
+              <PlayCircle size={14} />
+              Reativar {wa.pausedByChannel > 0 ? `(${wa.pausedByChannel})` : ''}
+            </Button>
+          </div>
         </div>
-        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
-          <p className="text-micro text-fg-subtle uppercase">Pausados (total)</p>
-          <p className="num text-h2 text-fg">{loadingCounts ? '—' : counts?.paused ?? 0}</p>
-        </div>
-        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
-          <p className="text-micro text-fg-subtle uppercase">Pausados em massa</p>
-          <p className="num text-h2 text-st-atencao">{loadingCounts ? '—' : counts?.pausedByMassAction ?? 0}</p>
-        </div>
-        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
-          <p className="text-micro text-fg-subtle uppercase">Pausados individualmente</p>
-          <p className="num text-h2 text-fg">{loadingCounts ? '—' : counts?.pausedIndividually ?? 0}</p>
+
+        {/* Card Instagram */}
+        <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
+              <h3 className="text-body font-semibold text-fg">Instagram</h3>
+            </div>
+            <span className="text-micro text-fg-subtle">
+              Total: {loadingCounts ? '—' : ig.total}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="p-2 rounded bg-surface border border-line-subtle">
+              <p className="text-micro text-fg-subtle uppercase">Ativos</p>
+              <p className="num text-body font-bold text-st-positivo">{loadingCounts ? '—' : ig.active}</p>
+            </div>
+            <div className="p-2 rounded bg-surface border border-line-subtle">
+              <p className="text-micro text-fg-subtle uppercase">Pausa Canal</p>
+              <p className="num text-body font-bold text-st-atencao">{loadingCounts ? '—' : ig.pausedByChannel}</p>
+            </div>
+            <div className="p-2 rounded bg-surface border border-line-subtle">
+              <p className="text-micro text-fg-subtle uppercase">Individual</p>
+              <p className="num text-body font-bold text-fg">{loadingCounts ? '—' : ig.pausedIndividually}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <Button
+              size="sm"
+              onClick={() => openConfirm('instagram', 'pause')}
+              disabled={loadingCounts || ig.active === 0}
+              className="flex-1 focus-ring h-9 bg-st-negativo text-white hover:bg-st-negativo/90"
+            >
+              <PauseCircle size={14} />
+              Pausar Instagram
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => openConfirm('instagram', 'unpause')}
+              disabled={loadingCounts || ig.pausedByChannel === 0}
+              variant="outline"
+              className="flex-1 focus-ring h-9 border-line-default"
+            >
+              <PlayCircle size={14} />
+              Reativar {ig.pausedByChannel > 0 ? `(${ig.pausedByChannel})` : ''}
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <Label>Motivo (opcional, só para a pausa em massa)</Label>
-        <Textarea
-          value={reason}
-          onChange={e => setReason(e.target.value)}
-          placeholder="Ex.: manutenção programada, campanha suspensa..."
-          className="bg-surface-inset border-line-subtle max-w-[var(--w-form)]"
-          rows={2}
-        />
-      </div>
+      <Separator className="bg-line-subtle my-2" />
 
-      {feedback && <p className="text-micro text-st-positivo">{feedback}</p>}
+      {/* Pausa Geral (Todos os Canais) */}
+      <div className="space-y-3">
+        <h3 className="text-body font-semibold text-fg">Pausa Geral (Todos os canais)</h3>
+        {/* Contadores ao vivo */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
+            <p className="text-micro text-fg-subtle uppercase">Ativos (Geral)</p>
+            <p className="num text-h2 text-st-positivo">{loadingCounts ? '—' : activeCount}</p>
+          </div>
+          <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
+            <p className="text-micro text-fg-subtle uppercase">Pausados (total)</p>
+            <p className="num text-h2 text-fg">{loadingCounts ? '—' : counts?.paused ?? 0}</p>
+          </div>
+          <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
+            <p className="text-micro text-fg-subtle uppercase">Pausados em massa</p>
+            <p className="num text-h2 text-st-atencao">{loadingCounts ? '—' : counts?.pausedByMassAction ?? 0}</p>
+          </div>
+          <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
+            <p className="text-micro text-fg-subtle uppercase">Pausados individualmente</p>
+            <p className="num text-h2 text-fg">{loadingCounts ? '—' : counts?.pausedIndividually ?? 0}</p>
+          </div>
+        </div>
 
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        <Button
-          onClick={() => openConfirm('pause')}
-          disabled={loadingCounts}
-          className="focus-ring h-11 lg:h-9 bg-st-negativo text-white hover:bg-st-negativo/90"
-        >
-          <PauseCircle size={15} />
-          Pausar tudo
-        </Button>
-        <Button
-          onClick={() => openConfirm('unpause')}
-          disabled={loadingCounts || !counts?.pausedByMassAction}
-          variant="outline"
-          className="focus-ring h-11 lg:h-9 border-line-default"
-        >
-          <PlayCircle size={15} />
-          Reativar tudo {counts?.pausedByMassAction ? `(${counts.pausedByMassAction})` : ''}
-        </Button>
+        <div className="space-y-1.5">
+          <Label>Motivo (opcional)</Label>
+          <Textarea
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            placeholder="Ex.: manutenção programada, suspensão de campanha..."
+            className="bg-surface-inset border-line-subtle max-w-[var(--w-form)]"
+            rows={2}
+          />
+        </div>
+
+        {feedback && <p className="text-micro text-st-positivo font-medium">{feedback}</p>}
+
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Button
+            onClick={() => openConfirm('all', 'pause')}
+            disabled={loadingCounts || activeCount === 0}
+            className="focus-ring h-11 lg:h-9 bg-st-negativo text-white hover:bg-st-negativo/90"
+          >
+            <PauseCircle size={15} />
+            Pausar tudo (todos os canais)
+          </Button>
+          <Button
+            onClick={() => openConfirm('all', 'unpause')}
+            disabled={loadingCounts || !counts?.pausedByMassAction}
+            variant="outline"
+            className="focus-ring h-11 lg:h-9 border-line-default"
+          >
+            <PlayCircle size={15} />
+            Reativar tudo {counts?.pausedByMassAction ? `(${counts.pausedByMassAction})` : ''}
+          </Button>
+        </div>
       </div>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -549,18 +713,32 @@ function PausarTudoSection({ slug }: { slug: string }) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertTriangle size={18} className="text-st-atencao" />
-              {confirmAction === 'pause' ? 'Pausar todo o atendimento?' : 'Reativar todo o atendimento?'}
+              {targetTitle}
             </DialogTitle>
             <DialogDescription>
               {confirmAction === 'pause' ? (
+                confirmTarget === 'all' ? (
+                  <>
+                    O bot de IA vai parar de responder <strong className="text-fg">{activeCount}</strong> lead(s)
+                    ativo(s) em todos os canais. Quem já está pausado por decisão individual não é afetado.
+                  </>
+                ) : (
+                  <>
+                    O bot de IA vai parar de responder <strong className="text-fg">{confirmTarget === 'whatsapp' ? wa.active : ig.active}</strong> lead(s)
+                    ativo(s) no canal <strong className="text-fg">{confirmTarget === 'whatsapp' ? 'WhatsApp' : 'Instagram'}</strong>.
+                    Os demais canais e pausas individuais não serão afetados.
+                  </>
+                )
+              ) : confirmTarget === 'all' ? (
                 <>
-                  O bot de IA vai parar de responder <strong className="text-fg">{activeCount}</strong> lead(s)
-                  ativo(s) agora mesmo. Quem já está pausado por decisão individual não é afetado.
+                  Vai reverter a pausa de <strong className="text-fg">{counts?.pausedByMassAction ?? 0}</strong>{' '}
+                  lead(s) pausado(s) por esta ação geral. Pausas individuais feitas por humanos não são revertidas.
                 </>
               ) : (
                 <>
-                  Vai reverter a pausa de <strong className="text-fg">{counts?.pausedByMassAction ?? 0}</strong>{' '}
-                  lead(s) pausado(s) por esta ação em massa. Pausas individuais feitas depois não são revertidas.
+                  Vai reverter a pausa de <strong className="text-fg">{confirmTarget === 'whatsapp' ? wa.pausedByChannel : ig.pausedByChannel}</strong>{' '}
+                  lead(s) pausado(s) pela ação em lote do <strong className="text-fg">{confirmTarget === 'whatsapp' ? 'WhatsApp' : 'Instagram'}</strong>.
+                  Pausas individuais feitas por humanos não são revertidas.
                 </>
               )}
             </DialogDescription>
@@ -579,7 +757,7 @@ function PausarTudoSection({ slug }: { slug: string }) {
               )}
             >
               {submitting ? <Loader2 size={14} className="animate-spin" /> : null}
-              {confirmAction === 'pause' ? 'Sim, pausar tudo' : 'Sim, reativar tudo'}
+              {confirmAction === 'pause' ? 'Sim, pausar' : 'Sim, reativar'}
             </Button>
           </DialogFooter>
         </DialogContent>

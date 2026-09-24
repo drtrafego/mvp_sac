@@ -157,7 +157,7 @@ export function normalizeOrigin(
   // mineração já venceu acima, e só depois tráfego pago vence colisões com
   // canais orgânicos como "instagram_ads_agosto". Todas as buscas novas usam
   // a borda à esquerda (`hasWordBoundary`), não `.includes()` solto.
-  if (hasGoogleAdsSignal() || hasMetaAdsSignal()) {
+  if (combined.includes('instagram_ad') || combined.includes('ig_ad') || hasGoogleAdsSignal() || hasMetaAdsSignal()) {
     if (hasGoogleAdsSignal()) {
       return {
         key: 'google_ads',
@@ -210,7 +210,21 @@ export function normalizeOrigin(
     }
   }
 
-  // 3. Instagram Direct / Orgânico
+  // 3. Instagram Direct / Orgânico / Comentários
+  if (combined.includes('instagram_comment') || combined.includes('ig_comment') || combined.includes('comentario') || combined.includes('comment')) {
+    return {
+      key: 'instagram_comment',
+      label: 'Instagram (Comentário)',
+      shortLabel: 'IG Comentário',
+      category: 'instagram',
+      subcategory: 'comment',
+      color: 'bg-purple-500',
+      badgeColor: 'border-purple-500/30 bg-purple-500/10 text-purple-400',
+      textColor: 'text-purple-400',
+      iconName: 'instagram',
+    }
+  }
+
   if (combined.includes('instagram') || combined.includes('direct') || combined.includes('ig_direct')) {
     return {
       key: 'instagram_direct',
