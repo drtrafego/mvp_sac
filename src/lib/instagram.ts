@@ -167,6 +167,41 @@ export async function checkInstagramUserFollowsBusiness({
   }
 }
 
+export async function fetchInstagramUserProfile({
+  igsid,
+  companyId,
+}: {
+  igsid: string
+  companyId: number
+}): Promise<{ ok: boolean; name?: string; username?: string; error?: string }> {
+  const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
+  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  if (!token) {
+    return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
+  }
+
+  const cleanId = igsid.replace(/^ig_/, '')
+
+  try {
+    const url = `https://graph.facebook.com/v19.0/${cleanId}?fields=name,username&access_token=${encodeURIComponent(token)}`
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+
+    if (!res.ok) {
+      const errDetail = (data.error as Record<string, unknown>)?.message || JSON.stringify(data)
+      console.error('[Instagram Profile Fetch Error]:', errDetail)
+      return { ok: false, error: `Erro ao consultar perfil do Instagram: ${errDetail}` }
+    }
+
+    const name = typeof data.name === 'string' && data.name.trim() ? data.name : undefined
+    const username = typeof data.username === 'string' && data.username.trim() ? data.username : undefined
+    return { ok: true, name, username }
+  } catch (error) {
+    console.error('[Instagram Profile Fetch Exception]:', error)
+    return { ok: false, error: String(error) }
+  }
+}
+
 /**
  * Publica uma resposta pública diretamente abaixo do comentário original.
  * Endpoint Graph API: POST /{comment_id}/replies
@@ -304,4 +339,3 @@ export async function getInstagramRecentMedia(
     return { ok: false, media: [], error: String(error) }
   }
 }
-

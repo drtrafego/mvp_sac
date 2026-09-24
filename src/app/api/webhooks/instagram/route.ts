@@ -8,10 +8,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { after } from "next/server"
 import { db } from "@/lib/db"
 import { companies, settings, whatsappMessages, webhookReceived, recoveryLeads } from "@/lib/db/schema"
-import { eq, sql } from "drizzle-orm"
+import { and, eq, sql } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
 import { processInstagramComment, handleFollowCheckReply } from "@/lib/instagram-comment-processor"
+import { fetchInstagramUserProfile } from "@/lib/instagram"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
@@ -197,6 +198,27 @@ export async function POST(req: NextRequest) {
                 }
 
                 const igPhone = `ig_${sender.id}`
+                const fallbackInstagramName = `Instagram Direct (${sender.id.slice(-4)})`
+                let leadName = fallbackInstagramName
+
+                const [existingLead] = await db
+                  .select({ id: recoveryLeads.id })
+                  .from(recoveryLeads)
+                  .where(and(
+                    eq(recoveryLeads.companyId, companyId),
+                    eq(recoveryLeads.phone, igPhone),
+                    sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes')`,
+                  ))
+                  .limit(1)
+
+                if (!existingLead) {
+                  const profile = await fetchInstagramUserProfile({ igsid: sender.id, companyId })
+                  if (profile.ok && profile.username) {
+                    leadName = `@${profile.username}`
+                  } else if (profile.ok && profile.name?.trim()) {
+                    leadName = profile.name
+                  }
+                }
 
                 // Upsert atômico: SELECT-então-INSERT deixava uma janela de
                 // corrida entre duas requisições concorrentes com o mesmo
@@ -213,7 +235,7 @@ export async function POST(req: NextRequest) {
                     channel: 'instagram',
                     eventType: 'instagram_direct',
                     phone: igPhone,
-                    name: `Instagram Direct (${sender.id.slice(-4)})`,
+                    name: leadName,
                     status: 'in_conversation',
                     trackingSource: 'instagram_direct',
                   })
