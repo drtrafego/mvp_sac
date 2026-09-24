@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin, unauthorizedResponse } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { companies, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 
 export const dynamic = 'force-dynamic'
 
@@ -90,6 +90,104 @@ const CONVERSAS: SeedConvo[] = [
   },
 ]
 
+type SeedEvent = {
+  platform: string
+  eventType: string
+  name: string
+  phone: string
+  email?: string
+  productName?: string
+  productValue?: number
+  status?: string
+  boletoCode?: string
+  boletoUrl?: string
+  boletoExpiryDays?: number
+  pixCode?: string
+  pixExpiryMinutes?: number
+  checkoutUrl?: string
+  paymentType?: string
+  channel?: string
+  trackingSource?: string
+  miningTags?: { origem?: string; nicho?: string; temperatura?: string }
+  at: string
+}
+
+const EVENTOS: SeedEvent[] = [
+  {
+    platform: 'hotmart',
+    eventType: 'boleto',
+    name: 'Cliente Demo (Boleto)',
+    phone: 'demo_5511900000007',
+    productName: 'Curso Avançado de Marketing',
+    productValue: 49700,
+    boletoCode: '34191.79001 01043.510047 91020.150008 1 96380000049700',
+    boletoUrl: 'https://exemplo.com/boleto/demo',
+    boletoExpiryDays: 3,
+    at: '2026-09-23T09:20:00-03:00',
+  },
+  {
+    platform: 'kiwify',
+    eventType: 'pix',
+    name: 'Cliente Demo (Pix)',
+    phone: 'demo_5511900000008',
+    productName: 'Mentoria VIP',
+    productValue: 97000,
+    pixCode: '00020126580014BR.GOV.BCB.PIX0136demo-pix-000000000000005204000053039865802BR',
+    pixExpiryMinutes: 30,
+    at: '2026-09-23T11:05:00-03:00',
+  },
+  {
+    platform: 'greenn',
+    eventType: 'carrinho_abandonado',
+    name: 'Cliente Demo (Carrinho)',
+    phone: 'demo_5511900000009',
+    productName: 'Ebook Estratégias de Tráfego',
+    productValue: 9700,
+    checkoutUrl: 'https://checkout.exemplo.com/demo-carrinho',
+    at: '2026-09-23T13:45:00-03:00',
+  },
+  {
+    platform: 'zouti',
+    eventType: 'cartao_recusado',
+    name: 'Cliente Demo (Cartão Recusado)',
+    phone: 'demo_5511900000010',
+    productName: 'Assinatura Anual',
+    productValue: 199700,
+    paymentType: 'credit_card',
+    at: '2026-09-23T15:30:00-03:00',
+  },
+  {
+    platform: 'hotmart',
+    eventType: 'compra_aprovada',
+    name: 'Cliente Demo (Venda)',
+    phone: 'demo_5511900000011',
+    productName: 'Curso Avançado de Marketing',
+    productValue: 49700,
+    status: 'converted',
+    at: '2026-09-23T17:10:00-03:00',
+  },
+  {
+    platform: 'sac',
+    eventType: 'atendimento',
+    name: 'Cliente Demo (Mineração 1)',
+    phone: 'demo_5511900000012',
+    channel: 'mineracao',
+    trackingSource: 'Minerador',
+    miningTags: { origem: 'google_places', nicho: 'Estética', temperatura: 'hot' },
+    at: '2026-09-23T09:50:00-03:00',
+  },
+  {
+    platform: 'sac',
+    eventType: 'atendimento',
+    name: 'Cliente Demo (Mineração 2)',
+    phone: 'demo_5511900000013',
+    channel: 'mineracao',
+    trackingSource: 'Minerador',
+    miningTags: { origem: 'instagram', nicho: 'Odontologia', temperatura: 'warm' },
+    at: '2026-09-23T18:20:00-03:00',
+  },
+]
+
 export async function POST() {
   try {
     await requireAdmin()
@@ -103,8 +201,13 @@ export async function POST() {
   }
 
   const created: { leadId: number; name: string }[] = []
+  const skipped: string[] = []
 
   for (const convo of CONVERSAS) {
+    const [existing] = await db.select({ id: recoveryLeads.id }).from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, company.id), eq(recoveryLeads.phone, convo.phone))).limit(1)
+    if (existing) { skipped.push(convo.name); continue }
+
     const inboundAt = new Date(convo.at)
     const outboundAt = new Date(inboundAt.getTime() + convo.replyDelayMin * 60_000)
 
@@ -158,5 +261,44 @@ export async function POST() {
     created.push({ leadId: lead!.id, name: convo.name })
   }
 
-  return NextResponse.json({ ok: true, companyId: company.id, created })
+  for (const ev of EVENTOS) {
+    const [existing] = await db.select({ id: recoveryLeads.id }).from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, company.id), eq(recoveryLeads.phone, ev.phone))).limit(1)
+    if (existing) { skipped.push(ev.name); continue }
+
+    const at = new Date(ev.at)
+    const [lead] = await db
+      .insert(recoveryLeads)
+      .values({
+        companyId: company.id,
+        platform: ev.platform,
+        channel: ev.channel ?? 'whatsapp',
+        eventType: ev.eventType,
+        phone: ev.phone,
+        name: ev.name,
+        email: ev.email ?? null,
+        productName: ev.productName ?? null,
+        productValue: ev.productValue ?? null,
+        status: ev.status ?? 'pending',
+        boletoCode: ev.boletoCode ?? null,
+        boletoUrl: ev.boletoUrl ?? null,
+        boletoExpiry: ev.boletoExpiryDays ? new Date(at.getTime() + ev.boletoExpiryDays * 86_400_000) : null,
+        pixCode: ev.pixCode ?? null,
+        pixExpiry: ev.pixExpiryMinutes ? new Date(at.getTime() + ev.pixExpiryMinutes * 60_000) : null,
+        checkoutUrl: ev.checkoutUrl ?? null,
+        paymentType: ev.paymentType ?? null,
+        trackingSource: ev.trackingSource ?? null,
+        miningTags: ev.miningTags ?? null,
+        orderDate: at,
+        approvedDate: ev.eventType === 'compra_aprovada' ? at : null,
+        createdAt: at,
+        updatedAt: at,
+        lastActionAt: at,
+      })
+      .returning()
+
+    created.push({ leadId: lead!.id, name: ev.name })
+  }
+
+  return NextResponse.json({ ok: true, companyId: company.id, created, skipped })
 }
