@@ -32,10 +32,11 @@ interface Props {
   to?: string;
 }
 
-type Preset = { label: string; days?: number; thisMonth?: boolean; all?: boolean };
+type Preset = { label: string; days?: number; yesterday?: boolean; thisMonth?: boolean; all?: boolean };
 
 const PRESETS: Preset[] = [
   { label: "Hoje", days: 0 },
+  { label: "Ontem", yesterday: true },
   { label: "Últimos 7 dias", days: 6 },
   { label: "Últimos 30 dias", days: 29 },
   { label: "Últimos 60 dias", days: 59 },
@@ -150,6 +151,9 @@ export default function DateRangePicker({ from, to }: Props) {
     } else if (p.thisMonth) {
       f = startOfMonth(today);
       t = endOfMonth(today);
+    } else if (p.yesterday) {
+      f = subDays(today, 1);
+      t = f;
     } else {
       f = subDays(today, p.days ?? 0);
     }
