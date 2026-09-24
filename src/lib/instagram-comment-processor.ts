@@ -525,9 +525,25 @@ export async function handleFollowCheckReply({
     const claimedRows = unwrapExecRows<{ id: number }>(claimResult)
 
     if (claimedRows.length === 0) {
-      // Outra invocação concorrente já reivindicou (ou o estado mudou por
-      // outro motivo, ex.: automação apagada nesse meio tempo). Não manda o
-      // conteúdo de novo.
+      // FIX de QA (24/09/2026, 3ª rodada): loga o rastro ANTES de desistir.
+      // Sem isto, corrida esperada (outra invocação concorrente já
+      // reivindicou, comportamento normal) e motivo genuíno (bug futuro
+      // zerando o campo na hora errada) ficavam indistinguíveis e
+      // completamente silenciosos — quem for investigar "cliente confirmou e
+      // não recebeu nada" não achava rastro nenhum no log.
+      const [currentLead] = await db
+        .select({ pendingFollowCheckAutomationId: recoveryLeads.pendingFollowCheckAutomationId })
+        .from(recoveryLeads)
+        .where(eq(recoveryLeads.id, leadId))
+        .limit(1)
+      console.warn(
+        `[Follow Check] Empresa ${companyId}, lead ${leadId}: claim de liberação NÃO afetou nenhuma linha ` +
+          `(automationId esperado=${automationId}, pending_follow_check_automation_id atual do lead=${
+            currentLead ? currentLead.pendingFollowCheckAutomationId ?? 'null' : 'lead não encontrado'
+          }). Se o valor atual for null ou outra automação, é corrida esperada com invocação concorrente ` +
+          `(comportamento normal, não é erro). Se o valor atual ainda for ${automationId}, investigar: o claim ` +
+          `deveria ter afetado a linha.`,
+      )
       return { status: 'already_claimed' }
     }
 
@@ -575,6 +591,23 @@ export async function handleFollowCheckReply({
     })
 
   if (!afterIncrement) {
+    // FIX de QA (24/09/2026, 3ª rodada): mesmo rastro do claim acima, aqui pro
+    // caso do incremento de tentativa. Corrida esperada (outra invocação já
+    // liberou/zerou o gate nesse meio tempo) e motivo genuíno ficavam do
+    // mesmo jeito indistinguíveis e silenciosos.
+    const [currentLead] = await db
+      .select({ pendingFollowCheckAutomationId: recoveryLeads.pendingFollowCheckAutomationId })
+      .from(recoveryLeads)
+      .where(eq(recoveryLeads.id, leadId))
+      .limit(1)
+    console.warn(
+      `[Follow Check] Empresa ${companyId}, lead ${leadId}: incremento de tentativa NÃO afetou nenhuma linha ` +
+        `(automationId esperado=${automationId}, pending_follow_check_automation_id atual do lead=${
+          currentLead ? currentLead.pendingFollowCheckAutomationId ?? 'null' : 'lead não encontrado'
+        }). Se o valor atual for null ou outra automação, é corrida esperada com invocação concorrente que já ` +
+        `liberou/zerou o gate (comportamento normal, não é erro). Se o valor atual ainda for ${automationId}, ` +
+        `investigar: o incremento deveria ter afetado a linha.`,
+    )
     return { status: 'state_changed' }
   }
 
