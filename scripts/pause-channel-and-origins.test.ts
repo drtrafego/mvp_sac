@@ -74,4 +74,46 @@ assert.equal(shouldSkipAiReply({ attachments: [{ type: 'image' }] }), true, 'Med
 assert.equal(shouldSkipAiReply({ attachments: [] }), false, 'Empty attachments must not skip')
 assert.equal(shouldSkipAiReply({}), false, 'Text message with no attachments must not skip')
 
+console.log('Testing parseOriginItem (Item 7)...')
+import { parseOriginItem } from '../src/components/inbox/ChannelBadge'
+
+const commentOrigin = parseOriginItem('instagram_comment')
+assert.equal(commentOrigin?.label, 'Instagram Comentário', 'instagram_comment should have label Instagram Comentário')
+assert.equal(commentOrigin?.key, 'instagram_comment', 'key should be instagram_comment')
+
+const adOrigin = parseOriginItem('instagram_ad')
+assert.equal(adOrigin?.label, 'Instagram Anúncio', 'instagram_ad should have label Instagram Anúncio')
+assert.equal(adOrigin?.key, 'instagram_ad', 'key should be instagram_ad')
+
+const directOrigin = parseOriginItem('instagram_direct')
+assert.equal(directOrigin?.label, 'Instagram Direto', 'instagram_direct should have label Instagram Direto')
+assert.equal(directOrigin?.key, 'instagram_direct', 'key should be instagram_direct')
+
+console.log('Testing inferConversationChannel (Item 8)...')
+import { inferConversationChannel } from '../src/lib/sync-agents'
+
+assert.equal(
+  inferConversationChannel({ title: 'Análise de e-mail recebido', channel: 'webhook', session_id: 'sess_123' }),
+  'email',
+  'Email automation session with title "Análise de e-mail recebido" must be inferred as email'
+)
+
+assert.equal(
+  inferConversationChannel({ channel: 'brevo', session_id: 'sess_456' }),
+  'email',
+  'Brevo channel must be inferred as email'
+)
+
+assert.equal(
+  inferConversationChannel({ channel: 'whatsapp', chat_id: '5511999998888' }),
+  'whatsapp',
+  'WhatsApp channel with phone number must be inferred as whatsapp'
+)
+
+assert.equal(
+  inferConversationChannel({ channel: 'instagram', chat_id: 'ig_12345' }),
+  'instagram',
+  'Instagram channel with ig_ prefix must be inferred as instagram'
+)
+
 console.log('All tests passed successfully! ✅')

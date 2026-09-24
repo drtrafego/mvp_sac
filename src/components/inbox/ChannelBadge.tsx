@@ -238,11 +238,29 @@ export function parseOriginItem(raw: string | null | undefined): OriginItem | nu
     }
   }
 
-  // 3. Instagram Direct / Orgânico
-  if (norm.includes('instagram') || norm.includes('direct') || norm.includes('ig')) {
+  // 3. Instagram (Comentário, Anúncio, Direto)
+  if (norm.includes('instagram_comment') || norm.includes('ig_comment') || norm.includes('comentario') || norm.includes('comment')) {
     return {
-      key: 'instagram',
-      label: 'Instagram',
+      key: 'instagram_comment',
+      label: 'Instagram Comentário',
+      color: 'border-purple-500/30 bg-purple-500/10 text-purple-500 dark:text-purple-400',
+      icon: <InstagramLogoIcon size={10} className="shrink-0 text-purple-400" />,
+    }
+  }
+
+  if (norm.includes('instagram_ad') || norm.includes('ig_ad')) {
+    return {
+      key: 'instagram_ad',
+      label: 'Instagram Anúncio',
+      color: 'border-pink-500/30 bg-pink-500/10 text-pink-500 dark:text-pink-400',
+      icon: <InstagramLogoIcon size={10} className="shrink-0 text-pink-400" />,
+    }
+  }
+
+  if (norm.includes('instagram_direct') || norm.includes('ig_direct') || norm.includes('instagram') || norm.includes('direct') || norm.includes('ig')) {
+    return {
+      key: 'instagram_direct',
+      label: 'Instagram Direto',
       color: 'border-pink-500/30 bg-pink-500/10 text-pink-500 dark:text-pink-400',
       icon: <InstagramLogoIcon size={10} className="shrink-0 text-pink-400" />,
     }
@@ -367,7 +385,13 @@ export function PlatformBadge({
   }
 
   const badges = Array.from(itemsMap.values())
-  if (badges.length === 0) {
+  const filteredBadges = badges.filter((b) => b.key !== 'instagram_direct' && b.key !== 'instagram')
+
+  if (filteredBadges.length === 0) {
+    // Se o único badge era instagram_direct ou instagram genérico, suprime para não duplicar com ChannelBadge
+    if (badges.some((b) => b.key === 'instagram_direct' || b.key === 'instagram')) {
+      return null
+    }
     return (
       <span
         className={cn(
@@ -382,7 +406,7 @@ export function PlatformBadge({
 
   return (
     <div className={cn('flex flex-wrap items-center gap-1', className)}>
-      {badges.map((b) => (
+      {filteredBadges.map((b) => (
         <span
           key={b.key}
           className={cn(

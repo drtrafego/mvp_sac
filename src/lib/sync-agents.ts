@@ -297,6 +297,71 @@ export function shouldUpdateLeadName(
   return LEAD_NAME_SOURCE_RANK[next.source] >= LEAD_NAME_SOURCE_RANK[current.source]
 }
 
+export function inferConversationChannel(cv: {
+  channel?: string | null
+  title?: string | null
+  chat_id?: string | null
+  session_id?: string | null
+}): string {
+  const ch = (cv.channel || '').toLowerCase().trim()
+  const title = (cv.title || '').toLowerCase().trim()
+  const chatId = (cv.chat_id || cv.session_id || '').toLowerCase().trim()
+
+  // 1. Sinais explícitos de E-mail (canal, título contendo e-mail/brevo/webhook ou chatId com @)
+  if (
+    ch.includes('email') ||
+    ch.includes('mail') ||
+    ch.includes('brevo') ||
+    ch.includes('webhook') ||
+    ch.includes('smtp') ||
+    chatId.includes('@') ||
+    title.includes('e-mail') ||
+    title.includes('email') ||
+    title.includes('brevo')
+  ) {
+    return 'email'
+  }
+
+  // 2. Sinais explícitos de Instagram
+  if (
+    ch.includes('insta') ||
+    ch.includes('ig') ||
+    ch.includes('direct') ||
+    chatId.startsWith('ig_') ||
+    chatId.startsWith('instagram_') ||
+    title.includes('instagram')
+  ) {
+    return 'instagram'
+  }
+
+  // 3. Sinais explícitos de WhatsApp
+  if (
+    ch.includes('whats') ||
+    ch.includes('zap') ||
+    ch.includes('wpp') ||
+    ch.includes('uazapi') ||
+    ch.includes('meta') ||
+    ch.includes('ctwa')
+  ) {
+    return 'whatsapp'
+  }
+
+  // 4. Formato de telefone / números apenas (E.164)
+  const digitsOnly = chatId.replace(/\D/g, '')
+  if (digitsOnly.length >= 8 && !chatId.includes('@')) {
+    return 'whatsapp'
+  }
+
+  // 5. Se o canal não bateu com nenhum padrão acima, registramos log de aviso
+  if (ch) {
+    console.warn(
+      `[sync-agents] Canal não reconhecido na conversa: channel="${cv.channel}", title="${cv.title}", session_id="${cv.session_id}". Mapeado como "whatsapp" por fallback.`
+    )
+  }
+
+  return 'whatsapp'
+}
+
 async function tableExistsInAgentsDb(schema: string, table: string): Promise<boolean> {
   const rows = await queryAgentsDb<{ exists: boolean }>(
     `
@@ -1143,11 +1208,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
             let leadId = leadMap.get(`${company.id}_${cleanPhone}`) || leadMap.get(`${company.id}_${last9}`)
             const isExistingLead = !!leadId
-            const channelType = cv.channel?.includes('email')
-              ? 'email'
-              : cv.channel?.includes('insta')
-              ? 'instagram'
-              : 'whatsapp'
+            const channelType = inferConversationChannel(cv)
 
             let leadDate = cv.ended_at ? new Date(cv.ended_at) : (cv.started_at ? new Date(cv.started_at) : new Date())
             if (isNaN(leadDate.getTime())) leadDate = new Date()
