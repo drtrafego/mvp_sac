@@ -254,7 +254,7 @@ export async function POST(req: NextRequest) {
                 let leadName = fallbackInstagramName
 
                 const [existingLead] = await db
-                  .select({ id: recoveryLeads.id })
+                  .select({ id: recoveryLeads.id, name: recoveryLeads.name })
                   .from(recoveryLeads)
                   .where(and(
                     eq(recoveryLeads.companyId, companyId),
@@ -269,6 +269,16 @@ export async function POST(req: NextRequest) {
                     leadName = `@${profile.username}`
                   } else if (profile.ok && profile.name?.trim()) {
                     leadName = profile.name
+                  }
+                }
+
+                const nameUpdateForConflict: Partial<typeof recoveryLeads.$inferInsert> = {}
+                if (existingLead?.name?.startsWith('Instagram Direct')) {
+                  const profile = await fetchInstagramUserProfile({ igsid: sender.id, companyId })
+                  if (profile.ok && profile.username) {
+                    nameUpdateForConflict.name = `@${profile.username}`
+                  } else if (profile.ok && profile.name?.trim()) {
+                    nameUpdateForConflict.name = profile.name
                   }
                 }
 
@@ -315,6 +325,7 @@ export async function POST(req: NextRequest) {
                       updatedAt: new Date(),
                       lastActionAt: new Date(),
                       channel: 'instagram',
+                      ...nameUpdateForConflict,
                       ...(isAd
                         ? {
                             trackingSource: 'instagram_ad',
