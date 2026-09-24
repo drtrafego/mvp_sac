@@ -246,6 +246,9 @@ export function ensureSchema(client: any): Promise<void> {
           // recoveryLeads.pendingFollowCheckAutomationId).
           client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS require_follow_check BOOLEAN DEFAULT FALSE`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS pending_follow_check_automation_id INTEGER REFERENCES instagram_comment_automations(id) ON DELETE SET NULL`,
+          // FIX ALTO de QA (24/09/2026, 2ª rodada): contador de tentativas
+          // sem confirmar, ver comentário completo em schema.ts.
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS pending_follow_check_attempts INTEGER DEFAULT 0`,
 
           // ─── Bloqueios de agenda por data (férias, congresso, feriado) ─────────
           // Só a CONFIGURAÇÃO fica salva aqui: nenhum bot consulta isto ainda

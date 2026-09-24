@@ -332,17 +332,38 @@ export const recoveryLeads = pgTable('recovery_leads', {
   // automação específica (aguardando a pessoa responder pra checar
   // is_user_follow_business de verdade via Graph API). O webhook inbound do
   // Instagram (src/app/api/webhooks/instagram/route.ts e [slug]/route.ts)
-  // testa este campo ANTES de decidir se a mensagem cai no
-  // generateAndSendAiReply normal: se estiver pendente, a mensagem vai pro
-  // handleFollowCheckReply (src/lib/instagram-comment-processor.ts) em vez
-  // da IA, pra não ter duas respostas conflitantes pro mesmo lead na mesma
-  // mensagem. Fica null quando o lead nunca entrou no fluxo, ou depois que a
-  // Graph API confirma que a pessoa segue e o dmMessage real é liberado.
+  // testa este campo (E !botPaused, ver comentário lá) ANTES de decidir se a
+  // mensagem cai no generateAndSendAiReply normal: se estiver pendente, a
+  // mensagem vai pro handleFollowCheckReply (src/lib/instagram-comment-processor.ts)
+  // em vez da IA, pra não ter duas respostas conflitantes pro mesmo lead na
+  // mesma mensagem. Fica null quando o lead nunca entrou no fluxo, quando a
+  // Graph API confirma que a pessoa segue e o dmMessage real é liberado, ou
+  // quando pendingFollowCheckAttempts estoura o limite (gate desiste, ver
+  // comentário abaixo).
   // Só UM fluxo pendente por vez (modelagem mais simples que cobre o caso
   // real: se a pessoa comentar em dois posts com automações diferentes que
   // exigem seguir, a última pergunta é a que vale, decisão de produto
   // documentada aqui em vez de espalhada por uma tabela nova).
+  // FIX CRÍTICO de QA (24/09/2026, 2ª rodada): processInstagramComment só
+  // pode ESCREVER este campo quando a automação que casou o comentário TEM
+  // requireFollowCheck=true. Antes do fix, qualquer automação (inclusive uma
+  // SEM o flag) sobrescrevia isto pra null sempre que casava um comentário
+  // novo da mesma pessoa, e derrubava silenciosamente um gate pendente de
+  // OUTRA automação (comentar depois em post B sem o flag apagava a espera
+  // do post A com o flag, e a resposta seguinte da pessoa confirmando A caía
+  // direto na IA normal, nunca liberando o conteúdo de A).
   pendingFollowCheckAutomationId: integer('pending_follow_check_automation_id').references(() => instagramCommentAutomations.id, { onDelete: 'set null' }),
+
+  // Quantas vezes a pessoa respondeu SEM confirmar que segue, dentro do
+  // fluxo pendente acima. FIX ALTO de QA (24/09/2026, 2ª rodada): sem
+  // limite, handleFollowCheckReply repetia "segue lá" pra sempre, mesmo se a
+  // pessoa decidiu não seguir mas queria falar de outra coisa (sequestro de
+  // conversa sem saída). Ao atingir MAX_FOLLOW_CHECK_ATTEMPTS (ver
+  // src/lib/instagram-comment-processor.ts), o gate desiste: zera este
+  // campo e o campo acima, grava uma nota em `notes` (CRM nativo do lead) e
+  // devolve a mensagem pro fluxo normal de generateAndSendAiReply. Zerado
+  // (não incrementado) toda vez que um NOVO ciclo do gate começa.
+  pendingFollowCheckAttempts: integer('pending_follow_check_attempts').default(0),
 
   // Follow-up, Lembretes e Etapa do Pipeline
   followUpDate: timestamp('follow_up_date'),

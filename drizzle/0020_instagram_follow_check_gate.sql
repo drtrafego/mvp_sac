@@ -17,3 +17,9 @@
 
 ALTER TABLE "instagram_comment_automations" ADD COLUMN IF NOT EXISTS "require_follow_check" boolean DEFAULT false;
 ALTER TABLE "recovery_leads" ADD COLUMN IF NOT EXISTS "pending_follow_check_automation_id" integer REFERENCES "instagram_comment_automations"("id") ON DELETE SET NULL;
+
+-- FIX ALTO de QA (24/09/2026, 2ª rodada): sem limite de tentativas, um lead
+-- que decidiu não seguir mas queria falar de outra coisa ficava sequestrado
+-- no gate pra sempre. Ver comentário completo em schema.ts e
+-- MAX_FOLLOW_CHECK_ATTEMPTS em src/lib/instagram-comment-processor.ts.
+ALTER TABLE "recovery_leads" ADD COLUMN IF NOT EXISTS "pending_follow_check_attempts" integer DEFAULT 0;

@@ -270,7 +270,14 @@ export async function POST(req: NextRequest) {
                 // uma coisa qualquer enquanto o gate ainda decide se libera o
                 // conteúdo). Vai pro handleFollowCheckReply, que confere de verdade
                 // via Graph API e decide.
-                if (lead?.id && lead.pendingFollowCheckAutomationId) {
+                // FIX CRÍTICO de QA (24/09/2026, 2ª rodada): `!lead.botPaused`
+                // entra TAMBÉM nesta condição, não só na de baixo. Antes, um
+                // atendente humano pausava a conversa pra assumir e o gate de
+                // seguidor continuava mandando mensagem automática por cima
+                // dele mesmo assim. Pendente + pausado agora não cai em
+                // NENHUM dos dois ramos (nem gate, nem IA): não manda nada,
+                // decisão fica 100% com o humano até ele despausar.
+                if (lead?.id && lead.pendingFollowCheckAutomationId && !lead.botPaused) {
                   const leadId = lead.id
                   const automationId = lead.pendingFollowCheckAutomationId
                   const igsid = sender.id

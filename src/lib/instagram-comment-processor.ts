@@ -13,6 +13,7 @@ import {
   hideInstagramComment,
   checkInstagramUserFollowsBusiness,
 } from '@/lib/instagram'
+import { generateAndSendAiReply } from '@/lib/ai-reply'
 import { eq, and, gte, sql } from 'drizzle-orm'
 
 export interface CommentEventData {
@@ -349,14 +350,6 @@ export async function processInstagramComment(event: CommentEventData) {
       .where(eq(recoveryLeads.phone, igPhone))
       .limit(1)
 
-    // Não-nulo só quando esta automação exige o gate de seguidor: marca o
-    // lead como aguardando a resposta dele pra checar is_user_follow_business
-    // de verdade (ver comentário completo em schema.ts). Automação sem o
-    // flag não toca este campo, e se ele já estivesse preenchido por OUTRA
-    // automação anterior, esta escrita nova (mesmo null) o substitui por
-    // simplicidade: só um fluxo pendente por vez, decisão documentada ali.
-    const pendingFollowCheckAutomationId = matchedRule.requireFollowCheck ? matchedRule.id : null
-
     if (!lead) {
       const [newLead] = await db
         .insert(recoveryLeads)
@@ -369,25 +362,45 @@ export async function processInstagramComment(event: CommentEventData) {
           name: displayName,
           status: 'in_conversation',
           trackingSource: 'instagram_comment',
-          pendingFollowCheckAutomationId,
+          // Lead novo, sem estado anterior pra preservar: grava direto.
+          pendingFollowCheckAutomationId: matchedRule.requireFollowCheck ? matchedRule.id : null,
+          pendingFollowCheckAttempts: 0,
         })
         .returning()
       lead = newLead
     } else {
-      await db
-        .update(recoveryLeads)
-        .set({
-          updatedAt: now,
-          // lastActionAt precisa entrar aqui: o COALESCE de ordenação do
-          // Inbox trava no primeiro valor não nulo, então a DM enviada pelo
-          // comentário automático não subia a conversa quando lastActionAt
-          // já existia de antes.
-          lastActionAt: now,
-          channel: 'instagram',
-          name: lead.name && !lead.name.startsWith('Instagram Direct') ? lead.name : displayName,
-          pendingFollowCheckAutomationId,
-        })
-        .where(eq(recoveryLeads.id, lead.id))
+      const updateSet: Partial<typeof recoveryLeads.$inferInsert> = {
+        updatedAt: now,
+        // lastActionAt precisa entrar aqui: o COALESCE de ordenação do
+        // Inbox trava no primeiro valor não nulo, então a DM enviada pelo
+        // comentário automático não subia a conversa quando lastActionAt
+        // já existia de antes.
+        lastActionAt: now,
+        channel: 'instagram',
+        name: lead.name && !lead.name.startsWith('Instagram Direct') ? lead.name : displayName,
+      }
+
+      // FIX CRÍTICO de QA (24/09/2026, 2ª rodada): só grava o campo do gate
+      // quando ESTA automação exige seguir. Antes, qualquer comentário casado
+      // (inclusive de automação SEM o flag) sobrescrevia
+      // pendingFollowCheckAutomationId pra null incondicionalmente, e
+      // derrubava silenciosamente um gate pendente de OUTRA automação: pessoa
+      // comenta no post A (com o flag) → fica pendente → comenta no post B
+      // (sem o flag) antes de responder → o pendente de A é apagado sem
+      // ninguém saber → a resposta dela confirmando A cai direto na IA
+      // normal, o conteúdo de A nunca libera mesmo ela seguindo de verdade.
+      // Automação sem o flag agora NUNCA toca este campo (nem lê, nem
+      // escreve): o gate pendente de outra automação, se existir, continua
+      // intacto até ela responder ou até o limite de tentativas (ver
+      // handleFollowCheckReply). Automação COM o flag ainda sobrescreve um
+      // gate pendente de OUTRA automação com flag (última pergunta vale,
+      // decisão de produto já documentada em schema.ts) — isso não mudou.
+      if (matchedRule.requireFollowCheck) {
+        updateSet.pendingFollowCheckAutomationId = matchedRule.id
+        updateSet.pendingFollowCheckAttempts = 0
+      }
+
+      await db.update(recoveryLeads).set(updateSet).where(eq(recoveryLeads.id, lead.id))
     }
 
     // Grava a mensagem enviada (pergunta intermediária ou dmMessage direto,
@@ -410,18 +423,44 @@ export async function processInstagramComment(event: CommentEventData) {
   return { status: 'sent', messageId: dmResult.messageId }
 }
 
+// Limite de respostas sem confirmar seguir, antes do gate desistir (FIX ALTO
+// de QA, 24/09/2026, 2ª rodada). Sem isto, uma pessoa que decidiu não seguir
+// mas quer falar de outra coisa (emoji, pergunta sobre outro assunto, "não
+// quero seguir") ficava sequestrada pra sempre recebendo "segue lá que
+// libero", sem endpoint nem atalho de UI pra um atendente zerar isso na mão.
+// Fix mínimo aceitável: depois deste tanto de tentativas, o gate desiste
+// sozinho e devolve a conversa pro fluxo normal de IA (ver mais abaixo).
+const MAX_FOLLOW_CHECK_ATTEMPTS = 3
+
+// db.execute(sql`...`) devolve FORMATOS DIFERENTES por driver: neon-http
+// (produção, @neondatabase/serverless) devolve um objeto com `.rows`;
+// postgres-js (usado nos testes contra Postgres descartável real) devolve a
+// lista de linhas direto, sem essa propriedade. Sem isto, a checagem "a
+// claim foi minha" abaixo quebraria silenciosamente só no ambiente de teste
+// (result.rows undefined ali, mas funcionando por acaso em produção).
+function unwrapExecRows<T>(result: unknown): T[] {
+  if (Array.isArray(result)) return result as T[]
+  if (result && typeof result === 'object' && Array.isArray((result as { rows?: unknown }).rows)) {
+    return (result as { rows: T[] }).rows
+  }
+  return []
+}
+
 /**
  * Segunda etapa do gate de seguidor (24/09/2026): chamado pelo webhook
  * inbound do Instagram (route.ts e [slug]/route.ts) quando o lead que
- * respondeu tem `pendingFollowCheckAutomationId` setado, em vez de cair no
+ * respondeu tem `pendingFollowCheckAutomationId` setado (e o bot não está
+ * pausado por um humano, ver comentário nos webhooks), em vez de cair no
  * generateAndSendAiReply normal. Confere de verdade via Graph API
  * (is_user_follow_business) e decide:
  *   - segue: libera o dmMessage real da automação e limpa o estado pendente.
+ *     Usa claim-then-act (ver FIX CRÍTICO abaixo) pra nunca liberar duas
+ *     vezes com respostas concorrentes da mesma pessoa.
  *   - não segue: reforça o pedido pra seguir e MANTÉM o estado pendente, pra
- *     checar de novo na próxima resposta dela.
+ *     checar de novo na próxima resposta dela — até bater
+ *     MAX_FOLLOW_CHECK_ATTEMPTS, quando desiste (ver FIX ALTO abaixo).
  *   - erro da API (token, rate limit, rede): não decide nada no escuro, só
- *     loga e mantém o estado pendente pra tentar de novo na próxima resposta
- *     (nenhum limite de tentativas foi pedido, então não inventamos um).
+ *     loga e mantém o estado pendente pra tentar de novo na próxima resposta.
  */
 export async function handleFollowCheckReply({
   companyId,
@@ -445,7 +484,7 @@ export async function handleFollowCheckReply({
     // não deixar o lead preso pra sempre esperando por algo que não existe.
     await db
       .update(recoveryLeads)
-      .set({ pendingFollowCheckAutomationId: null })
+      .set({ pendingFollowCheckAutomationId: null, pendingFollowCheckAttempts: 0 })
       .where(eq(recoveryLeads.id, leadId))
     return { status: 'automation_not_found' }
   }
@@ -457,6 +496,9 @@ export async function handleFollowCheckReply({
       `[Follow Check] Empresa ${companyId}, lead ${leadId}: erro ao consultar Graph API:`,
       followCheck.error,
     )
+    // Não manda NADA (nem libera, nem nega) e mantém o estado pendente:
+    // decidir com base num erro de API seria decidir no escuro. A próxima
+    // resposta da pessoa tenta de novo.
     return { status: 'api_error', error: followCheck.error }
   }
 
@@ -464,20 +506,40 @@ export async function handleFollowCheckReply({
   const now = new Date()
 
   if (followCheck.follows) {
+    // FIX CRÍTICO de QA (24/09/2026, 2ª rodada): claim-then-act. Antes, o
+    // dmMessage real saía ANTES de zerar pendingFollowCheckAutomationId, e
+    // duas invocações quase simultâneas (retry/duplicidade real de webhook
+    // da Meta, provado por teste) mandavam o conteúdo pago DUAS vezes. Este
+    // UPDATE só zera o campo SE ele ainda apontar pra esta automação — quem
+    // conseguir essa troca atômica é quem manda a mensagem; quem chegar
+    // depois (0 linhas afetadas) desiste sem mandar nada de novo.
+    const claimResult = await db.execute<{ id: number }>(sql`
+      UPDATE recovery_leads
+      SET pending_follow_check_automation_id = NULL,
+          pending_follow_check_attempts = 0,
+          updated_at = now(),
+          last_action_at = now()
+      WHERE id = ${leadId} AND pending_follow_check_automation_id = ${automationId}
+      RETURNING id
+    `)
+    const claimedRows = unwrapExecRows<{ id: number }>(claimResult)
+
+    if (claimedRows.length === 0) {
+      // Outra invocação concorrente já reivindicou (ou o estado mudou por
+      // outro motivo, ex.: automação apagada nesse meio tempo). Não manda o
+      // conteúdo de novo.
+      return { status: 'already_claimed' }
+    }
+
     const sendResult = await sendInstagramMessage({
       recipientId: igsid,
       text: automation.dmMessage,
       companyId,
     })
 
-    if (sendResult.ok) {
-      await db
-        .update(recoveryLeads)
-        .set({ pendingFollowCheckAutomationId: null, updatedAt: now, lastActionAt: now })
-        .where(eq(recoveryLeads.id, leadId))
-    } else {
+    if (!sendResult.ok) {
       console.error(
-        `[Follow Check] Empresa ${companyId}, lead ${leadId}: falha ao enviar dmMessage real:`,
+        `[Follow Check] Empresa ${companyId}, lead ${leadId}: falha ao enviar dmMessage real depois de reivindicar a liberação:`,
         sendResult.error,
       )
     }
@@ -497,8 +559,60 @@ export async function handleFollowCheckReply({
     return { status: sendResult.ok ? 'released' : 'send_failed', error: sendResult.error }
   }
 
-  // Não segue ainda: reforça o pedido e MANTÉM pendingFollowCheckAutomationId
-  // (não mexe nele) pra checar de novo quando ela responder de novo.
+  // Não segue ainda: conta mais uma tentativa sem confirmar. A condição no
+  // WHERE (pendingFollowCheckAutomationId = automationId) é a mesma trava de
+  // "reivindicar antes de agir": se o estado já mudou (outra invocação
+  // liberou/zerou nesse meio tempo), este UPDATE não afeta nenhuma linha e
+  // não faz sentido reforçar "segue lá" por cima de um estado que já mudou.
+  const [afterIncrement] = await db
+    .update(recoveryLeads)
+    .set({ pendingFollowCheckAttempts: sql`coalesce(${recoveryLeads.pendingFollowCheckAttempts}, 0) + 1` })
+    .where(and(eq(recoveryLeads.id, leadId), eq(recoveryLeads.pendingFollowCheckAutomationId, automationId)))
+    .returning({
+      pendingFollowCheckAttempts: recoveryLeads.pendingFollowCheckAttempts,
+      notes: recoveryLeads.notes,
+      botPaused: recoveryLeads.botPaused,
+    })
+
+  if (!afterIncrement) {
+    return { status: 'state_changed' }
+  }
+
+  if ((afterIncrement.pendingFollowCheckAttempts ?? 0) >= MAX_FOLLOW_CHECK_ATTEMPTS) {
+    // FIX ALTO de QA (24/09/2026, 2ª rodada): desiste do gate. Zera o estado,
+    // deixa uma nota no CRM nativo do lead (campo `notes`, o mesmo que
+    // qualquer agente vê no Inbox) pra um humano entender por que o gate
+    // saiu do ar, e devolve ESTA MESMA mensagem que acabou de chegar pro
+    // fluxo normal de IA — sem isso, a mensagem simplesmente não teria
+    // resposta nenhuma neste turno.
+    const noteText = `[Gate de seguidor] "${automation.name}": lead não confirmou seguir após ${MAX_FOLLOW_CHECK_ATTEMPTS} tentativas em ${now.toISOString()}. Gate desativado, atendimento normal retomado.`
+    const updatedNotes = afterIncrement.notes ? `${afterIncrement.notes}\n${noteText}` : noteText
+
+    await db
+      .update(recoveryLeads)
+      .set({
+        pendingFollowCheckAutomationId: null,
+        pendingFollowCheckAttempts: 0,
+        notes: updatedNotes,
+        updatedAt: now,
+      })
+      .where(eq(recoveryLeads.id, leadId))
+
+    // Só devolve pra IA se ninguém pausou o bot nesse meio tempo (checagem
+    // fresca, veio do mesmo UPDATE acima): pendente + pausado nunca deveria
+    // gerar mensagem automática nenhuma (mesma regra dos webhooks).
+    if (!afterIncrement.botPaused) {
+      await generateAndSendAiReply(leadId).catch(err =>
+        console.error(
+          `[Follow Check] Empresa ${companyId}, lead ${leadId}: erro ao devolver a conversa pro fluxo normal de IA depois do limite de tentativas:`,
+          err,
+        ),
+      )
+    }
+
+    return { status: 'gate_abandoned_after_max_attempts' }
+  }
+
   const [config] = await db
     .select({ instagramUsername: settings.instagramUsername })
     .from(settings)

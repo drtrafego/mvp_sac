@@ -201,7 +201,10 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             // requireFollowCheck, a resposta dele NUNCA cai no
             // generateAndSendAiReply normal (evitaria duas respostas conflitantes
             // pro mesmo lead na mesma mensagem).
-            if (lead?.id && lead.pendingFollowCheckAutomationId) {
+            // FIX CRÍTICO de QA (24/09/2026, 2ª rodada): `!lead.botPaused`
+            // também nesta condição — pendente + pausado não manda nada
+            // automático (nem gate, nem IA), decisão fica com o humano.
+            if (lead?.id && lead.pendingFollowCheckAutomationId && !lead.botPaused) {
               const leadId = lead.id
               const automationId = lead.pendingFollowCheckAutomationId
               const igsid = sender.id

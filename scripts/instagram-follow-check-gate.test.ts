@@ -39,6 +39,21 @@
 //   (g) erro da Graph API (token/rede) não decide no escuro: mantém o
 //       estado pendente e não manda nada incorreto.
 //
+// Regressão permanente da 2ª rodada de QA adversarial (24/09/2026), 3
+// bugs CRÍTICOS + 1 ALTO reprovaram o PR #59, corrigidos e travados aqui:
+//   (h) QA-1 (CRÍTICO): comentário em post B, numa automação SEM o flag, não
+//       pode apagar silenciosamente o gate pendente de OUTRA automação (post
+//       A, com o flag) da mesma pessoa.
+//   (i) QA-2 (CRÍTICO): lead com checagem pendente E botPaused=true não
+//       aciona NADA automático (nem o gate, nem a IA) — decisão fica 100%
+//       com o humano que pausou.
+//   (j) QA-3 (CRÍTICO): duas invocações CONCORRENTES de handleFollowCheckReply
+//       pro mesmo lead/automação, ambas com is_user_follow_business=true, só
+//       mandam o conteúdo pago UMA vez (claim-then-act, não "manda-então-zera").
+//   (k) QA-4 (ALTO): depois de MAX_FOLLOW_CHECK_ATTEMPTS respostas sem
+//       confirmar, o gate desiste, grava nota no CRM do lead e devolve a
+//       mensagem pro fluxo normal de IA (sem sequestrar a conversa pra sempre).
+//
 // Uso: npx tsx --experimental-test-module-mocks --test scripts/instagram-follow-check-gate.test.ts
 
 import { test, mock } from 'node:test'
@@ -495,6 +510,292 @@ async function main() {
         leadDepois.pendingFollowCheckAutomationId,
         automation.id,
         'erro de API precisa MANTER o estado pendente pra tentar de novo na próxima resposta',
+      )
+    })
+
+    // ── (h) QA-1 CRÍTICO: automação SEM o flag não pode apagar o gate
+    // pendente de OUTRA automação (achado real do QA adversarial na 2ª
+    // rodada do PR #59) ──────────────────────────────────────────────────
+    await test('(h) QA-1 CRÍTICO: comentário em automação SEM requireFollowCheck NÃO apaga gate pendente de outra automação', async () => {
+      const [automationA] = await testDb
+        .insert(schema.instagramCommentAutomations)
+        .values({
+          companyId: company.id,
+          name: 'QA-1 Automação A (com flag)',
+          keywords: 'GATEA',
+          matchType: 'contains',
+          dmMessage: 'Conteúdo real da automação A',
+          isActive: true,
+          requireFollowCheck: true,
+        })
+        .returning()
+
+      const [automationB] = await testDb
+        .insert(schema.instagramCommentAutomations)
+        .values({
+          companyId: company.id,
+          name: 'QA-1 Automação B (sem flag)',
+          keywords: 'GATEB',
+          matchType: 'contains',
+          dmMessage: 'Conteúdo direto da automação B',
+          isActive: true,
+          requireFollowCheck: false,
+        })
+        .returning()
+
+      const commenterQa1 = 'commenter_qa1_1'
+
+      // 1. Comenta no post A (automação com o flag): fica pendente em A.
+      await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_qa1_post_a',
+        commenterId: commenterQa1,
+        commenterUsername: 'qa1user',
+        mediaId: 'media_qa1_a',
+        commentText: 'libera o GATEA',
+      })
+
+      const [leadAposA] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.phone, `ig_${commenterQa1}`))
+      assert.equal(leadAposA.pendingFollowCheckAutomationId, automationA.id, 'deveria ficar pendente na automação A')
+
+      // 2. ANTES de responder, comenta no post B (automação SEM o flag).
+      // Bug original: isto zerava pendingFollowCheckAutomationId pra null
+      // incondicionalmente, mesmo automação B não tendo o flag.
+      const resultB = await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_qa1_post_b',
+        commenterId: commenterQa1,
+        commenterUsername: 'qa1user',
+        mediaId: 'media_qa1_b',
+        commentText: 'libera o GATEB',
+      })
+      assert.equal(resultB.status, 'sent')
+
+      const [leadAposB] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.phone, `ig_${commenterQa1}`))
+      assert.equal(
+        leadAposB.pendingFollowCheckAutomationId,
+        automationA.id,
+        'FIX CRÍTICO: automação B SEM o flag não pode ter apagado o gate pendente da automação A',
+      )
+
+      // 3. A pessoa responde confirmando que segue: tem que liberar o
+      // conteúdo da automação A (a que ela estava realmente respondendo),
+      // não ficar perdida/nula.
+      followCheckResponse = { ok: true, follows: true }
+      const sendCallsAntes = sendMessageCalls.length
+      const resultado = await handleFollowCheckReply({
+        companyId: company.id,
+        leadId: leadAposB.id,
+        igsid: commenterQa1,
+        automationId: leadAposB.pendingFollowCheckAutomationId!,
+      })
+      assert.equal(resultado.status, 'released')
+      assert.equal(sendMessageCalls.length, sendCallsAntes + 1)
+      assert.equal(sendMessageCalls[sendMessageCalls.length - 1].text, automationA.dmMessage)
+    })
+
+    // ── (i) QA-2 CRÍTICO: pendente + botPaused não pode disparar NADA
+    // automático (nem gate, nem IA) ──────────────────────────────────────
+    await test('(i) QA-2 CRÍTICO: lead com checagem pendente E botPaused=true não aciona gate nem IA', async () => {
+      const [automation] = await testDb
+        .insert(schema.instagramCommentAutomations)
+        .values({
+          companyId: company.id,
+          name: 'QA-2 Automação (bot pausado)',
+          keywords: 'GATEPAUSA',
+          matchType: 'contains',
+          dmMessage: 'Conteúdo que não pode sair sozinho com bot pausado',
+          isActive: true,
+          requireFollowCheck: true,
+        })
+        .returning()
+
+      const commenterQa2 = 'commenter_qa2_1'
+      await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_qa2_1',
+        commenterId: commenterQa2,
+        commenterUsername: 'qa2user',
+        mediaId: 'media_qa2',
+        commentText: 'libera o GATEPAUSA',
+      })
+
+      // Atendente humano pausa o bot pra assumir a conversa na mão.
+      await testDb
+        .update(schema.recoveryLeads)
+        .set({ botPaused: true })
+        .where(eq(schema.recoveryLeads.phone, `ig_${commenterQa2}`))
+
+      const followCallsAntes = followCheckCalls.length
+      const aiCallsAntes = aiReplyCalls.length
+      const sendCallsAntes = sendMessageCalls.length
+
+      const req = makeInboundDmRequest(commenterQa2, 'já sigo, pode liberar', 'mid_qa2_1')
+      const res = await instagramWebhookPost(req, { params: Promise.resolve({ slug: 'follow-gate-teste' }) })
+      assert.equal(res.status, 200)
+      await capturedAfterPromise
+
+      assert.equal(
+        followCheckCalls.length,
+        followCallsAntes,
+        'FIX CRÍTICO: com botPaused=true, handleFollowCheckReply NÃO deveria ter sido chamado',
+      )
+      assert.equal(
+        aiReplyCalls.length,
+        aiCallsAntes,
+        'com botPaused=true, generateAndSendAiReply também NÃO deveria ter sido chamado (é a mesma regra de sempre)',
+      )
+      assert.equal(sendMessageCalls.length, sendCallsAntes, 'nenhuma mensagem automática deveria ter sido mandada')
+
+      const [leadDepois] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.phone, `ig_${commenterQa2}`))
+      assert.equal(
+        leadDepois.pendingFollowCheckAutomationId,
+        automation.id,
+        'o estado pendente continua intacto, esperando o humano decidir/despausar',
+      )
+    })
+
+    // ── (j) QA-3 CRÍTICO: corrida real não pode duplicar o conteúdo pago ────
+    await test('(j) QA-3 CRÍTICO: duas invocações concorrentes de handleFollowCheckReply só liberam o conteúdo UMA vez', async () => {
+      const [automation] = await testDb
+        .insert(schema.instagramCommentAutomations)
+        .values({
+          companyId: company.id,
+          name: 'QA-3 Automação (corrida)',
+          keywords: 'GATECORRIDA',
+          matchType: 'contains',
+          dmMessage: 'Conteúdo pago que não pode duplicar',
+          isActive: true,
+          requireFollowCheck: true,
+        })
+        .returning()
+
+      const commenterQa3 = 'commenter_qa3_1'
+      await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_qa3_1',
+        commenterId: commenterQa3,
+        commenterUsername: 'qa3user',
+        mediaId: 'media_qa3',
+        commentText: 'libera o GATECORRIDA',
+      })
+
+      const [lead] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.phone, `ig_${commenterQa3}`))
+      assert.equal(lead.pendingFollowCheckAutomationId, automation.id)
+
+      followCheckResponse = { ok: true, follows: true }
+      const sendCallsAntes = sendMessageCalls.length
+
+      // Duas invocações "ao mesmo tempo" pro MESMO lead/automação, cenário
+      // real de retry ou duplicidade de webhook da Meta entregando a mesma
+      // resposta da pessoa duas vezes.
+      const [resultado1, resultado2] = await Promise.all([
+        handleFollowCheckReply({ companyId: company.id, leadId: lead.id, igsid: commenterQa3, automationId: automation.id }),
+        handleFollowCheckReply({ companyId: company.id, leadId: lead.id, igsid: commenterQa3, automationId: automation.id }),
+      ])
+
+      const statuses = [resultado1.status, resultado2.status].sort()
+      assert.deepEqual(
+        statuses,
+        ['already_claimed', 'released'],
+        'exatamente UMA invocação deveria reivindicar e liberar; a outra desiste sem mandar nada',
+      )
+
+      assert.equal(
+        sendMessageCalls.length,
+        sendCallsAntes + 1,
+        'FIX CRÍTICO: o conteúdo pago não pode ser mandado duas vezes numa corrida real',
+      )
+      assert.equal(sendMessageCalls[sendMessageCalls.length - 1].text, automation.dmMessage)
+
+      const [leadDepois] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.id, lead.id))
+      assert.equal(leadDepois.pendingFollowCheckAutomationId, null)
+    })
+
+    // ── (k) QA-4 ALTO: limite de tentativas evita sequestro de conversa ─────
+    await test('(k) QA-4 ALTO: depois do limite de tentativas, o gate desiste e devolve a conversa pro fluxo normal de IA', async () => {
+      const [automation] = await testDb
+        .insert(schema.instagramCommentAutomations)
+        .values({
+          companyId: company.id,
+          name: 'QA-4 Automação (limite de tentativas)',
+          keywords: 'GATELIMITE',
+          matchType: 'contains',
+          dmMessage: 'Conteúdo que nunca deveria ser liberado neste teste',
+          isActive: true,
+          requireFollowCheck: true,
+        })
+        .returning()
+
+      const commenterQa4 = 'commenter_qa4_1'
+      await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_qa4_1',
+        commenterId: commenterQa4,
+        commenterUsername: 'qa4user',
+        mediaId: 'media_qa4',
+        commentText: 'libera o GATELIMITE',
+      })
+
+      followCheckResponse = { ok: true, follows: false }
+      const aiCallsAntes = aiReplyCalls.length
+
+      // Responde 3 vezes seguidas sem confirmar que segue (nunca clica em
+      // seguir de verdade, só responde "não" / manda outra coisa).
+      for (let tentativa = 1; tentativa <= 3; tentativa++) {
+        const [leadAntes] = await testDb
+          .select()
+          .from(schema.recoveryLeads)
+          .where(eq(schema.recoveryLeads.phone, `ig_${commenterQa4}`))
+        const resultado = await handleFollowCheckReply({
+          companyId: company.id,
+          leadId: leadAntes.id,
+          igsid: commenterQa4,
+          automationId: automation.id,
+        })
+
+        if (tentativa < 3) {
+          assert.equal(resultado.status, 'still_pending', `tentativa ${tentativa} deveria continuar pendente`)
+        } else {
+          assert.equal(
+            resultado.status,
+            'gate_abandoned_after_max_attempts',
+            'na 3ª tentativa sem confirmar, o gate deveria desistir',
+          )
+        }
+      }
+
+      assert.equal(
+        aiReplyCalls.length,
+        aiCallsAntes + 1,
+        'depois de desistir, a mensagem deveria cair no fluxo normal de IA (não fica sem resposta nenhuma)',
+      )
+
+      const [leadDepois] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.phone, `ig_${commenterQa4}`))
+      assert.equal(leadDepois.pendingFollowCheckAutomationId, null, 'gate desistiu: estado pendente tem que estar limpo')
+      assert.equal(leadDepois.pendingFollowCheckAttempts, 0, 'contador de tentativas tem que ser zerado ao desistir')
+      assert.match(
+        leadDepois.notes ?? '',
+        /não confirmou seguir/i,
+        'tem que sobrar uma nota no CRM do lead explicando por que o gate saiu do ar',
       )
     })
   } finally {
