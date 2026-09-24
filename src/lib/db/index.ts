@@ -240,6 +240,13 @@ export function ensureSchema(client: any): Promise<void> {
             ON instagram_comment_logs (automation_id, commenter_id, media_id)
           `,
 
+          // ─── Gate de seguidor do Comment-to-DM (24/09/2026) ─────────────────────
+          // Ver comentário completo em src/lib/db/schema.ts
+          // (instagramCommentAutomations.requireFollowCheck e
+          // recoveryLeads.pendingFollowCheckAutomationId).
+          client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS require_follow_check BOOLEAN DEFAULT FALSE`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS pending_follow_check_automation_id INTEGER REFERENCES instagram_comment_automations(id) ON DELETE SET NULL`,
+
           // ─── Bloqueios de agenda por data (férias, congresso, feriado) ─────────
           // Só a CONFIGURAÇÃO fica salva aqui: nenhum bot consulta isto ainda
           // (ver comentário no schema.ts em agendaBlockedDates).

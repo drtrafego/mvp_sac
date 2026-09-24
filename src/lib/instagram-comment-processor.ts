@@ -3,12 +3,15 @@ import {
   instagramCommentAutomations,
   instagramCommentLogs,
   recoveryLeads,
+  settings,
   whatsappMessages,
 } from '@/lib/db/schema'
 import {
   sendInstagramPrivateReply,
+  sendInstagramMessage,
   replyInstagramCommentPublic,
   hideInstagramComment,
+  checkInstagramUserFollowsBusiness,
 } from '@/lib/instagram'
 import { eq, and, gte, sql } from 'drizzle-orm'
 
@@ -106,6 +109,22 @@ function matchesKeywords(
   }
 
   return { matched: false }
+}
+
+/**
+ * Textos do gate de seguidor (24/09/2026). Não são configuráveis por
+ * automação de propósito (o pedido foi só o flag liga/desliga, ver
+ * comentário em schema.ts): manter fixo evita mais um campo de texto pra
+ * validar/testar sem necessidade real hoje.
+ */
+function buildFollowCheckQuestion(username?: string | null): string {
+  const handle = username ? `@${username}` : 'a nossa conta'
+  return `Oi! Antes de eu te mandar o conteúdo, só preciso confirmar uma coisa: você já segue ${handle} aqui no Instagram? Responde aqui que eu libero na hora!`
+}
+
+function buildFollowCheckDenied(username?: string | null): string {
+  const handle = username ? `@${username}` : 'a nossa conta'
+  return `Ainda não te encontrei seguindo ${handle}. Segue lá e me responde de novo (um "pronto" já serve) que eu libero o conteúdo certinho pra você!`
 }
 
 /**
@@ -241,10 +260,24 @@ export async function processInstagramComment(event: CommentEventData) {
     }
   }
 
-  // 6. Disparo da Resposta Privada (Private Reply) via Graph API
+  // 6. Disparo da Resposta Privada (Private Reply) via Graph API.
+  // Automação com requireFollowCheck: NÃO manda o dmMessage ainda, manda a
+  // pergunta intermediária (ver comentário no schema.ts). O conteúdo real só
+  // sai depois que a pessoa responder e a Graph API confirmar que ela segue
+  // a conta (handleFollowCheckReply, chamado pelo webhook inbound).
+  let sentText = matchedRule.dmMessage
+  if (matchedRule.requireFollowCheck) {
+    const [config] = await db
+      .select({ instagramUsername: settings.instagramUsername })
+      .from(settings)
+      .where(eq(settings.companyId, companyId))
+      .limit(1)
+    sentText = buildFollowCheckQuestion(config?.instagramUsername)
+  }
+
   const dmResult = await sendInstagramPrivateReply({
     commentId,
-    text: matchedRule.dmMessage,
+    text: sentText,
     companyId,
   })
 
@@ -316,6 +349,14 @@ export async function processInstagramComment(event: CommentEventData) {
       .where(eq(recoveryLeads.phone, igPhone))
       .limit(1)
 
+    // Não-nulo só quando esta automação exige o gate de seguidor: marca o
+    // lead como aguardando a resposta dele pra checar is_user_follow_business
+    // de verdade (ver comentário completo em schema.ts). Automação sem o
+    // flag não toca este campo, e se ele já estivesse preenchido por OUTRA
+    // automação anterior, esta escrita nova (mesmo null) o substitui por
+    // simplicidade: só um fluxo pendente por vez, decisão documentada ali.
+    const pendingFollowCheckAutomationId = matchedRule.requireFollowCheck ? matchedRule.id : null
+
     if (!lead) {
       const [newLead] = await db
         .insert(recoveryLeads)
@@ -328,6 +369,7 @@ export async function processInstagramComment(event: CommentEventData) {
           name: displayName,
           status: 'in_conversation',
           trackingSource: 'instagram_comment',
+          pendingFollowCheckAutomationId,
         })
         .returning()
       lead = newLead
@@ -343,18 +385,20 @@ export async function processInstagramComment(event: CommentEventData) {
           lastActionAt: now,
           channel: 'instagram',
           name: lead.name && !lead.name.startsWith('Instagram Direct') ? lead.name : displayName,
+          pendingFollowCheckAutomationId,
         })
         .where(eq(recoveryLeads.id, lead.id))
     }
 
-    // Grava a DM enviada na tabela unificada de mensagens
+    // Grava a mensagem enviada (pergunta intermediária ou dmMessage direto,
+    // dependendo do gate) na tabela unificada de mensagens
     await db.insert(whatsappMessages).values({
       companyId,
       leadId: lead?.id ?? null,
       phone: igPhone,
       channel: 'instagram',
       direction: 'outbound',
-      content: matchedRule.dmMessage,
+      content: sentText,
       messageType: 'text',
       sentBy: 'bot',
       externalId: dmResult.messageId ?? null,
@@ -364,4 +408,121 @@ export async function processInstagramComment(event: CommentEventData) {
   }
 
   return { status: 'sent', messageId: dmResult.messageId }
+}
+
+/**
+ * Segunda etapa do gate de seguidor (24/09/2026): chamado pelo webhook
+ * inbound do Instagram (route.ts e [slug]/route.ts) quando o lead que
+ * respondeu tem `pendingFollowCheckAutomationId` setado, em vez de cair no
+ * generateAndSendAiReply normal. Confere de verdade via Graph API
+ * (is_user_follow_business) e decide:
+ *   - segue: libera o dmMessage real da automação e limpa o estado pendente.
+ *   - não segue: reforça o pedido pra seguir e MANTÉM o estado pendente, pra
+ *     checar de novo na próxima resposta dela.
+ *   - erro da API (token, rate limit, rede): não decide nada no escuro, só
+ *     loga e mantém o estado pendente pra tentar de novo na próxima resposta
+ *     (nenhum limite de tentativas foi pedido, então não inventamos um).
+ */
+export async function handleFollowCheckReply({
+  companyId,
+  leadId,
+  igsid,
+  automationId,
+}: {
+  companyId: number
+  leadId: number
+  igsid: string
+  automationId: number
+}): Promise<{ status: string; error?: string }> {
+  const [automation] = await db
+    .select()
+    .from(instagramCommentAutomations)
+    .where(eq(instagramCommentAutomations.id, automationId))
+    .limit(1)
+
+  if (!automation) {
+    // Automação foi apagada nesse meio tempo: limpa o estado pendente pra
+    // não deixar o lead preso pra sempre esperando por algo que não existe.
+    await db
+      .update(recoveryLeads)
+      .set({ pendingFollowCheckAutomationId: null })
+      .where(eq(recoveryLeads.id, leadId))
+    return { status: 'automation_not_found' }
+  }
+
+  const followCheck = await checkInstagramUserFollowsBusiness({ igsid, companyId })
+
+  if (!followCheck.ok) {
+    console.error(
+      `[Follow Check] Empresa ${companyId}, lead ${leadId}: erro ao consultar Graph API:`,
+      followCheck.error,
+    )
+    return { status: 'api_error', error: followCheck.error }
+  }
+
+  const igPhone = `ig_${igsid.replace(/^ig_/, '')}`
+  const now = new Date()
+
+  if (followCheck.follows) {
+    const sendResult = await sendInstagramMessage({
+      recipientId: igsid,
+      text: automation.dmMessage,
+      companyId,
+    })
+
+    if (sendResult.ok) {
+      await db
+        .update(recoveryLeads)
+        .set({ pendingFollowCheckAutomationId: null, updatedAt: now, lastActionAt: now })
+        .where(eq(recoveryLeads.id, leadId))
+    } else {
+      console.error(
+        `[Follow Check] Empresa ${companyId}, lead ${leadId}: falha ao enviar dmMessage real:`,
+        sendResult.error,
+      )
+    }
+
+    await db.insert(whatsappMessages).values({
+      companyId,
+      leadId,
+      phone: igPhone,
+      channel: 'instagram',
+      direction: 'outbound',
+      content: automation.dmMessage,
+      messageType: 'text',
+      sentBy: 'bot',
+      externalId: sendResult.messageId ?? null,
+    })
+
+    return { status: sendResult.ok ? 'released' : 'send_failed', error: sendResult.error }
+  }
+
+  // Não segue ainda: reforça o pedido e MANTÉM pendingFollowCheckAutomationId
+  // (não mexe nele) pra checar de novo quando ela responder de novo.
+  const [config] = await db
+    .select({ instagramUsername: settings.instagramUsername })
+    .from(settings)
+    .where(eq(settings.companyId, companyId))
+    .limit(1)
+  const deniedText = buildFollowCheckDenied(config?.instagramUsername)
+
+  const sendResult = await sendInstagramMessage({
+    recipientId: igsid,
+    text: deniedText,
+    companyId,
+  })
+
+  await db.insert(whatsappMessages).values({
+    companyId,
+    leadId,
+    phone: igPhone,
+    channel: 'instagram',
+    direction: 'outbound',
+    content: deniedText,
+    messageType: 'text',
+    sentBy: 'bot',
+    externalId: sendResult.messageId ?? null,
+  })
+
+  return { status: 'still_pending', error: sendResult.error }
 }

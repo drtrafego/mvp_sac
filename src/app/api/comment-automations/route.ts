@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
       activeHoursStart,
       activeHoursEnd,
       isActive = true,
+      requireFollowCheck = false,
     } = body
 
     if (!name || typeof name !== 'string' || !name.trim()) {
@@ -67,6 +68,7 @@ export async function POST(req: NextRequest) {
         activeHoursStart: activeHoursStart?.trim() || null,
         activeHoursEnd: activeHoursEnd?.trim() || null,
         isActive: Boolean(isActive),
+        requireFollowCheck: Boolean(requireFollowCheck),
       })
       .returning()
 

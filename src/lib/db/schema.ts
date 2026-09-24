@@ -326,6 +326,24 @@ export const recoveryLeads = pgTable('recovery_leads', {
   botPausedBy: text('bot_paused_by'),
   botPausedAll: boolean('bot_paused_all').default(false), // true só quando o PAUSAR TUDO da empresa foi quem pausou este lead.
 
+  // Estado do gate de seguidor do Instagram Comment-to-DM (24/09/2026, ver
+  // comentário completo em instagramCommentAutomations.requireFollowCheck).
+  // Não-nulo = este lead está no meio do fluxo de 2 mensagens de UMA
+  // automação específica (aguardando a pessoa responder pra checar
+  // is_user_follow_business de verdade via Graph API). O webhook inbound do
+  // Instagram (src/app/api/webhooks/instagram/route.ts e [slug]/route.ts)
+  // testa este campo ANTES de decidir se a mensagem cai no
+  // generateAndSendAiReply normal: se estiver pendente, a mensagem vai pro
+  // handleFollowCheckReply (src/lib/instagram-comment-processor.ts) em vez
+  // da IA, pra não ter duas respostas conflitantes pro mesmo lead na mesma
+  // mensagem. Fica null quando o lead nunca entrou no fluxo, ou depois que a
+  // Graph API confirma que a pessoa segue e o dmMessage real é liberado.
+  // Só UM fluxo pendente por vez (modelagem mais simples que cobre o caso
+  // real: se a pessoa comentar em dois posts com automações diferentes que
+  // exigem seguir, a última pergunta é a que vale, decisão de produto
+  // documentada aqui em vez de espalhada por uma tabela nova).
+  pendingFollowCheckAutomationId: integer('pending_follow_check_automation_id').references(() => instagramCommentAutomations.id, { onDelete: 'set null' }),
+
   // Follow-up, Lembretes e Etapa do Pipeline
   followUpDate: timestamp('follow_up_date'),
   followUpNote: text('follow_up_note'),
@@ -589,6 +607,19 @@ export const instagramCommentAutomations = pgTable('instagram_comment_automation
   activeHoursStart: text('active_hours_start'),           // ex: "08:00"
   activeHoursEnd: text('active_hours_end'),               // ex: "22:00"
   isActive: boolean('is_active').default(true),
+  // ─── Gate de seguidor (24/09/2026) ─────────────────────────────────────
+  // Opt-in POR AUTOMAÇÃO, default false = comportamento de sempre (manda o
+  // dmMessage direto). Quando true, processInstagramComment (ver
+  // src/lib/instagram-comment-processor.ts) manda uma PERGUNTA INTERMEDIÁRIA
+  // em vez do dmMessage, marca recoveryLeads.pendingFollowCheckAutomationId
+  // com o id desta automação, e só libera o dmMessage de verdade quando a
+  // pessoa responder E a Instagram User Profile API confirmar
+  // is_user_follow_business=true (ver checkInstagramUserFollowsBusiness em
+  // src/lib/instagram.ts). Pedido do Gastão depois de ver um bot de terceiro
+  // fazer essa checagem real (ele testou mentir "já sigo" sem seguir de
+  // verdade, e o bot pegou a mentira): tem que ser verificação real via API,
+  // nunca um botão de honra sem checagem.
+  requireFollowCheck: boolean('require_follow_check').default(false),
   totalTriggered: integer('total_triggered').default(0),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
