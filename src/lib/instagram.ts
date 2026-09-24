@@ -125,6 +125,49 @@ export async function sendInstagramPrivateReply({
 }
 
 /**
+ * Consulta se um usuário do Instagram (IGSID) segue a conta da empresa,
+ * via Instagram User Profile API (campo is_user_follow_business).
+ * Restrição real da Meta (confirmada na doc oficial em 24/09/2026): só dá
+ * pra consultar o perfil de alguém DEPOIS que essa pessoa mandou mensagem
+ * pra empresa (ou clicou em ice breaker/menu persistente) — comentar num
+ * post sozinho não libera esse acesso. Por isso o gate de seguidor
+ * (src/lib/instagram-comment-processor.ts) manda uma pergunta intermediária
+ * pelo Direct e só chama esta função depois que a pessoa responde.
+ */
+export async function checkInstagramUserFollowsBusiness({
+  igsid,
+  companyId,
+}: {
+  igsid: string
+  companyId: number
+}): Promise<{ ok: boolean; follows?: boolean; error?: string }> {
+  const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
+  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  if (!token) {
+    return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
+  }
+
+  const cleanId = igsid.replace(/^ig_/, '')
+
+  try {
+    const url = `https://graph.facebook.com/v19.0/${cleanId}?fields=name,is_user_follow_business&access_token=${encodeURIComponent(token)}`
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+
+    if (!res.ok) {
+      const errDetail = (data.error as Record<string, unknown>)?.message || JSON.stringify(data)
+      console.error('[Instagram Follow Check Error]:', errDetail)
+      return { ok: false, error: `Erro ao consultar perfil do Instagram: ${errDetail}` }
+    }
+
+    return { ok: true, follows: data.is_user_follow_business === true }
+  } catch (error) {
+    console.error('[Instagram Follow Check Exception]:', error)
+    return { ok: false, error: String(error) }
+  }
+}
+
+/**
  * Publica uma resposta pública diretamente abaixo do comentário original.
  * Endpoint Graph API: POST /{comment_id}/replies
  * Payload: { message: "..." }

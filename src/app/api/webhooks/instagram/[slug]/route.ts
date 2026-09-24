@@ -11,7 +11,7 @@ import { companies, settings, whatsappMessages, recoveryLeads, webhookReceived }
 import { eq, sql } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
-import { processInstagramComment } from "@/lib/instagram-comment-processor"
+import { processInstagramComment, handleFollowCheckReply } from "@/lib/instagram-comment-processor"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
@@ -195,11 +195,29 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             // Mensagem real trocada: se for a primeira, marca a abordagem do lead
             await markLeadContacted(lead?.id)
 
-            // Resposta automática de IA (Fase 1): mesmo motor do endpoint global
-            // e do WhatsApp (decidido dentro de generateAndSendAiReply pelo
-            // lead.channel). Roda depois do 200 sair, nunca atrasa o webhook.
-            // Respeita botPaused e o gate de aiSystemPrompt.
-            if (lead?.id && !lead.botPaused) {
+            // Gate de seguidor do Comment-to-DM (24/09/2026): mesma causa raiz e
+            // mesmo fix da rota global (route.ts um nível acima) — se este lead
+            // está no meio do fluxo de 2 mensagens de uma automação com
+            // requireFollowCheck, a resposta dele NUNCA cai no
+            // generateAndSendAiReply normal (evitaria duas respostas conflitantes
+            // pro mesmo lead na mesma mensagem).
+            // FIX CRÍTICO de QA (24/09/2026, 2ª rodada): `!lead.botPaused`
+            // também nesta condição — pendente + pausado não manda nada
+            // automático (nem gate, nem IA), decisão fica com o humano.
+            if (lead?.id && lead.pendingFollowCheckAutomationId && !lead.botPaused) {
+              const leadId = lead.id
+              const automationId = lead.pendingFollowCheckAutomationId
+              const igsid = sender.id
+              after(() =>
+                handleFollowCheckReply({ companyId: company.id, leadId, igsid, automationId }).catch((err) =>
+                  console.error(`[Follow Check] erro no after() do webhook Instagram (slug=${slug}):`, err),
+                ),
+              )
+            } else if (lead?.id && !lead.botPaused) {
+              // Resposta automática de IA (Fase 1): mesmo motor do endpoint global
+              // e do WhatsApp (decidido dentro de generateAndSendAiReply pelo
+              // lead.channel). Roda depois do 200 sair, nunca atrasa o webhook.
+              // Respeita botPaused e o gate de aiSystemPrompt.
               const leadId = lead.id
               after(() =>
                 generateAndSendAiReply(leadId).catch((err) =>

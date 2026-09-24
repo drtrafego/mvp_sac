@@ -69,6 +69,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     if (body.activeHoursStart !== undefined) updateData.activeHoursStart = body.activeHoursStart?.trim() || null
     if (body.activeHoursEnd !== undefined) updateData.activeHoursEnd = body.activeHoursEnd?.trim() || null
     if (typeof body.isActive === 'boolean') updateData.isActive = body.isActive
+    if (typeof body.requireFollowCheck === 'boolean') updateData.requireFollowCheck = body.requireFollowCheck
 
     const [updated] = await db
       .update(instagramCommentAutomations)

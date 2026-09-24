@@ -47,6 +47,7 @@ interface AutomationRule {
   activeHoursStart: string | null
   activeHoursEnd: string | null
   isActive: boolean
+  requireFollowCheck: boolean
   totalTriggered: number
   createdAt: string
 }
@@ -100,6 +101,7 @@ export default function ComentariosInstagramPage() {
   const [formHideComment, setFormHideComment] = useState(false)
   const [formHoursStart, setFormHoursStart] = useState('')
   const [formHoursEnd, setFormHoursEnd] = useState('')
+  const [formRequireFollowCheck, setFormRequireFollowCheck] = useState(false)
 
   const loadData = async () => {
     setLoading(true)
@@ -158,6 +160,7 @@ export default function ComentariosInstagramPage() {
     setFormHideComment(false)
     setFormHoursStart('')
     setFormHoursEnd('')
+    setFormRequireFollowCheck(false)
     setActionError(null)
     setIsModalOpen(true)
     loadMedia()
@@ -184,6 +187,7 @@ export default function ComentariosInstagramPage() {
     setFormHideComment(rule.hideCommentAfterReply)
     setFormHoursStart(rule.activeHoursStart || '')
     setFormHoursEnd(rule.activeHoursEnd || '')
+    setFormRequireFollowCheck(rule.requireFollowCheck)
     setActionError(null)
     setIsModalOpen(true)
     loadMedia()
@@ -246,6 +250,7 @@ export default function ComentariosInstagramPage() {
       hideCommentAfterReply: formHideComment,
       activeHoursStart: formHoursStart.trim() || null,
       activeHoursEnd: formHoursEnd.trim() || null,
+      requireFollowCheck: formRequireFollowCheck,
     }
 
     try {
@@ -433,6 +438,11 @@ export default function ComentariosInstagramPage() {
                         {rule.hideCommentAfterReply && (
                           <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
                             <EyeOff size={10} /> Oculta Comentário
+                          </span>
+                        )}
+                        {rule.requireFollowCheck && (
+                          <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center gap-1">
+                            <Shield size={10} /> Exige Seguir
                           </span>
                         )}
                       </div>
@@ -815,6 +825,23 @@ export default function ComentariosInstagramPage() {
                     checked={formHideComment}
                     onChange={e => setFormHideComment(e.target.checked)}
                     className="w-4 h-4 rounded accent-brand-solid cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-1 border-t border-line-subtle/60 mt-1">
+                  <div className="pr-3">
+                    <span className="text-xs font-semibold text-fg block">
+                      Exigir que a pessoa siga a conta antes de liberar
+                    </span>
+                    <span className="text-[10px] text-fg-subtle">
+                      Em vez da DM final, manda uma pergunta primeiro. Só libera o conteúdo depois de confirmar de verdade (Graph API) que a pessoa segue a conta.
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={formRequireFollowCheck}
+                    onChange={e => setFormRequireFollowCheck(e.target.checked)}
+                    className="w-4 h-4 rounded accent-brand-solid cursor-pointer shrink-0"
                   />
                 </div>
 

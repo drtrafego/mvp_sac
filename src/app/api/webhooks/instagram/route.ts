@@ -11,7 +11,7 @@ import { companies, settings, whatsappMessages, webhookReceived, recoveryLeads }
 import { eq, sql } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
-import { processInstagramComment } from "@/lib/instagram-comment-processor"
+import { processInstagramComment, handleFollowCheckReply } from "@/lib/instagram-comment-processor"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
@@ -262,11 +262,35 @@ export async function POST(req: NextRequest) {
                 // Mensagem real trocada: se for a primeira, marca a abordagem do lead
                 await markLeadContacted(lead?.id)
 
-                // Resposta automática de IA (Fase 1): mesmo motor do WhatsApp, só
-                // muda o canal de envio (decidido dentro de generateAndSendAiReply
-                // pelo lead.channel). Roda depois do 200 sair, nunca atrasa o
-                // webhook. Respeita botPaused e o gate de aiSystemPrompt.
-                if (lead?.id && !lead.botPaused) {
+                // Gate de seguidor do Comment-to-DM (24/09/2026): se este lead está
+                // no meio do fluxo de 2 mensagens de uma automação com
+                // requireFollowCheck, a resposta dele NUNCA cai no
+                // generateAndSendAiReply normal (evitaria duas respostas
+                // conflitantes pro mesmo lead na mesma mensagem: a IA respondendo
+                // uma coisa qualquer enquanto o gate ainda decide se libera o
+                // conteúdo). Vai pro handleFollowCheckReply, que confere de verdade
+                // via Graph API e decide.
+                // FIX CRÍTICO de QA (24/09/2026, 2ª rodada): `!lead.botPaused`
+                // entra TAMBÉM nesta condição, não só na de baixo. Antes, um
+                // atendente humano pausava a conversa pra assumir e o gate de
+                // seguidor continuava mandando mensagem automática por cima
+                // dele mesmo assim. Pendente + pausado agora não cai em
+                // NENHUM dos dois ramos (nem gate, nem IA): não manda nada,
+                // decisão fica 100% com o humano até ele despausar.
+                if (lead?.id && lead.pendingFollowCheckAutomationId && !lead.botPaused) {
+                  const leadId = lead.id
+                  const automationId = lead.pendingFollowCheckAutomationId
+                  const igsid = sender.id
+                  after(() =>
+                    handleFollowCheckReply({ companyId, leadId, igsid, automationId }).catch((err) =>
+                      console.error('[Follow Check] erro no after() do webhook Instagram:', err),
+                    ),
+                  )
+                } else if (lead?.id && !lead.botPaused) {
+                  // Resposta automática de IA (Fase 1): mesmo motor do WhatsApp, só
+                  // muda o canal de envio (decidido dentro de generateAndSendAiReply
+                  // pelo lead.channel). Roda depois do 200 sair, nunca atrasa o
+                  // webhook. Respeita botPaused e o gate de aiSystemPrompt.
                   const leadId = lead.id
                   after(() =>
                     generateAndSendAiReply(leadId).catch((err) =>
