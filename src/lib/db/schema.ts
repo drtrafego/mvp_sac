@@ -474,6 +474,37 @@ export const recoveryLeads = pgTable('recovery_leads', {
     .where(sql`${table.platform} in ('instagram', 'sac', 'hermes')`),
 ])
 
+// ─── Tags livres de lead (25/09/2026, pedido do Gastão via Renato) ──────────
+// Sistema de tags genérico, multi-canal (não é exclusivo de whatsapp: vale
+// pro campo recoveryLeads.channel inteiro, whatsapp | instagram | email |
+// mineracao). Tabela separada em vez de um array/JSONB dentro de
+// recovery_leads de propósito: permite adicionar/remover UMA tag sem
+// reescrever a linha toda do lead, e guarda quem/quando marcou cada uma
+// (auditoria), coisa que um array simples não dá de graça.
+//
+// A tag especial 'pessoa' (comparação sempre normalizada, ver rota) tem
+// efeito colateral real: além de etiquetar, pausa o bot de IA do lead
+// (recoveryLeads.botPaused=true, botPausedBy='tag:pessoa') e avisa a ponte
+// da Nina (src/lib/nao-responder.ts) pra ela também não responder o contato
+// fora do SAC (webhook direto da Meta, follow-up, disparo diário). Ver
+// contrato completo em src/app/api/leads/[leadId]/tags/route.ts.
+export const leadTags = pgTable('lead_tags', {
+  id: serial('id').primaryKey(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  // Normalizada (trim + lowercase) na escrita, pra "Pessoa" e "pessoa" não
+  // virarem duas tags distintas no mesmo lead. Ver normalizeTag() na rota.
+  tag: text('tag').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  createdBy: text('created_by'), // nome/e-mail de quem marcou (humano) ou 'tag:pessoa' quando é efeito de sistema
+}, (table) => [
+  uniqueIndex('lead_tags_lead_tag_unique').on(table.leadId, table.tag),
+  index('lead_tags_tag_idx').on(table.tag),
+])
+
+export const leadTagsRelations = relations(leadTags, ({ one }) => ({
+  lead: one(recoveryLeads, { fields: [leadTags.leadId], references: [recoveryLeads.id] }),
+}))
+
 // ─── Fila de mensagens agendadas ─────────────────────────────────────────────
 export const messageJobs = pgTable('message_jobs', {
   id: serial('id').primaryKey(),
@@ -756,6 +787,7 @@ export const recoveryLeadsRelations = relations(recoveryLeads, ({ one, many }) =
   jobs: many(messageJobs),
   messages: many(whatsappMessages),
   gramadoReservations: many(gramadoReservations),
+  tags: many(leadTags),
 }))
 
 export const gramadoReservationsRelations = relations(gramadoReservations, ({ one }) => ({

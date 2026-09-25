@@ -425,6 +425,27 @@ export function ensureSchema(client: any): Promise<void> {
             CREATE INDEX IF NOT EXISTS gramado_reservations_phone_idx
             ON gramado_reservations (company_id, phone_norm)
           `,
+
+          // Tags livres de lead (25/09/2026). Ver comentário completo em
+          // src/lib/db/schema.ts (leadTags) e no contrato da rota
+          // src/app/api/leads/[leadId]/tags/route.ts.
+          client`
+            CREATE TABLE IF NOT EXISTS lead_tags (
+              id SERIAL PRIMARY KEY,
+              lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
+              tag TEXT NOT NULL,
+              created_at TIMESTAMP DEFAULT NOW(),
+              created_by TEXT
+            )
+          `,
+          client`
+            CREATE UNIQUE INDEX IF NOT EXISTS lead_tags_lead_tag_unique
+            ON lead_tags (lead_id, tag)
+          `,
+          client`
+            CREATE INDEX IF NOT EXISTS lead_tags_tag_idx
+            ON lead_tags (tag)
+          `,
         ])
 
         // ─── Idempotência contra reentrega de webhook da Meta (20/09/2026, ────
