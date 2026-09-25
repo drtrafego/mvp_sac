@@ -23,6 +23,16 @@ type Params = { params: Promise<{ leadId: string; tag: string }> }
  * ou o anti-loop de bot-detector.ts), botPausedBy vai ter outro valor e este
  * endpoint NÃO mexe em botPaused/botPausedAt/botPausedBy — não pode reativar
  * o bot silenciosamente por cima de uma pausa com motivo diferente.
+ *
+ * ‼️ QA (25/09/2026, CRÍTICO, TOCTOU): NÃO decida com base no `lead` lido no
+ * INÍCIO da função. O `await notifyNaoResponder(...)` pode levar até 5s
+ * (timeout real), e nesse intervalo o anti-loop (src/lib/ai-reply.ts, roda em
+ * TODA mensagem inbound) pode pausar o lead por outro motivo. O UPDATE final
+ * é um compare-and-swap: só reativa o bot se botPausedBy AINDA for
+ * 'tag:pessoa' NO MOMENTO do UPDATE (condição repetida no WHERE, não só
+ * checada em memória antes do await). Se o CAS não afetar nenhuma linha, é
+ * porque algo mudou botPausedBy durante a espera — a resposta reflete uma
+ * LEITURA FRESCA do estado atual, nunca o valor otimista de antes do await.
  */
 export async function DELETE(_req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { leadId, tag: rawTagParam } = await params
@@ -51,23 +61,32 @@ export async function DELETE(_req: NextRequest, { params }: Params): Promise<Nex
   let botPaused = lead.botPaused
 
   if (tag === PESSOA_TAG) {
-    const result = await notifyNaoResponder(lead.phone, 'desmarcar')
+    const result = await notifyNaoResponder(lead.phone, 'desmarcar', lead.channel)
     if (!result.ok) warning = result.warning
 
-    if (lead.botPausedBy === BOT_PAUSED_BY_TAG_PESSOA) {
-      const [updated] = await db
-        .update(recoveryLeads)
-        .set({
-          botPaused: false,
-          botPausedAt: null,
-          botPausedBy: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(recoveryLeads.id, id))
-        .returning()
-      botPaused = updated?.botPaused ?? false
+    // Compare-and-swap: a condição é repetida no WHERE (não só checada em
+    // memória antes do await acima), pra não reativar o bot por cima de uma
+    // pausa concorrente que apareceu enquanto esperávamos a Nina responder.
+    const [updated] = await db
+      .update(recoveryLeads)
+      .set({
+        botPaused: false,
+        botPausedAt: null,
+        botPausedBy: null,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.botPausedBy, BOT_PAUSED_BY_TAG_PESSOA)))
+      .returning()
+
+    if (updated) {
+      botPaused = updated.botPaused
+    } else {
+      // Ninguém foi afetado: ou já não estava pausado por 'tag:pessoa', ou
+      // outra coisa (anti-loop, pausa manual) mudou botPausedBy durante o
+      // await. Leitura fresca do banco, nunca o valor otimista de `lead`.
+      const [fresh] = await db.select().from(recoveryLeads).where(eq(recoveryLeads.id, id))
+      botPaused = fresh?.botPaused ?? lead.botPaused
     }
-    // botPausedBy com outro valor (pausa manual, anti-loop): não mexe.
   }
 
   const tags = await db.select().from(leadTags).where(eq(leadTags.leadId, id))

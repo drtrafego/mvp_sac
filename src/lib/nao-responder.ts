@@ -21,6 +21,9 @@ const REQUEST_TIMEOUT_MS = 5000
 export const NAO_RESPONDER_WARNING =
   'tag salva, mas o aviso ao atendimento automático da Nina (webhook direto/follow-up/disparo) ainda não foi confirmado — avise manualmente se for urgente'
 
+export const NAO_RESPONDER_WARNING_INVALID_CONTACT =
+  'tag salva, mas este lead não é um contato de WhatsApp válido (canal diferente ou telefone fora do formato esperado) — não dá pra avisar a Nina automaticamente, avise manualmente se for urgente'
+
 export type NaoResponderAcao = 'marcar' | 'desmarcar'
 
 export interface NaoResponderResult {
@@ -28,25 +31,44 @@ export interface NaoResponderResult {
   warning?: string
 }
 
-/** Só dígitos, com DDI 55 na frente (mesmo formato documentado no contrato
- * do webhook de conversão do Hermes, src/app/api/webhooks/hermes/[slug]/conversion/route.ts,
- * e confirmado por um lead real em produção no comentário de
- * src/lib/inbox-channel-filter.ts:434). Retorna null se sobrarem poucos
- * dígitos pra ser um telefone válido (não vale a pena nem tentar a chamada). */
-export function normalizePhoneWithCountryCode(phone: string | null | undefined): string | null {
+/**
+ * Formato EXATO que formatBrazilianPhone()/formatPhone() produzem para um
+ * WhatsApp brasileiro legítimo (src/lib/whatsapp/index.ts e
+ * src/app/api/webhooks/hotmart/[slug]/route.ts): 55 + DDD (2) + 9 + 8
+ * dígitos = 13 dígitos.
+ *
+ * ‼️ QA (25/09/2026, CRÍTICO): a validação antiga só contava dígitos
+ * (12 ou 13) e concatenava "55" na frente cegamente quando não começava com
+ * 55. Isso fabricava telefone BRASILEIRO FALSO pra qualquer DDI de 1 dígito
+ * + 10 dígitos locais (ex.: EUA/Canadá, DDI "1"), mandando um contato errado
+ * pra rota da Luana sem nenhum aviso. Também não distinguia canal: leads de
+ * Instagram gravam phone = `ig_<id>` (não é telefone) e só não quebravam
+ * antes por coincidência de tamanho. Correção: exigir channel === 'whatsapp'
+ * E o formato exato acima, nunca inferir DDI por contagem de dígitos.
+ */
+const BRAZIL_WHATSAPP_PHONE_REGEX = /^55\d{2}9\d{8}$/
+
+/** true só quando dá pra confiar que é um WhatsApp brasileiro legítimo
+ * (mesmo formato que formatBrazilianPhone()/formatPhone() produzem). */
+export function isValidBrazilianWhatsappContact(channel: string | null | undefined, phone: string | null | undefined): boolean {
+  if (channel !== 'whatsapp') return false
   const digits = (phone || '').replace(/\D/g, '')
-  if (!digits) return null
-  const comDdi = digits.startsWith('55') ? digits : `55${digits}`
-  if (comDdi.length < 12 || comDdi.length > 13) return null
-  return comDdi
+  return BRAZIL_WHATSAPP_PHONE_REGEX.test(digits)
 }
 
-export async function notifyNaoResponder(phone: string | null | undefined, acao: NaoResponderAcao): Promise<NaoResponderResult> {
-  const telefone = normalizePhoneWithCountryCode(phone)
-  if (!telefone) {
-    console.error(`[nao-responder] telefone inválido pra normalizar (acao=${acao}), pulando aviso à Nina`)
-    return { ok: false, warning: NAO_RESPONDER_WARNING }
+export async function notifyNaoResponder(
+  phone: string | null | undefined,
+  acao: NaoResponderAcao,
+  channel: string | null | undefined,
+): Promise<NaoResponderResult> {
+  if (!isValidBrazilianWhatsappContact(channel, phone)) {
+    console.error(
+      `[nao-responder] canal=${channel ?? 'desconhecido'} telefone fora do formato esperado de WhatsApp BR, ` +
+        `pulando aviso à Nina (acao=${acao})`,
+    )
+    return { ok: false, warning: NAO_RESPONDER_WARNING_INVALID_CONTACT }
   }
+  const telefone = (phone || '').replace(/\D/g, '')
 
   const token = process.env.NAO_RESPONDER_TOKEN
   if (!token) {

@@ -101,7 +101,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       })
       .where(eq(recoveryLeads.id, id))
 
-    const result = await notifyNaoResponder(lead.phone, 'marcar')
+    const result = await notifyNaoResponder(lead.phone, 'marcar', lead.channel)
     if (!result.ok) warning = result.warning
   }
 

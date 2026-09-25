@@ -425,11 +425,18 @@ export function ensureSchema(client: any): Promise<void> {
             CREATE INDEX IF NOT EXISTS gramado_reservations_phone_idx
             ON gramado_reservations (company_id, phone_norm)
           `,
+        ])
 
-          // Tags livres de lead (25/09/2026). Ver comentário completo em
-          // src/lib/db/schema.ts (leadTags) e no contrato da rota
-          // src/app/api/leads/[leadId]/tags/route.ts.
-          client`
+        // ─── Tags livres de lead (25/09/2026) ──────────────────────────────
+        // Ver comentário completo em src/lib/db/schema.ts (leadTags) e no
+        // contrato da rota src/app/api/leads/[leadId]/tags/route.ts.
+        // Fora do Promise.allSettled acima de propósito (QA 25/09/2026, item
+        // médio): aquele array nunca inspeciona o resultado de cada
+        // statement, então uma falha ali some em silêncio — mesmo padrão já
+        // usado abaixo para os índices de dedup de whatsapp_messages e
+        // recovery_leads.
+        try {
+          await client`
             CREATE TABLE IF NOT EXISTS lead_tags (
               id SERIAL PRIMARY KEY,
               lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
@@ -437,16 +444,19 @@ export function ensureSchema(client: any): Promise<void> {
               created_at TIMESTAMP DEFAULT NOW(),
               created_by TEXT
             )
-          `,
-          client`
+          `
+          await client`
             CREATE UNIQUE INDEX IF NOT EXISTS lead_tags_lead_tag_unique
             ON lead_tags (lead_id, tag)
-          `,
-          client`
+          `
+          await client`
             CREATE INDEX IF NOT EXISTS lead_tags_tag_idx
             ON lead_tags (tag)
-          `,
-        ])
+          `
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[DB Schema Sync Error] Falha ao criar a tabela lead_tags ou seus índices:', message)
+        }
 
         // ─── Idempotência contra reentrega de webhook da Meta (20/09/2026, ────
         // ampliado 21/09/2026 pra incluir company_id, achado do QA 2ª rodada)

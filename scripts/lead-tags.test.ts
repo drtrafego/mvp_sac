@@ -295,6 +295,98 @@ async function main() {
       assert.equal(tags.length, 0, 'a tag em si é removida normalmente, só o efeito colateral no bot é que não reverte')
     })
 
+    // ── 8. CRÍTICO (QA 25/09/2026): race condition (TOCTOU) no DELETE ────
+    // notifyNaoResponder() pode levar até 5s de timeout real esperando a
+    // rota da Luana. Nesse intervalo, o anti-loop de ai-reply.ts (roda em
+    // TODA mensagem inbound, independente de qualquer ação do operador) pode
+    // pausar o lead por outro motivo. O bug antigo lia botPausedBy no INÍCIO
+    // da função e só checava esse valor em memória depois do await, então o
+    // UPDATE final reativava o bot por cima da pausa concorrente. Este teste
+    // simula exatamente essa janela: o mock de fetch só resolve DEPOIS de já
+    // ter alterado botPausedBy no banco, reproduzindo a corrida real.
+    await test('DELETE não reativa o bot se outra coisa pausar concorrentemente durante o await da chamada à Nina', async () => {
+      const lead = await criarLead('5511911110011')
+      await POST(makePostRequest(lead.id, 'pessoa'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+
+      const [antes] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
+      assert.equal(antes.botPausedBy, 'tag:pessoa')
+
+      const motivoAntiLoop = 'Anti-loop (bot do outro lado detectado: saudação, pontos=5)'
+      globalThis.fetch = (async () => {
+        // simula o anti-loop mudando botPausedBy ENQUANTO o DELETE ainda
+        // está esperando a resposta desta chamada de rede
+        await testDb
+          .update(schema.recoveryLeads)
+          .set({ botPausedBy: motivoAntiLoop, botPausedAt: new Date() })
+          .where(eq(schema.recoveryLeads.id, lead.id))
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }) as typeof fetch
+
+      const res = await DELETE(new NextRequest(`https://sac.example.com/api/leads/${lead.id}/tags/pessoa`, { method: 'DELETE' }), {
+        params: Promise.resolve({ leadId: String(lead.id), tag: 'pessoa' }),
+      })
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.botPaused, true, 'não pode reativar o bot por cima da pausa concorrente do anti-loop (leitura fresca, não o valor otimista de antes do await)')
+
+      const [depois] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
+      assert.equal(depois.botPaused, true)
+      assert.equal(depois.botPausedBy, motivoAntiLoop, 'o motivo da pausa concorrente tem que sobreviver intacto, o CAS não pode ter apagado por cima dele')
+
+      mockFetchOk()
+    })
+
+    // ── 9. CRÍTICO (QA 25/09/2026): normalização de telefone perigosa ────
+    // Telefone que NÃO é WhatsApp brasileiro legítimo (canal diferente, ou
+    // formato fora do que formatBrazilianPhone()/formatPhone() produzem) não
+    // pode disparar a chamada à Nina com um número fabricado, e o warning
+    // precisa deixar claro que não avisou (não pode ficar em silêncio).
+    await test('tag "pessoa" em lead que NÃO é WhatsApp válido: salva a tag/pausa, mas avisa que não notificou a Nina', async () => {
+      let fetchCalled = false
+      globalThis.fetch = (async () => {
+        fetchCalled = true
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }) as typeof fetch
+
+      const [lead] = await testDb
+        .insert(schema.recoveryLeads)
+        .values({ companyId: company.id, eventType: 'test', phone: 'ig_17841400718350027', platform: 'sac', channel: 'instagram' })
+        .returning()
+
+      const res = await POST(makePostRequest(lead.id, 'pessoa'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.ok(json.warning, 'precisa avisar que não deu pra notificar a Nina')
+      assert.equal(fetchCalled, false, 'não pode chamar a rota da Luana com um telefone/canal que não é WhatsApp válido')
+
+      const [updated] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
+      assert.equal(updated.botPaused, true, 'a pausa no SAC vale por si mesmo sem avisar a Nina')
+      assert.equal(updated.botPausedBy, 'tag:pessoa')
+
+      mockFetchOk()
+    })
+
+    // ── 10. Caminho feliz continua funcionando: WhatsApp BR legítimo ─────
+    await test('tag "pessoa" em WhatsApp brasileiro legítimo continua disparando a chamada à Nina normalmente', async () => {
+      let fetchCalled = false
+      let fetchBody: unknown = null
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        fetchCalled = true
+        fetchBody = init?.body ? JSON.parse(String(init.body)) : null
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }) as typeof fetch
+
+      const lead = await criarLead('5511911110012')
+      const res = await POST(makePostRequest(lead.id, 'pessoa'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.warning, undefined, 'caso feliz não deveria ter warning')
+      assert.equal(fetchCalled, true, 'WhatsApp BR legítimo tem que continuar chamando a rota da Luana')
+      assert.equal((fetchBody as { telefone?: string } | null)?.telefone, '5511911110012')
+
+      mockFetchOk()
+    })
+
     // ── 5a. Token da Luana ausente -> tag salva mesmo assim, com warning ──
     await test('token NAO_RESPONDER_TOKEN ausente: tag e pausa salvam, warning é populado', async () => {
       delete process.env.NAO_RESPONDER_TOKEN

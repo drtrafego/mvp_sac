@@ -51,7 +51,7 @@ export function LeadTags({
   }, [leadId])
 
   useEffect(() => {
-    load()
+    load() // eslint-disable-line react-hooks/set-state-in-effect -- fetch assíncrono, setState só corre depois do await, não durante o corpo do effect
   }, [load])
 
   const hasPessoa = tags.some(t => t.tag === PESSOA_TAG)
