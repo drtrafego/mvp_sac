@@ -2,7 +2,7 @@ import 'server-only'
 import { stackServerApp } from '@/stack'
 import { db } from '@/lib/db'
 import { companies, companyMembers } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { verifyAgentSessionCookie } from '@/lib/agent-session'
@@ -132,17 +132,9 @@ export async function getCurrentCompany() {
     return created ?? null
   }
 
-  // Fluxo normal: empresa vinculada ao user (proprietário)
-  const [company] = await db
-    .select()
-    .from(companies)
-    .where(eq(companies.stackAuthUserId, user.id))
-
-  if (company) return company
-
   const cookieStore = await cookies()
 
-  // Verificar convite de membro pendente
+  // 1. Verificar convite de membro pendente por cookie (link clicado /invite/membro/[token])
   const pendingMemberInvite = cookieStore.get('pending_member_invite')?.value
   if (pendingMemberInvite) {
     const [membership] = await db
@@ -150,7 +142,7 @@ export async function getCurrentCompany() {
       .from(companyMembers)
       .where(eq(companyMembers.inviteToken, pendingMemberInvite))
 
-    if (membership && membership.status === 'pending') {
+    if (membership) {
       await db
         .update(companyMembers)
         .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
@@ -165,7 +157,7 @@ export async function getCurrentCompany() {
     }
   }
 
-  // Verificar se já é membro ativo de alguma empresa (por ID)
+  // 2. Verificar se já é membro ativo em companyMembers (por stackAuthUserId)
   const [activeMembership] = await db
     .select()
     .from(companyMembers)
@@ -179,19 +171,21 @@ export async function getCurrentCompany() {
     if (memberCompany) return memberCompany
   }
 
-  // Reconhecer pelo email: se o email do usuário foi pré-cadastrado como membro,
-  // vincula automaticamente sem precisar de link de convite
+  // 3. Reconhecer pelo e-mail: se o e-mail do usuário foi cadastrado como membro em Configurações > Equipe
   if (user.primaryEmail) {
+    const cleanUserEmail = user.primaryEmail.toLowerCase().trim()
     const [pendingByEmail] = await db
       .select()
       .from(companyMembers)
-      .where(eq(companyMembers.email, user.primaryEmail.toLowerCase()))
+      .where(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`)
 
     if (pendingByEmail) {
-      await db
-        .update(companyMembers)
-        .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
-        .where(eq(companyMembers.id, pendingByEmail.id))
+      if (pendingByEmail.status !== 'ativo' || pendingByEmail.stackAuthUserId !== user.id) {
+        await db
+          .update(companyMembers)
+          .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
+          .where(eq(companyMembers.id, pendingByEmail.id))
+      }
 
       const [memberCompany] = await db
         .select()
@@ -201,7 +195,15 @@ export async function getCurrentCompany() {
     }
   }
 
-  // Verificar invite pendente (convite de empresa legado)
+  // 4. Se não for membro de nenhuma empresa em companyMembers, verifica se é proprietário
+  const [ownCompany] = await db
+    .select()
+    .from(companies)
+    .where(eq(companies.stackAuthUserId, user.id))
+
+  if (ownCompany) return ownCompany
+
+  // 5. Convite de empresa legado (pending_invite)
   const pendingInvite = cookieStore.get('pending_invite')?.value
   if (pendingInvite) {
     const [inviteCompany] = await db
@@ -220,7 +222,7 @@ export async function getCurrentCompany() {
     }
   }
 
-  // Auto-cria a empresa no primeiro login (sem invite)
+  // 6. Auto-criação no primeiro login se não for membro nem proprietário de nenhuma empresa
   const baseName = user.displayName || user.primaryEmail?.split('@')[0] || 'empresa'
   const baseSlug = baseName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
   const slug = `${baseSlug}-${Math.random().toString(36).slice(2, 7)}`
