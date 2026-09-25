@@ -166,18 +166,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // Se a empresa (achada pelo phone_number_id do payload) tiver App Secret próprio, usa o dela;
       // senão cai no META_APP_SECRET compartilhado de hoje.
       let companySecret: string | null = null
+      let companyId: number | null = null
       const phoneNumberIdForSecret = extractPhoneNumberIdForSecret(body)
       if (phoneNumberIdForSecret) {
-        const [cfgForSecret] = await db.select().from(settings).where(eq(settings.metaPhoneNumberId, phoneNumberIdForSecret))
+        const [cfgForSecret] = await db
+          .select({ companyId: settings.companyId, metaAppSecret: settings.metaAppSecret })
+          .from(settings)
+          .where(eq(settings.metaPhoneNumberId, phoneNumberIdForSecret))
         companySecret = cfgForSecret?.metaAppSecret ?? null
+        companyId = cfgForSecret?.companyId ?? null
       }
       const secret = companySecret || process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET
       if (!secret) {
-        console.error('[WhatsApp Webhook] Nenhum App Secret configurado (nem da empresa, nem o compartilhado), recusando requisição')
+        console.error('[WhatsApp Webhook] Nenhum App Secret configurado (nem da empresa, nem o compartilhado), recusando requisição', { phoneNumberId: phoneNumberIdForSecret, companyId })
         return NextResponse.json({ error: 'meta_app_secret_not_configured' }, { status: 503 })
       }
       const sigHeader = req.headers.get('x-hub-signature-256')
       if (!sigHeader || !verifyMetaSignature(rawBody, sigHeader, secret)) {
+        console.error('[WhatsApp Webhook] Assinatura invalida, recusando requisicao', { phoneNumberId: phoneNumberIdForSecret, companyId, temSigHeader: Boolean(sigHeader) })
         return NextResponse.json({ error: 'Assinatura inválida ou ausente' }, { status: 401 })
       }
     } else {

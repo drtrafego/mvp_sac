@@ -10,6 +10,12 @@ import { parseAgentDisplayName } from '@/lib/agent-display-name'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
+const WHATSAPP_SEM_SECRET_WARNING = 'WhatsApp configurado sem App Secret próprio: mensagens desta empresa vão falhar em silêncio se o secret compartilhado também não existir. Configure o App Secret do app desta empresa na Meta for Developers.'
+
+function hasFilledValue(value: unknown): boolean {
+  return typeof value === 'string' ? value.trim().length > 0 : Boolean(value)
+}
+
 export async function GET(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { idOrSlug } = await params
   const { error, context } = await authenticateAgentRequest(req, idOrSlug)
@@ -124,6 +130,10 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     }
 
     const [updated] = await db.select().from(settings).where(eq(settings.companyId, context.company.id))
+    const warnings = body.metaPhoneNumberId !== undefined && hasFilledValue(body.metaPhoneNumberId) && !hasFilledValue(updated?.metaAppSecret)
+      ? [WHATSAPP_SEM_SECRET_WARNING]
+      : []
+
     return NextResponse.json({
       ok: true,
       company: {
@@ -133,6 +143,7 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
         agentDisplayName: agentDisplayName ?? context.company.agentDisplayName ?? '',
       },
       settings: updated,
+      ...(warnings.length > 0 ? { warnings } : {}),
     })
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Erro ao atualizar configurações' }, { status: 500 })

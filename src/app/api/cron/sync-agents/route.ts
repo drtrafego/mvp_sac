@@ -4,6 +4,11 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { syncAgentsAndCompanies } from '@/lib/sync-agents'
+import { db } from '@/lib/db'
+import { companies, settings, whatsappMessages } from '@/lib/db/schema'
+import { and, eq, sql } from 'drizzle-orm'
+
+const HORAS_SILENCIO_ALARME = 6
 
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a)
@@ -44,6 +49,46 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       messagesImported: report.messagesImported,
       dbUrlUsed: report.dbUrlUsed,
     }))
+
+    try {
+      const canais = await db
+        .select({
+          companyId: companies.id,
+          companyName: companies.name,
+          companySlug: companies.slug,
+          ultimaMensagemInbound: sql<Date | null>`max(${whatsappMessages.createdAt})`,
+        })
+        .from(companies)
+        .innerJoin(settings, eq(settings.companyId, companies.id))
+        .leftJoin(
+          whatsappMessages,
+          and(
+            eq(whatsappMessages.companyId, companies.id),
+            eq(whatsappMessages.channel, 'whatsapp'),
+            eq(whatsappMessages.direction, 'inbound'),
+          ),
+        )
+        .where(sql`${settings.metaPhoneNumberId} IS NOT NULL AND ${settings.metaPhoneNumberId} <> ''`)
+        .groupBy(companies.id, companies.name, companies.slug)
+
+      const agora = Date.now()
+      for (const canal of canais) {
+        if (!canal.ultimaMensagemInbound) continue
+
+        const ultimaMensagemInbound = new Date(canal.ultimaMensagemInbound)
+        const horasSemMensagem = (agora - ultimaMensagemInbound.getTime()) / (1000 * 60 * 60)
+        if (horasSemMensagem > HORAS_SILENCIO_ALARME) {
+          console.error('[Cron Sync Agents] Canal WhatsApp calado', {
+            companyId: canal.companyId,
+            companyName: canal.companyName || canal.companySlug,
+            horasSemMensagem,
+          })
+        }
+      }
+    } catch (err) {
+      console.error('[Cron Sync Agents] Falha ao checar canais calados', err)
+    }
+
     return NextResponse.json(report)
   } catch (error) {
     console.error('[Cron Sync Agents Error]:', error)
