@@ -23,6 +23,9 @@
 // Mais 2 casos de robustez que a própria rota implementa:
 //   6. Tag duplicada (mesmo valor, ou variando maiúscula) é idempotente.
 //   7. GET lista as tags do lead.
+// Mais o caso 11, ABA (QA 25/09/2026, 3ª rodada): um re-tag "pessoa"
+// concorrente durante o await do DELETE não pode ser desfeito por ele, mesmo
+// tendo o mesmo motivo em string ('tag:pessoa').
 //
 // Uso: npx tsx --experimental-test-module-mocks --test scripts/lead-tags.test.ts
 
@@ -332,6 +335,85 @@ async function main() {
       const [depois] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
       assert.equal(depois.botPaused, true)
       assert.equal(depois.botPausedBy, motivoAntiLoop, 'o motivo da pausa concorrente tem que sobreviver intacto, o CAS não pode ter apagado por cima dele')
+
+      mockFetchOk()
+    })
+
+    // ── 11. CRÍTICO (QA 25/09/2026, 3ª rodada): race condition ABA ───────
+    // A correção do teste 8 resolveu o caso "outro MOTIVO assume a pausa
+    // durante o await", mas comparar só o VALOR de botPausedBy não basta:
+    // é uma string constante que não distingue ENTRE pausas diferentes pelo
+    // MESMO motivo. Cenário real: DELETE A lê botPausedBy='tag:pessoa' e
+    // botPausedAt=T1, entra no await de notifyNaoResponder(); ENQUANTO
+    // espera, um POST B re-adiciona a tag "pessoa" no MESMO lead (uso
+    // legítimo: desmarcar e remarcar rápido, ou dois operadores diferentes)
+    // — o POST SEMPRE regrava botPausedBy='tag:pessoa' E um botPausedAt NOVO
+    // (T2). Um CAS que só olhasse o valor de botPausedBy erraria aqui (a
+    // string nunca mudou de T1 pra T2) e desfaria a pausa NOVA de B por
+    // cima. Este teste roda o efeito de B DE VERDADE dentro da janela do
+    // await de A (mesmo mock de fetch usado pelo teste 8 pra simular a
+    // corrida real), reproduzindo exatamente o ataque que o QA achou.
+    await test('DELETE não desfaz uma pausa "tag:pessoa" NOVA criada por um re-tag concorrente durante o await (ABA)', async () => {
+      mockFetchOk()
+      const lead = await criarLead('5511911110013')
+      await POST(makePostRequest(lead.id, 'pessoa'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+
+      const [antes] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
+      assert.equal(antes.botPausedBy, 'tag:pessoa')
+      const botPausedAtOriginal = antes.botPausedAt
+
+      let botPausedAtDoReTag: Date | null = null
+      globalThis.fetch = (async () => {
+        // Simula o POST B rodando DE VERDADE enquanto o DELETE A ainda
+        // espera esta chamada de rede: reafirma a tag e a pausa "pessoa"
+        // exatamente como o handler POST faz (mesmo motivo em string, mas
+        // um botPausedAt NOVO), e recria a linha em lead_tags que o DELETE
+        // de A já tinha removido antes deste await.
+        await testDb
+          .insert(schema.leadTags)
+          .values({ leadId: lead.id, tag: 'pessoa', createdBy: 'Operador B' })
+          .onConflictDoNothing({ target: [schema.leadTags.leadId, schema.leadTags.tag] })
+
+        const [reTagged] = await testDb
+          .update(schema.recoveryLeads)
+          .set({ botPaused: true, botPausedAt: new Date(), botPausedBy: 'tag:pessoa', updatedAt: new Date() })
+          .where(eq(schema.recoveryLeads.id, lead.id))
+          .returning()
+        botPausedAtDoReTag = reTagged.botPausedAt
+
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }) as typeof fetch
+
+      const res = await DELETE(new NextRequest(`https://sac.example.com/api/leads/${lead.id}/tags/pessoa`, { method: 'DELETE' }), {
+        params: Promise.resolve({ leadId: String(lead.id), tag: 'pessoa' }),
+      })
+      assert.equal(res.status, 200)
+      const json = await res.json()
+
+      assert.ok(botPausedAtDoReTag, 'pré-condição: o mock precisa ter rodado e gerado um botPausedAt novo')
+      assert.notEqual(
+        new Date(botPausedAtDoReTag!).getTime(),
+        botPausedAtOriginal ? new Date(botPausedAtOriginal).getTime() : NaN,
+        'pré-condição do teste: o re-tag concorrente precisa ter gerado um botPausedAt DIFERENTE do original (senão o teste não prova nada sobre ABA)',
+      )
+
+      assert.equal(json.botPaused, true, 'não pode desfazer a pausa NOVA (de B) só porque o motivo em string é o mesmo "tag:pessoa"')
+
+      const [depois] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
+      assert.equal(depois.botPaused, true, 'a pausa de B tem que sobreviver ao DELETE de A')
+      assert.equal(depois.botPausedBy, 'tag:pessoa')
+      assert.equal(
+        new Date(depois.botPausedAt!).getTime(),
+        new Date(botPausedAtDoReTag!).getTime(),
+        'botPausedAt tem que continuar sendo o de B (a pausa nova): o CAS de A não pode ter mexido nisso',
+      )
+
+      // A tag "pessoa" reinserida por B continua em lead_tags: o DELETE de A
+      // já tinha removido a linha ANTES do await, e B a recriou depois.
+      const tags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, lead.id))
+      assert.equal(tags.length, 1, 'a tag "pessoa" re-adicionada por B tem que sobreviver ao DELETE de A')
+      assert.equal(tags[0].tag, 'pessoa')
+      assert.equal(tags[0].createdBy, 'Operador B')
 
       mockFetchOk()
     })
