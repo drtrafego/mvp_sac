@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { companies, settings } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq } from 'drizzle-orm'
-import { maskSettingsRow } from '@/lib/settings-mask'
+import { maskSettingsRow, shouldWriteSettingsField } from '@/lib/settings-mask'
 import { parseAgentDisplayName } from '@/lib/agent-display-name'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
@@ -94,9 +94,16 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       'zoutiWebhookToken',
     ]
 
+    // Achado de QA (26/09/2026): campo de credencial (mascarado no GET acima)
+    // com valor vazio ou começando em "****" é ignorado aqui, senão um
+    // caller que faz round-trip GET -> PATCH sem filtrar os campos
+    // mascarados grava o placeholder por cima da credencial real. Cobre
+    // agentBiaApiKey/agentLuanaApiKey/agentRenatoApiKey (bearer tokens que
+    // autenticam os próprios agentes nesta API) e os demais tokens da
+    // allowlist abaixo. Ver shouldWriteSettingsField() em settings-mask.ts.
     const updateData: Record<string, any> = { updatedAt: new Date() }
     for (const k of allowedKeys) {
-      if (body[k] !== undefined) updateData[k] = body[k]
+      if (shouldWriteSettingsField(k, body[k])) updateData[k] = body[k]
     }
 
     if (agentDisplayName !== undefined) {
