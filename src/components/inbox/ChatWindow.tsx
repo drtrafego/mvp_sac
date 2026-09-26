@@ -23,6 +23,7 @@ import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
 import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill, EmailEngagementBadge } from './ChannelBadge'
 import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
+import { LeadTags } from './LeadTags'
 import { cn } from '@/lib/utils'
 import type { EmailEngagement } from '@/lib/email-engagement'
 
@@ -772,6 +773,15 @@ export function ChatWindow({
               </div>
             )
           })()}
+
+          {/* Tags do Lead */}
+          <div className="rounded-xl border border-line-subtle bg-surface-inset p-3">
+            <LeadTags
+              leadId={lead.id}
+              leadChannel={lead.channel}
+              onPessoaTagChange={(paused) => setBotPaused(paused)}
+            />
+          </div>
 
           <div className="space-y-2">
             <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">CRM & Venda</h4>

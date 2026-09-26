@@ -488,8 +488,20 @@ export const messageJobs = pgTable('message_jobs', {
   externalWamid: text('external_wamid'),               // Fase 1.4: WAMID retornado pela Meta ao enviar
   deliveryStatus: text('delivery_status'),              // Fase 1.4: sent | delivered | read | failed
   messageOrder: integer('message_order'),               // Fase 2.3: posição da mensagem na sequência
-  createdAt: timestamp('created_at').defaultNow(),
 })
+
+// ─── Tags de Leads ────────────────────────────────────────────────────────────
+export const leadTags = pgTable('lead_tags', {
+  id: serial('id').primaryKey(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  tag: text('tag').notNull(),
+  scopeChannel: text('scope_channel'), // null = geral; 'whatsapp' | 'instagram' | 'email' | 'mineracao'
+  createdBy: text('created_by'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (table) => [
+  uniqueIndex('lead_tags_lead_tag_scope_unique').on(table.leadId, table.tag, table.scopeChannel),
+  index('lead_tags_lead_idx').on(table.leadId),
+])
 
 // ─── Histórico de mensagens WhatsApp / Instagram / E-mail ────────────────────
 export const whatsappMessages = pgTable('whatsapp_messages', {
@@ -756,6 +768,11 @@ export const recoveryLeadsRelations = relations(recoveryLeads, ({ one, many }) =
   jobs: many(messageJobs),
   messages: many(whatsappMessages),
   gramadoReservations: many(gramadoReservations),
+  tags: many(leadTags),
+}))
+
+export const leadTagsRelations = relations(leadTags, ({ one }) => ({
+  lead: one(recoveryLeads, { fields: [leadTags.leadId], references: [recoveryLeads.id] }),
 }))
 
 export const gramadoReservationsRelations = relations(gramadoReservations, ({ one }) => ({

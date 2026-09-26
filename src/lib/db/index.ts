@@ -35,7 +35,19 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS company text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS notes text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS adset_name text`,
-          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ad_name text`,
+          // lead_tags
+          client`
+            CREATE TABLE IF NOT EXISTS lead_tags (
+              id SERIAL PRIMARY KEY,
+              lead_id INTEGER REFERENCES recovery_leads(id) ON DELETE CASCADE NOT NULL,
+              tag TEXT NOT NULL,
+              scope_channel TEXT,
+              created_by TEXT,
+              created_at TIMESTAMP DEFAULT NOW()
+            )
+          `,
+          client`ALTER TABLE lead_tags ADD COLUMN IF NOT EXISTS scope_channel text`,
+          client`CREATE UNIQUE INDEX IF NOT EXISTS lead_tags_lead_tag_scope_unique ON lead_tags (lead_id, tag, coalesce(scope_channel, ''))`,
 
           // whatsapp_messages
           client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS channel text DEFAULT 'whatsapp'`,
