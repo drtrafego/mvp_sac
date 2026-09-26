@@ -4,10 +4,11 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
-import { messageJobs, recoveryLeads, sequenceMessages } from '@/lib/db/schema'
-import { eq, lte, and, gt, desc } from 'drizzle-orm'
+import { messageJobs, recoveryLeads, sequenceMessages, whatsappMessages } from '@/lib/db/schema'
+import { eq, lte, and, gt, desc, inArray, or } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
+import { MAX_JOBS_PER_RUN, checkMetaWindowForJob } from '@/lib/message-jobs-policy'
 
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a)
@@ -111,7 +112,41 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
     .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
     .where(and(eq(messageJobs.status, 'pending'), lte(messageJobs.scheduledFor, now)))
     .orderBy(desc(recoveryLeads.priority))
-    .limit(50)
+    .limit(MAX_JOBS_PER_RUN)
+
+  // Janela de 24h da Meta: precisa da última mensagem INBOUND de cada lead
+  // do batch (sem isso, mensagem livre pra contato frio fora da janela é
+  // recusada pela Meta, ou pior, aceita por engano em algum canal). Um único
+  // round-trip pro batch inteiro, igual ao padrão de src/app/api/inbox/route.ts.
+  const jobLeadIds = [...new Set(pendingJobs.map(p => p.job.leadId).filter((id): id is number => id != null))]
+  const jobPhones = [...new Set(pendingJobs.map(p => p.leadPhone).filter((p): p is string => Boolean(p)))]
+
+  const inboundMessages = jobLeadIds.length > 0
+    ? await db
+        .select({ leadId: whatsappMessages.leadId, phone: whatsappMessages.phone, createdAt: whatsappMessages.createdAt })
+        .from(whatsappMessages)
+        .where(and(
+          eq(whatsappMessages.direction, 'inbound'),
+          jobPhones.length > 0
+            ? or(inArray(whatsappMessages.leadId, jobLeadIds), inArray(whatsappMessages.phone, jobPhones))!
+            : inArray(whatsappMessages.leadId, jobLeadIds)
+        ))
+        .orderBy(desc(whatsappMessages.createdAt))
+        .limit(500)
+    : []
+
+  const lastInboundByLead = new Map<number, Date>()
+  const lastInboundByPhone = new Map<string, Date>()
+  for (const m of inboundMessages) {
+    if (m.leadId != null && m.createdAt && !lastInboundByLead.has(m.leadId)) lastInboundByLead.set(m.leadId, m.createdAt)
+    if (m.phone && m.createdAt && !lastInboundByPhone.has(m.phone)) lastInboundByPhone.set(m.phone, m.createdAt)
+  }
+
+  function lastInboundFor(leadId: number | null | undefined, phone: string | null | undefined): Date | null {
+    if (leadId != null && lastInboundByLead.has(leadId)) return lastInboundByLead.get(leadId)!
+    if (phone && lastInboundByPhone.has(phone)) return lastInboundByPhone.get(phone)!
+    return null
+  }
 
   let sent = 0
   let failed = 0
@@ -168,6 +203,18 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
 
       // Job de upsell: conteúdo direto, sem referência a sequenceMessages
       if (job.upsellContent) {
+        // Upsell é sempre mensagem livre (nunca template): fora da janela de
+        // 24h a Meta recusa, então falha o job em vez de tentar enviar.
+        const upsellWindow = checkMetaWindowForJob({
+          messageType: 'text',
+          lastInboundAt: lastInboundFor(job.leadId, leadPhone),
+        })
+        if (!upsellWindow.allowed) {
+          await db.update(messageJobs).set({ status: 'failed', error: upsellWindow.error }).where(eq(messageJobs.id, job.id))
+          failed++
+          continue
+        }
+
         const wamid = await sendWhatsAppMessage(lead.phone, {
           type: 'text',
           content: interpolate(job.upsellContent, lead),
@@ -189,6 +236,20 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
 
       const msgType = message.messageType ?? 'text'
       const buttons = Array.isArray(message.buttonsJson) ? message.buttonsJson as { id: string; label: string }[] : undefined
+
+      // Janela de 24h da Meta: mensagem livre (não-template) fora da janela
+      // é recusada pela Meta. Template aprovado passa direto (é pra isso que
+      // ele existe). Vale sobretudo pro fluxo de import de lista/disparo em
+      // massa (contatos frios, prováveis fora da janela desde o início).
+      const windowCheck = checkMetaWindowForJob({
+        messageType: msgType,
+        lastInboundAt: lastInboundFor(job.leadId, leadPhone),
+      })
+      if (!windowCheck.allowed) {
+        await db.update(messageJobs).set({ status: 'failed', error: windowCheck.error }).where(eq(messageJobs.id, job.id))
+        failed++
+        continue
+      }
 
       // Fase 1.3: monta variáveis interpoladas para templates Meta
       let templateVariableValues: string[] | undefined
