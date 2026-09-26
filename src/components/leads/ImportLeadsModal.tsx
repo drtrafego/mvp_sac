@@ -6,9 +6,6 @@ import {
   FileSpreadsheet,
   CheckCircle2,
   AlertCircle,
-  AlertTriangle,
-  Tag,
-  Plus,
   X,
   ChevronRight,
   ArrowLeft,
@@ -100,27 +97,6 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
   const [triggerSequence, setTriggerSequence] = useState(false)
   const [defaultProduct, setDefaultProduct] = useState('Produto Principal')
 
-  // Tags da Importação
-  const [importTags, setImportTags] = useState<Array<{ tag: string; scopeChannel: string | null }>>([])
-  const [newTagName, setNewTagName] = useState('')
-  const [newTagScope, setNewTagScope] = useState('all')
-
-  const handleAddTag = () => {
-    const norm = newTagName.trim().toLowerCase().replace(/\s+/g, ' ')
-    if (!norm) return
-    const finalScope = norm === 'pessoa' ? null : (newTagScope === 'all' ? null : newTagScope)
-    if (importTags.some(t => t.tag === norm && t.scopeChannel === finalScope)) return
-
-    setImportTags(prev => [...prev, { tag: norm, scopeChannel: finalScope }])
-    setNewTagName('')
-  }
-
-  const handleRemoveTag = (index: number) => {
-    setImportTags(prev => prev.filter((_, i) => i !== index))
-  }
-
-  const hasPessoaTagSelected = importTags.some(t => t.tag === 'pessoa')
-
   // Resultados
   const [importResult, setImportResult] = useState<{
     total: number
@@ -190,7 +166,6 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
           defaultEventType,
           defaultSource,
           triggerSequence,
-          tags: importTags,
         }),
       })
 
@@ -446,96 +421,6 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                   </span>
                 </div>
               </label>
-            </div>
-
-            {/* 3. Tags dos Leads */}
-            <div className="space-y-3 pt-2 border-t border-line-subtle">
-              <span className="text-label uppercase text-fg-subtle font-bold block">3. Tags dos Leads (Opcional)</span>
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Nome da tag (ex: pessoa, vip, prospecção)..."
-                  value={newTagName}
-                  onChange={e => setNewTagName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      handleAddTag()
-                    }
-                  }}
-                  className={cn(FIELD, CONTROL_H, 'px-3 text-body flex-1 rounded-[var(--r-md)] border')}
-                />
-                <Select
-                  value={newTagScope}
-                  onValueChange={v => v && setNewTagScope(v)}
-                  items={{
-                    all: '🌐 Geral (Todos os canais)',
-                    whatsapp: '💬 WhatsApp',
-                    instagram: '📸 Instagram',
-                    email: '✉️ E-mail',
-                    mineracao: '⛏️ Mineração',
-                  }}
-                >
-                  <SelectTrigger className={cn(FIELD, CONTROL_H, 'w-full sm:w-48 text-body')}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-surface-overlay text-fg border border-line-subtle">
-                    <SelectItem value="all">🌐 Geral (Todos os canais)</SelectItem>
-                    <SelectItem value="whatsapp">💬 WhatsApp</SelectItem>
-                    <SelectItem value="instagram">📸 Instagram</SelectItem>
-                    <SelectItem value="email">✉️ E-mail</SelectItem>
-                    <SelectItem value="mineracao">⛏️ Mineração</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  onClick={handleAddTag}
-                  disabled={!newTagName.trim()}
-                  className={cn(CONTROL_H, 'px-3 bg-surface-inset hover:bg-surface-panel text-fg border border-line-subtle cursor-pointer')}
-                >
-                  <Plus size={14} className="mr-1" /> Add Tag
-                </Button>
-              </div>
-
-              {importTags.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {importTags.map((t, idx) => (
-                    <span
-                      key={idx}
-                      className={cn(
-                        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-micro font-medium border',
-                        t.tag === 'pessoa'
-                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-bold'
-                          : 'bg-surface-inset border-line-subtle text-fg'
-                      )}
-                    >
-                      <Tag size={12} className={t.tag === 'pessoa' ? 'text-amber-400' : 'text-cyan-400'} />
-                      <span>{t.tag}</span>
-                      <span className="text-[10px] opacity-75 font-mono">
-                        [{!t.scopeChannel ? 'Geral' : t.scopeChannel}]
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveTag(idx)}
-                        className="hover:text-rose-400 text-fg-subtle cursor-pointer ml-0.5"
-                      >
-                        <X size={12} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {hasPessoaTagSelected && (
-                <div className="p-3.5 rounded-[var(--r-md)] bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 mt-2">
-                  <div className="flex items-center gap-2 font-bold text-micro uppercase tracking-wider">
-                    <AlertTriangle size={15} /> Aviso sobre a Tag "pessoa"
-                  </div>
-                  <p className="text-micro text-amber-200/90 leading-relaxed">
-                    Ao aplicar a tag <strong>"pessoa"</strong>, o bot de IA será <strong>pausado</strong> para todos os contatos importados nesta planilha e a notificação de pausa externa (Ponte AutonomIA/Nina) será disparada.
-                  </p>
-                </div>
-              )}
             </div>
 
             {/* Ações */}

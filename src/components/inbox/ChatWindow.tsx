@@ -777,14 +777,6 @@ export function ChatWindow({
             )
           })()}
 
-          {/* Tags do Lead */}
-          <LeadTags
-            leadId={lead.id}
-            leadChannel={lead.channel}
-            botPaused={botPaused}
-            onBotPausedChange={(paused) => setBotPaused(paused)}
-          />
-
           <div className="space-y-2">
             <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">CRM & Venda</h4>
             <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2 text-micro">

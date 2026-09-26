@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs, leadTags } from '@/lib/db/schema'
+import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
-import { normalizeTag, validateTagScope } from '@/lib/lead-tags'
-import { notifyNaoResponder } from '@/lib/nao-responder'
 
 function cleanPhone(raw: string): string {
   let digits = raw.replace(/\D/g, '')
@@ -28,11 +26,6 @@ function parseValueToCents(raw: string | number | null | undefined): number {
   return Math.round(parseFloat(cleaned) * 100) || 0
 }
 
-interface TagInput {
-  tag: string
-  scopeChannel?: string | null
-}
-
 interface ImportItem {
   name?: string
   phone: string
@@ -41,14 +34,13 @@ interface ImportItem {
   productValue?: string | number
   eventType?: string
   trackingSource?: string
-  tags?: Array<string | TagInput>
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
   const body = await req.json()
 
-  const { items, defaultEventType = 'carrinho_abandonado', defaultSource = 'mineracao', triggerSequence = false, tags: requestTags = [] } = body
+  const { items, defaultEventType = 'carrinho_abandonado', defaultSource = 'mineracao', triggerSequence = false } = body
 
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ error: 'Nenhum contato enviado para importação' }, { status: 400 })
@@ -158,68 +150,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             })
           }
         }
-      }
-
-      // Aplica tags enviadas na requisição ou no item
-      const itemRawTags = [
-        ...(Array.isArray(requestTags) ? requestTags : []),
-        ...(Array.isArray(item.tags) ? item.tags : []),
-      ]
-
-      let hasPessoaTag = false
-
-      if (itemRawTags.length > 0) {
-        for (const t of itemRawTags) {
-          const rawName = typeof t === 'string' ? t : t?.tag
-          const rawScope = typeof t === 'string' ? null : (t?.scopeChannel ?? null)
-          const normTag = normalizeTag(rawName)
-          if (!normTag) continue
-
-          const finalScope = normTag === 'pessoa' ? null : (rawScope?.trim() || null)
-
-          if (finalScope) {
-            const scopeVal = validateTagScope(finalScope, trackingSource || 'whatsapp')
-            if (!scopeVal.valid) {
-              continue
-            }
-          }
-
-          await db
-            .insert(leadTags)
-            .values({
-              leadId,
-              tag: normTag,
-              scopeChannel: finalScope,
-              createdBy: 'Importação em lote',
-            })
-            .onConflictDoNothing()
-
-          if (normTag === 'pessoa') {
-            hasPessoaTag = true
-          }
-        }
-      }
-
-      if (hasPessoaTag) {
-        const now = new Date()
-        await db
-          .update(recoveryLeads)
-          .set({
-            botPaused: true,
-            botPausedAt: now,
-            botPausedBy: 'Importação em lote (tag pessoa)',
-            botPausedAll: false,
-            botPausedChannel: null,
-            updatedAt: now,
-          })
-          .where(eq(recoveryLeads.id, leadId))
-
-        await notifyNaoResponder({
-          phone,
-          action: 'pause',
-          reason: 'Importação em lote com tag pessoa',
-          channel: 'whatsapp',
-        })
       }
     } catch (err) {
       skipped++

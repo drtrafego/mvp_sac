@@ -487,19 +487,18 @@ export const recoveryLeads = pgTable('recovery_leads', {
 // (recoveryLeads.botPaused=true, botPausedBy='tag:pessoa') e avisa a ponte
 // da Nina (src/lib/nao-responder.ts) pra ela também não responder o contato
 // fora do SAC (webhook direto da Meta, follow-up, disparo diário). Ver
-// ─── Tags de Leads ────────────────────────────────────────────────────────────
 // contrato completo em src/app/api/leads/[leadId]/tags/route.ts.
 export const leadTags = pgTable('lead_tags', {
   id: serial('id').primaryKey(),
   leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  // Normalizada (trim + lowercase) na escrita, pra "Pessoa" e "pessoa" não
+  // virarem duas tags distintas no mesmo lead. Ver normalizeTag() na rota.
   tag: text('tag').notNull(),
-  scopeChannel: text('scope_channel'), // null = geral; 'whatsapp' | 'instagram' | 'email' | 'mineracao'
   createdAt: timestamp('created_at').defaultNow(),
   createdBy: text('created_by'), // nome/e-mail de quem marcou (humano) ou 'tag:pessoa' quando é efeito de sistema
 }, (table) => [
-  uniqueIndex('lead_tags_lead_tag_scope_unique').on(table.leadId, table.tag, table.scopeChannel),
+  uniqueIndex('lead_tags_lead_tag_unique').on(table.leadId, table.tag),
   index('lead_tags_tag_idx').on(table.tag),
-  index('lead_tags_lead_idx').on(table.leadId),
 ])
 
 export const leadTagsRelations = relations(leadTags, ({ one }) => ({
@@ -520,6 +519,7 @@ export const messageJobs = pgTable('message_jobs', {
   externalWamid: text('external_wamid'),               // Fase 1.4: WAMID retornado pela Meta ao enviar
   deliveryStatus: text('delivery_status'),              // Fase 1.4: sent | delivered | read | failed
   messageOrder: integer('message_order'),               // Fase 2.3: posição da mensagem na sequência
+  createdAt: timestamp('created_at').defaultNow(),
 })
 
 // ─── Histórico de mensagens WhatsApp / Instagram / E-mail ────────────────────
@@ -789,7 +789,6 @@ export const recoveryLeadsRelations = relations(recoveryLeads, ({ one, many }) =
   gramadoReservations: many(gramadoReservations),
   tags: many(leadTags),
 }))
-
 
 export const gramadoReservationsRelations = relations(gramadoReservations, ({ one }) => ({
   company: one(companies, { fields: [gramadoReservations.companyId], references: [companies.id] }),

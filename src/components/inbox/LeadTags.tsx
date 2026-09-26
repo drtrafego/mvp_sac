@@ -2,47 +2,39 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Tag, X, Loader2, Plus, UserCog, TriangleAlert } from 'lucide-react'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 const PESSOA_TAG = 'pessoa'
 const MAX_TAG_LENGTH = 50
 
-export interface TagItem {
-  id?: number
+interface LeadTagRow {
   tag: string
-  scopeChannel?: string | null
-  createdBy?: string | null
-  createdAt?: string | null
+  createdAt: string | null
+  createdBy: string | null
 }
 
+/**
+ * Tags livres do lead (25/09/2026). Componente autocontido: busca e mantém
+ * suas próprias tags via /api/leads/[leadId]/tags, e só avisa o pai
+ * (ChatWindow) quando o efeito colateral da tag "pessoa" muda o estado do
+ * bot (onBotPausedChange), pra manter o botão "Pausar/Retomar Bot" e o pill
+ * de status sincronizados sem duplicar a fonte da verdade.
+ */
 export function LeadTags({
   leadId,
-  leadChannel = 'whatsapp',
-  botPaused = false,
-  onPessoaTagChange,
+  botPaused,
   onBotPausedChange,
 }: {
   leadId: number
-  leadChannel?: string
-  botPaused?: boolean
-  onPessoaTagChange?: (paused: boolean) => void
-  onBotPausedChange?: (paused: boolean) => void
+  botPaused: boolean
+  onBotPausedChange: (paused: boolean) => void
 }) {
-  const [tags, setTags] = useState<TagItem[]>([])
+  const [tags, setTags] = useState<LeadTagRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [newTagName, setNewTagName] = useState('')
-  const [newTagScope, setNewTagScope] = useState('all')
+  const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [warning, setWarning] = useState<string | null>(null)
   const [confirmingPessoa, setConfirmingPessoa] = useState(false)
-  const [deletingTag, setDeletingTag] = useState<string | null>(null)
-
-  const handleBotPausedChanged = (paused: boolean) => {
-    onPessoaTagChange?.(paused)
-    onBotPausedChange?.(paused)
-  }
 
   const load = useCallback(async () => {
     try {
@@ -52,19 +44,17 @@ export function LeadTags({
         setTags(Array.isArray(data.tags) ? data.tags : [])
       }
     } catch {
-      /* silencioso */
+      /* silencioso, painel de detalhes não é crítico */
     } finally {
       setLoading(false)
     }
   }, [leadId])
 
   useEffect(() => {
-    if (leadId) {
-      load()
-    }
-  }, [leadId, load])
+    load() // eslint-disable-line react-hooks/set-state-in-effect -- fetch assíncrono, setState só corre depois do await, não durante o corpo do effect
+  }, [load])
 
-  const hasPessoa = tags.some((t) => t.tag === PESSOA_TAG)
+  const hasPessoa = tags.some(t => t.tag === PESSOA_TAG)
 
   async function addTag(value: string) {
     const trimmed = value.trim()
@@ -72,18 +62,17 @@ export function LeadTags({
     setBusy(true)
     setWarning(null)
     try {
-      const scopeVal = trimmed.toLowerCase() === PESSOA_TAG ? null : newTagScope === 'all' ? null : newTagScope
       const res = await fetch(`/api/leads/${leadId}/tags`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag: trimmed, scopeChannel: scopeVal }),
+        body: JSON.stringify({ tag: trimmed }),
       })
       const data = await res.json().catch(() => null)
       if (res.ok && data) {
         setTags(Array.isArray(data.tags) ? data.tags : [])
-        setNewTagName('')
+        setInput('')
         if (data.warning) setWarning(data.warning)
-        if (trimmed.toLowerCase() === PESSOA_TAG) handleBotPausedChanged(true)
+        if (trimmed.toLowerCase() === PESSOA_TAG) onBotPausedChange(true)
       }
     } finally {
       setBusy(false)
@@ -94,7 +83,6 @@ export function LeadTags({
   async function removeTag(value: string) {
     if (busy) return
     setBusy(true)
-    setDeletingTag(value)
     setWarning(null)
     try {
       const res = await fetch(`/api/leads/${leadId}/tags/${encodeURIComponent(value)}`, { method: 'DELETE' })
@@ -102,16 +90,15 @@ export function LeadTags({
       if (res.ok && data) {
         setTags(Array.isArray(data.tags) ? data.tags : [])
         if (data.warning) setWarning(data.warning)
-        if (typeof data.botPaused === 'boolean') handleBotPausedChanged(data.botPaused)
+        if (typeof data.botPaused === 'boolean') onBotPausedChange(data.botPaused)
       }
     } finally {
       setBusy(false)
-      setDeletingTag(null)
     }
   }
 
   function handleAddClick() {
-    const trimmed = newTagName.trim()
+    const trimmed = input.trim()
     if (!trimmed) return
     if (trimmed.toLowerCase() === PESSOA_TAG && !confirmingPessoa) {
       setConfirmingPessoa(true)
@@ -120,18 +107,16 @@ export function LeadTags({
     addTag(trimmed)
   }
 
-  const isPessoaTyped = newTagName.trim().toLowerCase() === PESSOA_TAG
-
   return (
-    <div className="space-y-2.5">
+    <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2.5">
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-1.5 text-micro font-bold uppercase text-fg-subtle">
-          <Tag size={12} className="text-cyan-400" /> Tags
+          <Tag size={12} /> Tags
         </span>
         {hasPessoa && botPaused && (
           <span
             title="A tag 'pessoa' pausou o bot de IA deste lead"
-            className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400"
+            className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400"
           >
             <UserCog size={11} /> bot pausado
           </span>
@@ -141,34 +126,30 @@ export function LeadTags({
       <div className="flex flex-wrap gap-1.5">
         {loading && <Loader2 size={13} className="animate-spin text-fg-faint" />}
         {!loading && tags.length === 0 && (
-          <span className="text-[11px] text-fg-faint italic">Nenhuma tag atribuída</span>
+          <span className="text-[11px] text-fg-faint">Nenhuma tag ainda</span>
         )}
-        {tags.map((t) => {
+        {tags.map(t => {
           const isPessoa = t.tag === PESSOA_TAG
-          const isDeleting = deletingTag === t.tag
           return (
             <span
               key={t.tag}
               title={t.createdBy ? `Marcada por ${t.createdBy}` : undefined}
               className={cn(
-                'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-micro font-medium border transition-colors',
+                'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold',
                 isPessoa
-                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-bold'
-                  : 'bg-surface-inset border-line-subtle text-fg'
+                  ? 'border-rose-500/40 bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                  : 'border-line-subtle bg-surface-raised text-fg-muted'
               )}
             >
-              <span>{t.tag}</span>
-              <span className="text-[9px] opacity-70 font-mono">
-                [{!t.scopeChannel ? 'Geral' : t.scopeChannel}]
-              </span>
+              {t.tag}
               <button
                 type="button"
                 onClick={() => removeTag(t.tag)}
                 disabled={busy}
                 aria-label={`Remover tag ${t.tag}`}
-                className="hover:text-rose-400 text-fg-subtle cursor-pointer ml-0.5 disabled:opacity-40"
+                className="rounded-full hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-40 cursor-pointer"
               >
-                {isDeleting ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+                <X size={10} />
               </button>
             </span>
           )
@@ -177,18 +158,18 @@ export function LeadTags({
 
       {confirmingPessoa && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 space-y-1.5">
-          <p className="flex items-start gap-1.5 text-[11px] text-amber-300 font-medium leading-tight">
-            <TriangleAlert size={13} className="shrink-0 mt-0.5 text-amber-400" />
-            Marcar &quot;pessoa&quot; pausará o bot de IA deste lead e notificará a ponte externa. Confirmar?
+          <p className="flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 font-medium">
+            <TriangleAlert size={13} className="shrink-0 mt-0.5" />
+            Marcar &quot;pessoa&quot; pausa o bot de IA deste lead agora (a Nina para de responder). Confirmar?
           </p>
           <div className="flex gap-1.5">
             <button
               type="button"
-              onClick={() => addTag(newTagName)}
+              onClick={() => addTag(input)}
               disabled={busy}
-              className="rounded-lg bg-amber-500 px-2.5 py-1 text-[11px] font-bold text-black hover:opacity-90 disabled:opacity-50 cursor-pointer"
+              className="rounded-lg bg-amber-500 px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-90 disabled:opacity-50 cursor-pointer"
             >
-              {busy ? 'Confirmando...' : 'Confirmar e pausar bot'}
+              {busy ? 'Confirmando…' : 'Confirmar e pausar bot'}
             </button>
             <button
               type="button"
@@ -202,12 +183,12 @@ export function LeadTags({
         </div>
       )}
 
-      <div className="flex items-center gap-1.5 pt-1 border-t border-line-subtle">
+      <div className="flex items-center gap-1.5">
         <input
           type="text"
-          value={newTagName}
-          onChange={(e) => setNewTagName(e.target.value)}
-          onKeyDown={(e) => {
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => {
             if (e.key === 'Enter') {
               e.preventDefault()
               handleAddClick()
@@ -216,36 +197,22 @@ export function LeadTags({
           maxLength={MAX_TAG_LENGTH}
           placeholder="Nova tag..."
           disabled={busy}
-          className="h-8 text-micro bg-surface-inset border border-line-subtle rounded-md px-2 flex-1 text-fg placeholder:text-fg-faint focus:outline-none focus:border-cyan-500"
+          className="focus-ring flex-1 min-w-0 rounded-lg border border-line-subtle bg-surface-panel px-2.5 py-1.5 text-[12px] text-fg placeholder:text-fg-faint outline-none disabled:opacity-50"
         />
-        <Select
-          value={newTagScope}
-          onValueChange={(v) => v && setNewTagScope(v)}
-          disabled={isPessoaTyped || busy}
-        >
-          <SelectTrigger className="h-8 text-micro bg-surface-inset border border-line-subtle rounded-md w-24 px-2">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-surface-overlay text-fg border border-line-subtle text-micro">
-            <SelectItem value="all">Geral</SelectItem>
-            <SelectItem value="whatsapp">WhatsApp</SelectItem>
-            <SelectItem value="instagram">Instagram</SelectItem>
-            <SelectItem value="email">E-mail</SelectItem>
-            <SelectItem value="mineracao">Mineração</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button
+        <button
           type="button"
           onClick={handleAddClick}
-          disabled={busy || !newTagName.trim()}
-          className="h-8 px-2.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 rounded-md text-micro font-bold cursor-pointer"
+          disabled={busy || !input.trim()}
+          aria-label="Adicionar tag"
+          title="Adicionar tag"
+          className="h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-line-subtle bg-surface-panel text-fg-subtle transition-colors hover:text-fg hover:bg-surface-raised disabled:opacity-40 cursor-pointer"
         >
-          {busy ? <Loader2 size={12} className="animate-spin" /> : <Plus size={13} />}
-        </Button>
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={14} />}
+        </button>
       </div>
 
       {warning && (
-        <p className="flex items-start gap-1.5 text-[10px] text-amber-400">
+        <p className="flex items-start gap-1.5 text-[10px] text-amber-600 dark:text-amber-400">
           <TriangleAlert size={12} className="shrink-0 mt-0.5" /> {warning}
         </p>
       )}
