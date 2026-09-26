@@ -203,16 +203,18 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
 
       // Job de upsell: conteúdo direto, sem referência a sequenceMessages
       if (job.upsellContent) {
-        // Upsell é sempre mensagem livre (nunca template): fora da janela de
-        // 24h a Meta recusa, então falha o job em vez de tentar enviar.
+        // REVERSÃO DE EMERGÊNCIA (26/09/2026): a checagem de janela de 24h
+        // aqui embaixo estava BLOQUEANDO 100% dos disparos de upsell/recuperação
+        // (disparo frio, quase sempre sem lastInboundAt) e falhando o job em vez
+        // de enviar. Voltado ao comportamento anterior (envia sem checar janela)
+        // até existir um plano de migração pra templates aprovados nesses fluxos.
+        // Ver pendência documentada em src/lib/message-jobs-policy.ts.
         const upsellWindow = checkMetaWindowForJob({
           messageType: 'text',
           lastInboundAt: lastInboundFor(job.leadId, leadPhone),
         })
         if (!upsellWindow.allowed) {
-          await db.update(messageJobs).set({ status: 'failed', error: upsellWindow.error }).where(eq(messageJobs.id, job.id))
-          failed++
-          continue
+          console.warn('[cron] job fora da janela de 24h (bloqueio desativado, enviando mesmo assim)', { jobId: job.id, leadId: job.leadId })
         }
 
         const wamid = await sendWhatsAppMessage(lead.phone, {
@@ -237,18 +239,19 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
       const msgType = message.messageType ?? 'text'
       const buttons = Array.isArray(message.buttonsJson) ? message.buttonsJson as { id: string; label: string }[] : undefined
 
-      // Janela de 24h da Meta: mensagem livre (não-template) fora da janela
-      // é recusada pela Meta. Template aprovado passa direto (é pra isso que
-      // ele existe). Vale sobretudo pro fluxo de import de lista/disparo em
-      // massa (contatos frios, prováveis fora da janela desde o início).
+      // REVERSÃO DE EMERGÊNCIA (26/09/2026): esta checagem estava bloqueando
+      // TODO o funil de recuperação (carrinho_abandonado, boleto, pix,
+      // cartao_recusado em src/lib/biblioteca.ts, todos messageType: 'text',
+      // disparo frio) fazendo o job falhar sem enviar nada, a cada rodada do
+      // cron desde o deploy. Voltado a só logar, sem bloquear, até existir
+      // plano de migração pra templates aprovados. Pendência documentada em
+      // src/lib/message-jobs-policy.ts.
       const windowCheck = checkMetaWindowForJob({
         messageType: msgType,
         lastInboundAt: lastInboundFor(job.leadId, leadPhone),
       })
       if (!windowCheck.allowed) {
-        await db.update(messageJobs).set({ status: 'failed', error: windowCheck.error }).where(eq(messageJobs.id, job.id))
-        failed++
-        continue
+        console.warn('[cron] job fora da janela de 24h (bloqueio desativado, enviando mesmo assim)', { jobId: job.id, leadId: job.leadId, msgType })
       }
 
       // Fase 1.3: monta variáveis interpoladas para templates Meta

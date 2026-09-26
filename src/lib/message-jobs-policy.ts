@@ -3,6 +3,17 @@
 // (2) limite conservador de mensagens por execução do cron, pra não estourar
 // o tier de mensageria do número (WhatsApp Business API) nem o rate limit
 // da Graph API. Extraído do executor pra ser testável sem banco/rede real.
+//
+// ⚠️ PENDÊNCIA (26/09/2026, revertido em emergência): checkMetaWindowForJob()
+// continua aqui e testada, mas o route.ts PAROU de usar o resultado pra
+// bloquear o envio (só loga aviso). Motivo: os 4 eventos de disparo frio da
+// biblioteca padrão (carrinho_abandonado, boleto, pix, cartao_recusado em
+// src/lib/biblioteca.ts) usam messageType: 'text' e são o PRIMEIRO contato
+// com o lead (lastInboundAt quase sempre null) — bloquear aqui derruba o
+// funil de recuperação inteiro, que é o motivo do produto existir. Plano
+// correto, ainda não feito: migrar esses 4 eventos pra template aprovado da
+// Meta (que passa a janela por definição) e só então voltar a bloquear texto
+// livre fora da janela. Não reative o bloqueio no route.ts sem isso.
 
 import { getMetaWindowInfo } from '@/lib/meta-window'
 
