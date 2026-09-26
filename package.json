@@ -31,7 +31,8 @@
     "test:pipeline-stage-inference": "tsx scripts/pipeline-stage-inference.test.ts",
     "test:agenda-slot-validation": "tsx --test scripts/agenda-slot-validation.test.ts",
     "test:lead-tags": "tsx --experimental-test-module-mocks --test scripts/lead-tags.test.ts",
-    "test:message-jobs-policy": "tsx --test scripts/message-jobs-policy.test.ts"
+    "test:message-jobs-policy": "tsx --test scripts/message-jobs-policy.test.ts",
+    "test:db-consolidacao-autonomia": "tsx --test scripts/db-consolidacao-autonomia.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
