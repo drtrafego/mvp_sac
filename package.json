@@ -30,7 +30,10 @@
     "test:settings-agent-display-name": "tsx --experimental-test-module-mocks --test scripts/settings-agent-display-name.test.ts",
     "test:pipeline-stage-inference": "tsx scripts/pipeline-stage-inference.test.ts",
     "test:agenda-slot-validation": "tsx --test scripts/agenda-slot-validation.test.ts",
-    "test:lead-tags": "tsx --experimental-test-module-mocks --test scripts/lead-tags.test.ts"
+    "test:lead-tags": "tsx --experimental-test-module-mocks --test scripts/lead-tags.test.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:list": "playwright test --list",
+    "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -70,6 +73,7 @@
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
-    "typescript": "^5"
+    "typescript": "^5",
+    "playwright": "1.63.0"
   }
 }
