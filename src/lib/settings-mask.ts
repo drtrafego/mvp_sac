@@ -10,3 +10,55 @@ export function mask(val: string | null | undefined): string {
   if (val.length <= 4) return '****'
   return '****' + val.slice(-4)
 }
+
+/**
+ * Lista única dos campos de settings que são credencial (token/senha/chave/
+ * connection string), nunca conteúdo público (ID, nome, config). Toda rota
+ * que serializa uma linha de `settings` como resposta JSON passa por
+ * `maskSettingsRow()` abaixo, pra nenhum campo novo nascer exposto por
+ * esquecimento de alguém copiar a lista manualmente numa rota nova.
+ *
+ * Achado de auditoria (26/09/2026): supabaseDatabaseUrl, agentBiaApiKey,
+ * agentLuanaApiKey e agentRenatoApiKey vazavam em claro no GET humano e no
+ * GET/PATCH v1 porque essas rotas espalhavam `...row` inteiro e só
+ * sobrescreviam uma lista manual de campos (que nunca incluía esses 4).
+ * instagramAppSecret vazava só na rota v1 pelo mesmo motivo.
+ */
+const SETTINGS_SECRET_FIELDS = [
+  'hotmartWebhookToken',
+  'hotmartClientSecret',
+  'greennWebhookToken',
+  'greennApiKey',
+  'zoutiWebhookToken',
+  'zoutiApiKey',
+  'kiwifyWebhookToken',
+  'metaAccessToken',
+  'metaAppSecret',
+  'metaAdsAccessToken',
+  'uazapiInstanceToken',
+  'brevoApiKey',
+  'instagramAccessToken',
+  'instagramAppSecret',
+  'supabaseDatabaseUrl',
+  'agentBiaApiKey',
+  'agentLuanaApiKey',
+  'agentRenatoApiKey',
+] as const
+
+/**
+ * Devolve uma cópia da linha de `settings` com todo campo de credencial
+ * mascarado (só os 4 últimos caracteres, ou '' se vazio). Mantém os demais
+ * campos (IDs públicos, config, timestamps) intactos. Usar em toda resposta
+ * JSON que carregar uma linha de `settings`, seja GET, PUT ou PATCH: o campo
+ * mascarado continua GRAVÁVEL normalmente (a máscara só entra na LEITURA de
+ * volta, nunca na escrita).
+ */
+export function maskSettingsRow<T extends Record<string, unknown>>(row: T): T {
+  const masked = { ...row }
+  for (const field of SETTINGS_SECRET_FIELDS) {
+    if (field in masked) {
+      ;(masked as Record<string, unknown>)[field] = mask(masked[field] as string | null | undefined)
+    }
+  }
+  return masked
+}

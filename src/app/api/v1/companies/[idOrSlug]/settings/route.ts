@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { companies, settings } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq } from 'drizzle-orm'
-import { mask } from '@/lib/settings-mask'
+import { maskSettingsRow } from '@/lib/settings-mask'
 import { parseAgentDisplayName } from '@/lib/agent-display-name'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
@@ -26,28 +26,13 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     .from(settings)
     .where(eq(settings.companyId, context.company.id))
 
-  // Mesmo padrão de mask() de src/app/api/settings/route.ts (painel humano):
-  // token/segredo nunca sai em texto plano numa resposta GET, nem pra agente
-  // autenticado. Sem isso, qualquer chamada a esta rota devolvia
-  // metaAdsAccessToken (e os demais segredos) em claro.
-  const maskedSettings = row
-    ? {
-        ...row,
-        hotmartWebhookToken: mask(row.hotmartWebhookToken),
-        hotmartClientSecret: mask(row.hotmartClientSecret),
-        greennWebhookToken: mask(row.greennWebhookToken),
-        greennApiKey: mask(row.greennApiKey),
-        zoutiWebhookToken: mask(row.zoutiWebhookToken),
-        zoutiApiKey: mask(row.zoutiApiKey),
-        kiwifyWebhookToken: mask(row.kiwifyWebhookToken),
-        metaAccessToken: mask(row.metaAccessToken),
-        metaAppSecret: mask(row.metaAppSecret),
-        metaAdsAccessToken: mask(row.metaAdsAccessToken),
-        uazapiInstanceToken: mask(row.uazapiInstanceToken),
-        brevoApiKey: mask(row.brevoApiKey),
-        instagramAccessToken: mask(row.instagramAccessToken),
-      }
-    : null
+  // Mesmo padrão de maskSettingsRow() de src/lib/settings-mask.ts (painel
+  // humano): token/segredo nunca sai em texto plano numa resposta GET, nem
+  // pra agente autenticado. Achado de auditoria (26/09/2026): esta rota
+  // espalhava `...row` inteiro e só sobrescrevia uma lista manual de campos,
+  // que deixava passar em claro supabaseDatabaseUrl, agentBiaApiKey,
+  // agentLuanaApiKey, agentRenatoApiKey e instagramAppSecret.
+  const maskedSettings = row ? maskSettingsRow(row) : null
 
   return NextResponse.json({
     ok: true,
@@ -142,7 +127,7 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
         name: context.company.name,
         agentDisplayName: agentDisplayName ?? context.company.agentDisplayName ?? '',
       },
-      settings: updated,
+      settings: updated ? maskSettingsRow(updated) : null,
       ...(warnings.length > 0 ? { warnings } : {}),
     })
   } catch (err: any) {
