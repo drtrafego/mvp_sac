@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
+import { randomBytes } from 'crypto'
 import * as schema from './schema'
 import { NINA_SOUL } from '../souls/nina'
 
@@ -175,22 +176,6 @@ export function ensureSchema(client: any): Promise<void> {
               SELECT 1 FROM company_members cm 
               WHERE cm.company_id = c.id AND cm.email = 'dr.trafego@gmail.com'
             )
-          `,
-
-          // Garante chaves de API individuais por agente para cada empresa
-          client`
-            UPDATE settings s
-            SET 
-              agent_bia_api_key = COALESCE(s.agent_bia_api_key, 'sac_bia_' || c.slug || '_' || md5(c.id::text || '_bia')),
-              agent_luana_api_key = COALESCE(s.agent_luana_api_key, 'sac_luana_' || c.slug || '_' || md5(c.id::text || '_luana')),
-              agent_renato_api_key = COALESCE(s.agent_renato_api_key, 'sac_renato_' || c.slug || '_' || md5(c.id::text || '_renato'))
-            FROM companies c
-            WHERE s.company_id = c.id
-          `,
-          client`
-            UPDATE companies
-            SET invite_token = COALESCE(invite_token, 'sac_company_' || slug || '_' || md5(id::text || '_token'))
-            WHERE invite_token IS NULL
           `,
 
           // ─── Instagram Comment-to-DM (Automações e Logs) ───────────────────────
@@ -426,6 +411,73 @@ export function ensureSchema(client: any): Promise<void> {
             ON gramado_reservations (company_id, phone_norm)
           `,
         ])
+
+        // ─── Credenciais de agente com entropia real (26/09/2026, achado de ────
+        // auditoria de segurança P0, reproduzido) ───────────────────────────────
+        // As duas UPDATEs que geravam agent_bia_api_key / agent_luana_api_key /
+        // agent_renato_api_key / invite_token por md5(slug + id numérico) foram
+        // REMOVIDAS do Promise.allSettled acima: quem soubesse o slug e o id da
+        // empresa (nenhum dos dois é secreto) recalculava a credencial sozinho,
+        // sem entropia privada nenhuma. A geração agora usa crypto.randomBytes
+        // (Node), por isso roda fora de SQL puro, uma empresa de cada vez, só
+        // para quem ainda está NULL — igual ao padrão de fora do
+        // Promise.allSettled já usado abaixo (falha loga em vez de sumir).
+        // Empresa que já tinha chave md5 antiga (provavelmente todas as de
+        // produção hoje) CONTINUA com ela até ser rotacionada: ver
+        // POST /api/admin/companies/[id]/rotate-key (uma empresa por vez, nunca
+        // em massa sem autorização explícita).
+        try {
+          type PendingAgentKeyRow = {
+            company_id: number
+            slug: string
+            agent_bia_api_key: string | null
+            agent_luana_api_key: string | null
+            agent_renato_api_key: string | null
+          }
+          const pendingKeys = (await client`
+            SELECT s.company_id, c.slug,
+                   s.agent_bia_api_key, s.agent_luana_api_key, s.agent_renato_api_key
+            FROM settings s
+            JOIN companies c ON c.id = s.company_id
+            WHERE s.agent_bia_api_key IS NULL
+               OR s.agent_luana_api_key IS NULL
+               OR s.agent_renato_api_key IS NULL
+          `) as PendingAgentKeyRow[]
+          for (const row of pendingKeys) {
+            if (!row.agent_bia_api_key) {
+              await client`
+                UPDATE settings SET agent_bia_api_key = ${'sac_bia_' + row.slug + '_' + randomBytes(24).toString('hex')}
+                WHERE company_id = ${row.company_id} AND agent_bia_api_key IS NULL
+              `
+            }
+            if (!row.agent_luana_api_key) {
+              await client`
+                UPDATE settings SET agent_luana_api_key = ${'sac_luana_' + row.slug + '_' + randomBytes(24).toString('hex')}
+                WHERE company_id = ${row.company_id} AND agent_luana_api_key IS NULL
+              `
+            }
+            if (!row.agent_renato_api_key) {
+              await client`
+                UPDATE settings SET agent_renato_api_key = ${'sac_renato_' + row.slug + '_' + randomBytes(24).toString('hex')}
+                WHERE company_id = ${row.company_id} AND agent_renato_api_key IS NULL
+              `
+            }
+          }
+
+          type PendingInviteRow = { id: number; slug: string }
+          const pendingInvites = (await client`
+            SELECT id, slug FROM companies WHERE invite_token IS NULL
+          `) as PendingInviteRow[]
+          for (const row of pendingInvites) {
+            await client`
+              UPDATE companies SET invite_token = ${'sac_company_' + row.slug + '_' + randomBytes(24).toString('hex')}
+              WHERE id = ${row.id} AND invite_token IS NULL
+            `
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[DB Schema Sync Error] Falha ao gerar credenciais de agente com entropia real:', message)
+        }
 
         // ─── Tags livres de lead (25/09/2026) ──────────────────────────────
         // Ver comentário completo em src/lib/db/schema.ts (leadTags) e no
