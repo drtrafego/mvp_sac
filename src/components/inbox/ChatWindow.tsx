@@ -238,6 +238,8 @@ export function ChatWindow({
     ) loadOlderMessages()
   }, [loadOlderMessages])
 
+  const [sendError, setSendError] = useState<string | null>(null)
+
   async function handleToggleBotPause() {
     if (pauseLoading) return
     setPauseLoading(true)
@@ -257,9 +259,14 @@ export function ChatWindow({
             : '🟢 Bot retomado! O assistente virtual voltará a responder automaticamente.'
         )
         setTimeout(() => setPauseToast(null), 4000)
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        setPauseToast(`❌ ${errData.error || 'Não foi possível alterar a pausa do bot.'}`)
+        setTimeout(() => setPauseToast(null), 4000)
       }
     } catch {
-      /* erro silencioso */
+      setPauseToast('❌ Erro de conexão ao alterar pausa do bot.')
+      setTimeout(() => setPauseToast(null), 4000)
     } finally {
       setPauseLoading(false)
     }
@@ -323,8 +330,8 @@ export function ChatWindow({
   async function handleSend() {
     if (!text.trim() || sending) return
     setSending(true)
+    setSendError(null)
     const content = text.trim()
-    setText('')
     try {
       const res = await fetch(`/api/inbox/${lead.id}`, {
         method: 'POST',
@@ -333,11 +340,15 @@ export function ChatWindow({
       })
       if (res.ok) {
         const msg: InboxMessage = await res.json()
+        setText('')
         shouldScrollToBottomRef.current = true
         setMessages(prev => [...prev, msg])
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        setSendError(errData.error || 'Falha ao enviar mensagem. Seu rascunho foi mantido.')
       }
     } catch {
-      /* silencioso */
+      setSendError('Erro de conexão ao enviar mensagem. Seu rascunho foi mantido.')
     } finally {
       setSending(false)
     }
@@ -527,7 +538,13 @@ export function ChatWindow({
         </div>
 
         {/* 3. Área de Envio da Mensagem */}
-        <div className="border-t border-line-subtle bg-surface-panel p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:pb-3 shrink-0">
+        <div className="border-t border-line-subtle bg-surface-panel p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:pb-3 shrink-0 space-y-2">
+          {sendError && (
+            <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-micro flex items-center justify-between">
+              <span>⚠️ {sendError}</span>
+              <button onClick={() => setSendError(null)} className="text-fg-subtle hover:text-fg font-bold">×</button>
+            </div>
+          )}
           <div className="flex items-end gap-2">
             <textarea
               ref={textareaRef}

@@ -169,6 +169,13 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
         }),
       })
 
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        alert(`Erro na importação: ${errData.error || 'Falha ao processar planilha no servidor.'}`)
+        setStep('mapping')
+        return
+      }
+
       const result = await res.json()
       setImportResult(result)
       setStep('result')

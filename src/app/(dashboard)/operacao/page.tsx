@@ -41,7 +41,7 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
   const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
   const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
 
-  const [[jobStats], [webhookStats], [leadStats], members, sequences] = await Promise.all([
+  const [[jobStats], [webhookStats], [leadStats], [pausedStats], members, sequences] = await Promise.all([
     db
       .select({
         pending: sql<number>`cast(count(*) filter (where ${messageJobs.status} = 'pending') as int)`,
@@ -77,6 +77,13 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
       .where(baseWhere),
 
     db
+      .select({
+        pausedCount: sql<number>`cast(count(*) filter (where ${recoveryLeads.botPaused} = true) as int)`,
+      })
+      .from(recoveryLeads)
+      .where(baseWhere),
+
+    db
       .select()
       .from(companyMembers)
       .where(eq(companyMembers.companyId, cid))
@@ -93,16 +100,19 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
   const sentJobs = jobStats?.sent ?? 0
   const failedJobs = jobStats?.failed ?? 0
   const totalJobs = sentJobs + failedJobs + pendingJobs
-  const successRate = totalJobs > 0 ? (((sentJobs) / (sentJobs + failedJobs || 1)) * 100).toFixed(1) : '100.0'
+  const successRate = (sentJobs + failedJobs) > 0 ? (((sentJobs) / (sentJobs + failedJobs)) * 100).toFixed(1) : '100.0'
 
   const totalWebhooks = webhookStats?.total ?? 0
   const failedWebhooks = webhookStats?.failedOrSkipped ?? 0
   const totalLeads = leadStats?.totalLeads ?? 0
   const convertedLeads = leadStats?.convertedLeads ?? 0
+  const pausedLeads = pausedStats?.pausedCount ?? 0
 
-  // Métricas do Bot AutonomIA
-  const botAutonomyRate = totalJobs > 0 ? '94.8%' : '100.0%'
-  const botSlaSeconds = '< 3s'
+  // Métricas do Bot AutonomIA baseadas em dados reais
+  const botAutonomyRate = totalLeads > 0
+    ? (((totalLeads - pausedLeads) / totalLeads) * 100).toFixed(1) + '%'
+    : '100.0%'
+  const botSlaSeconds = 'Instantâneo (< 5s)'
   const activeSequencesCount = sequences.filter(s => s.isActive).length
 
   const saude = [
@@ -151,13 +161,13 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
       statValue: `${totalLeads} contatos`,
     },
     {
-      name: 'Nina (Atendimento & SAC Casal do Tráfego)',
+      name: 'Nina (Atendimento & SAC)',
       role: 'Agente de Atendimento & Dúvidas Rápidas',
       channel: 'WhatsApp Multicanal',
       status: 'Ativo',
       badgeColor: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
       description: 'Responde dúvidas frequentes sobre os produtos, entrega de acesso e pós-venda.',
-      statLabel: 'SLA de Resposta',
+      statLabel: 'Tempo Estimado de Resposta',
       statValue: botSlaSeconds,
     },
   ]
@@ -174,12 +184,12 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
                 Empresa: {company.name}
               </span>
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
-                <Cpu size={12} /> Bot AutonomIA 100% Online
+                <Cpu size={12} /> Bot AutonomIA Ativo
               </span>
             </div>
             <h1 className="text-h1 text-fg">Operação, SLA & Autonomia dos Bots</h1>
             <p className="text-body text-fg-muted mt-0.5">
-              Auditoria dos disparos automatizados, saúde das filas de envio e métricas de autonomia dos agentes IA exclusivos da <strong>{company.name}</strong>.
+              Auditoria dos disparos automatizados, saúde das filas de envio e métricas de autonomia dos agentes IA da <strong>{company.name}</strong>.
             </p>
           </div>
           <Suspense fallback={null}>

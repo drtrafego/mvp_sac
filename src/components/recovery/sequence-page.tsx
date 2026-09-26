@@ -301,41 +301,67 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
   }, [fetchLeads, from, to, selectedProduct])
 
   async function handleToggle(active: boolean) {
-    const res = await fetch(`/api/sequences/${eventType}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isActive: active, name: sequence?.name ?? title }),
-    })
-    const updated = await res.json()
-    setSequence(updated)
+    try {
+      const res = await fetch(`/api/sequences/${eventType}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: active, name: sequence?.name ?? title }),
+      })
+      if (!res.ok) {
+        alert('Erro ao alterar status da sequência.')
+        return
+      }
+      const updated = await res.json()
+      setSequence(updated)
+    } catch {
+      alert('Erro de conexão ao alterar status da sequência.')
+    }
   }
 
   async function handleSaveProductFilter() {
     setSavingFilter(true)
-    const res = await fetch(`/api/sequences/${eventType}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: sequence?.name ?? title, productFilter: productFilter || null }),
-    })
-    const updated = await res.json()
-    setSequence(updated)
-    setSavingFilter(false)
+    try {
+      const res = await fetch(`/api/sequences/${eventType}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: sequence?.name ?? title, productFilter: productFilter || null }),
+      })
+      if (!res.ok) {
+        alert('Erro ao salvar filtro de produtos.')
+        return
+      }
+      const updated = await res.json()
+      setSequence(updated)
+    } catch {
+      alert('Erro de rede ao salvar filtro de produtos.')
+    } finally {
+      setSavingFilter(false)
+    }
   }
 
   async function handleSaveUpsell() {
     setSavingUpsell(true)
-    const res = await fetch(`/api/sequences/${eventType}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: sequence?.name ?? title,
-        upsellMessage: upsellMessage || null,
-        upsellDelayMinutes,
-      }),
-    })
-    const updated = await res.json()
-    setSequence(updated)
-    setSavingUpsell(false)
+    try {
+      const res = await fetch(`/api/sequences/${eventType}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: sequence?.name ?? title,
+          upsellMessage: upsellMessage || null,
+          upsellDelayMinutes,
+        }),
+      })
+      if (!res.ok) {
+        alert('Erro ao salvar mensagem de upsell.')
+        return
+      }
+      const updated = await res.json()
+      setSequence(updated)
+    } catch {
+      alert('Erro de rede ao salvar upsell.')
+    } finally {
+      setSavingUpsell(false)
+    }
   }
 
   async function handleSaveMessage() {
@@ -365,6 +391,11 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          alert(`Erro ao salvar mensagem: ${errData.error || 'Falha na resposta do servidor'}`)
+          return
+        }
         const updated = await res.json()
         setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
       } else {
@@ -373,6 +404,11 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          alert(`Erro ao criar mensagem: ${errData.error || 'Falha na resposta do servidor'}`)
+          return
+        }
         const created = await res.json()
         setMessages((prev) => [...prev, created])
       }
@@ -380,24 +416,42 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
       setDialogOpen(false)
       setEditingMessage(null)
       setForm(emptyForm)
+    } catch {
+      alert('Erro de conexão ao salvar mensagem.')
     } finally {
       setSaving(false)
     }
   }
 
   async function handleDelete(id: number) {
-    await fetch(`/api/sequences/${eventType}/messages/${id}`, { method: 'DELETE' })
-    setMessages((prev) => prev.filter((m) => m.id !== id))
+    try {
+      const res = await fetch(`/api/sequences/${eventType}/messages/${id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        alert('Erro ao excluir mensagem no servidor.')
+        return
+      }
+      setMessages((prev) => prev.filter((m) => m.id !== id))
+    } catch {
+      alert('Erro de conexão ao excluir mensagem.')
+    }
   }
 
   async function handleToggleMessage(id: number, active: boolean) {
-    const res = await fetch(`/api/sequences/${eventType}/messages/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isActive: active }),
-    })
-    const updated = await res.json()
-    setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
+    try {
+      const res = await fetch(`/api/sequences/${eventType}/messages/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: active }),
+      })
+      if (!res.ok) {
+        alert('Erro ao alterar status da mensagem.')
+        return
+      }
+      const updated = await res.json()
+      setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
+    } catch {
+      alert('Erro de conexão ao alterar status da mensagem.')
+    }
   }
 
   function openEdit(msg: Message) {

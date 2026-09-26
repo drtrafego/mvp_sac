@@ -238,17 +238,27 @@ function EquipeSection() {
 
   async function handleRemove(id: number) {
     if (!confirm('Remover este membro?')) return
-    await fetch(`/api/members/${id}`, { method: 'DELETE' })
-    setData(prev => prev ? { ...prev, members: prev.members.filter(m => m.id !== id) } : prev)
+    const res = await fetch(`/api/members/${id}`, { method: 'DELETE' })
+    if (res.ok) {
+      setData(prev => prev ? { ...prev, members: prev.members.filter(m => m.id !== id) } : prev)
+    } else {
+      const json = await res.json().catch(() => ({}))
+      setError(json.error ?? 'Falha ao remover membro.')
+    }
   }
 
   async function handleRoleChange(id: number, role: string) {
-    await fetch(`/api/members/${id}`, {
+    const res = await fetch(`/api/members/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role }),
     })
-    setData(prev => prev ? { ...prev, members: prev.members.map(m => m.id === id ? { ...m, role } : m) } : prev)
+    if (res.ok) {
+      setData(prev => prev ? { ...prev, members: prev.members.map(m => m.id === id ? { ...m, role } : m) } : prev)
+    } else {
+      const json = await res.json().catch(() => ({}))
+      setError(json.error ?? 'Falha ao alterar função do membro.')
+    }
   }
 
   return (
@@ -975,16 +985,29 @@ export default function ConfiguracoesPage() {
     setForm(f => ({ ...f, [key]: value }))
   }
 
+  const [saveError, setSaveError] = useState<string | null>(null)
+
   async function handleSave() {
     setSaving(true)
-    await fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    })
-    setSaving(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    setSaveError(null)
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      if (res.ok) {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2500)
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        setSaveError(errData.error || 'Falha ao salvar as configurações.')
+      }
+    } catch {
+      setSaveError('Erro de conexão ao salvar as configurações.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -1621,11 +1644,16 @@ export default function ConfiguracoesPage() {
         </div>
       </section>
 
-      <div className="pt-2">
-        <Button onClick={handleSave} disabled={saving} className="focus-ring flex h-11 items-center gap-2 bg-brand-solid text-on-accent lg:h-9">
+      <div className="pt-2 flex items-center gap-3">
+        <Button onClick={handleSave} disabled={saving} className="focus-ring flex h-11 items-center gap-2 bg-brand-solid text-on-accent lg:h-9 cursor-pointer">
           <Save size={15} />
-          {saving ? 'Salvando...' : saved ? 'Salvo!' : 'Salvar Configurações'}
+          {saving ? 'Salvando...' : saved ? 'Salvo com Sucesso!' : 'Salvar Configurações'}
         </Button>
+        {saveError && (
+          <p className="text-micro text-rose-400 font-medium animate-in fade-in duration-200">
+            ⚠️ {saveError}
+          </p>
+        )}
       </div>
     </div>
   )

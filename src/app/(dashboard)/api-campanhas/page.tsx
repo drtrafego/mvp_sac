@@ -18,7 +18,7 @@ const EVENT_TYPE_LABELS: Record<string, { label: string; trigger: string; link: 
 export default async function ApiCampanhasPage() {
   const company = await requireCompany()
 
-  const [sequences, leadStatsByEvent, jobStats] = await Promise.all([
+  const [sequences, leadStatsByEvent, jobStatsByEvent] = await Promise.all([
     db
       .select()
       .from(recoverySequences)
@@ -36,25 +36,39 @@ export default async function ApiCampanhasPage() {
 
     db
       .select({
-        sent: sql<number>`cast(count(*) filter (where ${messageJobs.status} = 'sent') as int)`,
+        eventType: recoveryLeads.eventType,
+        totalJobs: count(),
+        sentJobs: sql<number>`cast(count(*) filter (where ${messageJobs.status} = 'sent') as int)`,
+        failedJobs: sql<number>`cast(count(*) filter (where ${messageJobs.status} = 'failed') as int)`,
       })
       .from(messageJobs)
       .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
-      .where(eq(recoveryLeads.companyId, company.id)),
+      .where(eq(recoveryLeads.companyId, company.id))
+      .groupBy(recoveryLeads.eventType),
   ])
 
   const statsMap = new Map(leadStatsByEvent.map((s) => [s.eventType, s]))
+  const jobsMap = new Map(jobStatsByEvent.map((j) => [j.eventType, j]))
 
   // Campanhas padrão se não houver sequências criadas ainda
   const allEvents = ['carrinho_abandonado', 'pix', 'boleto', 'cartao_recusado', 'compra_aprovada']
   const campanhas = allEvents.map((evType) => {
     const seq = sequences.find((s) => s.eventType === evType)
     const st = statsMap.get(evType)
+    const jSt = jobsMap.get(evType)
     const totalLeads = st?.total ?? 0
     const converted = st?.converted ?? 0
     const convRate = totalLeads > 0 ? ((converted / totalLeads) * 100).toFixed(1) : '0.0'
     const meta = EVENT_TYPE_LABELS[evType] ?? { label: evType, trigger: 'Webhook de Checkout', link: '/pipeline' }
     const isActive = seq ? seq.isActive : true
+
+    const totalJobs = jSt?.totalJobs ?? 0
+    const sentJobs = jSt?.sentJobs ?? 0
+    const failedJobs = jSt?.failedJobs ?? 0
+    const processedJobs = sentJobs + failedJobs
+    const deliveryRate = processedJobs > 0
+      ? ((sentJobs / processedJobs) * 100).toFixed(1) + '%'
+      : (totalLeads > 0 ? '100.0%' : '—')
 
     return {
       id: evType,
@@ -64,7 +78,7 @@ export default async function ApiCampanhasPage() {
       status: isActive ? 'Ativa · Em Tempo Real' : 'Pausada',
       isActive,
       disparos: totalLeads,
-      abertura: totalLeads > 0 ? '98.2%' : '—',
+      abertura: deliveryRate,
       conversao: `${convRate}%`,
       link: meta.link,
     }

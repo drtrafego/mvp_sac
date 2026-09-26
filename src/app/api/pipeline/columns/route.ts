@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { settings } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { settings, recoveryLeads } from '@/lib/db/schema'
+import { eq, and } from 'drizzle-orm'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,10 +32,20 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { columns } = body
+    const { columns, migrateFromColumn, migrateToColumn } = body
 
     if (!Array.isArray(columns)) {
       return NextResponse.json({ error: 'Colunas inválidas' }, { status: 400 })
+    }
+
+    if (migrateFromColumn && migrateToColumn) {
+      await db
+        .update(recoveryLeads)
+        .set({
+          status: migrateToColumn,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(recoveryLeads.companyId, company.id), eq(recoveryLeads.status, migrateFromColumn)))
     }
 
     await db

@@ -264,8 +264,33 @@ export function ConversationList({
   }, [refresh, sourceFilter])
 
   useEffect(() => {
-    const t = setInterval(() => fetchPage({ merge: true }), 15_000)
-    return () => clearInterval(t)
+    let timer: NodeJS.Timeout | null = null
+
+    const startPolling = () => {
+      if (timer) clearInterval(timer)
+      timer = setInterval(() => {
+        if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') {
+          fetchPage({ merge: true })
+        }
+      }, 15_000)
+    }
+
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchPage({ merge: true })
+      }
+    }
+
+    startPolling()
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility)
+    }
+    return () => {
+      if (timer) clearInterval(timer)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility)
+      }
+    }
   }, [fetchPage])
 
   // Contagem por aba: vem de /api/inbox/counts (COUNT real no banco, empresa
@@ -323,8 +348,33 @@ export function ConversationList({
 
   useEffect(() => {
     fetchCounts() // eslint-disable-line react-hooks/set-state-in-effect -- fetch assíncrono, setState só corre depois do await, não durante o corpo do effect
-    const t = setInterval(fetchCounts, 15_000)
-    return () => clearInterval(t)
+    let timer: NodeJS.Timeout | null = null
+
+    const startPolling = () => {
+      if (timer) clearInterval(timer)
+      timer = setInterval(() => {
+        if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') {
+          fetchCounts()
+        }
+      }, 15_000)
+    }
+
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchCounts()
+      }
+    }
+
+    startPolling()
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility)
+    }
+    return () => {
+      if (timer) clearInterval(timer)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility)
+      }
+    }
   }, [fetchCounts])
 
   // Troca de aba principal: sair de "Mineração" limpa o sub-filtro de canal

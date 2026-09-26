@@ -267,18 +267,25 @@ export function KanbanBoard({
   const [editStageColor, setEditStageColor] = useState('#3987e5')
 
   // Salvar etapas no banco e localStorage
-  const persistStages = useCallback(async (newStages: KanbanStage[]) => {
+  const persistStages = useCallback(async (newStages: KanbanStage[], migrateFromColumn?: string, migrateToColumn?: string) => {
     setStages(newStages)
     try {
       localStorage.setItem(`mvp_sac_pipeline_stages_${companySlug}`, JSON.stringify(newStages))
     } catch {}
 
     try {
-      await fetch('/api/pipeline/columns', {
+      const res = await fetch('/api/pipeline/columns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ columns: newStages }),
+        body: JSON.stringify({
+          columns: newStages,
+          migrateFromColumn,
+          migrateToColumn,
+        }),
       })
+      if (!res.ok) {
+        console.error('Falha ao salvar colunas na API')
+      }
     } catch (err) {
       console.error('Erro ao persistir colunas na API:', err)
     }
@@ -363,7 +370,7 @@ export function KanbanBoard({
     )
 
     const newStages = stages.filter(s => s.id !== stageId)
-    persistStages(newStages)
+    persistStages(newStages, stageId, fallbackStageId)
     setSavedToast(`Etapa excluída. Leads movidos para a coluna inicial.`)
     setTimeout(() => setSavedToast(null), 3000)
   }
@@ -414,18 +421,31 @@ export function KanbanBoard({
   const handleDrop = async (newStage: string) => {
     if (draggedId === null) return
 
+    const previousLeads = leads
+    const targetLead = leads.find(l => l.id === draggedId)
+    if (!targetLead || targetLead.stage === newStage) {
+      setDraggedId(null)
+      return
+    }
+
     setLeads((prev) =>
       prev.map((l) => (l.id === draggedId ? { ...l, stage: newStage } : l))
     )
 
     try {
-      await fetch(`/api/pipeline/${draggedId}`, {
+      const res = await fetch(`/api/pipeline/${draggedId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stage: newStage }),
       })
+      if (!res.ok) {
+        setLeads(previousLeads)
+        alert('Erro ao atualizar etapa do lead. Alteração revertida.')
+      }
     } catch (err) {
       console.error('Erro ao mover lead:', err)
+      setLeads(previousLeads)
+      alert('Erro de conexão ao mover lead. Alteração revertida.')
     } finally {
       setDraggedId(null)
     }
@@ -477,10 +497,11 @@ export function KanbanBoard({
       responsibleAgent: modalResponsibleAgent.trim() || null,
     }
 
+    const previousLeads = leads
     setLeads((prev) => prev.map((l) => (l.id === selectedLead.id ? updatedLead : l)))
 
     try {
-      await fetch(`/api/pipeline/${selectedLead.id}`, {
+      const res = await fetch(`/api/pipeline/${selectedLead.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -496,12 +517,23 @@ export function KanbanBoard({
           responsibleAgent: updatedLead.responsibleAgent,
         }),
       })
+
+      if (!res.ok) {
+        setLeads(previousLeads)
+        const errData = await res.json().catch(() => ({}))
+        alert(`Erro ao salvar lead: ${errData.error || 'Falha na requisição'}`)
+        setIsSaving(false)
+        return
+      }
     } catch (err) {
       console.error('Erro ao salvar lead:', err)
-    } finally {
+      setLeads(previousLeads)
+      alert('Erro de rede ao salvar lead.')
       setIsSaving(false)
+      return
     }
 
+    setIsSaving(false)
     const name = updatedLead.name || 'Contato'
     setSelectedLead(null)
     setSavedToast(`Card de ${name} atualizado com sucesso!`)
