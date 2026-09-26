@@ -45,6 +45,24 @@ let _migrationPromise: Promise<void> | null = null
 //
 // casaldotrafego tem leads/mensagens migrados mas a EMPRESA em si não é
 // apagada (mesmo comportamento de sempre, nunca mexemos nisso).
+//
+// LIMITAÇÃO conhecida 1 (achado do QA, 26/09/2026): safe_to_delete_gastao só
+// valida a contagem do lado gastao-matos (before_counts / moved_*_gastao).
+// Não é destrutivo, porque casaldotrafego nunca é apagada aqui, mas a
+// garantia de "nenhum DELETE sem transferência confirmada" cobre só
+// gastao-matos, não casaldotrafego — não afirmar cobertura completa dos dois
+// lados.
+//
+// LIMITAÇÃO conhecida 2 (achado do QA, 26/09/2026): companies.id tem
+// ON DELETE CASCADE a partir de outras ~7 tabelas além de recovery_leads e
+// whatsapp_messages (syncCursors, gramadoReservations, recoverySequences,
+// instagramCommentAutomations, instagramCommentLogs, agendaBlockedDates,
+// metaConversionEvents — ver schema.ts). Se gastao-matos tiver linha em
+// qualquer uma delas, o DELETE FROM companies cascateia e apaga sem ter sido
+// migrado. NÃO é regressão desta função (o código antigo já tinha o mesmo
+// buraco) — só não afirmar que "nenhum DELETE sem transferência confirmada"
+// é garantia absoluta: ela cobre leads e mensagens, não as demais tabelas
+// com cascade.
 export async function consolidateAutonomiaCompany(client: any): Promise<void> {
   try {
     const [consolidation] = await client`
@@ -615,21 +633,24 @@ export function ensureSchema(client: any): Promise<void> {
         // mais (o novo já cobre o mesmo par channel+external_id, só que
         // também escopado por empresa) e ficaria como índice morto.
         //
-        // DROP/CREATE ...CONCURRENTLY (26/09/2026, achado A07 da auditoria
-        // Codex/gpt-6-astra): a Vercel sobe várias instâncias serverless em
-        // paralelo, e cada cold start passa por aqui. Sem CONCURRENTLY, um
-        // DROP/CREATE INDEX comum toma lock que bloqueia escrita na tabela
-        // durante a construção; com tabela grande em produção isso trava
-        // requisição de verdade se duas instâncias colidirem no mesmo
-        // instante. CONCURRENTLY exige rodar FORA de bloco de transação, o
-        // que já é o caso aqui (cada `client\`...\`` é um statement autônomo,
-        // sem BEGIN em volta). O try/catch em volta já cobre o caso de duas
-        // instâncias colidindo mesmo assim (erro vira log, não derruba a
-        // requisição).
+        // CONCURRENTLY foi tentado em 26/09/2026 (achado A07 da auditoria
+        // Codex/gpt-6-astra) pra reduzir lock entre instâncias serverless
+        // concorrentes, e revertido no mesmo dia (achado do QA sobre o
+        // próprio fix A07): se a conexão cair no meio de um CREATE INDEX
+        // CONCURRENTLY (plausível em serverless real: timeout, cold start
+        // reciclado, Neon HTTP cortando a conexão), o índice fica no
+        // catálogo com indisvalid=false (inválido, inútil) e o
+        // "IF NOT EXISTS" do próximo cold start só olha se o NOME existe,
+        // não se é válido — o índice fica quebrado PRA SEMPRE, em silêncio,
+        // só um NOTICE que ninguém vê. Este índice específico protege
+        // contra mensagem de WhatsApp duplicada: se quebrar sem avisar,
+        // a proteção contra duplicata desliga sem ninguém saber. Sem
+        // CONCURRENTLY o DROP/CREATE toma lock breve, mas é atômico e não
+        // tem esse modo de falha silenciosa.
         try {
-          await client`DROP INDEX CONCURRENTLY IF EXISTS whatsapp_messages_inbound_external_id_unique`
+          await client`DROP INDEX IF EXISTS whatsapp_messages_inbound_external_id_unique`
           await client`
-            CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS whatsapp_messages_inbound_company_channel_external_id_unique
+            CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_messages_inbound_company_channel_external_id_unique
             ON whatsapp_messages (company_id, channel, external_id)
             WHERE external_id IS NOT NULL AND direction = 'inbound'
           `
@@ -661,19 +682,24 @@ export function ensureSchema(client: any): Promise<void> {
         // produção; leads de VENDA (hotmart etc.) não entram nessa condição
         // e não são afetados.
         //
-        // DROP/CREATE ...CONCURRENTLY (26/09/2026, mesmo motivo e mesma
-        // ressalva do bloco de whatsapp_messages logo acima: reduz o lock
-        // contra corrida entre instâncias serverless simultâneas). Nota pra
-        // quem mexer aqui de novo: este DROP+CREATE roda a CADA cold start
-        // (não só na primeira vez), porque o DROP é incondicional; ficou
-        // assim de propósito nesta rodada (mudar isso é risco à parte, fora
-        // do escopo do achado A07) — considerar no futuro checar antes se o
-        // índice já existe com a definição certa, pra não reconstruir toda
-        // vez.
+        // CONCURRENTLY foi tentado em 26/09/2026 (achado A07) e revertido no
+        // mesmo dia (achado do QA sobre o próprio fix A07, mesmo motivo do
+        // bloco de whatsapp_messages logo acima): se a conexão cair no meio
+        // de um CREATE INDEX CONCURRENTLY, o índice fica inválido no
+        // catálogo em silêncio. Este bloco em particular usa o MESMO nome
+        // no DROP e no CREATE, então cada cold start futuro já tenta
+        // recriá-lo (se autocura sozinho), mas ainda assim fica uma janela
+        // com o índice quebrado até o próximo cold start passar por aqui —
+        // sem CONCURRENTLY não existe essa janela. Nota pra quem mexer aqui
+        // de novo: este DROP+CREATE roda a CADA cold start (não só na
+        // primeira vez), porque o DROP é incondicional; ficou assim de
+        // propósito (mudar isso é risco à parte, fora de escopo) —
+        // considerar no futuro checar antes se o índice já existe com a
+        // definição certa, pra não reconstruir toda vez.
         try {
-          await client`DROP INDEX CONCURRENTLY IF EXISTS recovery_leads_chat_company_phone_unique`
+          await client`DROP INDEX IF EXISTS recovery_leads_chat_company_phone_unique`
           await client`
-            CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS recovery_leads_chat_company_phone_unique
+            CREATE UNIQUE INDEX IF NOT EXISTS recovery_leads_chat_company_phone_unique
             ON recovery_leads (company_id, phone)
             WHERE platform IN ('instagram', 'sac', 'hermes')
           `
