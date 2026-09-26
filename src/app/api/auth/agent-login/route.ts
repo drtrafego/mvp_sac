@@ -44,16 +44,27 @@ export async function GET(request: NextRequest) {
   const destination = redirectTo.startsWith('/') && !redirectTo.startsWith('//') ? redirectTo : '/'
   const response = NextResponse.redirect(new URL(destination, request.url))
 
-  const sessionCookie = await createAgentSessionCookie(
-    {
-      id: 'agent-ia-casal-admin-id',
-      primaryEmail: 'agente.ia@casaldotrafego.com',
-      displayName: 'Agente IA (Admin)',
-      isAdmin: true,
-      companyId: DEFAULT_COMPANY_ID,
-    },
-    SESSION_TTL_MS
-  )
+  let sessionCookie: string
+  try {
+    sessionCookie = await createAgentSessionCookie(
+      {
+        id: 'agent-ia-casal-admin-id',
+        primaryEmail: 'agente.ia@casaldotrafego.com',
+        displayName: 'Agente IA (Admin)',
+        isAdmin: true,
+        companyId: DEFAULT_COMPANY_ID,
+      },
+      SESSION_TTL_MS
+    )
+  } catch {
+    // getSecret() falha fechado quando AGENT_SESSION_SECRET/STACK_SECRET_SERVER_KEY
+    // não estão configurados (ver src/lib/agent-session.ts). Sem isso, login de
+    // agente fica desativado, nunca aceito com um segredo previsível.
+    return NextResponse.json(
+      { error: 'Login de agente desativado: AGENT_SESSION_SECRET (ou STACK_SECRET_SERVER_KEY) não configurado.' },
+      { status: 503 }
+    )
+  }
 
   response.cookies.set('agent_auth_session', sessionCookie, {
     httpOnly: true,

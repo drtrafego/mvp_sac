@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
+import { LeadTags } from './LeadTags'
 import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill, EmailEngagementBadge } from './ChannelBadge'
 import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { LeadTags } from './LeadTags'
@@ -596,6 +597,9 @@ export function ChatWindow({
               </p>
             )}
           </div>
+
+          {/* Tags do lead (25/09/2026) — a tag "pessoa" pausa o bot, ver LeadTags.tsx */}
+          <LeadTags leadId={lead.id} botPaused={botPaused} onBotPausedChange={setBotPaused} />
 
           {/* Consultas reais espelhadas da agenda nativa do Dr. Lucas */}
           {appointments.length > 0 && (

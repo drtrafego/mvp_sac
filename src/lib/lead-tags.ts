@@ -2,12 +2,16 @@
  * Utilitários para normalização e validação de tags de leads no SAC.
  */
 
+export const PESSOA_TAG = 'pessoa'
+export const BOT_PAUSED_BY_TAG_PESSOA = 'tag:pessoa'
+export const MAX_TAG_LENGTH = 50
+
 export const ALLOWED_TAG_SCOPES = ['whatsapp', 'instagram', 'email', 'mineracao'] as const
 export type ScopeChannel = (typeof ALLOWED_TAG_SCOPES)[number] | null | undefined
 
 /**
- * Normaliza o texto de uma tag: remove espaços nas pontas, substitui múltiplos espaços por um só
- * e converte para minúsculas.
+ * Normaliza o texto de uma tag: remove espaços nas pontas, substitui múltiplos espaços por um só,
+ * converte para minúsculas e limita a 50 caracteres.
  */
 export function normalizeTag(rawTag: string | null | undefined): string {
   if (!rawTag) return ''
@@ -15,6 +19,7 @@ export function normalizeTag(rawTag: string | null | undefined): string {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ')
+    .slice(0, MAX_TAG_LENGTH)
 }
 
 /**

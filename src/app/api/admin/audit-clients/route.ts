@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeEqual } from 'node:crypto'
+import { timingSafeEqual, randomBytes } from 'node:crypto'
 import { db } from '@/lib/db'
 import { companies, settings, companyMembers, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { eq, sql } from 'drizzle-orm'
@@ -44,7 +44,14 @@ export async function GET(req: NextRequest) {
   const allCompanies = await db.select().from(companies).orderBy(companies.id)
   let allSettings = await db.select().from(settings).orderBy(settings.id)
 
-  // Auto-heal: garante settings e chaves para qualquer empresa que estiver sem
+  // Auto-heal: garante settings e chaves para qualquer empresa que estiver sem.
+  // Chave gerada com randomBytes (entropia real), nunca `slug+id` concatenado:
+  // esse formato antigo era recalculável por quem soubesse o slug e o id
+  // numérico da empresa, nenhum dos dois secreto (mesmo achado de auditoria
+  // de segurança P0, 26/09/2026, que corrigiu o gerador md5 de src/lib/db/index.ts).
+  const genAgentKey = (agent: 'bia' | 'luana' | 'renato', slug: string) =>
+    `sac_${agent}_${slug}_${randomBytes(24).toString('hex')}`
+
   for (const comp of allCompanies) {
     const s = allSettings.find(set => set.companyId === comp.id)
     if (!s) {
@@ -52,18 +59,18 @@ export async function GET(req: NextRequest) {
         .insert(settings)
         .values({
           companyId: comp.id,
-          agentBiaApiKey: `sac_bia_${comp.slug}_${comp.id}bia`,
-          agentLuanaApiKey: `sac_luana_${comp.slug}_${comp.id}luana`,
-          agentRenatoApiKey: `sac_renato_${comp.slug}_${comp.id}renato`,
+          agentBiaApiKey: genAgentKey('bia', comp.slug),
+          agentLuanaApiKey: genAgentKey('luana', comp.slug),
+          agentRenatoApiKey: genAgentKey('renato', comp.slug),
         })
         .onConflictDoNothing()
     } else if (!s.agentBiaApiKey || !s.agentLuanaApiKey || !s.agentRenatoApiKey) {
       await db
         .update(settings)
         .set({
-          agentBiaApiKey: s.agentBiaApiKey || `sac_bia_${comp.slug}_${comp.id}bia`,
-          agentLuanaApiKey: s.agentLuanaApiKey || `sac_luana_${comp.slug}_${comp.id}luana`,
-          agentRenatoApiKey: s.agentRenatoApiKey || `sac_renato_${comp.slug}_${comp.id}renato`,
+          agentBiaApiKey: s.agentBiaApiKey || genAgentKey('bia', comp.slug),
+          agentLuanaApiKey: s.agentLuanaApiKey || genAgentKey('luana', comp.slug),
+          agentRenatoApiKey: s.agentRenatoApiKey || genAgentKey('renato', comp.slug),
         })
         .where(eq(settings.companyId, comp.id))
     }

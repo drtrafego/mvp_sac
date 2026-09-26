@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { companies, settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
-import { mask } from '@/lib/settings-mask'
+import { maskSettingsRow } from '@/lib/settings-mask'
 import { parseAgentDisplayName } from '@/lib/agent-display-name'
 
 /**
@@ -72,33 +72,19 @@ export async function GET(): Promise<NextResponse> {
   }
 
   return NextResponse.json({
-    ...row,
+    ...maskSettingsRow(row),
     companySlug: company.slug,
     agentDisplayName: company.agentDisplayName ?? '',
     webhookUrlToken,
-    hotmartWebhookToken: mask(row.hotmartWebhookToken),
-    hotmartClientSecret: mask(row.hotmartClientSecret),
-    greennWebhookToken: mask(row.greennWebhookToken),
-    greennApiKey: mask(row.greennApiKey),
-    zoutiWebhookToken: mask(row.zoutiWebhookToken),
-    zoutiApiKey: mask(row.zoutiApiKey),
-    kiwifyWebhookToken: mask(row.kiwifyWebhookToken),
-    metaAccessToken: mask(row.metaAccessToken),
     metaWabaId: row.metaWabaId ?? '',
-    metaAppSecret: mask(row.metaAppSecret),
-    metaAdsAccessToken: mask(row.metaAdsAccessToken),
     metaAdsAccountId: row.metaAdsAccountId ?? '',
     metaPixelId: row.metaPixelId ?? '',
-    uazapiInstanceToken: mask(row.uazapiInstanceToken),
-    brevoApiKey: mask(row.brevoApiKey),
     brevoSenderEmail: row.brevoSenderEmail ?? '',
     brevoSenderName: row.brevoSenderName ?? '',
     instagramUsername: row.instagramUsername ?? '',
     instagramAccountId: row.instagramAccountId ?? '',
-    instagramAccessToken: mask(row.instagramAccessToken),
     instagramVerifyToken: row.instagramVerifyToken ?? '',
     instagramPageId: row.instagramPageId ?? '',
-    instagramAppSecret: mask(row.instagramAppSecret),
     sidebarConfig: row.sidebarConfig ?? null,
   })
 }
@@ -163,7 +149,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       })
       .where(eq(settings.id, existing.id))
       .returning()
-    return NextResponse.json({ ...updated, agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
+    return NextResponse.json({ ...maskSettingsRow(updated), agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
   }
 
   const [created] = await db
@@ -204,5 +190,5 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       updatedAt: new Date(),
     })
     .returning()
-  return NextResponse.json({ ...created, agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
+  return NextResponse.json({ ...maskSettingsRow(created), agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
 }

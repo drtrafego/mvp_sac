@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
+import { randomBytes } from 'crypto'
 import * as schema from './schema'
 import { NINA_SOUL } from '../souls/nina'
 
@@ -7,6 +8,160 @@ type Db = ReturnType<typeof drizzle<typeof schema>>
 
 let _db: Db | undefined
 let _migrationPromise: Promise<void> | null = null
+
+// ─── Consolidação AutonomIA: transferência + delete ATÔMICOS ─────────────────
+// (26/09/2026, achado A07 P0 da auditoria Codex/gpt-6-astra). Antes, isto
+// vivia dentro do Promise.allSettled de ensureSchema como 5 statements
+// separados (INSERT autonomia, UPDATE recovery_leads, UPDATE
+// whatsapp_messages, 3x DELETE de gastao-matos): allSettled dispara TODAS as
+// queries do array em PARALELO, sem ordem garantida entre elas nem rollback
+// conjunto (cada `client\`...\`` já executa a request assim que é chamado,
+// antes mesmo do allSettled esperar), então o DELETE em cascata (FKs com
+// ON DELETE CASCADE, ver schema.ts) podia rodar ANTES ou apesar de a
+// transferência ter falhado silenciosamente, apagando lead/mensagem de
+// cliente real que nunca chegou a ser migrado para a AutonomIA.
+//
+// Agora é UMA única query com múltiplos CTEs, extraída em função própria
+// (testável isolada, sem depender do singleton _migrationPromise nem da
+// lista gigante de ALTER TABLE de ensureSchema). Em Postgres uma query única
+// (mesmo com vários CTEs de escrita) roda como uma transação implícita: se
+// qualquer parte falhar, TUDO é revertido, nenhum DELETE acontece sem a
+// transferência ter sido concluída primeiro.
+//
+// Testado com Postgres descartável real (scripts/db-consolidacao-
+// autonomia.test.ts): cenário de sucesso completo, cenário de falha simulada
+// no meio da transferência de mensagens (nada é apagado, rollback total
+// confirmado), e execução repetida (idempotente, nenhuma empresa/lead/
+// mensagem sobra pra mexer na segunda vez).
+//
+// Validação extra (defesa em profundidade, não só a atomicidade da
+// transação): a contagem de leads/mensagens de gastao-matos ANTES
+// (before_counts, contra o snapshot original, que os CTEs de leitura direta
+// nunca veem afetado pelos UPDATEs irmãos porque todos os CTEs de uma mesma
+// query usam o snapshot do início da query) é comparada com a contagem de
+// linhas efetivamente movidas (RETURNING das próprias UPDATEs). Só bate = só
+// então o DELETE de company_members/settings/companies roda; não bater vira
+// log de erro e a origem fica preservada pra a próxima inicialização tentar
+// de novo.
+//
+// casaldotrafego tem leads/mensagens migrados mas a EMPRESA em si não é
+// apagada (mesmo comportamento de sempre, nunca mexemos nisso).
+//
+// LIMITAÇÃO conhecida 1 (achado do QA, 26/09/2026): safe_to_delete_gastao só
+// valida a contagem do lado gastao-matos (before_counts / moved_*_gastao).
+// Não é destrutivo, porque casaldotrafego nunca é apagada aqui, mas a
+// garantia de "nenhum DELETE sem transferência confirmada" cobre só
+// gastao-matos, não casaldotrafego — não afirmar cobertura completa dos dois
+// lados.
+//
+// LIMITAÇÃO conhecida 2 (achado do QA, 26/09/2026): companies.id tem
+// ON DELETE CASCADE a partir de outras ~7 tabelas além de recovery_leads e
+// whatsapp_messages (syncCursors, gramadoReservations, recoverySequences,
+// instagramCommentAutomations, instagramCommentLogs, agendaBlockedDates,
+// metaConversionEvents — ver schema.ts). Se gastao-matos tiver linha em
+// qualquer uma delas, o DELETE FROM companies cascateia e apaga sem ter sido
+// migrado. NÃO é regressão desta função (o código antigo já tinha o mesmo
+// buraco) — só não afirmar que "nenhum DELETE sem transferência confirmada"
+// é garantia absoluta: ela cobre leads e mensagens, não as demais tabelas
+// com cascade.
+export async function consolidateAutonomiaCompany(client: any): Promise<void> {
+  try {
+    const [consolidation] = await client`
+      WITH target_company AS (
+        INSERT INTO companies (name, slug, plan)
+        VALUES ('AutonomIA', 'autonomia', 'pro')
+        ON CONFLICT (slug) DO UPDATE SET slug = companies.slug
+        RETURNING id
+      ),
+      gastao_company AS (
+        SELECT id FROM companies WHERE slug = 'gastao-matos'
+      ),
+      casal_company AS (
+        SELECT id FROM companies WHERE slug = 'casaldotrafego'
+      ),
+      before_counts AS (
+        SELECT
+          (SELECT count(*) FROM recovery_leads WHERE company_id IN (SELECT id FROM gastao_company)) AS gastao_leads_before,
+          (SELECT count(*) FROM whatsapp_messages WHERE company_id IN (SELECT id FROM gastao_company)) AS gastao_messages_before
+      ),
+      moved_leads_gastao AS (
+        UPDATE recovery_leads
+        SET company_id = (SELECT id FROM target_company)
+        WHERE company_id IN (SELECT id FROM gastao_company)
+        RETURNING id
+      ),
+      moved_leads_casal AS (
+        UPDATE recovery_leads
+        SET company_id = (SELECT id FROM target_company)
+        WHERE company_id IN (SELECT id FROM casal_company)
+        RETURNING id
+      ),
+      moved_messages_gastao AS (
+        UPDATE whatsapp_messages
+        SET company_id = (SELECT id FROM target_company)
+        WHERE company_id IN (SELECT id FROM gastao_company)
+        RETURNING id
+      ),
+      moved_messages_casal AS (
+        UPDATE whatsapp_messages
+        SET company_id = (SELECT id FROM target_company)
+        WHERE company_id IN (SELECT id FROM casal_company)
+        RETURNING id
+      ),
+      validated AS (
+        SELECT
+          (SELECT gastao_leads_before FROM before_counts) AS gastao_leads_before,
+          (SELECT count(*) FROM moved_leads_gastao) AS gastao_leads_moved,
+          (SELECT gastao_messages_before FROM before_counts) AS gastao_messages_before,
+          (SELECT count(*) FROM moved_messages_gastao) AS gastao_messages_moved
+      ),
+      safe_to_delete_gastao AS (
+        SELECT (
+          (SELECT gastao_leads_before FROM validated) = (SELECT gastao_leads_moved FROM validated)
+          AND (SELECT gastao_messages_before FROM validated) = (SELECT gastao_messages_moved FROM validated)
+        ) AS ok
+      ),
+      deleted_members AS (
+        DELETE FROM company_members
+        WHERE company_id IN (SELECT id FROM gastao_company)
+          AND (SELECT ok FROM safe_to_delete_gastao) = true
+        RETURNING id
+      ),
+      deleted_settings AS (
+        DELETE FROM settings
+        WHERE company_id IN (SELECT id FROM gastao_company)
+          AND (SELECT ok FROM safe_to_delete_gastao) = true
+        RETURNING id
+      ),
+      deleted_company AS (
+        DELETE FROM companies
+        WHERE id IN (SELECT id FROM gastao_company)
+          AND (SELECT ok FROM safe_to_delete_gastao) = true
+        RETURNING id
+      )
+      SELECT
+        (SELECT ok FROM safe_to_delete_gastao) AS safe_to_delete,
+        (SELECT count(*) FROM moved_leads_gastao) + (SELECT count(*) FROM moved_leads_casal) AS leads_moved_total,
+        (SELECT count(*) FROM moved_messages_gastao) + (SELECT count(*) FROM moved_messages_casal) AS messages_moved_total,
+        (SELECT count(*) FROM deleted_members) AS members_deleted,
+        (SELECT count(*) FROM deleted_settings) AS settings_deleted,
+        (SELECT count(*) FROM deleted_company) AS company_deleted
+    `
+    if (consolidation && consolidation.safe_to_delete === false) {
+      console.error(
+        '[DB Schema Sync Error] Consolidação AutonomIA: a contagem de leads/mensagens transferidos de gastao-matos não bateu com o esperado. ' +
+          'company_members/settings/companies de gastao-matos NÃO foram apagados nesta rodada (dado preservado); vai tentar de novo na próxima inicialização.',
+      )
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(
+      '[DB Schema Sync Error] Falha na consolidação atômica AutonomIA (gastao-matos/casaldotrafego -> autonomia): ' +
+        'nada foi transferido nem apagado nesta rodada, a query inteira foi revertida (rollback automático):',
+      message,
+    )
+  }
+}
 
 export function ensureSchema(client: any): Promise<void> {
   if (!_migrationPromise) {
@@ -131,30 +286,29 @@ export function ensureSchema(client: any): Promise<void> {
           `,
 
           // Centralização das empresas dos Agentes:
-          // 1. Garante que AutonomIA existe
-          client`INSERT INTO companies (name, slug, plan) VALUES ('AutonomIA', 'autonomia', 'pro') ON CONFLICT (slug) DO NOTHING`,
-          // 2. Transfere todos os leads e mensagens de Gastão Matos e Casal do Tráfego para AutonomIA
-          client`
-            UPDATE recovery_leads 
-            SET company_id = (SELECT id FROM companies WHERE slug = 'autonomia' LIMIT 1) 
-            WHERE company_id IN (SELECT id FROM companies WHERE slug = 'gastao-matos' OR slug = 'casaldotrafego')
-          `,
-          client`
-            UPDATE whatsapp_messages 
-            SET company_id = (SELECT id FROM companies WHERE slug = 'autonomia' LIMIT 1) 
-            WHERE company_id IN (SELECT id FROM companies WHERE slug = 'gastao-matos' OR slug = 'casaldotrafego')
-          `,
-          // 3. Remove dependências e apaga definitivamente Gastão Matos (consolidado na AutonomIA)
-          client`DELETE FROM company_members WHERE company_id IN (SELECT id FROM companies WHERE slug = 'gastao-matos')`,
-          client`DELETE FROM settings WHERE company_id IN (SELECT id FROM companies WHERE slug = 'gastao-matos')`,
-          client`DELETE FROM companies WHERE slug = 'gastao-matos'`,
-          // 4. Garante as 5 empresas ativas do sistema: AutonomIA, Dr. Lucas, Gramado Plaza, Isabela Fanini e Amanda Felix
+          // A transferência de leads/mensagens de gastao-matos/casaldotrafego
+          // para autonomia, e o DELETE definitivo de gastao-matos, SAÍRAM
+          // deste array em 26/09/2026 (achado A07, auditoria Codex/gpt-6-astra,
+          // ver bloco atômico logo depois deste Promise.allSettled). Motivo:
+          // Promise.allSettled dispara todas as queries do array em PARALELO,
+          // sem ordem garantida entre elas (cada `client\`...\`` já executa a
+          // request assim que é chamado, antes mesmo do allSettled esperar);
+          // a transferência podia terminar DEPOIS do DELETE em cascata, e uma
+          // falha silenciosa (allSettled não aborta as demais) não impedia o
+          // DELETE de rodar mesmo sem o dado ter sido migrado. Isso apagava
+          // lead/mensagem de cliente real sem nunca ter chegado na AutonomIA.
+          //
+          // Garante as 5 empresas ativas do sistema: AutonomIA, Dr. Lucas, Gramado Plaza, Isabela Fanini e Amanda Felix
+          // (autonomia é criada de novo aqui, redundante com o INSERT ...
+          // ON CONFLICT DO NOTHING de dentro de consolidateAutonomiaCompany
+          // logo abaixo do array — mantido assim de propósito, é idempotente
+          // e sair daqui é risco à toa fora do escopo do achado A07).
           client`INSERT INTO companies (name, slug, plan) VALUES ('AutonomIA', 'autonomia', 'pro') ON CONFLICT (slug) DO NOTHING`,
           client`INSERT INTO companies (name, slug, plan) VALUES ('Gramado Plaza', 'gramado-plaza', 'pro') ON CONFLICT (slug) DO NOTHING`,
           client`INSERT INTO companies (name, slug, plan) VALUES ('Dr. Lucas', 'drlucas', 'pro') ON CONFLICT (slug) DO NOTHING`,
           client`INSERT INTO companies (name, slug, plan) VALUES ('Isabela Fanini', 'isabela-fanini', 'pro') ON CONFLICT (slug) DO NOTHING`,
           client`INSERT INTO companies (name, slug, plan) VALUES ('Amanda Felix', 'amanda', 'pro') ON CONFLICT (slug) DO NOTHING`,
-          // 5. Garante registro em settings para cada empresa
+          // Garante registro em settings para cada empresa
           client`INSERT INTO settings (company_id) SELECT id FROM companies ON CONFLICT (company_id) DO NOTHING`,
 
           // Fase 1 da resposta automática de IA (Nina/AutonomIA, 19/09/2026):
@@ -187,22 +341,6 @@ export function ensureSchema(client: any): Promise<void> {
               SELECT 1 FROM company_members cm 
               WHERE cm.company_id = c.id AND cm.email = 'dr.trafego@gmail.com'
             )
-          `,
-
-          // Garante chaves de API individuais por agente para cada empresa
-          client`
-            UPDATE settings s
-            SET 
-              agent_bia_api_key = COALESCE(s.agent_bia_api_key, 'sac_bia_' || c.slug || '_' || md5(c.id::text || '_bia')),
-              agent_luana_api_key = COALESCE(s.agent_luana_api_key, 'sac_luana_' || c.slug || '_' || md5(c.id::text || '_luana')),
-              agent_renato_api_key = COALESCE(s.agent_renato_api_key, 'sac_renato_' || c.slug || '_' || md5(c.id::text || '_renato'))
-            FROM companies c
-            WHERE s.company_id = c.id
-          `,
-          client`
-            UPDATE companies
-            SET invite_token = COALESCE(invite_token, 'sac_company_' || slug || '_' || md5(id::text || '_token'))
-            WHERE invite_token IS NULL
           `,
 
           // ─── Instagram Comment-to-DM (Automações e Logs) ───────────────────────
@@ -439,6 +577,109 @@ export function ensureSchema(client: any): Promise<void> {
           `,
         ])
 
+        // ─── Credenciais de agente com entropia real (26/09/2026, achado de ────
+        // auditoria de segurança P0, reproduzido) ───────────────────────────────
+        // As duas UPDATEs que geravam agent_bia_api_key / agent_luana_api_key /
+        // agent_renato_api_key / invite_token por md5(slug + id numérico) foram
+        // REMOVIDAS do Promise.allSettled acima: quem soubesse o slug e o id da
+        // empresa (nenhum dos dois é secreto) recalculava a credencial sozinho,
+        // sem entropia privada nenhuma. A geração agora usa crypto.randomBytes
+        // (Node), por isso roda fora de SQL puro, uma empresa de cada vez, só
+        // para quem ainda está NULL — igual ao padrão de fora do
+        // Promise.allSettled já usado abaixo (falha loga em vez de sumir).
+        // Empresa que já tinha chave md5 antiga (provavelmente todas as de
+        // produção hoje) CONTINUA com ela até ser rotacionada: ver
+        // POST /api/admin/companies/[id]/rotate-key (uma empresa por vez, nunca
+        // em massa sem autorização explícita).
+        try {
+          type PendingAgentKeyRow = {
+            company_id: number
+            slug: string
+            agent_bia_api_key: string | null
+            agent_luana_api_key: string | null
+            agent_renato_api_key: string | null
+          }
+          const pendingKeys = (await client`
+            SELECT s.company_id, c.slug,
+                   s.agent_bia_api_key, s.agent_luana_api_key, s.agent_renato_api_key
+            FROM settings s
+            JOIN companies c ON c.id = s.company_id
+            WHERE s.agent_bia_api_key IS NULL
+               OR s.agent_luana_api_key IS NULL
+               OR s.agent_renato_api_key IS NULL
+          `) as PendingAgentKeyRow[]
+          for (const row of pendingKeys) {
+            if (!row.agent_bia_api_key) {
+              await client`
+                UPDATE settings SET agent_bia_api_key = ${'sac_bia_' + row.slug + '_' + randomBytes(24).toString('hex')}
+                WHERE company_id = ${row.company_id} AND agent_bia_api_key IS NULL
+              `
+            }
+            if (!row.agent_luana_api_key) {
+              await client`
+                UPDATE settings SET agent_luana_api_key = ${'sac_luana_' + row.slug + '_' + randomBytes(24).toString('hex')}
+                WHERE company_id = ${row.company_id} AND agent_luana_api_key IS NULL
+              `
+            }
+            if (!row.agent_renato_api_key) {
+              await client`
+                UPDATE settings SET agent_renato_api_key = ${'sac_renato_' + row.slug + '_' + randomBytes(24).toString('hex')}
+                WHERE company_id = ${row.company_id} AND agent_renato_api_key IS NULL
+              `
+            }
+          }
+
+          type PendingInviteRow = { id: number; slug: string }
+          const pendingInvites = (await client`
+            SELECT id, slug FROM companies WHERE invite_token IS NULL
+          `) as PendingInviteRow[]
+          for (const row of pendingInvites) {
+            await client`
+              UPDATE companies SET invite_token = ${'sac_company_' + row.slug + '_' + randomBytes(24).toString('hex')}
+              WHERE id = ${row.id} AND invite_token IS NULL
+            `
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[DB Schema Sync Error] Falha ao gerar credenciais de agente com entropia real:', message)
+        }
+
+        // Consolidação AutonomIA (transferência + delete de gastao-matos):
+        // função própria, ver comentário completo em consolidateAutonomiaCompany
+        // no topo deste arquivo (achado A07, 26/09/2026).
+        await consolidateAutonomiaCompany(client)
+
+        // ─── Tags livres de lead (25/09/2026) ──────────────────────────────
+        // Ver comentário completo em src/lib/db/schema.ts (leadTags) e no
+        // contrato da rota src/app/api/leads/[leadId]/tags/route.ts.
+        // Fora do Promise.allSettled acima de propósito (QA 25/09/2026, item
+        // médio): aquele array nunca inspeciona o resultado de cada
+        // statement, então uma falha ali some em silêncio — mesmo padrão já
+        // usado abaixo para os índices de dedup de whatsapp_messages e
+        // recovery_leads.
+        try {
+          await client`
+            CREATE TABLE IF NOT EXISTS lead_tags (
+              id SERIAL PRIMARY KEY,
+              lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
+              tag TEXT NOT NULL,
+              created_at TIMESTAMP DEFAULT NOW(),
+              created_by TEXT
+            )
+          `
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS lead_tags_lead_tag_unique
+            ON lead_tags (lead_id, tag)
+          `
+          await client`
+            CREATE INDEX IF NOT EXISTS lead_tags_tag_idx
+            ON lead_tags (tag)
+          `
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[DB Schema Sync Error] Falha ao criar a tabela lead_tags ou seus índices:', message)
+        }
+
         // ─── Idempotência contra reentrega de webhook da Meta (20/09/2026, ────
         // ampliado 21/09/2026 pra incluir company_id, achado do QA 2ª rodada)
         // Fora do Promise.allSettled acima de propósito: aquele array nunca
@@ -455,6 +696,21 @@ export function ensureSchema(client: any): Promise<void> {
         // novo não apaga o antigo sozinho, e mantê-lo não protegeria nada a
         // mais (o novo já cobre o mesmo par channel+external_id, só que
         // também escopado por empresa) e ficaria como índice morto.
+        //
+        // CONCURRENTLY foi tentado em 26/09/2026 (achado A07 da auditoria
+        // Codex/gpt-6-astra) pra reduzir lock entre instâncias serverless
+        // concorrentes, e revertido no mesmo dia (achado do QA sobre o
+        // próprio fix A07): se a conexão cair no meio de um CREATE INDEX
+        // CONCURRENTLY (plausível em serverless real: timeout, cold start
+        // reciclado, Neon HTTP cortando a conexão), o índice fica no
+        // catálogo com indisvalid=false (inválido, inútil) e o
+        // "IF NOT EXISTS" do próximo cold start só olha se o NOME existe,
+        // não se é válido — o índice fica quebrado PRA SEMPRE, em silêncio,
+        // só um NOTICE que ninguém vê. Este índice específico protege
+        // contra mensagem de WhatsApp duplicada: se quebrar sem avisar,
+        // a proteção contra duplicata desliga sem ninguém saber. Sem
+        // CONCURRENTLY o DROP/CREATE toma lock breve, mas é atômico e não
+        // tem esse modo de falha silenciosa.
         try {
           await client`DROP INDEX IF EXISTS whatsapp_messages_inbound_external_id_unique`
           await client`
@@ -489,6 +745,21 @@ export function ensureSchema(client: any): Promise<void> {
         // atendimento (platform IN ('instagram','sac','hermes')) em
         // produção; leads de VENDA (hotmart etc.) não entram nessa condição
         // e não são afetados.
+        //
+        // CONCURRENTLY foi tentado em 26/09/2026 (achado A07) e revertido no
+        // mesmo dia (achado do QA sobre o próprio fix A07, mesmo motivo do
+        // bloco de whatsapp_messages logo acima): se a conexão cair no meio
+        // de um CREATE INDEX CONCURRENTLY, o índice fica inválido no
+        // catálogo em silêncio. Este bloco em particular usa o MESMO nome
+        // no DROP e no CREATE, então cada cold start futuro já tenta
+        // recriá-lo (se autocura sozinho), mas ainda assim fica uma janela
+        // com o índice quebrado até o próximo cold start passar por aqui —
+        // sem CONCURRENTLY não existe essa janela. Nota pra quem mexer aqui
+        // de novo: este DROP+CREATE roda a CADA cold start (não só na
+        // primeira vez), porque o DROP é incondicional; ficou assim de
+        // propósito (mudar isso é risco à parte, fora de escopo) —
+        // considerar no futuro checar antes se o índice já existe com a
+        // definição certa, pra não reconstruir toda vez.
         try {
           await client`DROP INDEX IF EXISTS recovery_leads_chat_company_phone_unique`
           await client`

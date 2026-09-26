@@ -216,6 +216,7 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
   const [upsellDelayMinutes, setUpsellDelayMinutes] = useState<number>(1440)
   const [savingUpsell, setSavingUpsell] = useState(false)
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
+  const [metaTemplatesError, setMetaTemplatesError] = useState<string | null>(null)
   
   // Filtering & Search
   const [searchQuery, setSearchQuery] = useState('')
@@ -274,9 +275,23 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
       setWhatsappProvider(settingsData.whatsappProvider ?? 'meta')
       if (settingsData.whatsappProvider === 'meta' && settingsData.metaWabaId) {
         fetch('/api/meta/templates')
-          .then(r => r.ok ? r.json() : [])
-          .then(templates => setMetaTemplates(Array.isArray(templates) ? templates : []))
-          .catch(() => {})
+          .then(async (r) => {
+            if (r.ok) return r.json()
+            let msg = 'Não foi possível buscar os templates aprovados na Meta.'
+            try {
+              const body = await r.json()
+              if (body?.error) msg = body.error
+            } catch {}
+            throw new Error(msg)
+          })
+          .then(templates => {
+            setMetaTemplates(Array.isArray(templates) ? templates : [])
+            setMetaTemplatesError(null)
+          })
+          .catch((err: unknown) => {
+            setMetaTemplates([])
+            setMetaTemplatesError(err instanceof Error ? err.message : 'Não foi possível buscar os templates aprovados na Meta.')
+          })
       }
     }).finally(() => setLoading(false))
   }, [eventType, platformFilter])
@@ -1069,7 +1084,7 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
                 </SelectTrigger>
                 <SelectContent className="border border-line-subtle bg-surface-overlay text-fg">
                   {Object.entries(MESSAGE_TYPE_OPTIONS)
-                    .filter(([value]) => value !== 'template' || metaTemplates.length > 0)
+                    .filter(([value]) => value !== 'template' || metaTemplates.length > 0 || metaTemplatesError)
                     .map(([value, label]) => (
                       <SelectItem key={value} value={value}>{label}</SelectItem>
                     ))}
@@ -1163,6 +1178,12 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
 
             {form.messageType === 'template' && (
               <div className="space-y-3">
+                {metaTemplatesError && (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-micro flex items-center gap-2">
+                    <AlertCircle size={15} className="shrink-0" />
+                    <span>{metaTemplatesError}</span>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <label className="block text-label uppercase text-fg-subtle">Template Meta</label>
                   <Select

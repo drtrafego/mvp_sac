@@ -183,8 +183,12 @@ export async function fetchInstagramUserProfile({
   const cleanId = igsid.replace(/^ig_/, '')
 
   try {
+    // Timeout curto (5s, não os 10s do resto do arquivo): esta chamada roda
+    // SÍNCRONA no path do webhook de DM (route.ts / [slug]/route.ts), antes
+    // do 200 sair. A Meta reenvia o evento se a resposta demorar demais, e o
+    // nome é enriquecimento best-effort, não vale segurar o webhook por isso.
     const url = `https://graph.facebook.com/v19.0/${cleanId}?fields=name,username&access_token=${encodeURIComponent(token)}`
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+    const res = await fetch(url, { signal: AbortSignal.timeout(5_000) })
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
 
     if (!res.ok) {

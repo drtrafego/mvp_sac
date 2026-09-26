@@ -13,8 +13,23 @@ export interface AgentSessionPayload {
   exp: number // epoch ms
 }
 
+// Falha fechada: sem AGENT_SESSION_SECRET nem STACK_SECRET_SERVER_KEY
+// configurados, nenhuma sessão de agente pode ser criada ou verificada.
+// Havia aqui um fallback em texto claro ('sac-agent-session-default-sec-2026')
+// versionado no repositório: qualquer um que lesse o código conseguia assinar
+// um cookie próprio com isAdmin=true e pular a autenticação inteira (achado
+// de auditoria de segurança P0, 26/09/2026, reproduzido: bypass confirmado
+// com o ambiente de assinatura vazio). Nunca reintroduzir um valor padrão
+// aqui: se as env vars não existirem, o certo é recusar a sessão, não
+// assinar com um segredo previsível.
 function getSecret(): string {
-  return process.env.AGENT_SESSION_SECRET || process.env.STACK_SECRET_SERVER_KEY || 'sac-agent-session-default-sec-2026'
+  const secret = process.env.AGENT_SESSION_SECRET || process.env.STACK_SECRET_SERVER_KEY
+  if (!secret) {
+    throw new Error(
+      'AGENT_SESSION_SECRET (ou STACK_SECRET_SERVER_KEY) não configurado: sessão de agente desativada.'
+    )
+  }
+  return secret
 }
 
 function toBase64Url(bytes: ArrayBuffer): string {

@@ -4,10 +4,11 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
-import { messageJobs, recoveryLeads, sequenceMessages } from '@/lib/db/schema'
-import { eq, lte, and, gt, desc } from 'drizzle-orm'
+import { messageJobs, recoveryLeads, sequenceMessages, whatsappMessages } from '@/lib/db/schema'
+import { eq, lte, and, gt, desc, inArray, or } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
+import { MAX_JOBS_PER_RUN, checkMetaWindowForJob } from '@/lib/message-jobs-policy'
 
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a)
@@ -111,7 +112,41 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
     .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
     .where(and(eq(messageJobs.status, 'pending'), lte(messageJobs.scheduledFor, now)))
     .orderBy(desc(recoveryLeads.priority))
-    .limit(50)
+    .limit(MAX_JOBS_PER_RUN)
+
+  // Janela de 24h da Meta: precisa da última mensagem INBOUND de cada lead
+  // do batch (sem isso, mensagem livre pra contato frio fora da janela é
+  // recusada pela Meta, ou pior, aceita por engano em algum canal). Um único
+  // round-trip pro batch inteiro, igual ao padrão de src/app/api/inbox/route.ts.
+  const jobLeadIds = [...new Set(pendingJobs.map(p => p.job.leadId).filter((id): id is number => id != null))]
+  const jobPhones = [...new Set(pendingJobs.map(p => p.leadPhone).filter((p): p is string => Boolean(p)))]
+
+  const inboundMessages = jobLeadIds.length > 0
+    ? await db
+        .select({ leadId: whatsappMessages.leadId, phone: whatsappMessages.phone, createdAt: whatsappMessages.createdAt })
+        .from(whatsappMessages)
+        .where(and(
+          eq(whatsappMessages.direction, 'inbound'),
+          jobPhones.length > 0
+            ? or(inArray(whatsappMessages.leadId, jobLeadIds), inArray(whatsappMessages.phone, jobPhones))!
+            : inArray(whatsappMessages.leadId, jobLeadIds)
+        ))
+        .orderBy(desc(whatsappMessages.createdAt))
+        .limit(500)
+    : []
+
+  const lastInboundByLead = new Map<number, Date>()
+  const lastInboundByPhone = new Map<string, Date>()
+  for (const m of inboundMessages) {
+    if (m.leadId != null && m.createdAt && !lastInboundByLead.has(m.leadId)) lastInboundByLead.set(m.leadId, m.createdAt)
+    if (m.phone && m.createdAt && !lastInboundByPhone.has(m.phone)) lastInboundByPhone.set(m.phone, m.createdAt)
+  }
+
+  function lastInboundFor(leadId: number | null | undefined, phone: string | null | undefined): Date | null {
+    if (leadId != null && lastInboundByLead.has(leadId)) return lastInboundByLead.get(leadId)!
+    if (phone && lastInboundByPhone.has(phone)) return lastInboundByPhone.get(phone)!
+    return null
+  }
 
   let sent = 0
   let failed = 0
@@ -168,6 +203,20 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
 
       // Job de upsell: conteúdo direto, sem referência a sequenceMessages
       if (job.upsellContent) {
+        // REVERSÃO DE EMERGÊNCIA (26/09/2026): a checagem de janela de 24h
+        // aqui embaixo estava BLOQUEANDO 100% dos disparos de upsell/recuperação
+        // (disparo frio, quase sempre sem lastInboundAt) e falhando o job em vez
+        // de enviar. Voltado ao comportamento anterior (envia sem checar janela)
+        // até existir um plano de migração pra templates aprovados nesses fluxos.
+        // Ver pendência documentada em src/lib/message-jobs-policy.ts.
+        const upsellWindow = checkMetaWindowForJob({
+          messageType: 'text',
+          lastInboundAt: lastInboundFor(job.leadId, leadPhone),
+        })
+        if (!upsellWindow.allowed) {
+          console.warn('[cron] job fora da janela de 24h (bloqueio desativado, enviando mesmo assim)', { jobId: job.id, leadId: job.leadId })
+        }
+
         const wamid = await sendWhatsAppMessage(lead.phone, {
           type: 'text',
           content: interpolate(job.upsellContent, lead),
@@ -189,6 +238,21 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
 
       const msgType = message.messageType ?? 'text'
       const buttons = Array.isArray(message.buttonsJson) ? message.buttonsJson as { id: string; label: string }[] : undefined
+
+      // REVERSÃO DE EMERGÊNCIA (26/09/2026): esta checagem estava bloqueando
+      // TODO o funil de recuperação (carrinho_abandonado, boleto, pix,
+      // cartao_recusado em src/lib/biblioteca.ts, todos messageType: 'text',
+      // disparo frio) fazendo o job falhar sem enviar nada, a cada rodada do
+      // cron desde o deploy. Voltado a só logar, sem bloquear, até existir
+      // plano de migração pra templates aprovados. Pendência documentada em
+      // src/lib/message-jobs-policy.ts.
+      const windowCheck = checkMetaWindowForJob({
+        messageType: msgType,
+        lastInboundAt: lastInboundFor(job.leadId, leadPhone),
+      })
+      if (!windowCheck.allowed) {
+        console.warn('[cron] job fora da janela de 24h (bloqueio desativado, enviando mesmo assim)', { jobId: job.id, leadId: job.leadId, msgType })
+      }
 
       // Fase 1.3: monta variáveis interpoladas para templates Meta
       let templateVariableValues: string[] | undefined
