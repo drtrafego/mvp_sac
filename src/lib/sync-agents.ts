@@ -1907,6 +1907,19 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   // <schema-do-agente>.crm_leads. Além de importar novos registros, enriquece
   // leads já criados pelo bloco de conversas com campaign_source/UTMs reais.
   for (const scope of agentScopes.values()) {
+    // Só a AutonomIA libera palavra reservada de mineração vinda do CRM
+    // nativo (campaign_source/utm_source em texto livre). Isso é
+    // DELIBERADAMENTE mais restrito que o bloco 4 (outreach_convos), que já
+    // trata o Gramado Plaza como outreach válido quando há uma linha real
+    // de abordagem lá — porque outreach_convos é a fonte de verdade
+    // (evidência por conversa), enquanto campaign_source é texto livre sem
+    // garantia nenhuma (foi exatamente uma anotação livre com a palavra
+    // "prospeccao" no CRM do Gramado que causou o badge de Mineração falso
+    // corrigido em 27/09/2026 — ver commit "neutraliza palavra reservada de
+    // mineração fora de empresa outreach"). NÃO amplie esta lista pra
+    // incluir 'gramado-plaza' ou qualquer outro slug sem antes confirmar que
+    // a fonte específica (crm_leads) realmente prova outreach pra aquela
+    // empresa — senão reabre o mesmo bug.
     const isOutreachCompany = scope.company.slug === 'autonomia'
     try {
       const crmColumns = await detectAgentsTableColumns(scope.schema, 'crm_leads', [
