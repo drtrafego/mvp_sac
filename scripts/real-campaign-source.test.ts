@@ -39,6 +39,18 @@ async function main() {
   await test('mantém normalização de ads para meta_ads', () => {
     assert.equal(realCampaignSource('ads', false), 'meta_ads')
   })
+
+  await test('neutraliza Prospecção com acento e maiúscula para empresa comum', () => {
+    assert.equal(realCampaignSource('Prospecção', false), null)
+  })
+
+  await test('neutraliza MINERAÇÃO com acento e caixa alta para empresa comum', () => {
+    assert.equal(realCampaignSource('MINERAÇÃO', false), null)
+  })
+
+  await test('mantém Prospecção com acento para empresa de mineração de verdade', () => {
+    assert.equal(realCampaignSource('Prospecção', true), 'Prospecção')
+  })
 }
 
 main().catch((error) => {
