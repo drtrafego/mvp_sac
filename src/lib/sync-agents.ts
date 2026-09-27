@@ -808,10 +808,15 @@ const GENERIC_CAMPAIGN_SOURCES = new Set([
   'orgânico',
 ])
 
-export function realCampaignSource(value: string | null | undefined): string | null {
+const MINERACAO_CAMPAIGN_SOURCES = ['mineracao', 'prospeccao', 'miner', 'mining', 'places']
+
+export function realCampaignSource(value: string | null | undefined, allowMineracaoWords: boolean = false): string | null {
   const source = (value || '').trim()
   if (!source || GENERIC_CAMPAIGN_SOURCES.has(source.toLowerCase())) return null
   if (/^(ad|ads|an[uú]ncio|ctwa)$/i.test(source)) return 'meta_ads'
+  if (!allowMineracaoWords && MINERACAO_CAMPAIGN_SOURCES.some((needle) => hasMineracaoWordBoundary(source, needle))) {
+    return null
+  }
   return source
 }
 
@@ -833,7 +838,7 @@ function hasMineracaoWordBoundary(value: string | null | undefined, needle: stri
 }
 
 export function needsMineracaoTrackingSourceFix(currentTrackingSource: string | null | undefined): boolean {
-  const alreadyMineracao = ['mineracao', 'prospeccao', 'miner', 'mining', 'places'].some((needle) =>
+  const alreadyMineracao = MINERACAO_CAMPAIGN_SOURCES.some((needle) =>
     hasMineracaoWordBoundary(currentTrackingSource, needle)
   )
   if (alreadyMineracao) return false
@@ -1901,6 +1906,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   // <schema-do-agente>.crm_leads. Além de importar novos registros, enriquece
   // leads já criados pelo bloco de conversas com campaign_source/UTMs reais.
   for (const scope of agentScopes.values()) {
+    const isOutreachCompany = scope.company.slug === 'autonomia'
     try {
       const crmColumns = await detectAgentsTableColumns(scope.schema, 'crm_leads', [
         'id', 'organization_id', 'whatsapp', 'phone', 'email', 'name', 'company', 'notes', 'value', 'status',
@@ -1964,7 +1970,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const existingId = (cleanPhone && leadMap.get(`${scope.company.id}_${cleanPhone}`)) ||
           (last9 && leadMap.get(`${scope.company.id}_${last9}`)) ||
           (email && leadMap.get(`${scope.company.id}_${email}`))
-        const nativeSource = realCampaignSource(l.campaign_source) || realCampaignSource(l.utm_source)
+        const nativeSource = realCampaignSource(l.campaign_source, isOutreachCompany) || realCampaignSource(l.utm_source, isOutreachCompany)
 
         if (existingId && existingId > 0) {
           const attributionPatch: Omit<Partial<typeof recoveryLeads.$inferInsert>,
@@ -2000,7 +2006,6 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const leadDate = l.created_at ? new Date(l.created_at) : (l.first_contact_at ? new Date(l.first_contact_at) : new Date())
         const prodVal = l.value ? Math.round(Number(l.value) * 100) : null
         const stage = l.status === 'converted' ? 'fechado' : (l.follow_up_date ? 'agendado' : 'qualificado')
-        const isOutreachCompany = scope.company.slug === 'autonomia'
         const [newLead] = await db.insert(recoveryLeads).values({
           companyId: scope.company.id,
           phone: cleanPhone || email || '',
