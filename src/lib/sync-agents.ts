@@ -833,8 +833,9 @@ export function realCampaignSource(value: string | null | undefined, allowMinera
 // bloco 5) é sobrescrito, porque a fonte de verdade aqui É o outreach_convos
 // da mineração, mais confiável que um default genérico de outro bloco.
 function hasMineracaoWordBoundary(value: string | null | undefined, needle: string): boolean {
+  const normalized = (value || '').normalize('NFD').replace(/\p{Mn}/gu, '')
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(^|[^a-z])${escaped}`, 'i').test(value || '')
+  return new RegExp(`(^|[^a-z])${escaped}`, 'i').test(normalized)
 }
 
 export function needsMineracaoTrackingSourceFix(currentTrackingSource: string | null | undefined): boolean {
