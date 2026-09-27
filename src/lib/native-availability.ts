@@ -32,11 +32,22 @@ export function parseNativeAvailabilityPayload(slug: string, body: unknown):
   const rawSchedule = input.schedule
   if (!rawSchedule || typeof rawSchedule !== 'object') return { ok: false, error: 'schedule inválido.' }
   const scheduleKeys = rawSchedule as Record<string, unknown>
-  const requiredKeys = ['segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado', 'domingo', 'timezone', 'duracaoSlotMinutos']
+  const dayKeys = ['segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado', 'domingo'] as const
+  const requiredKeys = [...dayKeys, 'timezone', 'duracaoSlotMinutos']
   if (requiredKeys.some(key => !(key in scheduleKeys))) {
     return { ok: false, error: 'Snapshot nativo incompleto.' }
   }
-  const validated = validateAvailabilitySchedule(rawSchedule)
+  // Os coletores nativos foram implantados quando cada dia ainda aceitava uma
+  // única faixa como objeto. Preserve esse contrato de webhook e normalize-o
+  // para o modelo atual, que aceita uma lista de faixas por dia.
+  const normalizedSchedule = { ...scheduleKeys }
+  for (const day of dayKeys) {
+    const value = normalizedSchedule[day]
+    if (value !== null && !Array.isArray(value) && typeof value === 'object') {
+      normalizedSchedule[day] = [value]
+    }
+  }
+  const validated = validateAvailabilitySchedule(normalizedSchedule)
   if (!validated.ok) return { ok: false, error: validated.error }
   const source = input.source
   if (source !== 'bot_file' && source !== 'reservations_api') {

@@ -42,7 +42,7 @@ def drlucas_snapshot():
             continue
         if len(ranges) != 1 or len(ranges[0]) != 2:
             raise ValueError(f"{target_day} tem múltiplas faixas; o formato do SAC ainda não as representa")
-        schedule[target_day] = {"inicio": str(ranges[0][0]), "fim": str(ranges[0][1])}
+        schedule[target_day] = [{"inicio": str(ranges[0][0]), "fim": str(ranges[0][1])}]
     schedule["timezone"] = str(raw.get("timezone") or "-03:00")
     schedule["duracaoSlotMinutos"] = int(raw.get("slot_minutes"))
     return schedule, "bot_file"
@@ -66,7 +66,7 @@ def gramado_snapshot():
         start, end = grade.get("horarioInicio"), grade.get("horarioFim")
         interval = int(grade.get("intervaloSlotMin"))
         day = DAYS[date.weekday()]
-        schedule[day] = {"inicio": str(start), "fim": str(end)}
+        schedule[day] = [{"inicio": str(start), "fim": str(end)}]
         previous_interval = schedule.get("duracaoSlotMinutos")
         if previous_interval is not None and previous_interval != interval:
             raise ValueError("API devolveu duração de slot diferente entre os dias da semana")

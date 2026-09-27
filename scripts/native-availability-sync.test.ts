@@ -112,6 +112,21 @@ async function main() {
       }).ok, false, 'não pode completar um snapshot parcial com defaults do SAC')
     })
 
+    await test('webhook normaliza o formato legado de faixa única usado pelos coletores', () => {
+      const legacySchedule = Object.fromEntries(Object.entries(lucasSchedule).map(([key, value]) => [
+        key,
+        Array.isArray(value) ? value[0] : value,
+      ]))
+      const parsed = native.parseNativeAvailabilityPayload('drlucas', {
+        schedule: legacySchedule,
+        source: 'bot_file',
+        cursor: 'sha256:legado',
+        capturedAt: new Date().toISOString(),
+      })
+      assert.equal(parsed.ok, true)
+      if (parsed.ok) assert.deepEqual(parsed.value.schedule, lucasSchedule)
+    })
+
     await test('webhook autenticado grava o snapshot real no Postgres', async () => {
       const req = new NextRequest('http://localhost/api/webhooks/hermes/drlucas/availability', {
         method: 'POST',
