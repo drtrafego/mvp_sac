@@ -30,6 +30,14 @@ import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { recoveryLeads } from '../src/lib/db/schema'
 import { normalizePhoneDigits, matchesPhoneSearch } from '../src/lib/inbox-channel-filter'
+import {
+  contactExactKey,
+  contactSuffixKey,
+  parseContactIdentifier,
+  readUniqueLeadLookup,
+  rememberPhoneLeadLookup,
+  resolvePhoneLeadLookup,
+} from '../src/lib/contact-resolution'
 
 let passou = 0
 let falhou = 0
@@ -95,6 +103,57 @@ async function testesPuros() {
     assert.equal(normalizePhoneDigits('+55 (75) 8178-4614'), '557581784614')
     assert.equal(normalizePhoneDigits(null), '')
     assert.equal(normalizePhoneDigits(undefined), '')
+  })
+
+  await caso('resolução segura NÃO escolhe arbitrariamente dois DDDs com os mesmos últimos 9 dígitos', () => {
+    const leadMap = new Map<string, number>()
+    const ambiguousLeadKeys = new Set<string>()
+
+    rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, 3, '557581784614', 101)
+    rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, 3, '558581784614', 202)
+
+    assert.equal(resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, 3, '581784614'), undefined)
+    assert.equal(resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, 3, '557581784614'), 101)
+    assert.equal(resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, 3, '558581784614'), 202)
+    assert.equal(ambiguousLeadKeys.has(contactSuffixKey(3, '557581784614')!), true)
+  })
+
+  await caso('resolução por sufixo continua funcionando quando o sufixo é único na mesma empresa', () => {
+    const leadMap = new Map<string, number>()
+    const ambiguousLeadKeys = new Set<string>()
+
+    rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, 3, '557581784614', 101)
+    rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, 4, '558581784614', 202)
+
+    assert.equal(resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, 3, '581784614'), 101)
+    assert.equal(resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, 4, '581784614'), 202)
+  })
+
+  await caso('contact numérico grande é tratado como telefone, não como leadId via parseInt', () => {
+    const parsed = parseContactIdentifier('557581784614')
+    assert.deepEqual(parsed, { kind: 'phone', raw: '557581784614', digits: '557581784614' })
+  })
+
+  await caso('leadId fica explícito: número curto ou prefixo lead:, telefone E.164 vira telefone', () => {
+    assert.deepEqual(parseContactIdentifier('482'), { kind: 'leadId', leadId: 482 })
+    assert.deepEqual(parseContactIdentifier('lead:557581784614'), { kind: 'leadId', leadId: 557581784614 })
+    assert.deepEqual(parseContactIdentifier('+55 75 8178-4614'), {
+      kind: 'phone',
+      raw: '+55 75 8178-4614',
+      digits: '557581784614',
+    })
+  })
+
+  await caso('chaves ambíguas não vazam para outra empresa', () => {
+    const leadMap = new Map<string, number>()
+    const ambiguousLeadKeys = new Set<string>()
+
+    rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, 3, '557581784614', 101)
+    rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, 3, '558581784614', 202)
+    rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, 4, '557581784614', 303)
+
+    assert.equal(readUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactExactKey(4, '557581784614')), 303)
+    assert.equal(resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, 4, '581784614'), 303)
   })
 }
 
