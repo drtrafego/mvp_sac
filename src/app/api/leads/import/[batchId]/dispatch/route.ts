@@ -53,6 +53,7 @@ async function loadPreview(batchId: number, companyId: number) {
       JOIN sequence_messages sm ON sm.sequence_id = rs.id AND sm.is_active = true
       WHERE b.id = ${batchId}
         AND b.company_id = ${companyId}
+        AND l.bot_paused IS NOT TRUE
     ), recipient_summary AS (
       SELECT count(DISTINCT lead_id)::int AS recipient_count FROM eligible_pairs
     )

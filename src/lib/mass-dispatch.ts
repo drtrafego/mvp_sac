@@ -218,6 +218,7 @@ export async function queueMassDispatchBatch(
           LIMIT 1
         ) rs ON true
         JOIN sequence_messages sm ON sm.sequence_id = rs.id AND sm.is_active = true
+        WHERE l.bot_paused IS NOT TRUE
       ), current_preview AS (
         SELECT coalesce(jsonb_agg(jsonb_build_object(
           'id', p.message_id,

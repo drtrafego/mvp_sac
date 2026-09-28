@@ -104,6 +104,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     updated: number
     skipped: number
     tagFailed: number
+    dispatchRecipientFailed: number
     errors: string[]
     batchId: number | null
     recipientCount: number
@@ -576,7 +577,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                 <CheckCircle2 size={26} />
               </div>
               <p className="text-h2 text-fg font-bold">
-                {importResult.tagFailed > 0 ? 'Importação concluída com ressalvas' : 'Importação Concluída com Sucesso!'}
+                {importResult.tagFailed > 0 || importResult.dispatchRecipientFailed > 0 ? 'Importação concluída com ressalvas' : 'Importação Concluída com Sucesso!'}
               </p>
               <p className="text-micro text-fg-muted">Os contatos já estão disponíveis no painel de Leads, Pipeline e Origens.</p>
             </div>
@@ -602,6 +603,19 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                   {importResult.tagFailed} contato(s) foram salvos, mas a tag não pôde ser aplicada.
                 </p>
                 {importResult.errors.length > 0 && (
+                  <ul className="mt-1 list-disc pl-5 text-micro">
+                    {importResult.errors.map((error, index) => <li key={index}>{error}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {importResult.dispatchRecipientFailed > 0 && (
+              <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-body text-amber-600 dark:text-amber-400">
+                <p className="font-semibold">
+                  {importResult.dispatchRecipientFailed} contato(s) foram salvos, mas não entraram no lote de disparo.
+                </p>
+                {importResult.errors.length > 0 && importResult.tagFailed === 0 && (
                   <ul className="mt-1 list-disc pl-5 text-micro">
                     {importResult.errors.map((error, index) => <li key={index}>{error}</li>)}
                   </ul>

@@ -304,6 +304,16 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
         failed++
         continue
       }
+      if (lead.botPaused) {
+        await db
+          .update(messageJobs)
+          .set({ status: 'cancelled', error: 'Lead com bot pausado antes do envio', processingStartedAt: null })
+          .where(and(
+            eq(messageJobs.leadId, job.leadId),
+            inArray(messageJobs.status, ['pending', 'processing'])
+          ))
+        continue
+      }
 
       // Job de upsell: conteúdo direto, sem referência a sequenceMessages
       if (job.upsellContent) {

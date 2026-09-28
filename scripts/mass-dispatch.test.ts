@@ -145,6 +145,23 @@ test('productFilter usa a mesma regra do webhook e restringe destinatários', ()
   assert.match(routeSource, /count\(DISTINCT lead_id\)::int AS recipient_count/)
 })
 
+test('preview e enfileiramento excluem leads com bot pausado mesmo se estiverem em recipients', () => {
+  const queueSource = readFileSync(resolve(process.cwd(), 'src/lib/mass-dispatch.ts'), 'utf8')
+  const routeSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/import/[batchId]/dispatch/route.ts'), 'utf8')
+
+  assert.match(routeSource, /l\.bot_paused IS NOT TRUE/)
+  assert.match(queueSource, /l\.bot_paused IS NOT TRUE/)
+})
+
+test('cron relê botPaused antes do envio e cancela jobs pendentes do lead pausado', () => {
+  const cronSource = readFileSync(resolve(process.cwd(), 'src/app/api/cron/route.ts'), 'utf8')
+
+  assert.match(cronSource, /if \(lead\.botPaused\)/)
+  assert.match(cronSource, /status:\s*'cancelled'/)
+  assert.match(cronSource, /Lead com bot pausado antes do envio/)
+  assert.match(cronSource, /inArray\(messageJobs\.status, \['pending', 'processing'\]\)/)
+})
+
 test('falha de persistência após envio aceito vira sent_unconfirmed, nunca failed', async () => {
   const fallbacks: DispatchOutcome[] = []
   const outcome = await executeAndRecordDispatch(

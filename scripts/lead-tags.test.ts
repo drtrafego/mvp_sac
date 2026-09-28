@@ -265,6 +265,8 @@ async function main() {
   const { GET, POST } = await import('../src/app/api/leads/[leadId]/tags/route')
   const { DELETE } = await import('../src/app/api/leads/[leadId]/tags/[tag]/route')
   const { POST: IMPORT_POST } = await import('../src/app/api/leads/import/route')
+  const { GET: DISPATCH_GET } = await import('../src/app/api/leads/import/[batchId]/dispatch/route')
+  const { queueMassDispatchBatch } = await import('../src/lib/mass-dispatch')
   const { buildLeadTagDeleteUrl } = await import('../src/lib/lead-tags')
 
   const originalFetch = globalThis.fetch
@@ -298,6 +300,30 @@ async function main() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tag, scopeChannel }),
     })
+  }
+
+  async function criarSequenciaTemplate(eventType: string) {
+    const [sequence] = await testDb
+      .insert(schema.recoverySequences)
+      .values({ companyId: company.id, eventType, name: `Sequência ${eventType}`, isActive: true })
+      .returning()
+
+    const [message] = await testDb
+      .insert(schema.sequenceMessages)
+      .values({
+        sequenceId: sequence.id,
+        order: 1,
+        delayMinutes: 0,
+        messageType: 'template',
+        content: 'Olá',
+        templateName: `template_${eventType.replace(/[^a-z0-9_]/gi, '_')}`,
+        templateLanguage: 'pt_BR',
+        templateVariablesMap: { '1': '{nome}' },
+        isActive: true,
+      })
+      .returning()
+
+    return { sequence, message }
   }
 
   try {
@@ -497,6 +523,135 @@ async function main() {
       const pessoaTags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.tag, 'pessoa'))
       assert.ok(pessoaTags.some(row => row.leadId === novo.id && row.scopeChannel === 'whatsapp'))
       assert.ok(pessoaTags.some(row => row.leadId === existente.id && row.scopeChannel === 'whatsapp'))
+    })
+
+    await test('import CSV com tag "pessoa" e disparo em massa exclui lead pausado do lote, preview e enfileiramento', async () => {
+      mockFetchOk()
+      const eventType = 'import_pessoa_mass_dispatch'
+      await criarSequenciaTemplate(eventType)
+
+      const req = new NextRequest('https://sac.example.com/api/leads/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          items: [{ phone: '11911110030', name: 'Pessoa Pausada' }],
+          tag: 'Pessoa',
+          createMassDispatch: true,
+          defaultEventType: eventType,
+        }),
+      })
+
+      const res = await IMPORT_POST(req)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.inserted, 1)
+      assert.equal(json.updated, 0)
+      assert.equal(json.skipped, 0)
+      assert.equal(json.tagFailed, 0)
+      assert.equal(json.dispatchRecipientFailed, 0)
+      assert.equal(json.recipientCount, 0, 'lead pausado pela tag pessoa no mesmo import não entra no lote')
+
+      const [lead] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.phone, '5511911110030'))
+      assert.equal(lead.botPaused, true)
+      const recipients = await testDb.select().from(schema.massDispatchRecipients).where(eq(schema.massDispatchRecipients.batchId, json.batchId))
+      assert.equal(recipients.length, 0)
+
+      const previewRes = await DISPATCH_GET(new NextRequest(`https://sac.example.com/api/leads/import/${json.batchId}/dispatch`), {
+        params: Promise.resolve({ batchId: String(json.batchId) }),
+      })
+      assert.equal(previewRes.status, 200)
+      const preview = await previewRes.json()
+      assert.equal(preview.recipientCount, 0)
+
+      await testDb.insert(schema.massDispatchRecipients).values({ batchId: json.batchId, leadId: lead.id })
+
+      const defensivePreviewRes = await DISPATCH_GET(new NextRequest(`https://sac.example.com/api/leads/import/${json.batchId}/dispatch`), {
+        params: Promise.resolve({ batchId: String(json.batchId) }),
+      })
+      assert.equal(defensivePreviewRes.status, 200)
+      const defensivePreview = await defensivePreviewRes.json()
+      assert.equal(defensivePreview.recipientCount, 0, 'preview precisa filtrar botPaused mesmo com recipient indevido')
+
+      const queued = await queueMassDispatchBatch(json.batchId, company.id, 'meta-phone-test', [])
+      assert.equal(queued.status, 'no_eligible_messages', 'enfileiramento precisa filtrar botPaused mesmo com recipient indevido')
+    })
+
+    await test('import CSV exclui do lote lead que já estava botPaused antes do import', async () => {
+      mockFetchOk()
+      const eventType = 'import_pre_paused_mass_dispatch'
+      await criarSequenciaTemplate(eventType)
+      const existente = await criarLead('5511911110031')
+      await testDb
+        .update(schema.recoveryLeads)
+        .set({ botPaused: true, botPausedBy: 'Atendente assumiu', botPausedAt: new Date() })
+        .where(eq(schema.recoveryLeads.id, existente.id))
+
+      const req = new NextRequest('https://sac.example.com/api/leads/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          items: [{ phone: existente.phone, name: 'Já Pausado' }],
+          createMassDispatch: true,
+          defaultEventType: eventType,
+        }),
+      })
+
+      const res = await IMPORT_POST(req)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.inserted, 0)
+      assert.equal(json.updated, 1)
+      assert.equal(json.skipped, 0)
+      assert.equal(json.dispatchRecipientFailed, 0)
+      assert.equal(json.recipientCount, 0)
+
+      const recipients = await testDb.select().from(schema.massDispatchRecipients).where(eq(schema.massDispatchRecipients.batchId, json.batchId))
+      assert.equal(recipients.length, 0, 'lead previamente pausado não entra no lote')
+    })
+
+    await test('falha ao incluir no lote não impede tag e contadores de import ficam separados', async () => {
+      await sql.unsafe(`
+        CREATE OR REPLACE FUNCTION fail_mass_dispatch_recipient_insert() RETURNS trigger AS $$
+        BEGIN
+          RAISE EXCEPTION 'falha simulada no insert do recipient';
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER fail_mass_dispatch_recipient_insert_trigger
+          BEFORE INSERT ON mass_dispatch_recipients
+          FOR EACH ROW EXECUTE FUNCTION fail_mass_dispatch_recipient_insert();
+      `)
+
+      try {
+        const req = new NextRequest('https://sac.example.com/api/leads/import', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            items: [{ phone: '11911110032', name: 'Tag Antes Do Lote' }],
+            tag: 'vip-dispatch',
+            createMassDispatch: true,
+          }),
+        })
+        const res = await IMPORT_POST(req)
+        assert.equal(res.status, 200)
+        const json = await res.json()
+        assert.equal(json.inserted, 1)
+        assert.equal(json.updated, 0)
+        assert.equal(json.skipped, 0)
+        assert.equal(json.tagFailed, 0)
+        assert.equal(json.dispatchRecipientFailed, 1)
+        assert.equal(json.recipientCount, 0)
+        assert.match(json.errors[0], /falhou ao incluir no lote de disparo/)
+
+        const [lead] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.phone, '5511911110032'))
+        assert.ok(lead)
+        const tags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, lead.id))
+        assert.equal(tags.length, 1)
+        assert.equal(tags[0].tag, 'vip-dispatch')
+        assert.equal(tags[0].createdBy, 'import:csv')
+      } finally {
+        await sql`DROP TRIGGER IF EXISTS fail_mass_dispatch_recipient_insert_trigger ON mass_dispatch_recipients`
+        await sql`DROP FUNCTION IF EXISTS fail_mass_dispatch_recipient_insert()`
+      }
     })
 
     await test('falha no insert da tag mantém contadores do lead coerentes e usa tagFailed, não skipped', async () => {

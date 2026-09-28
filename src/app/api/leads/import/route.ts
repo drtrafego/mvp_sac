@@ -76,6 +76,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let updated = 0
   let skipped = 0
   let tagFailed = 0
+  let dispatchRecipientFailed = 0
   const errors: string[] = []
 
   const shouldCreateMassDispatch = Boolean(createMassDispatch || massDispatch || triggerMassDispatch)
@@ -176,12 +177,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
       }
 
-      if (batch) {
-        await db.insert(massDispatchRecipients)
-          .values({ batchId: batch.id, leadId })
-          .onConflictDoNothing()
-      }
-
       if (tag) {
         try {
           await db
@@ -199,6 +194,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           // updated continuam descrevendo corretamente o estado do banco.
           tagFailed++
           errors.push(`Lead ${leadId} persistido, mas falhou ao aplicar a tag "${tag}": ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+
+      if (batch) {
+        try {
+          const [pauseState] = await db
+            .select({ botPaused: recoveryLeads.botPaused })
+            .from(recoveryLeads)
+            .where(eq(recoveryLeads.id, leadId))
+            .limit(1)
+
+          if (!pauseState?.botPaused) {
+            await db.insert(massDispatchRecipients)
+              .values({ batchId: batch.id, leadId })
+              .onConflictDoNothing()
+          }
+        } catch (err) {
+          dispatchRecipientFailed++
+          errors.push(`Lead ${leadId} persistido, mas falhou ao incluir no lote de disparo: ${err instanceof Error ? err.message : String(err)}`)
         }
       }
     } catch (err) {
@@ -230,6 +244,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     updated,
     skipped,
     tagFailed,
+    dispatchRecipientFailed,
     errors: errors.slice(0, 10),
   })
 }
