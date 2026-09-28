@@ -42,10 +42,11 @@ type Params = { params: Promise<{ leadId: string; tag: string }> }
  * remarcar rápido) — o POST SEMPRE regrava botPausedBy='tag:pessoa' E um
  * botPausedAt NOVO. Quando A termina de esperar, um CAS que só olha o valor
  * de botPausedBy erra: a string nunca mudou, então A desfaz a pausa de B por
- * cima. Por isso o CAS também trava na IDENTIDADE daquela pausa específica
- * (botPausedAt capturado no início, antes do await): um re-tag durante a
- * espera sempre produz um botPausedAt diferente, o CAS deixa de casar, e cai
- * no caminho de leitura fresca (não mexe na pausa nova).
+ * cima. Por isso o CAS trava na IDENTIDADE da pausa observada DEPOIS do
+ * DELETE e da confirmação de que não resta nenhuma variante (botPausedAt
+ * relido antes do await): um re-tag posterior produz outro timestamp e o CAS
+ * deixa de casar. A releitura tardia também inclui um POST idempotente que
+ * tenha renovado a pausa antes do DELETE físico remover a linha existente.
  */
 export async function DELETE(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { leadId, tag: rawTagParam } = await params
@@ -99,11 +100,39 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
       return NextResponse.json({ ok: true, tags, botPaused })
     }
 
-    // Capturado ANTES do await: identidade da pausa específica que este
-    // DELETE está autorizado a desfazer. Se um POST concorrente re-tagear
-    // "pessoa" enquanto esperamos, ele grava um botPausedAt novo — e esse
-    // valor capturado aqui vai deixar de bater com o do banco no CAS abaixo.
-    const capturedBotPausedAt = lead.botPausedAt
+    // A decisão de encerrar o handoff só pôde ser tomada depois da consulta
+    // acima. O snapshot do CAS também precisa ser desta janela tardia: um
+    // POST idempotente pode ter renovado botPausedAt entre a leitura inicial
+    // do lead e o DELETE físico (quando a linha antiga ainda existia). Nesse
+    // caso a tag acabou de ser removida e esta pausa renovada ficou órfã, por
+    // isso deve ser desfeita. Um POST posterior a ESTE snapshot continua
+    // protegido pelo CAS de botPausedBy + botPausedAt abaixo.
+    const [pauseSnapshot] = await db
+      .select({
+        botPaused: recoveryLeads.botPaused,
+        botPausedBy: recoveryLeads.botPausedBy,
+        botPausedAt: recoveryLeads.botPausedAt,
+      })
+      .from(recoveryLeads)
+      .where(eq(recoveryLeads.id, id))
+
+    if (pauseSnapshot) botPaused = pauseSnapshot.botPaused
+
+    // Fecha a pequena janela entre a primeira confirmação de ausência e a
+    // releitura da pausa. Se um POST inteiro (insert + pause) terminou nesse
+    // intervalo, a linha reapareceu e este DELETE já não deve encerrar o
+    // handoff. Depois desta segunda checagem, qualquer POST novo renovará o
+    // timestamp após o snapshot e será barrado pelo CAS.
+    const [pessoaTagAfterSnapshot] = await db
+      .select({ id: leadTags.id })
+      .from(leadTags)
+      .where(and(eq(leadTags.leadId, id), eq(leadTags.tag, PESSOA_TAG)))
+      .limit(1)
+
+    if (pessoaTagAfterSnapshot) {
+      const tags = await db.select().from(leadTags).where(eq(leadTags.leadId, id))
+      return NextResponse.json({ ok: true, tags, botPaused })
+    }
 
     const result = await notifyNaoResponder(lead.phone, 'desmarcar', lead.channel)
     if (!result.ok) warning = result.warning
@@ -112,25 +141,27 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
     // memória antes do await acima), pra não reativar o bot por cima de uma
     // pausa concorrente que apareceu enquanto esperávamos a Nina responder.
     // Além do VALOR de botPausedBy, trava também na IDENTIDADE da pausa
-    // (botPausedAt capturado): duas pausas por "tag:pessoa" em momentos
+    // (botPausedAt relido): duas pausas por "tag:pessoa" em momentos
     // diferentes (ABA) têm timestamps diferentes, então um re-tag no meio do
     // await nunca é desfeito por este DELETE.
-    const [updated] = await db
-      .update(recoveryLeads)
-      .set({
-        botPaused: false,
-        botPausedAt: null,
-        botPausedBy: null,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(recoveryLeads.id, id),
-        eq(recoveryLeads.botPausedBy, BOT_PAUSED_BY_TAG_PESSOA),
-        capturedBotPausedAt === null
-          ? isNull(recoveryLeads.botPausedAt)
-          : eq(recoveryLeads.botPausedAt, capturedBotPausedAt),
-      ))
-      .returning()
+    const [updated] = pauseSnapshot?.botPausedBy === BOT_PAUSED_BY_TAG_PESSOA
+      ? await db
+          .update(recoveryLeads)
+          .set({
+            botPaused: false,
+            botPausedAt: null,
+            botPausedBy: null,
+            updatedAt: new Date(),
+          })
+          .where(and(
+            eq(recoveryLeads.id, id),
+            eq(recoveryLeads.botPausedBy, pauseSnapshot.botPausedBy),
+            pauseSnapshot.botPausedAt === null
+              ? isNull(recoveryLeads.botPausedAt)
+              : eq(recoveryLeads.botPausedAt, pauseSnapshot.botPausedAt),
+          ))
+          .returning()
+      : []
 
     if (updated) {
       botPaused = updated.botPaused

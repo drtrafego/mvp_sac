@@ -32,13 +32,15 @@
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
+import { migrate } from 'drizzle-orm/postgres-js/migrator'
 import { eq } from 'drizzle-orm'
 import * as schema from '../src/lib/db/schema'
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const CONTAINER_NAME = 'lead_tags_test'
@@ -113,6 +115,39 @@ function applyRealSchema(databaseUrl: string) {
   })
 }
 
+function createLeadTagsOnlyMigrationsFolder() {
+  const folder = mkdtempSync(path.join(tmpdir(), 'lead-tags-migrations-'))
+  const metaFolder = path.join(folder, 'meta')
+  mkdirSync(metaFolder)
+
+  const sourceJournal = JSON.parse(
+    readFileSync(path.join(PROJECT_ROOT, 'drizzle/meta/_journal.json'), 'utf8'),
+  ) as { version: string; dialect: string; entries: Array<{ idx: number; tag: string; version: string; when: number; breakpoints: boolean }> }
+  const entries = sourceJournal.entries
+    .filter(entry => entry.tag === '0021_lead_tags' || entry.tag === '0022_lead_tags_scope_channel')
+    .map((entry, idx) => ({ ...entry, idx }))
+
+  assert.deepEqual(
+    entries.map(entry => entry.tag),
+    ['0021_lead_tags', '0022_lead_tags_scope_channel'],
+    'o journal principal precisa manter 0021 antes de 0022',
+  )
+
+  for (const entry of entries) {
+    copyFileSync(
+      path.join(PROJECT_ROOT, 'drizzle', `${entry.tag}.sql`),
+      path.join(folder, `${entry.tag}.sql`),
+    )
+  }
+
+  writeFileSync(
+    path.join(metaFolder, '_journal.json'),
+    JSON.stringify({ version: sourceJournal.version, dialect: sourceJournal.dialect, entries }, null, 2),
+  )
+
+  return folder
+}
+
 async function main() {
   if (!dockerAvailable()) {
     console.error('Docker não disponível: este teste precisa de um Postgres descartável real.')
@@ -126,13 +161,82 @@ async function main() {
   const sql = postgres(disposable.url)
   const testDb = drizzle(sql, { schema })
 
-  await test('migração 0022 corrige índice antigo malformado e pode rodar duas vezes', async () => {
+  await test('journal aplica instalação limpa na ordem até 0021 e 0022', async () => {
+    const journal = JSON.parse(
+      readFileSync(path.join(PROJECT_ROOT, 'drizzle/meta/_journal.json'), 'utf8'),
+    ) as { entries: Array<{ idx: number; tag: string }> }
+    assert.deepEqual(journal.entries.map(entry => entry.idx), journal.entries.map((_, idx) => idx))
+    assert.deepEqual(
+      journal.entries
+        .filter(entry => entry.tag === '0021_lead_tags' || entry.tag === '0022_lead_tags_scope_channel')
+        .map(entry => entry.tag),
+      ['0021_lead_tags', '0022_lead_tags_scope_channel'],
+    )
+
+    await sql.unsafe('CREATE DATABASE lead_tags_migrations_test')
+    const migrationUrl = new URL(disposable.url)
+    migrationUrl.pathname = '/lead_tags_migrations_test'
+    const migrationSql = postgres(migrationUrl.toString(), { max: 1 })
+    const migrationsFolder = createLeadTagsOnlyMigrationsFolder()
+    try {
+      applyRealSchema(migrationUrl.toString())
+      await migrationSql`DROP TABLE IF EXISTS lead_tags`
+      await migrate(drizzle(migrationSql), { migrationsFolder })
+
+      const [leadTagsTable] = await migrationSql<{ exists: boolean }[]>`
+        SELECT to_regclass('public.lead_tags') IS NOT NULL AS exists
+      `
+      assert.equal(leadTagsTable.exists, true, '0021 precisa criar lead_tags antes de 0022 alterá-la')
+
+      const [scopeColumn] = await migrationSql<{ exists: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'lead_tags'
+            AND column_name = 'scope_channel'
+        ) AS exists
+      `
+      assert.equal(scopeColumn.exists, true, '0022 precisa rodar depois de 0021')
+
+      const [applied] = await migrationSql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count FROM drizzle.__drizzle_migrations
+      `
+      assert.equal(applied.count, 2, 'o teste deve aplicar somente as migrações 0021 e 0022')
+    } finally {
+      await migrationSql.end({ timeout: 2 })
+      rmSync(migrationsFolder, { recursive: true, force: true })
+    }
+  })
+
+  const [company] = await testDb
+    .insert(schema.companies)
+    .values({ name: 'Empresa Teste Tags', slug: 'empresa-teste-tags' })
+    .returning()
+
+  await test('migração 0022 limpa duplicatas legadas antes de recriar o índice funcional', async () => {
+    const [migrationLead] = await testDb
+      .insert(schema.recoveryLeads)
+      .values({ companyId: company.id, eventType: 'test', phone: '5511911110099', platform: 'sac', channel: 'whatsapp' })
+      .returning()
+
     await sql`DROP INDEX IF EXISTS lead_tags_lead_tag_scope_unique`
     await sql`CREATE UNIQUE INDEX lead_tags_lead_tag_scope_unique ON lead_tags (lead_id, tag, scope_channel)`
+
+    const [oldest] = await testDb
+      .insert(schema.leadTags)
+      .values({ leadId: migrationLead.id, tag: 'legado', scopeChannel: null, createdAt: new Date('2026-01-01T00:00:00Z') })
+      .returning()
+    await testDb
+      .insert(schema.leadTags)
+      .values({ leadId: migrationLead.id, tag: 'legado', scopeChannel: null, createdAt: new Date('2026-02-01T00:00:00Z') })
 
     const migration = readFileSync(path.join(PROJECT_ROOT, 'drizzle/0022_lead_tags_scope_channel.sql'), 'utf8')
     await sql.unsafe(migration)
     await sql.unsafe(migration)
+
+    const remaining = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, migrationLead.id))
+    assert.equal(remaining.length, 1, 'a limpeza precisa remover a duplicata geral legada')
+    assert.equal(remaining[0].id, oldest.id, 'a limpeza precisa preservar a linha mais antiga')
 
     const [index] = await sql<{ indexdef: string }[]>`
       SELECT indexdef
@@ -143,11 +247,6 @@ async function main() {
     assert.ok(index, 'o índice precisa existir depois das duas execuções')
     assert.match(index.indexdef.toLowerCase(), /coalesce\(scope_channel, ''::text\)/)
   })
-
-  const [company] = await testDb
-    .insert(schema.companies)
-    .values({ name: 'Empresa Teste Tags', slug: 'empresa-teste-tags' })
-    .returning()
 
   mock.module('@/lib/db', {
     namedExports: { db: testDb },
@@ -493,6 +592,104 @@ async function main() {
       assert.equal(tags[0].tag, 'pessoa')
       assert.equal(tags[0].scopeChannel, 'whatsapp')
       mockFetchOk()
+    })
+
+    // ── QA rodada 3: POST idempotente antes do DELETE físico ───────────
+    // O trigger BEFORE STATEMENT segura o DELETE antes de qualquer linha
+    // ser removida. Enquanto ele espera, o POST real encontra a mesma tag,
+    // faz onConflictDoNothing e renova botPausedAt. Só depois liberamos o
+    // DELETE, que remove a linha e confirma que nenhuma variante restou.
+    await test('DELETE desfaz pausa renovada por POST idempotente concorrente antes da remoção física', async () => {
+      mockFetchOk()
+      const lead = await criarLead('5511911110029')
+      await POST(makePostRequest(lead.id, 'pessoa'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+
+      const [antes] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
+      assert.ok(antes.botPausedAt)
+
+      const lockKey = 921_021
+      await sql.unsafe(`
+        CREATE OR REPLACE FUNCTION block_lead_tag_delete_before_statement() RETURNS trigger AS $$
+        BEGIN
+          PERFORM pg_advisory_lock(${lockKey});
+          PERFORM pg_advisory_unlock(${lockKey});
+          RETURN NULL;
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER block_lead_tag_delete_before_statement_trigger
+          BEFORE DELETE ON lead_tags
+          FOR EACH STATEMENT EXECUTE FUNCTION block_lead_tag_delete_before_statement();
+      `)
+
+      const blocker = await sql.reserve()
+      let deletePromise: Promise<NextResponse> | null = null
+      let lockReleased = false
+      try {
+        await blocker`SELECT pg_advisory_lock(${lockKey})`
+        deletePromise = DELETE(
+          new NextRequest(`https://sac.example.com/api/leads/${lead.id}/tags/pessoa`, { method: 'DELETE' }),
+          { params: Promise.resolve({ leadId: String(lead.id), tag: 'pessoa' }) },
+        )
+
+        const waitDeadline = Date.now() + 5_000
+        let deleteWaiting = false
+        while (Date.now() < waitDeadline) {
+          const [waiting] = await sql<{ waiting: boolean }[]>`
+            SELECT EXISTS (
+              SELECT 1
+              FROM pg_stat_activity
+              WHERE datname = current_database()
+                AND wait_event = 'advisory'
+                AND query ILIKE '%delete%lead_tags%'
+            ) AS waiting
+          `
+          if (waiting.waiting) {
+            deleteWaiting = true
+            break
+          }
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+        assert.equal(deleteWaiting, true, 'pré-condição: DELETE precisa estar bloqueado antes da remoção física')
+
+        // Evita que dois Date() caiam no mesmo milissegundo e garante que o
+        // teste prove a renovação de identidade feita pelo POST idempotente.
+        await new Promise(resolve => setTimeout(resolve, 5))
+        const postRes = await POST(makePostRequest(lead.id, 'pessoa'), {
+          params: Promise.resolve({ leadId: String(lead.id) }),
+        })
+        assert.equal(postRes.status, 200)
+
+        const [renovado] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
+        assert.ok(renovado.botPausedAt)
+        assert.notEqual(
+          renovado.botPausedAt.getTime(),
+          antes.botPausedAt.getTime(),
+          'pré-condição: POST idempotente precisa renovar botPausedAt antes do DELETE físico',
+        )
+
+        await blocker`SELECT pg_advisory_unlock(${lockKey})`
+        lockReleased = true
+
+        const deleteRes = await deletePromise
+        assert.equal(deleteRes.status, 200)
+        const json = await deleteRes.json()
+        assert.equal(json.botPaused, false, 'não pode sobrar pausa órfã depois que a única tag foi removida')
+
+        const [depois] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
+        assert.equal(depois.botPaused, false)
+        assert.equal(depois.botPausedBy, null)
+        assert.equal(depois.botPausedAt, null)
+
+        const tags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, lead.id))
+        assert.equal(tags.length, 0, 'a única linha deve ser removida depois do POST idempotente')
+      } finally {
+        if (!lockReleased) await blocker`SELECT pg_advisory_unlock(${lockKey})`
+        if (deletePromise) await deletePromise.catch(() => undefined)
+        blocker.release()
+        await sql`DROP TRIGGER IF EXISTS block_lead_tag_delete_before_statement_trigger ON lead_tags`
+        await sql`DROP FUNCTION IF EXISTS block_lead_tag_delete_before_statement()`
+        mockFetchOk()
+      }
     })
 
     // ── 4. Remover "pessoa" com botPausedBy de OUTRO motivo não reverte ──

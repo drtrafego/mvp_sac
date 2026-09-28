@@ -659,6 +659,26 @@ export function ensureSchema(client: any): Promise<void> {
           await client`
             ALTER TABLE lead_tags ADD COLUMN IF NOT EXISTS scope_channel TEXT
           `
+          // Uma tentativa anterior, depois revertida, pode ter deixado tags
+          // gerais duplicadas porque NULL não era protegido pelo índice.
+          // Limpar antes do DROP + CREATE garante que dados legados não
+          // façam a criação do índice correto falhar silenciosamente.
+          await client`
+            DELETE FROM lead_tags
+            WHERE id IN (
+              SELECT id
+              FROM (
+                SELECT
+                  id,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY lead_id, tag, COALESCE(scope_channel, '')
+                    ORDER BY created_at ASC NULLS LAST, id ASC
+                  ) AS duplicate_position
+                FROM lead_tags
+              ) AS ranked_lead_tags
+              WHERE duplicate_position > 1
+            )
+          `
           // Uma versão revertida já usou este mesmo nome com uma definição
           // incorreta (sem COALESCE). DROP + CREATE é intencional: IF NOT
           // EXISTS preservaria silenciosamente o índice malformado.
