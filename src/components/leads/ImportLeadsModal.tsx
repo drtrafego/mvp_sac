@@ -217,7 +217,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       const res = await fetch(`/api/leads/import/${importResult.batchId}/dispatch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: true }),
+        body: JSON.stringify({ confirm: true, previewMessages: dispatchPreview?.messages ?? [] }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Falha ao iniciar disparo')

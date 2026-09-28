@@ -21,4 +21,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS "mass_dispatch_recipients_batch_lead_unique" O
 --> statement-breakpoint
 ALTER TABLE "message_jobs" ADD COLUMN IF NOT EXISTS "mass_dispatch_batch_id" integer REFERENCES "mass_dispatch_batches"("id") ON DELETE set null;
 --> statement-breakpoint
+ALTER TABLE "message_jobs" ADD COLUMN IF NOT EXISTS "message_snapshot" jsonb;
+--> statement-breakpoint
+ALTER TABLE "message_jobs" ADD COLUMN IF NOT EXISTS "retry_count" integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "message_jobs_mass_dispatch_unique" ON "message_jobs" ("mass_dispatch_batch_id", "lead_id", "message_id");

@@ -543,6 +543,8 @@ export const messageJobs = pgTable('message_jobs', {
   deliveryStatus: text('delivery_status'),              // Fase 1.4: sent | delivered | read | failed
   messageOrder: integer('message_order'),               // Fase 2.3: posição da mensagem na sequência
   massDispatchBatchId: integer('mass_dispatch_batch_id').references(() => massDispatchBatches.id, { onDelete: 'set null' }),
+  messageSnapshot: jsonb('message_snapshot'),            // cópia imutável usada pelos disparos em massa
+  retryCount: integer('retry_count').notNull().default(0),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   uniqueIndex('message_jobs_mass_dispatch_unique').on(table.massDispatchBatchId, table.leadId, table.messageId),

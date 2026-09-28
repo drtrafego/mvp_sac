@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
+import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 
@@ -175,9 +176,7 @@ export async function POST(
     ))
 
   // Prioriza sequência com productFilter que combina; fallback para sem filtro
-  const sequence = sequences.find(s =>
-    s.productFilter && (s.productFilter === productId || s.productFilter === productName)
-  ) ?? sequences.find(s => !s.productFilter) ?? null
+  const sequence = selectRecoverySequence(sequences, productId, productName)
 
   const clientData = body.client ?? body.lead
   const phone = formatBrazilianPhone(clientData?.cellphone ?? '')

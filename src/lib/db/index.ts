@@ -666,6 +666,8 @@ export function ensureSchema(client: any): Promise<void> {
             ON mass_dispatch_recipients (batch_id, lead_id)
           `
           await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS mass_dispatch_batch_id INTEGER REFERENCES mass_dispatch_batches(id) ON DELETE SET NULL`
+          await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS message_snapshot JSONB`
+          await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`
           await client`
             CREATE UNIQUE INDEX IF NOT EXISTS message_jobs_mass_dispatch_unique
             ON message_jobs (mass_dispatch_batch_id, lead_id, message_id)

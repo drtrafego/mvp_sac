@@ -5,11 +5,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
 import { messageJobs, recoveryLeads, sequenceMessages, whatsappMessages } from '@/lib/db/schema'
-import { eq, lte, and, gt, desc, inArray, or } from 'drizzle-orm'
+import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
 import { MAX_JOBS_PER_RUN, checkMetaWindowForJob } from '@/lib/message-jobs-policy'
-import { executeAndRecordDispatch } from '@/lib/mass-dispatch'
+import { executeAndRecordDispatch, type DispatchOutcome, type MessageSnapshot } from '@/lib/mass-dispatch'
 
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a)
@@ -74,6 +74,27 @@ function interpolate(text: string | null | undefined, lead: {
     .replace(/\{afiliado\}/gi, lead.affiliateCode ?? '')
 }
 
+async function recordJobOutcome(jobId: number, result: DispatchOutcome): Promise<void> {
+  if (result.status === 'sent') {
+    await db.update(messageJobs).set({
+      status: 'sent', sentAt: result.sentAt, externalWamid: result.externalWamid,
+      deliveryStatus: 'sent', error: null,
+    }).where(eq(messageJobs.id, jobId))
+  } else if (result.status === 'sent_unconfirmed') {
+    await db.update(messageJobs).set({
+      status: 'sent_unconfirmed', sentAt: result.sentAt, externalWamid: result.externalWamid,
+      deliveryStatus: 'accepted_unconfirmed', error: result.error,
+    }).where(eq(messageJobs.id, jobId))
+  } else if (result.status === 'rate_limited') {
+    await db.update(messageJobs).set({
+      status: 'pending', scheduledFor: result.retryAt, error: result.error,
+      retryCount: sql`${messageJobs.retryCount} + 1`,
+    }).where(eq(messageJobs.id, jobId))
+  } else {
+    await db.update(messageJobs).set({ status: 'failed', error: result.error }).where(eq(messageJobs.id, jobId))
+  }
+}
+
 // O Vercel Cron só aciona rota por GET (mesmo padrão de /api/cron/sync-agents).
 // Esta rota nasceu só com POST e por isso NUNCA foi ligada a nenhum agendador:
 // achado em 23/09/2026, 7 dias de log da Vercel com zero chamadas aqui, contra
@@ -100,20 +121,28 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
 
   const now = new Date()
   // Ordena por prioridade do lead (desc) para processar cartao_recusado antes de boleto/carrinho
-  const pendingJobs = await db
-    .select({
-      job: messageJobs,
-      companyId: recoveryLeads.companyId,
-      leadPhone: recoveryLeads.phone,
-      leadCreatedAt: recoveryLeads.createdAt,
-      leadPriority: recoveryLeads.priority,
-      checkBeforeSend: messageJobs.checkBeforeSend,
-    })
-    .from(messageJobs)
-    .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
-    .where(and(eq(messageJobs.status, 'pending'), lte(messageJobs.scheduledFor, now)))
-    .orderBy(desc(recoveryLeads.priority))
-    .limit(MAX_JOBS_PER_RUN)
+  const pendingJobs = await db.transaction(async tx => {
+    const rows = await tx
+      .select({
+        job: messageJobs,
+        companyId: recoveryLeads.companyId,
+        leadPhone: recoveryLeads.phone,
+        leadCreatedAt: recoveryLeads.createdAt,
+        leadPriority: recoveryLeads.priority,
+        checkBeforeSend: messageJobs.checkBeforeSend,
+      })
+      .from(messageJobs)
+      .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
+      .where(and(eq(messageJobs.status, 'pending'), lte(messageJobs.scheduledFor, now)))
+      .orderBy(desc(recoveryLeads.priority))
+      .limit(MAX_JOBS_PER_RUN)
+      .for('update', { skipLocked: true })
+    const ids = rows.map(row => row.job.id)
+    if (ids.length > 0) {
+      await tx.update(messageJobs).set({ status: 'processing' }).where(inArray(messageJobs.id, ids))
+    }
+    return rows
+  })
 
   // Janela de 24h da Meta: precisa da última mensagem INBOUND de cada lead
   // do batch (sem isso, mensagem livre pra contato frio fora da janela é
@@ -153,6 +182,7 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
   let failed = 0
 
   for (const { job, companyId, leadPhone, leadCreatedAt, checkBeforeSend } of pendingJobs) {
+    let providerAccepted = false
     try {
       if (!job.leadId || (!job.messageId && !job.upsellContent)) {
         await db.update(messageJobs).set({ status: 'failed', error: 'Missing lead or message' }).where(eq(messageJobs.id, job.id))
@@ -179,7 +209,7 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
             .set({ status: 'cancelled' })
             .where(and(
               eq(messageJobs.leadId, job.leadId),
-              eq(messageJobs.status, 'pending')
+              inArray(messageJobs.status, ['pending', 'processing'])
             ))
           // Fase 2: registra qual job/mensagem desencadeou a conversão
           await db
@@ -223,15 +253,14 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
             type: 'text',
             content: interpolate(job.upsellContent, lead),
           }, companyId),
-          async result => {
-            await db.update(messageJobs).set(result.status === 'sent'
-              ? { status: 'sent', sentAt: result.sentAt, externalWamid: result.externalWamid, deliveryStatus: 'sent', error: null }
-              : { status: 'failed', error: result.error }
-            ).where(eq(messageJobs.id, job.id))
-          },
+          result => recordJobOutcome(job.id, result),
+          undefined,
+          result => recordJobOutcome(job.id, result),
+          job.retryCount,
         )
-        if (outcome.status === 'failed') {
-          failed++
+        providerAccepted = outcome.status === 'sent' || outcome.status === 'sent_unconfirmed'
+        if (!providerAccepted) {
+          if (outcome.status === 'failed') failed++
           continue
         }
         // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead
@@ -240,10 +269,29 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
         continue
       }
 
-      const [message] = await db.select().from(sequenceMessages).where(eq(sequenceMessages.id, job.messageId!))
+      let message: MessageSnapshot | undefined
+      if (job.massDispatchBatchId != null) {
+        // Segurança central do disparo em massa: nunca reler o template vivo.
+        // Jobs legados sem snapshot falham fechados em vez de enviar conteúdo
+        // que o usuário não aprovou no preview.
+        message = job.messageSnapshot as MessageSnapshot | undefined
+      } else {
+        const [liveMessage] = await db.select().from(sequenceMessages).where(eq(sequenceMessages.id, job.messageId!))
+        message = liveMessage ? {
+          messageType: liveMessage.messageType ?? 'text',
+          content: liveMessage.content,
+          mediaUrl: liveMessage.mediaUrl,
+          caption: liveMessage.caption,
+          buttonsJson: liveMessage.buttonsJson,
+          templateName: liveMessage.templateName,
+          templateLanguage: liveMessage.templateLanguage,
+          templateVariablesMap: liveMessage.templateVariablesMap,
+        } : undefined
+      }
 
       if (!message) {
-        await db.update(messageJobs).set({ status: 'failed', error: 'Message not found' }).where(eq(messageJobs.id, job.id))
+        const error = job.massDispatchBatchId != null ? 'Missing immutable message snapshot' : 'Message not found'
+        await db.update(messageJobs).set({ status: 'failed', error }).where(eq(messageJobs.id, job.id))
         failed++
         continue
       }
@@ -288,15 +336,14 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
           templateLanguage: message.templateLanguage ?? undefined,
           templateVariableValues,
         }, companyId),
-        async result => {
-          await db.update(messageJobs).set(result.status === 'sent'
-            ? { status: 'sent', sentAt: result.sentAt, externalWamid: result.externalWamid, deliveryStatus: 'sent', error: null }
-            : { status: 'failed', error: result.error }
-          ).where(eq(messageJobs.id, job.id))
-        },
+        result => recordJobOutcome(job.id, result),
+        undefined,
+        result => recordJobOutcome(job.id, result),
+        job.retryCount,
       )
-      if (outcome.status === 'failed') {
-        failed++
+      providerAccepted = outcome.status === 'sent' || outcome.status === 'sent_unconfirmed'
+      if (!providerAccepted) {
+        if (outcome.status === 'failed') failed++
         continue
       }
       await db.update(recoveryLeads).set({ status: 'in_progress', updatedAt: new Date() }).where(eq(recoveryLeads.id, lead.id))
@@ -305,8 +352,17 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
       sent++
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)
-      await db.update(messageJobs).set({ status: 'failed', error: errorMsg }).where(eq(messageJobs.id, job.id))
-      failed++
+      if (providerAccepted) {
+        console.error('[cron] ALERTA: falha pós-envio; job não será marcado como failed', { jobId: job.id, error: errorMsg })
+        try {
+          await db.update(messageJobs).set({ status: 'sent_unconfirmed', error: `Falha pós-envio: ${errorMsg}` }).where(eq(messageJobs.id, job.id))
+        } catch (persistErr) {
+          console.error('[cron] ALERTA CRÍTICO: falha ao persistir sent_unconfirmed', { jobId: job.id, persistErr })
+        }
+      } else {
+        await db.update(messageJobs).set({ status: 'failed', error: errorMsg }).where(eq(messageJobs.id, job.id))
+        failed++
+      }
     }
   }
 
@@ -315,7 +371,7 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
   for (const { job } of pendingJobs) {
     if (job.leadId && !completedLeadIds.has(job.leadId)) {
       const remaining = await db.select().from(messageJobs)
-        .where(and(eq(messageJobs.leadId, job.leadId), eq(messageJobs.status, 'pending')))
+        .where(and(eq(messageJobs.leadId, job.leadId), inArray(messageJobs.status, ['pending', 'processing'])))
       if (remaining.length === 0) {
         const [cur] = await db.select({ status: recoveryLeads.status }).from(recoveryLeads).where(eq(recoveryLeads.id, job.leadId))
         if (cur && cur.status !== 'converted') {
