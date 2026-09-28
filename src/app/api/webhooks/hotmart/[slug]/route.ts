@@ -6,6 +6,7 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import { purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
+import { extractHotmartToken } from '@/lib/hotmart-token'
 
 async function logReceived(args: {
   companyId: number | null
@@ -249,16 +250,6 @@ const eventTypeLabels: Record<string, string> = {
   disputa: 'Disputa / chargeback',
 }
 
-function extractToken(req: NextRequest, body: HotmartPayload): string | null {
-  const headerToken = req.headers.get('x-hotmart-webhook-token')
-  if (headerToken) return headerToken
-  const authHeader = req.headers.get('authorization')
-  if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7)
-  if (body?.hottok) return body.hottok
-  if (body?.data?.hottok) return body.data.hottok
-  return new URL(req.url).searchParams.get('hottok')
-}
-
 function formatPhone(code: string | undefined, phone: string): string {
   const codeClean = (code ?? '').replace(/\D/g, '')
   // Número de outro país: só concatena DDI + número limpo
@@ -317,7 +308,7 @@ export async function POST(
   // Hottok do parceiro como camada ADICIONAL: so e exigido quando configurado.
   // Nosso token (checkWebhookToken) ja garante a barreira de autenticacao.
   if (config?.hotmartWebhookToken) {
-    const incoming = extractToken(req, body)
+    const incoming = extractHotmartToken(req.headers, body, req.url)
     if (!incoming || incoming !== config.hotmartWebhookToken) {
       await logReceived({
         companyId: company.id, slug, event: body?.event ?? null, processed: false,

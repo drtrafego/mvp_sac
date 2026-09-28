@@ -3,6 +3,13 @@ import { db } from '@/lib/db'
 import { instagramCommentAutomations } from '@/lib/db/schema'
 import { eq, desc } from 'drizzle-orm'
 import { requireCompany, AuthError } from '@/lib/auth'
+import { findInvalidOptionalTextField } from '@/lib/request-validation'
+
+function isUnauthorizedError(error: unknown): boolean {
+  return error instanceof AuthError || (
+    typeof error === 'object' && error !== null && 'status' in error && error.status === 401
+  )
+}
 
 export async function GET() {
   try {
@@ -14,8 +21,8 @@ export async function GET() {
       .orderBy(desc(instagramCommentAutomations.createdAt))
 
     return NextResponse.json({ automations: rules })
-  } catch (err: any) {
-    if (err instanceof AuthError || err?.status === 401) {
+  } catch (err: unknown) {
+    if (isUnauthorizedError(err)) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
     console.error('[Comment Automations GET Error]:', err)
@@ -26,7 +33,11 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const company = await requireCompany()
-    const body = await req.json().catch(() => ({}))
+    const parsedBody: unknown = await req.json().catch(() => null)
+    if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+      return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
+    }
+    const body = parsedBody as Record<string, unknown>
 
     const {
       name,
@@ -52,29 +63,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'A mensagem da DM é obrigatória.' }, { status: 400 })
     }
 
+    const optionalTextFields = [
+      ['mediaId', mediaId],
+      ['mediaUrl', mediaUrl],
+      ['mediaCaption', mediaCaption],
+      ['keywords', keywords],
+      ['publicReply', publicReply],
+      ['activeHoursStart', activeHoursStart],
+      ['activeHoursEnd', activeHoursEnd],
+    ] as const
+    const invalidTextField = findInvalidOptionalTextField(optionalTextFields)
+    if (invalidTextField) {
+      return NextResponse.json(
+        { error: `O campo ${invalidTextField} deve ser um texto.` },
+        { status: 400 },
+      )
+    }
+
     const [created] = await db
       .insert(instagramCommentAutomations)
       .values({
         companyId: company.id,
         name: name.trim(),
-        mediaId: mediaId?.trim() || null,
-        mediaUrl: mediaUrl?.trim() || null,
-        mediaCaption: mediaCaption?.trim() || null,
-        keywords: keywords?.trim() || null,
-        matchType: ['contains', 'exact', 'any'].includes(matchType) ? matchType : 'contains',
+        mediaId: typeof mediaId === 'string' ? mediaId.trim() || null : null,
+        mediaUrl: typeof mediaUrl === 'string' ? mediaUrl.trim() || null : null,
+        mediaCaption: typeof mediaCaption === 'string' ? mediaCaption.trim() || null : null,
+        keywords: typeof keywords === 'string' ? keywords.trim() || null : null,
+        matchType: typeof matchType === 'string' && ['contains', 'exact', 'any'].includes(matchType) ? matchType : 'contains',
         dmMessage: dmMessage.trim(),
-        publicReply: publicReply?.trim() || null,
+        publicReply: typeof publicReply === 'string' ? publicReply.trim() || null : null,
         hideCommentAfterReply: Boolean(hideCommentAfterReply),
-        activeHoursStart: activeHoursStart?.trim() || null,
-        activeHoursEnd: activeHoursEnd?.trim() || null,
+        activeHoursStart: typeof activeHoursStart === 'string' ? activeHoursStart.trim() || null : null,
+        activeHoursEnd: typeof activeHoursEnd === 'string' ? activeHoursEnd.trim() || null : null,
         isActive: Boolean(isActive),
         requireFollowCheck: Boolean(requireFollowCheck),
       })
       .returning()
 
     return NextResponse.json({ automation: created }, { status: 201 })
-  } catch (err: any) {
-    if (err instanceof AuthError || err?.status === 401) {
+  } catch (err: unknown) {
+    if (isUnauthorizedError(err)) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
     console.error('[Comment Automations POST Error]:', err)

@@ -15,6 +15,7 @@ import {
 } from '@/lib/instagram'
 import { generateAndSendAiReply } from '@/lib/ai-reply'
 import { eq, and, gte, sql } from 'drizzle-orm'
+import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
 
 export interface CommentEventData {
   companyId: number
@@ -23,17 +24,6 @@ export interface CommentEventData {
   commenterUsername?: string
   mediaId: string
   commentText: string
-}
-
-/**
- * Normaliza strings para comparação (minúsculas, remove acentos e pontuação extra)
- */
-function normalizeText(str: string): string {
-  return str
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
 }
 
 /**
@@ -68,50 +58,6 @@ function isWithinActiveHours(startTime?: string | null, endTime?: string | null)
 /**
  * Verifica se o comentário corresponde às palavras-chave da regra
  */
-function matchesKeywords(
-  commentText: string,
-  keywordsStr: string | null | undefined,
-  matchType: string
-): { matched: boolean; matchedKeyword?: string } {
-  if (matchType === 'any') {
-    return { matched: true, matchedKeyword: '*' }
-  }
-
-  if (!keywordsStr || !keywordsStr.trim()) {
-    return { matched: false }
-  }
-
-  const normalizedComment = normalizeText(commentText)
-  const keywordsList = keywordsStr
-    .split(',')
-    .map(k => normalizeText(k))
-    .filter(Boolean)
-
-  if (keywordsList.length === 0) {
-    return { matched: false }
-  }
-
-  if (matchType === 'exact') {
-    for (const kw of keywordsList) {
-      if (normalizedComment === kw) {
-        return { matched: true, matchedKeyword: kw }
-      }
-    }
-    return { matched: false }
-  }
-
-  // matchType === 'contains' (padrão)
-  for (const kw of keywordsList) {
-    // Busca como palavra completa ou sequência
-    const regex = new RegExp(`(^|\\s|[.,!?;])${kw}($|\\s|[.,!?;])`, 'i')
-    if (regex.test(normalizedComment) || normalizedComment.includes(kw)) {
-      return { matched: true, matchedKeyword: kw }
-    }
-  }
-
-  return { matched: false }
-}
-
 /**
  * Textos do gate de seguidor (24/09/2026). Não são configuráveis por
  * automação de propósito (o pedido foi só o flag liga/desliga, ver
@@ -217,7 +163,7 @@ export async function processInstagramComment(event: CommentEventData) {
       continue
     }
 
-    const { matched, matchedKeyword } = matchesKeywords(commentText, rule.keywords, rule.matchType)
+    const { matched, matchedKeyword } = matchesCommentKeywords(commentText, rule.keywords, rule.matchType)
     if (matched) {
       matchedRule = rule
       matchedKeywordFound = matchedKeyword

@@ -13,6 +13,7 @@ export default function CompraAprovadaPage() {
   const [upsellDelay, setUpsellDelay] = useState(1440)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/sequences/compra_aprovada')
@@ -27,14 +28,27 @@ export default function CompraAprovadaPage() {
 
   async function saveUpsell() {
     setSaving(true)
-    await fetch('/api/sequences/compra_aprovada', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ upsellMessage, upsellDelayMinutes: upsellDelay }),
-    })
-    setSaving(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    setSaved(false)
+    setSaveError(null)
+    try {
+      const response = await fetch('/api/sequences/compra_aprovada', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upsellMessage, upsellDelayMinutes: upsellDelay }),
+      })
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.error || `Não foi possível salvar o upsell (HTTP ${response.status}).`)
+      }
+
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Não foi possível salvar o upsell.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -80,6 +94,7 @@ export default function CompraAprovadaPage() {
           <Save size={15} />
           {saving ? 'Salvando...' : saved ? 'Salvo!' : 'Salvar Upsell'}
         </Button>
+        {saveError && <p role="alert" className="text-body text-destructive">{saveError}</p>}
       </div>
     </div>
   )

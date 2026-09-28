@@ -109,9 +109,7 @@ function lead(companyId: number, phoneSuffix: string, values: Partial<typeof sch
 
 async function main() {
   if (!dockerAvailable()) {
-    console.error('Docker nao disponivel: este teste precisa de Postgres real.')
-    process.exitCode = 1
-    return
+    throw new Error('Docker nao disponivel: este teste precisa de Postgres real.')
   }
 
   const disposable = await startDisposablePostgres()

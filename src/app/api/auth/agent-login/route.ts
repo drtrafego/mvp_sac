@@ -22,10 +22,25 @@ const DEFAULT_COMPANY_ID = 14 // AutonomIA
 // do app (convite real passa por /invite/[token] e /invite/membro/[token],
 // com Stack Auth de verdade) e permitia que um invite token comum, feito
 // pra convidar UM cliente, virasse admin do sistema inteiro.
-export async function GET(request: NextRequest) {
-  const { searchParams } = request.nextUrl
-  const token = searchParams.get('token')
-  const redirectTo = searchParams.get('redirect') || searchParams.get('next') || '/'
+export async function GET() {
+  return NextResponse.json(
+    { error: 'Use POST e envie o token no corpo da requisição.' },
+    { status: 405, headers: { Allow: 'POST' } },
+  )
+}
+
+export async function POST(request: NextRequest) {
+  const parsedBody: unknown = await request.json().catch(() => null)
+  if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
+  }
+
+  const body = parsedBody as Record<string, unknown>
+  const token = typeof body.token === 'string' ? body.token : null
+  const redirectValue = body.redirect ?? body.next ?? '/'
+  if (typeof redirectValue !== 'string') {
+    return NextResponse.json({ error: 'Destino de redirecionamento inválido.' }, { status: 400 })
+  }
 
   if (!MASTER_AGENT_TOKEN) {
     return NextResponse.json({ error: 'Login de agente desativado: MASTER_AGENT_TOKEN não configurado.' }, { status: 503 })
@@ -40,9 +55,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Token de acesso inválido ou expirado.' }, { status: 401 })
   }
 
-  // Evita open redirect via "//evil.com" (começa com "/" mas é protocol-relative)
-  const destination = redirectTo.startsWith('/') && !redirectTo.startsWith('//') ? redirectTo : '/'
-  const response = NextResponse.redirect(new URL(destination, request.url))
+  const applicationOrigin = request.nextUrl.origin
+  let destination: URL
+  try {
+    destination = new URL(redirectValue, applicationOrigin)
+  } catch {
+    return NextResponse.json({ error: 'Destino de redirecionamento inválido.' }, { status: 400 })
+  }
+
+  if (destination.origin !== applicationOrigin) {
+    return NextResponse.json({ error: 'Destino de redirecionamento externo não permitido.' }, { status: 400 })
+  }
+
+  const response = NextResponse.redirect(destination)
 
   let sessionCookie: string
   try {
@@ -83,8 +108,4 @@ export async function GET(request: NextRequest) {
   })
 
   return response
-}
-
-export async function POST(request: NextRequest) {
-  return GET(request)
 }

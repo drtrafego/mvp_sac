@@ -32,7 +32,8 @@
     "test:agenda-slot-validation": "tsx --test scripts/agenda-slot-validation.test.ts",
     "test:lead-tags": "tsx --experimental-test-module-mocks --test scripts/lead-tags.test.ts",
     "test:message-jobs-policy": "tsx --test scripts/message-jobs-policy.test.ts",
-    "test:db-consolidacao-autonomia": "tsx --test scripts/db-consolidacao-autonomia.test.ts"
+    "test:db-consolidacao-autonomia": "tsx --test scripts/db-consolidacao-autonomia.test.ts",
+    "test:astra-security-quickwins": "node --import tsx --experimental-test-module-mocks --test scripts/astra-security-quickwins.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
