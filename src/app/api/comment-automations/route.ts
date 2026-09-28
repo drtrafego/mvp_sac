@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { instagramCommentAutomations } from '@/lib/db/schema'
 import { eq, desc } from 'drizzle-orm'
 import { requireCompany, AuthError } from '@/lib/auth'
+import { findInvalidOptionalTextField } from '@/lib/request-validation'
 
 function isUnauthorizedError(error: unknown): boolean {
   return error instanceof AuthError || (
@@ -71,10 +72,10 @@ export async function POST(req: NextRequest) {
       ['activeHoursStart', activeHoursStart],
       ['activeHoursEnd', activeHoursEnd],
     ] as const
-    const invalidTextField = optionalTextFields.find(([, value]) => value != null && typeof value !== 'string')
+    const invalidTextField = findInvalidOptionalTextField(optionalTextFields)
     if (invalidTextField) {
       return NextResponse.json(
-        { error: `O campo ${invalidTextField[0]} deve ser um texto.` },
+        { error: `O campo ${invalidTextField} deve ser um texto.` },
         { status: 400 },
       )
     }

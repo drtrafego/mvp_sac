@@ -65,6 +65,33 @@ test('/api/leads devolve 400 para paginação inválida antes de consultar auten
   assert.equal(requireCompanyCalls, 0)
 })
 
+test('PATCH /api/comment-automations rejeita tipo inválido em todos os textos opcionais', async () => {
+  const { PATCH } = await import('../src/app/api/comment-automations/[id]/route')
+  const optionalTextFields = [
+    'mediaId',
+    'mediaUrl',
+    'mediaCaption',
+    'keywords',
+    'publicReply',
+    'activeHoursStart',
+    'activeHoursEnd',
+  ]
+
+  for (const field of optionalTextFields) {
+    const response = await PATCH(
+      new NextRequest('https://app.example/api/comment-automations/123', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ [field]: {} }),
+      }),
+      { params: Promise.resolve({ id: '123' }) },
+    )
+
+    assert.equal(response.status, 400, field)
+    assert.deepEqual(await response.json(), { error: `O campo ${field} deve ser um texto.` }, field)
+  }
+})
+
 test('login de agente não aceita mais token em GET/query string', async () => {
   const { GET } = await import('../src/app/api/auth/agent-login/route')
   const response = await GET()
