@@ -263,7 +263,15 @@ async function main() {
 
       await assert.rejects(
         testDb.insert(schema.leadTags).values({ leadId: lead.id, tag: 'vip', scopeChannel: null }),
-        /duplicate key value violates unique constraint/,
+        (err: unknown) => {
+          assert.ok(err instanceof Error, 'o Drizzle deveria rejeitar com um Error')
+          assert.ok(err.cause instanceof Error, 'o Drizzle deveria preservar o erro original em cause')
+
+          return (
+            ('code' in err.cause && err.cause.code === '23505')
+            || /duplicate key value violates unique constraint/.test(err.cause.message)
+          )
+        },
       )
     })
 
