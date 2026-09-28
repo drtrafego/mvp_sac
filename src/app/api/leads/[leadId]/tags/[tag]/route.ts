@@ -47,15 +47,13 @@ type Params = { params: Promise<{ leadId: string; tag: string }> }
  * espera sempre produz um botPausedAt diferente, o CAS deixa de casar, e cai
  * no caminho de leitura fresca (não mexe na pausa nova).
  */
-export async function DELETE(req: NextRequest, { params }: Params): Promise<NextResponse> {
+export async function DELETE(_req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { leadId, tag: rawTagParam } = await params
   const id = parseInt(leadId)
   if (isNaN(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
 
   const tag = normalizeTag(decodeURIComponent(rawTagParam))
   if (!tag) return NextResponse.json({ error: 'Tag inválida' }, { status: 400 })
-
-  const scopeChannelParam = req.nextUrl.searchParams.get('scopeChannel')
 
   const company = await requireCompany()
 
@@ -65,13 +63,9 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
     .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
   if (!lead) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
 
-  const deleteCondition = scopeChannelParam
-    ? and(eq(leadTags.leadId, id), eq(leadTags.tag, tag), eq(leadTags.scopeChannel, scopeChannelParam))
-    : and(eq(leadTags.leadId, id), eq(leadTags.tag, tag))
-
   const [deleted] = await db
     .delete(leadTags)
-    .where(deleteCondition)
+    .where(and(eq(leadTags.leadId, id), eq(leadTags.tag, tag)))
     .returning()
 
   if (!deleted) return NextResponse.json({ error: 'Tag não encontrada neste lead' }, { status: 404 })

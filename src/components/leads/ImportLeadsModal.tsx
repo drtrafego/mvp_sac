@@ -15,10 +15,7 @@ import {
   User,
   Mail,
   DollarSign,
-  Package,
-  Tag,
-  TriangleAlert,
-  Plus,
+  Package
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -100,11 +97,6 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
   const [triggerSequence, setTriggerSequence] = useState(false)
   const [defaultProduct, setDefaultProduct] = useState('Produto Principal')
 
-  // Tags em massa (Item 1 & Item 2 do SAC)
-  const [selectedTags, setSelectedTags] = useState<Array<{ tag: string; scopeChannel: string | null }>>([])
-  const [tagInput, setTagInput] = useState('')
-  const [tagScope, setTagScope] = useState<string | null>(null)
-
   // Resultados
   const [importResult, setImportResult] = useState<{
     total: number
@@ -116,22 +108,6 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
   const [isProcessing, setIsProcessing] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const handleAddTag = () => {
-    const raw = tagInput.trim().toLowerCase()
-    if (!raw) return
-    const isPessoa = raw === 'pessoa'
-    const scope = isPessoa ? null : tagScope
-    if (selectedTags.some(t => t.tag === raw && t.scopeChannel === scope)) return
-    setSelectedTags([...selectedTags, { tag: raw, scopeChannel: scope }])
-    setTagInput('')
-  }
-
-  const handleRemoveTag = (index: number) => {
-    setSelectedTags(selectedTags.filter((_, idx) => idx !== index))
-  }
-
-  const hasPessoaSelected = selectedTags.some(t => t.tag === 'pessoa')
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -190,7 +166,6 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
           defaultEventType,
           defaultSource,
           triggerSequence,
-          tags: selectedTags,
         }),
       })
 
@@ -453,102 +428,6 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                   </span>
                 </div>
               </label>
-            </div>
-
-            {/* 3. Tags em Massa (Item 1 & Item 2) */}
-            <div className="space-y-3 pt-2 border-t border-line-subtle">
-              <span className="text-label uppercase text-fg-subtle font-bold block">3. Tags em Massa (Opcional)</span>
-              
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="text"
-                  value={tagInput}
-                  onChange={e => setTagInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      handleAddTag()
-                    }
-                  }}
-                  placeholder="Ex: pessoa, cliente_vip, base_fria..."
-                  className={cn(FIELD, CONTROL_H, 'px-3 rounded-[var(--r-md)] text-body flex-1')}
-                />
-
-                <Select
-                  value={tagScope || 'geral'}
-                  onValueChange={v => setTagScope(!v || v === 'geral' ? null : v)}
-                  items={{
-                    geral: 'Geral (Todos os canais)',
-                    whatsapp: 'WhatsApp',
-                    instagram: 'Instagram',
-                    email: 'E-mail',
-                    mineracao: 'Mineração',
-                  }}
-                >
-                  <SelectTrigger className={cn(FIELD, CONTROL_H, 'w-full sm:w-48 text-body')}>
-                    <SelectValue placeholder="Escopo de Canal" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-surface-overlay text-fg border border-line-subtle">
-                    <SelectItem value="geral">Geral (Todos os canais)</SelectItem>
-                    <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                    <SelectItem value="instagram">Instagram</SelectItem>
-                    <SelectItem value="email">E-mail</SelectItem>
-                    <SelectItem value="mineracao">Mineração</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                <Button
-                  type="button"
-                  onClick={handleAddTag}
-                  disabled={!tagInput.trim()}
-                  className={cn(CONTROL_H, 'px-4 bg-surface-raised border border-line-subtle hover:bg-surface-inset text-fg font-bold')}
-                >
-                  <Plus size={14} className="mr-1" /> Adicionar Tag
-                </Button>
-              </div>
-
-              {/* Lista de tags adicionadas ao lote */}
-              {selectedTags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {selectedTags.map((t, idx) => (
-                    <span
-                      key={`${t.tag}-${t.scopeChannel}-${idx}`}
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-micro font-bold',
-                        t.tag === 'pessoa'
-                          ? 'border-rose-500/40 bg-rose-500/15 text-rose-400'
-                          : 'border-line-subtle bg-surface-inset text-fg-muted'
-                      )}
-                    >
-                      <Tag size={11} />
-                      {t.tag}
-                      {t.scopeChannel && (
-                        <span className="text-[10px] text-cyan-400 font-mono">[{t.scopeChannel.toUpperCase()}]</span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveTag(idx)}
-                        className="hover:text-rose-400 cursor-pointer ml-0.5"
-                      >
-                        <X size={12} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {/* Confirmação explícita se "pessoa" estiver no lote */}
-              {hasPessoaSelected && (
-                <div className="rounded-[var(--r-md)] border border-rose-500/40 bg-rose-500/10 p-3 flex items-start gap-2.5 text-micro text-rose-300">
-                  <TriangleAlert size={16} className="shrink-0 text-rose-400 mt-0.5" />
-                  <div>
-                    <span className="font-bold text-rose-200 block">⚠️ Tag &quot;pessoa&quot; selecionada!</span>
-                    <span>
-                      Ao confirmar a importação, o bot de IA será <strong>pausado</strong> (<code>botPaused = true</code>) para todos os {parsedData.rows.length} contatos importados, e a ponte de atendimento receberá aviso de desativação.
-                    </span>
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Ações */}
