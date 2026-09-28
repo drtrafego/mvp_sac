@@ -4,11 +4,20 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
-import { messageJobs, recoveryLeads, sequenceMessages, whatsappMessages } from '@/lib/db/schema'
-import { eq, lte, and, gt, desc, inArray, or } from 'drizzle-orm'
+import { massDispatchPhoneCooldowns, messageJobs, recoveryLeads, sequenceMessages, settings, whatsappMessages } from '@/lib/db/schema'
+import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
 import { MAX_JOBS_PER_RUN, checkMetaWindowForJob } from '@/lib/message-jobs-policy'
+import { executeAndRecordDispatch, type DispatchOutcome, type MessageSnapshot } from '@/lib/mass-dispatch'
+import { releaseCronDispatchLock, tryAcquireCronDispatchLock } from '@/lib/cron-advisory-lock'
+
+const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
+
+function processingLeaseTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.MASS_DISPATCH_PROCESSING_LEASE_TIMEOUT_MS ?? '', 10)
+  return Number.isInteger(configured) && configured > 0 ? configured : DEFAULT_PROCESSING_LEASE_TIMEOUT_MS
+}
 
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a)
@@ -73,6 +82,44 @@ function interpolate(text: string | null | undefined, lead: {
     .replace(/\{afiliado\}/gi, lead.affiliateCode ?? '')
 }
 
+async function recordJobOutcome(jobId: number, result: DispatchOutcome, metaPhoneNumberId?: string | null): Promise<void> {
+  if (result.status === 'sent') {
+    await db.update(messageJobs).set({
+      status: 'sent', sentAt: result.sentAt, externalWamid: result.externalWamid,
+      deliveryStatus: 'sent', error: null, processingStartedAt: null,
+    }).where(eq(messageJobs.id, jobId))
+  } else if (result.status === 'sent_unconfirmed') {
+    await db.update(messageJobs).set({
+      status: 'sent_unconfirmed', sentAt: result.sentAt, externalWamid: result.externalWamid,
+      deliveryStatus: 'accepted_unconfirmed', error: result.error, processingStartedAt: null,
+    }).where(eq(messageJobs.id, jobId))
+  } else if (result.status === 'rate_limited') {
+    await db.transaction(async tx => {
+      await tx.update(messageJobs).set({
+        status: 'pending', scheduledFor: result.retryAt, error: result.error,
+        retryCount: sql`${messageJobs.retryCount} + 1`, processingStartedAt: null,
+      }).where(eq(messageJobs.id, jobId))
+      if (metaPhoneNumberId) {
+        await tx.insert(massDispatchPhoneCooldowns).values({
+          metaPhoneNumberId,
+          cooldownUntil: result.retryAt,
+          reason: result.error,
+          updatedAt: new Date(),
+        }).onConflictDoUpdate({
+          target: massDispatchPhoneCooldowns.metaPhoneNumberId,
+          set: {
+            cooldownUntil: result.retryAt,
+            reason: result.error,
+            updatedAt: new Date(),
+          },
+        })
+      }
+    })
+  } else {
+    await db.update(messageJobs).set({ status: 'failed', error: result.error, processingStartedAt: null }).where(eq(messageJobs.id, jobId))
+  }
+}
+
 // O Vercel Cron só aciona rota por GET (mesmo padrão de /api/cron/sync-agents).
 // Esta rota nasceu só com POST e por isso NUNCA foi ligada a nenhum agendador:
 // achado em 23/09/2026, 7 dias de log da Vercel com zero chamadas aqui, contra
@@ -97,22 +144,66 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const lockClient = await tryAcquireCronDispatchLock()
+  if (!lockClient) {
+    return NextResponse.json({ processed: 0, sent: 0, failed: 0, skipped: 'cron_already_running' })
+  }
+
+  try {
+    return await runDispatchPendingJobs()
+  } finally {
+    await releaseCronDispatchLock(lockClient)
+  }
+}
+
+async function runDispatchPendingJobs(): Promise<NextResponse> {
   const now = new Date()
+  const staleProcessingBefore = new Date(now.getTime() - processingLeaseTimeoutMs())
   // Ordena por prioridade do lead (desc) para processar cartao_recusado antes de boleto/carrinho
-  const pendingJobs = await db
-    .select({
-      job: messageJobs,
-      companyId: recoveryLeads.companyId,
-      leadPhone: recoveryLeads.phone,
-      leadCreatedAt: recoveryLeads.createdAt,
-      leadPriority: recoveryLeads.priority,
-      checkBeforeSend: messageJobs.checkBeforeSend,
-    })
-    .from(messageJobs)
-    .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
-    .where(and(eq(messageJobs.status, 'pending'), lte(messageJobs.scheduledFor, now)))
-    .orderBy(desc(recoveryLeads.priority))
-    .limit(MAX_JOBS_PER_RUN)
+  const pendingJobs = await db.transaction(async tx => {
+    const stale = await tx.update(messageJobs).set({
+      status: 'failed',
+      error: 'Job ficou em processing além do lease; revisão manual necessária para evitar reenvio duplicado',
+      processingStartedAt: null,
+    }).where(and(
+      eq(messageJobs.status, 'processing'),
+      lte(messageJobs.processingStartedAt, staleProcessingBefore),
+    )).returning({ id: messageJobs.id })
+    if (stale.length > 0) {
+      console.error('[cron] ALERTA: jobs processing órfãos sinalizados para revisão manual', { jobIds: stale.map(row => row.id) })
+    }
+    const rows = await tx
+      .select({
+        job: messageJobs,
+        companyId: recoveryLeads.companyId,
+        metaPhoneNumberId: settings.metaPhoneNumberId,
+        leadPhone: recoveryLeads.phone,
+        leadCreatedAt: recoveryLeads.createdAt,
+        leadPriority: recoveryLeads.priority,
+        checkBeforeSend: messageJobs.checkBeforeSend,
+      })
+      .from(messageJobs)
+      .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
+      .innerJoin(settings, eq(settings.companyId, recoveryLeads.companyId))
+      .where(and(
+        eq(messageJobs.status, 'pending'),
+        lte(messageJobs.scheduledFor, now),
+        sql`NOT EXISTS (
+          SELECT 1
+          FROM mass_dispatch_phone_cooldowns c
+          WHERE c.meta_phone_number_id = ${settings.metaPhoneNumberId}
+            AND c.cooldown_until > ${now}
+        )`
+      ))
+      .orderBy(desc(recoveryLeads.priority))
+      .limit(MAX_JOBS_PER_RUN)
+      .for('update', { skipLocked: true })
+    const ids = rows.map(row => row.job.id)
+    if (ids.length > 0) {
+      await tx.update(messageJobs).set({ status: 'processing', processingStartedAt: now }).where(inArray(messageJobs.id, ids))
+    }
+    return rows
+  })
 
   // Janela de 24h da Meta: precisa da última mensagem INBOUND de cada lead
   // do batch (sem isso, mensagem livre pra contato frio fora da janela é
@@ -150,11 +241,24 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
 
   let sent = 0
   let failed = 0
+  const cooldownsByPhone = new Map<string, Date>()
 
-  for (const { job, companyId, leadPhone, leadCreatedAt, checkBeforeSend } of pendingJobs) {
+  for (const { job, companyId, metaPhoneNumberId, leadPhone, leadCreatedAt, checkBeforeSend } of pendingJobs) {
+    let providerAccepted = false
     try {
+      const activeCooldown = metaPhoneNumberId ? cooldownsByPhone.get(metaPhoneNumberId) : undefined
+      if (activeCooldown && activeCooldown > new Date()) {
+        await db.update(messageJobs).set({
+          status: 'pending',
+          scheduledFor: activeCooldown,
+          error: 'Cooldown ativo para este número Meta após 429; job adiado sem nova chamada',
+          processingStartedAt: null,
+        }).where(eq(messageJobs.id, job.id))
+        continue
+      }
+
       if (!job.leadId || (!job.messageId && !job.upsellContent)) {
-        await db.update(messageJobs).set({ status: 'failed', error: 'Missing lead or message' }).where(eq(messageJobs.id, job.id))
+        await db.update(messageJobs).set({ status: 'failed', error: 'Missing lead or message', processingStartedAt: null }).where(eq(messageJobs.id, job.id))
         failed++
         continue
       }
@@ -175,10 +279,10 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
         if (purchased) {
           await db
             .update(messageJobs)
-            .set({ status: 'cancelled' })
+            .set({ status: 'cancelled', processingStartedAt: null })
             .where(and(
               eq(messageJobs.leadId, job.leadId),
-              eq(messageJobs.status, 'pending')
+              inArray(messageJobs.status, ['pending', 'processing'])
             ))
           // Fase 2: registra qual job/mensagem desencadeou a conversão
           await db
@@ -196,8 +300,18 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
 
       const [lead] = await db.select().from(recoveryLeads).where(eq(recoveryLeads.id, job.leadId))
       if (!lead) {
-        await db.update(messageJobs).set({ status: 'failed', error: 'Lead not found' }).where(eq(messageJobs.id, job.id))
+        await db.update(messageJobs).set({ status: 'failed', error: 'Lead not found', processingStartedAt: null }).where(eq(messageJobs.id, job.id))
         failed++
+        continue
+      }
+      if (lead.botPaused) {
+        await db
+          .update(messageJobs)
+          .set({ status: 'cancelled', error: 'Lead com bot pausado antes do envio', processingStartedAt: null })
+          .where(and(
+            eq(messageJobs.leadId, job.leadId),
+            inArray(messageJobs.status, ['pending', 'processing'])
+          ))
         continue
       }
 
@@ -217,21 +331,51 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
           console.warn('[cron] job fora da janela de 24h (bloqueio desativado, enviando mesmo assim)', { jobId: job.id, leadId: job.leadId })
         }
 
-        const wamid = await sendWhatsAppMessage(lead.phone, {
-          type: 'text',
-          content: interpolate(job.upsellContent, lead),
-        }, companyId)
-        await db.update(messageJobs).set({ status: 'sent', sentAt: new Date(), externalWamid: wamid, deliveryStatus: 'sent' }).where(eq(messageJobs.id, job.id))
+        const outcome = await executeAndRecordDispatch(
+          () => sendWhatsAppMessage(lead.phone, {
+            type: 'text',
+            content: interpolate(job.upsellContent, lead),
+          }, companyId),
+          result => recordJobOutcome(job.id, result, metaPhoneNumberId),
+          undefined,
+          result => recordJobOutcome(job.id, result, metaPhoneNumberId),
+          job.retryCount,
+        )
+        if (outcome.status === 'rate_limited' && metaPhoneNumberId) cooldownsByPhone.set(metaPhoneNumberId, outcome.retryAt)
+        providerAccepted = outcome.status === 'sent' || outcome.status === 'sent_unconfirmed'
+        if (!providerAccepted) {
+          if (outcome.status === 'failed') failed++
+          continue
+        }
         // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead
         await markLeadContacted(lead.id)
         sent++
         continue
       }
 
-      const [message] = await db.select().from(sequenceMessages).where(eq(sequenceMessages.id, job.messageId!))
+      let message: MessageSnapshot | undefined
+      if (job.massDispatchBatchId != null) {
+        // Segurança central do disparo em massa: nunca reler o template vivo.
+        // Jobs legados sem snapshot falham fechados em vez de enviar conteúdo
+        // que o usuário não aprovou no preview.
+        message = job.messageSnapshot as MessageSnapshot | undefined
+      } else {
+        const [liveMessage] = await db.select().from(sequenceMessages).where(eq(sequenceMessages.id, job.messageId!))
+        message = liveMessage ? {
+          messageType: liveMessage.messageType ?? 'text',
+          content: liveMessage.content,
+          mediaUrl: liveMessage.mediaUrl,
+          caption: liveMessage.caption,
+          buttonsJson: liveMessage.buttonsJson,
+          templateName: liveMessage.templateName,
+          templateLanguage: liveMessage.templateLanguage,
+          templateVariablesMap: liveMessage.templateVariablesMap,
+        } : undefined
+      }
 
       if (!message) {
-        await db.update(messageJobs).set({ status: 'failed', error: 'Message not found' }).where(eq(messageJobs.id, job.id))
+        const error = job.massDispatchBatchId != null ? 'Missing immutable message snapshot' : 'Message not found'
+        await db.update(messageJobs).set({ status: 'failed', error, processingStartedAt: null }).where(eq(messageJobs.id, job.id))
         failed++
         continue
       }
@@ -265,31 +409,45 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
         })
       }
 
-      const wamid = await sendWhatsAppMessage(lead.phone, {
-        type: msgType,
-        content: interpolate(message.content, lead),
-        mediaUrl: message.mediaUrl ?? undefined,
-        caption: interpolate(message.caption, lead),
-        buttons,
-        templateName: message.templateName ?? undefined,
-        templateLanguage: message.templateLanguage ?? undefined,
-        templateVariableValues,
-      }, companyId)
-
-      await db.update(messageJobs).set({
-        status: 'sent',
-        sentAt: new Date(),
-        externalWamid: wamid,
-        deliveryStatus: 'sent',
-      }).where(eq(messageJobs.id, job.id))
+      const outcome = await executeAndRecordDispatch(
+        () => sendWhatsAppMessage(lead.phone, {
+          type: msgType,
+          content: interpolate(message.content, lead),
+          mediaUrl: message.mediaUrl ?? undefined,
+          caption: interpolate(message.caption, lead),
+          buttons,
+          templateName: message.templateName ?? undefined,
+          templateLanguage: message.templateLanguage ?? undefined,
+          templateVariableValues,
+        }, companyId),
+        result => recordJobOutcome(job.id, result, metaPhoneNumberId),
+        undefined,
+        result => recordJobOutcome(job.id, result, metaPhoneNumberId),
+        job.retryCount,
+      )
+      if (outcome.status === 'rate_limited' && metaPhoneNumberId) cooldownsByPhone.set(metaPhoneNumberId, outcome.retryAt)
+      providerAccepted = outcome.status === 'sent' || outcome.status === 'sent_unconfirmed'
+      if (!providerAccepted) {
+        if (outcome.status === 'failed') failed++
+        continue
+      }
       await db.update(recoveryLeads).set({ status: 'in_progress', updatedAt: new Date() }).where(eq(recoveryLeads.id, lead.id))
       // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead
       await markLeadContacted(lead.id)
       sent++
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)
-      await db.update(messageJobs).set({ status: 'failed', error: errorMsg }).where(eq(messageJobs.id, job.id))
-      failed++
+      if (providerAccepted) {
+        console.error('[cron] ALERTA: falha pós-envio; job não será marcado como failed', { jobId: job.id, error: errorMsg })
+        try {
+          await db.update(messageJobs).set({ status: 'sent_unconfirmed', error: `Falha pós-envio: ${errorMsg}`, processingStartedAt: null }).where(eq(messageJobs.id, job.id))
+        } catch (persistErr) {
+          console.error('[cron] ALERTA CRÍTICO: falha ao persistir sent_unconfirmed', { jobId: job.id, persistErr })
+        }
+      } else {
+        await db.update(messageJobs).set({ status: 'failed', error: errorMsg, processingStartedAt: null }).where(eq(messageJobs.id, job.id))
+        failed++
+      }
     }
   }
 
@@ -298,7 +456,7 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
   for (const { job } of pendingJobs) {
     if (job.leadId && !completedLeadIds.has(job.leadId)) {
       const remaining = await db.select().from(messageJobs)
-        .where(and(eq(messageJobs.leadId, job.leadId), eq(messageJobs.status, 'pending')))
+        .where(and(eq(messageJobs.leadId, job.leadId), inArray(messageJobs.status, ['pending', 'processing'])))
       if (remaining.length === 0) {
         const [cur] = await db.select({ status: recoveryLeads.status }).from(recoveryLeads).where(eq(recoveryLeads.id, job.leadId))
         if (cur && cur.status !== 'converted') {

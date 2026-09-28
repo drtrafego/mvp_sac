@@ -5,6 +5,8 @@ import {
   UploadCloud,
   FileSpreadsheet,
   CheckCircle2,
+  AlertCircle,
+  ChevronRight,
   ArrowLeft,
   Sparkles,
   Phone,
@@ -76,7 +78,7 @@ function autoMatchColumn(headers: string[], keywords: string[]): string {
 }
 
 export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsModalProps) {
-  const [step, setStep] = useState<'upload' | 'mapping' | 'importing' | 'result'>('upload')
+  const [step, setStep] = useState<'upload' | 'mapping' | 'importing' | 'result' | 'preview' | 'queued'>('upload')
   const [fileName, setFileName] = useState('')
   const [parsedData, setParsedData] = useState<{ headers: string[]; rows: string[][] }>({ headers: [], rows: [] })
   
@@ -90,7 +92,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
   // Configurações gerais
   const [defaultSource, setDefaultSource] = useState('mineracao')
   const [defaultEventType, setDefaultEventType] = useState('carrinho_abandonado')
-  const [triggerSequence, setTriggerSequence] = useState(false)
+  const [createMassDispatch, setCreateMassDispatch] = useState(false)
   const [defaultProduct] = useState('Produto Principal')
   const [batchTag, setBatchTag] = useState('')
   const [tagScopeChannel, setTagScopeChannel] = useState('')
@@ -102,8 +104,19 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     updated: number
     skipped: number
     tagFailed: number
+    dispatchRecipientFailed: number
     errors: string[]
+    batchId: number | null
+    recipientCount: number
   } | null>(null)
+  const [dispatchPreview, setDispatchPreview] = useState<{
+    recipientCount: number
+    messageCount: number
+    totalJobs: number
+    messages: { id: number; order: number; delayMinutes: number; messageType: string; content: string; templateName: string | null }[]
+  } | null>(null)
+  const [dispatchConfirmed, setDispatchConfirmed] = useState(false)
+  const [jobsCreated, setJobsCreated] = useState(0)
   const [isProcessing, setIsProcessing] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -164,7 +177,8 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
           items,
           defaultEventType,
           defaultSource,
-          triggerSequence,
+          fileName,
+          createMassDispatch,
           tag: batchTag.trim() || undefined,
           scopeChannel: batchTag.trim() && tagScopeChannel ? tagScopeChannel : undefined,
         }),
@@ -189,13 +203,53 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     }
   }
 
+  const handleLoadPreview = async () => {
+    if (!importResult?.batchId) return
+    setIsProcessing(true)
+    try {
+      const res = await fetch(`/api/leads/import/${importResult.batchId}/dispatch`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Falha ao carregar preview')
+      setDispatchPreview(data)
+      setStep('preview')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Falha ao carregar preview')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const handleConfirmDispatch = async () => {
+    if (!importResult?.batchId || !dispatchConfirmed) return
+    setIsProcessing(true)
+    try {
+      const res = await fetch(`/api/leads/import/${importResult.batchId}/dispatch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true, previewMessages: dispatchPreview?.messages ?? [] }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Falha ao iniciar disparo')
+      setJobsCreated(data.jobsCreated)
+      setStep('queued')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Falha ao iniciar disparo')
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   const resetModal = () => {
     setStep('upload')
     setFileName('')
     setParsedData({ headers: [], rows: [] })
+    setCreateMassDispatch(false)
     setBatchTag('')
     setTagScopeChannel('')
     setImportResult(null)
+    setDispatchPreview(null)
+    setDispatchConfirmed(false)
+    setJobsCreated(0)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -416,18 +470,27 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                 </div>
               </div>
 
-              {/* Checkbox de Enfileiramento de Sequência */}
+              <div className="flex items-start gap-2.5 p-3 rounded-[var(--r-md)] bg-surface-inset border border-line-subtle mt-2">
+                <AlertCircle size={17} className="mt-0.5 shrink-0 text-amber-400" />
+                <div>
+                  <span className="text-body font-bold text-fg block">A importação não envia mensagens</span>
+                  <span className="text-micro text-fg-subtle block">
+                    Quando o disparo em massa estiver marcado, o upload cria apenas um lote em rascunho. O envio exige preview e confirmação separada.
+                  </span>
+                </div>
+              </div>
+
               <label className="flex items-center gap-2.5 p-3 rounded-[var(--r-md)] bg-surface-inset border border-line-subtle cursor-pointer mt-2">
                 <input
                   type="checkbox"
-                  checked={triggerSequence}
-                  onChange={e => setTriggerSequence(e.target.checked)}
+                  checked={createMassDispatch}
+                  onChange={e => setCreateMassDispatch(e.target.checked)}
                   className="rounded border-line-default text-brand-solid focus:ring-brand-ink h-4 w-4"
                 />
                 <div>
-                  <span className="text-body font-bold text-fg block">Iniciar disparo automático da sequência</span>
+                  <span className="text-body font-bold text-fg block">Preparar disparo em massa para este CSV</span>
                   <span className="text-micro text-fg-subtle block">
-                    Se marcado, agenda automaticamente a primeira mensagem da sequência do tipo selecionado para cada lead importado.
+                    Cria um lote draft com os destinatários importados. Nada é enviado até a confirmação explícita no preview.
                   </span>
                 </div>
               </label>
@@ -514,7 +577,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                 <CheckCircle2 size={26} />
               </div>
               <p className="text-h2 text-fg font-bold">
-                {importResult.tagFailed > 0 ? 'Importação concluída com ressalvas' : 'Importação Concluída com Sucesso!'}
+                {importResult.tagFailed > 0 || importResult.dispatchRecipientFailed > 0 ? 'Importação concluída com ressalvas' : 'Importação Concluída com Sucesso!'}
               </p>
               <p className="text-micro text-fg-muted">Os contatos já estão disponíveis no painel de Leads, Pipeline e Origens.</p>
             </div>
@@ -547,14 +610,106 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               </div>
             )}
 
-            <div className="flex justify-end pt-3 border-t border-line-subtle">
+            {importResult.dispatchRecipientFailed > 0 && (
+              <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-body text-amber-600 dark:text-amber-400">
+                <p className="font-semibold">
+                  {importResult.dispatchRecipientFailed} contato(s) foram salvos, mas não entraram no lote de disparo.
+                </p>
+                {importResult.errors.length > 0 && importResult.tagFailed === 0 && (
+                  <ul className="mt-1 list-disc pl-5 text-micro">
+                    {importResult.errors.map((error, index) => <li key={index}>{error}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-2 pt-3 border-t border-line-subtle">
               <Button
                 onClick={() => { onOpenChange(false); resetModal(); }}
-                className={cn(CONTROL_H, 'px-6 bg-brand-solid text-black font-bold')}
+                variant={importResult.batchId ? 'outline' : 'default'}
+                className={cn(CONTROL_H, 'px-5', !importResult.batchId && 'bg-brand-solid text-black font-bold')}
               >
-                Concluir & Fechar
+                {importResult.batchId ? 'Fechar sem disparar' : 'Concluir & Fechar'}
+              </Button>
+              {importResult.batchId && (
+                <Button
+                  onClick={handleLoadPreview}
+                  disabled={isProcessing || importResult.recipientCount === 0}
+                  className={cn(CONTROL_H, 'px-5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold')}
+                >
+                  {isProcessing ? 'Carregando...' : 'Ver preview do disparo'}
+                  <ChevronRight size={15} className="ml-1" />
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {step === 'preview' && importResult && dispatchPreview && (
+          <div className="space-y-4 pt-3">
+            <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-4">
+              <p className="text-body font-bold text-fg">Confirme antes de colocar na fila</p>
+              <p className="text-micro text-fg-muted mt-1">
+                {dispatchPreview.recipientCount} destinatários · {dispatchPreview.messageCount} mensagens por destinatário · {dispatchPreview.totalJobs} envios agendados no total.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-label uppercase text-fg-subtle font-bold">Mensagens que serão enviadas</span>
+              {dispatchPreview.messages.length === 0 ? (
+                <p className="rounded-[var(--r-md)] border border-rose-500/40 bg-rose-500/10 p-3 text-body text-fg">
+                  Nenhuma mensagem ativa está configurada para este tipo de evento.
+                </p>
+              ) : dispatchPreview.messages.map(message => (
+                <div key={message.id} className="rounded-[var(--r-md)] border border-line-subtle bg-surface-panel p-3">
+                  <p className="text-micro font-bold text-fg">
+                    Mensagem {message.order} · {message.messageType === 'template' ? `Template ${message.templateName || ''}` : message.messageType}
+                    {message.delayMinutes > 0 ? ` · após ${message.delayMinutes} min` : ' · imediata'}
+                  </p>
+                  <p className="text-body text-fg-muted mt-2 whitespace-pre-wrap">{message.content || '(conteúdo definido pelo template)'}</p>
+                </div>
+              ))}
+            </div>
+
+            <label className="flex items-start gap-2.5 p-3 rounded-[var(--r-md)] bg-surface-inset border border-line-subtle cursor-pointer">
+              <input
+                type="checkbox"
+                checked={dispatchConfirmed}
+                onChange={event => setDispatchConfirmed(event.target.checked)}
+                className="mt-0.5 rounded border-line-default text-brand-solid focus:ring-brand-ink h-4 w-4"
+              />
+              <span className="text-body text-fg">Confirmo o disparo real para os {dispatchPreview.recipientCount} contatos desta lista.</span>
+            </label>
+
+            <div className="flex justify-between gap-2 pt-3 border-t border-line-subtle">
+              <Button variant="ghost" onClick={() => setStep('result')} className={cn(CONTROL_H, 'px-4')}>
+                <ArrowLeft size={14} className="mr-1.5" /> Voltar
+              </Button>
+              <Button
+                onClick={handleConfirmDispatch}
+                disabled={!dispatchConfirmed || dispatchPreview.messageCount === 0 || isProcessing}
+                className={cn(CONTROL_H, 'px-5 bg-rose-500 hover:bg-rose-400 text-white font-bold')}
+              >
+                {isProcessing ? 'Enfileirando...' : 'Iniciar disparo desta lista'}
               </Button>
             </div>
+          </div>
+        )}
+
+        {step === 'queued' && dispatchPreview && (
+          <div className="py-8 text-center space-y-4">
+            <div className="h-12 w-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
+              <CheckCircle2 size={26} />
+            </div>
+            <div>
+              <p className="text-h2 text-fg font-bold">Disparo colocado na fila</p>
+              <p className="text-body text-fg-muted mt-1">
+                {jobsCreated} jobs foram criados. O executor processa no máximo 50 por rodada e registra sucesso ou falha individualmente.
+              </p>
+            </div>
+            <Button onClick={() => { onOpenChange(false); resetModal() }} className={cn(CONTROL_H, 'px-6 bg-brand-solid text-black font-bold')}>
+              Concluir & Fechar
+            </Button>
           </div>
         )}
       </DialogContent>

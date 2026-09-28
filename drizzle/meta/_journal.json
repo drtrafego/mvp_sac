@@ -92,6 +92,13 @@
       "when": 1792800000000,
       "tag": "0022_lead_tags_scope_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792900000000,
+      "tag": "0023_mass_dispatch_batches",
+      "breakpoints": true
     }
   ]
 }

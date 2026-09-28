@@ -514,6 +514,29 @@ export const leadTagsRelations = relations(leadTags, ({ one }) => ({
 }))
 
 // ─── Fila de mensagens agendadas ─────────────────────────────────────────────
+// Um upload cria somente um lote draft e sua lista de destinatários. A fila
+// abaixo só é populada pela confirmação explícita do usuário.
+export const massDispatchBatches = pgTable('mass_dispatch_batches', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  fileName: text('file_name'),
+  eventType: text('event_type').notNull(),
+  trackingSource: text('tracking_source').notNull(),
+  status: text('status').notNull().default('draft'),
+  recipientCount: integer('recipient_count').notNull().default(0),
+  confirmedAt: timestamp('confirmed_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+})
+
+export const massDispatchRecipients = pgTable('mass_dispatch_recipients', {
+  id: serial('id').primaryKey(),
+  batchId: integer('batch_id').references(() => massDispatchBatches.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (table) => [
+  uniqueIndex('mass_dispatch_recipients_batch_lead_unique').on(table.batchId, table.leadId),
+])
+
 export const messageJobs = pgTable('message_jobs', {
   id: serial('id').primaryKey(),
   leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }),
@@ -527,7 +550,20 @@ export const messageJobs = pgTable('message_jobs', {
   externalWamid: text('external_wamid'),               // Fase 1.4: WAMID retornado pela Meta ao enviar
   deliveryStatus: text('delivery_status'),              // Fase 1.4: sent | delivered | read | failed
   messageOrder: integer('message_order'),               // Fase 2.3: posição da mensagem na sequência
+  massDispatchBatchId: integer('mass_dispatch_batch_id').references(() => massDispatchBatches.id, { onDelete: 'set null' }),
+  messageSnapshot: jsonb('message_snapshot'),            // cópia imutável usada pelos disparos em massa
+  retryCount: integer('retry_count').notNull().default(0),
+  processingStartedAt: timestamp('processing_started_at'),
   createdAt: timestamp('created_at').defaultNow(),
+}, (table) => [
+  uniqueIndex('message_jobs_mass_dispatch_unique').on(table.massDispatchBatchId, table.leadId, table.messageId),
+])
+
+export const massDispatchPhoneCooldowns = pgTable('mass_dispatch_phone_cooldowns', {
+  metaPhoneNumberId: text('meta_phone_number_id').primaryKey(),
+  cooldownUntil: timestamp('cooldown_until').notNull(),
+  reason: text('reason'),
+  updatedAt: timestamp('updated_at').defaultNow(),
 })
 
 // ─── Histórico de mensagens WhatsApp / Instagram / E-mail ────────────────────
@@ -771,6 +807,7 @@ export const companiesRelations = relations(companies, ({ one, many }) => ({
   commentLogs: many(instagramCommentLogs),
   agendaBlockedDates: many(agendaBlockedDates),
   metaConversionEvents: many(metaConversionEvents),
+  massDispatchBatches: many(massDispatchBatches),
 }))
 
 export const settingsRelations = relations(settings, ({ one }) => ({
@@ -796,6 +833,18 @@ export const recoveryLeadsRelations = relations(recoveryLeads, ({ one, many }) =
   messages: many(whatsappMessages),
   gramadoReservations: many(gramadoReservations),
   tags: many(leadTags),
+  massDispatchRecipients: many(massDispatchRecipients),
+}))
+
+export const massDispatchBatchesRelations = relations(massDispatchBatches, ({ one, many }) => ({
+  company: one(companies, { fields: [massDispatchBatches.companyId], references: [companies.id] }),
+  recipients: many(massDispatchRecipients),
+  jobs: many(messageJobs),
+}))
+
+export const massDispatchRecipientsRelations = relations(massDispatchRecipients, ({ one }) => ({
+  batch: one(massDispatchBatches, { fields: [massDispatchRecipients.batchId], references: [massDispatchBatches.id] }),
+  lead: one(recoveryLeads, { fields: [massDispatchRecipients.leadId], references: [recoveryLeads.id] }),
 }))
 
 export const gramadoReservationsRelations = relations(gramadoReservations, ({ one }) => ({
@@ -806,6 +855,7 @@ export const gramadoReservationsRelations = relations(gramadoReservations, ({ on
 export const messageJobsRelations = relations(messageJobs, ({ one }) => ({
   lead: one(recoveryLeads, { fields: [messageJobs.leadId], references: [recoveryLeads.id] }),
   message: one(sequenceMessages, { fields: [messageJobs.messageId], references: [sequenceMessages.id] }),
+  massDispatchBatch: one(massDispatchBatches, { fields: [messageJobs.massDispatchBatchId], references: [massDispatchBatches.id] }),
 }))
 
 export const whatsappMessagesRelations = relations(whatsappMessages, ({ one }) => ({

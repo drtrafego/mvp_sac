@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs, leadTags } from '@/lib/db/schema'
-import { eq, and } from 'drizzle-orm'
+import { leadTags, massDispatchBatches, massDispatchRecipients, recoveryLeads } from '@/lib/db/schema'
+import { eq, and, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { isLeadChannel, MAX_TAG_LENGTH, normalizeTag, PESSOA_TAG, type LeadChannel } from '@/lib/lead-tags'
 import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
@@ -46,7 +46,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     items,
     defaultEventType = 'carrinho_abandonado',
     defaultSource = 'mineracao',
-    triggerSequence = false,
+    fileName,
+    createMassDispatch,
+    massDispatch,
+    triggerMassDispatch,
     tag: rawTag,
     scopeChannel: rawScopeChannel,
   } = body
@@ -73,24 +76,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let updated = 0
   let skipped = 0
   let tagFailed = 0
+  let dispatchRecipientFailed = 0
   const errors: string[] = []
 
-  // Se for para disparar sequência, busca a sequência e mensagens correspondentes
-  let activeMessages: (typeof sequenceMessages.$inferSelect)[] = []
-  if (triggerSequence) {
-    const [seq] = await db
-      .select()
-      .from(recoverySequences)
-      .where(and(eq(recoverySequences.companyId, company.id), eq(recoverySequences.eventType, defaultEventType)))
-      .limit(1)
+  const shouldCreateMassDispatch = Boolean(createMassDispatch || massDispatch || triggerMassDispatch)
+  const [batch] = shouldCreateMassDispatch
+    ? await db.insert(massDispatchBatches).values({
+        companyId: company.id,
+        fileName: typeof fileName === 'string' ? fileName.slice(0, 255) : null,
+        eventType: defaultEventType,
+        trackingSource: defaultSource,
+        status: 'draft',
+      }).returning({ id: massDispatchBatches.id })
+    : []
 
-    if (seq && seq.isActive) {
-      activeMessages = await db
-        .select()
-        .from(sequenceMessages)
-        .where(and(eq(sequenceMessages.sequenceId, seq.id), eq(sequenceMessages.isActive, true)))
-        .orderBy(sequenceMessages.order)
-    }
+  if (shouldCreateMassDispatch && !batch) {
+    return NextResponse.json({ error: 'Não foi possível criar o lote de disparo em massa' }, { status: 500 })
   }
 
   for (const item of items as ImportItem[]) {
@@ -174,21 +175,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         leadChannel = created.channel
         inserted++
 
-        // Enfileira mensagens da sequência se configurado
-        if (triggerSequence && activeMessages.length > 0) {
-          const now = new Date()
-          for (const msg of activeMessages) {
-            const scheduledFor = new Date(now.getTime() + (msg.delayMinutes || 0) * 60 * 1000)
-            await db.insert(messageJobs).values({
-              leadId,
-              messageId: msg.id,
-              messageOrder: msg.order,
-              scheduledFor,
-              status: 'pending',
-              checkBeforeSend: true,
-            })
-          }
-        }
       }
 
       if (tag) {
@@ -210,19 +196,55 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           errors.push(`Lead ${leadId} persistido, mas falhou ao aplicar a tag "${tag}": ${err instanceof Error ? err.message : String(err)}`)
         }
       }
+
+      if (batch) {
+        try {
+          const [pauseState] = await db
+            .select({ botPaused: recoveryLeads.botPaused })
+            .from(recoveryLeads)
+            .where(eq(recoveryLeads.id, leadId))
+            .limit(1)
+
+          if (!pauseState?.botPaused) {
+            await db.insert(massDispatchRecipients)
+              .values({ batchId: batch.id, leadId })
+              .onConflictDoNothing()
+          }
+        } catch (err) {
+          dispatchRecipientFailed++
+          errors.push(`Lead ${leadId} persistido, mas falhou ao incluir no lote de disparo: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
     } catch (err) {
       skipped++
       errors.push(err instanceof Error ? err.message : String(err))
     }
   }
 
+  let recipientCount = 0
+  if (batch) {
+    const [recipientTotal] = await db
+      .select({ count: sql<number>`cast(count(*) as int)` })
+      .from(massDispatchRecipients)
+      .where(eq(massDispatchRecipients.batchId, batch.id))
+
+    recipientCount = recipientTotal?.count ?? 0
+    await db.update(massDispatchBatches)
+      .set({ recipientCount })
+      .where(eq(massDispatchBatches.id, batch.id))
+  }
+
   return NextResponse.json({
     success: true,
+    batchId: batch?.id ?? null,
+    batchStatus: batch ? 'draft' : null,
+    recipientCount,
     total: items.length,
     inserted,
     updated,
     skipped,
     tagFailed,
+    dispatchRecipientFailed,
     errors: errors.slice(0, 10),
   })
 }
