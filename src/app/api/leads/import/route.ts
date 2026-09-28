@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs } from '@/lib/db/schema'
+import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs, leadTags } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
+import { normalizeTag, validateTagScope, PESSOA_TAG, BOT_PAUSED_BY_TAG_PESSOA, TagScopeChannel } from '@/lib/lead-tags'
+import { notifyNaoResponder } from '@/lib/nao-responder'
 
 function cleanPhone(raw: string): string {
   let digits = raw.replace(/\D/g, '')
@@ -40,10 +42,26 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
   const body = await req.json()
 
-  const { items, defaultEventType = 'carrinho_abandonado', defaultSource = 'mineracao', triggerSequence = false } = body
+  const { items, defaultEventType = 'carrinho_abandonado', defaultSource = 'mineracao', triggerSequence = false, tags: rawTagsInput } = body
 
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ error: 'Nenhum contato enviado para importação' }, { status: 400 })
+  }
+
+  // Normaliza e valida tags recebidas para a importação em massa
+  const rawTags: Array<{ tag: string; scopeChannel?: string | null } | string> = Array.isArray(rawTagsInput) ? rawTagsInput : []
+  const parsedTags: Array<{ tag: string; scopeChannel: TagScopeChannel }> = []
+
+  for (const t of rawTags) {
+    const name = typeof t === 'string' ? t : t?.tag || ''
+    const scope = typeof t === 'object' && t ? t.scopeChannel : null
+    const normTag = normalizeTag(name)
+    if (normTag) {
+      const val = validateTagScope(normTag, scope)
+      if (val.ok) {
+        parsedTags.push({ tag: normTag, scopeChannel: val.scopeChannel })
+      }
+    }
   }
 
   let inserted = 0
@@ -148,6 +166,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               status: 'pending',
               checkBeforeSend: true,
             })
+          }
+        }
+      }
+
+      // Aplica tags selecionadas em lote para este lead
+      if (parsedTags.length > 0) {
+        for (const t of parsedTags) {
+          await db
+            .insert(leadTags)
+            .values({
+              leadId,
+              tag: t.tag,
+              scopeChannel: t.scopeChannel,
+              createdBy: 'import_csv',
+            })
+            .onConflictDoNothing({ target: [leadTags.leadId, leadTags.tag, leadTags.scopeChannel] })
+
+          if (t.tag === PESSOA_TAG) {
+            await db
+              .update(recoveryLeads)
+              .set({
+                botPaused: true,
+                botPausedAt: new Date(),
+                botPausedBy: BOT_PAUSED_BY_TAG_PESSOA,
+                updatedAt: new Date(),
+              })
+              .where(eq(recoveryLeads.id, leadId))
+
+            try {
+              await notifyNaoResponder(phone, 'marcar', 'import')
+            } catch {
+              /* silencioso para não interromper a importação em lote */
+            }
           }
         }
       }

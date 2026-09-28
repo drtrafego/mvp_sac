@@ -494,11 +494,14 @@ export const leadTags = pgTable('lead_tags', {
   // Normalizada (trim + lowercase) na escrita, pra "Pessoa" e "pessoa" não
   // virarem duas tags distintas no mesmo lead. Ver normalizeTag() na rota.
   tag: text('tag').notNull(),
+  // Escopo de canal opcional: null (geral) ou 'whatsapp' | 'instagram' | 'email' | 'mineracao'
+  scopeChannel: text('scope_channel'),
   createdAt: timestamp('created_at').defaultNow(),
   createdBy: text('created_by'), // nome/e-mail de quem marcou (humano) ou 'tag:pessoa' quando é efeito de sistema
 }, (table) => [
-  uniqueIndex('lead_tags_lead_tag_unique').on(table.leadId, table.tag),
+  uniqueIndex('lead_tags_lead_tag_scope_unique').on(table.leadId, table.tag, table.scopeChannel),
   index('lead_tags_tag_idx').on(table.tag),
+  index('lead_tags_scope_channel_idx').on(table.scopeChannel),
 ])
 
 export const leadTagsRelations = relations(leadTags, ({ one }) => ({

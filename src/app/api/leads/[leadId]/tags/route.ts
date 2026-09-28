@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { leadTags, recoveryLeads } from '@/lib/db/schema'
 import { and, desc, eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
-import { normalizeTag, PESSOA_TAG, BOT_PAUSED_BY_TAG_PESSOA, MAX_TAG_LENGTH } from '@/lib/lead-tags'
+import { normalizeTag, validateTagScope, PESSOA_TAG, BOT_PAUSED_BY_TAG_PESSOA, MAX_TAG_LENGTH } from '@/lib/lead-tags'
 import { notifyNaoResponder } from '@/lib/nao-responder'
 
 type Params = { params: Promise<{ leadId: string }> }
@@ -38,16 +38,12 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
 
 /**
  * POST /api/leads/[leadId]/tags
- * Body: { tag: string }
+ * Body: { tag: string, scopeChannel?: string | null }
  *
- * Adiciona uma tag ao lead (idempotente: já existir a mesma tag não é erro).
+ * Adiciona uma tag ao lead (idempotente: já existir a mesma tag no mesmo escopo não é erro).
  * A tag especial "pessoa" (normalizada, ver normalizeTag()) além de etiquetar
  * pausa o bot de IA (botPaused=true, botPausedBy='tag:pessoa') e avisa a
- * ponte da Nina pra ela também não responder o contato fora do SAC. Essa
- * segunda parte NUNCA bloqueia a primeira: se a chamada à rota da Luana
- * falhar (rede, timeout, endpoint ainda não publicado), a tag e a pausa no
- * SAC já valem por si (cobrem 100% do fluxo síncrono via SAC), e a resposta
- * carrega um `warning` avisando que o resto não foi confirmado.
+ * ponte da Nina pra ela também não responder o contato fora do SAC.
  */
 export async function POST(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { leadId } = await params
@@ -57,7 +53,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   const company = await requireCompany()
   const user = await getCurrentUser()
 
-  let body: { tag?: string } = {}
+  let body: { tag?: string; scopeChannel?: string | null } = {}
   try {
     body = await req.json()
   } catch {
@@ -76,21 +72,23 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
   if (!lead) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
 
+  const scopeValidation = validateTagScope(tag, body.scopeChannel, lead.channel)
+  if (!scopeValidation.ok) {
+    return NextResponse.json({ error: scopeValidation.error }, { status: 400 })
+  }
+
+  const scopeChannel = scopeValidation.scopeChannel
   const createdBy = user?.displayName || user?.primaryEmail?.split('@')[0] || 'humano'
 
   const [inserted] = await db
     .insert(leadTags)
-    .values({ leadId: id, tag, createdBy })
-    .onConflictDoNothing({ target: [leadTags.leadId, leadTags.tag] })
+    .values({ leadId: id, tag, scopeChannel, createdBy })
+    .onConflictDoNothing({ target: [leadTags.leadId, leadTags.tag, leadTags.scopeChannel] })
     .returning()
 
   let warning: string | undefined
 
   if (tag === PESSOA_TAG) {
-    // Sempre reafirma a pausa, mesmo se a tag já existia (onConflictDoNothing
-    // não insere de novo, mas o efeito colateral tem que valer sempre que
-    // alguém chamar este endpoint com "pessoa" — idempotência da AÇÃO, não
-    // só da linha).
     await db
       .update(recoveryLeads)
       .set({
@@ -111,5 +109,5 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     .where(eq(leadTags.leadId, id))
     .orderBy(desc(leadTags.createdAt))
 
-  return NextResponse.json({ ok: true, tag: inserted ?? { leadId: id, tag, createdBy }, tags, warning })
+  return NextResponse.json({ ok: true, tag: inserted ?? { leadId: id, tag, scopeChannel, createdBy }, tags, warning })
 }
