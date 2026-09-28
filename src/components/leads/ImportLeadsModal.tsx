@@ -5,20 +5,16 @@ import {
   UploadCloud,
   FileSpreadsheet,
   CheckCircle2,
-  AlertCircle,
-  X,
-  ChevronRight,
   ArrowLeft,
   Sparkles,
-  Layers,
   Phone,
   User,
   Mail,
-  DollarSign,
   Package
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
@@ -95,7 +91,9 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
   const [defaultSource, setDefaultSource] = useState('mineracao')
   const [defaultEventType, setDefaultEventType] = useState('carrinho_abandonado')
   const [triggerSequence, setTriggerSequence] = useState(false)
-  const [defaultProduct, setDefaultProduct] = useState('Produto Principal')
+  const [defaultProduct] = useState('Produto Principal')
+  const [batchTag, setBatchTag] = useState('')
+  const [tagScopeChannel, setTagScopeChannel] = useState('')
 
   // Resultados
   const [importResult, setImportResult] = useState<{
@@ -103,6 +101,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     inserted: number
     updated: number
     skipped: number
+    tagFailed: number
     errors: string[]
   } | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -166,6 +165,8 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
           defaultEventType,
           defaultSource,
           triggerSequence,
+          tag: batchTag.trim() || undefined,
+          scopeChannel: batchTag.trim() && tagScopeChannel ? tagScopeChannel : undefined,
         }),
       })
 
@@ -180,7 +181,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       setImportResult(result)
       setStep('result')
       onSuccess()
-    } catch (err) {
+    } catch {
       alert('Erro ao processar importação. Tente novamente.')
       setStep('mapping')
     } finally {
@@ -192,6 +193,8 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     setStep('upload')
     setFileName('')
     setParsedData({ headers: [], rows: [] })
+    setBatchTag('')
+    setTagScopeChannel('')
     setImportResult(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -430,6 +433,50 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               </label>
             </div>
 
+            {/* 3. Tag opcional aplicada ao lote inteiro */}
+            <div className="space-y-3 pt-2 border-t border-line-subtle">
+              <span className="text-label uppercase text-fg-subtle font-bold block">3. Tag do lote (opcional)</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-micro font-bold text-fg">Tag para todos os contatos</label>
+                  <Input
+                    value={batchTag}
+                    onChange={e => setBatchTag(e.target.value)}
+                    maxLength={50}
+                    placeholder="Ex: vip"
+                    className={cn(FIELD, CONTROL_H, 'text-body')}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-micro font-bold text-fg">Escopo da tag</label>
+                  <Select
+                    value={tagScopeChannel || '__general__'}
+                    onValueChange={v => setTagScopeChannel(!v || v === '__general__' ? '' : v)}
+                    disabled={!batchTag.trim()}
+                    items={{
+                      __general__: 'Geral (todos os canais)',
+                      whatsapp: 'WhatsApp',
+                      instagram: 'Instagram',
+                      email: 'E-mail',
+                      mineracao: 'Mineração',
+                    }}
+                  >
+                    <SelectTrigger className={cn(FIELD, CONTROL_H, 'text-body')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-surface-overlay text-fg border border-line-subtle">
+                      <SelectItem value="__general__">Geral (todos os canais)</SelectItem>
+                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                      <SelectItem value="instagram">Instagram</SelectItem>
+                      <SelectItem value="email">E-mail</SelectItem>
+                      <SelectItem value="mineracao">Mineração</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <p className="text-micro text-fg-subtle">Se preenchida, a tag será aplicada tanto aos contatos novos quanto aos já existentes encontrados no lote.</p>
+            </div>
+
             {/* Ações */}
             <div className="flex justify-between items-center pt-3 border-t border-line-subtle">
               <Button variant="ghost" onClick={() => setStep('upload')} className={cn(CONTROL_H, 'px-4')}>
@@ -466,7 +513,9 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               <div className="h-12 w-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
                 <CheckCircle2 size={26} />
               </div>
-              <p className="text-h2 text-fg font-bold">Importação Concluída com Sucesso!</p>
+              <p className="text-h2 text-fg font-bold">
+                {importResult.tagFailed > 0 ? 'Importação concluída com ressalvas' : 'Importação Concluída com Sucesso!'}
+              </p>
               <p className="text-micro text-fg-muted">Os contatos já estão disponíveis no painel de Leads, Pipeline e Origens.</p>
             </div>
 
@@ -484,6 +533,19 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                 <span className="num text-h2 font-bold text-fg-subtle mt-1 block">{importResult.skipped}</span>
               </div>
             </div>
+
+            {importResult.tagFailed > 0 && (
+              <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-body text-amber-600 dark:text-amber-400">
+                <p className="font-semibold">
+                  {importResult.tagFailed} contato(s) foram salvos, mas a tag não pôde ser aplicada.
+                </p>
+                {importResult.errors.length > 0 && (
+                  <ul className="mt-1 list-disc pl-5 text-micro">
+                    {importResult.errors.map((error, index) => <li key={index}>{error}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
 
             <div className="flex justify-end pt-3 border-t border-line-subtle">
               <Button

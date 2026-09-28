@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs, leadTags } from '@/lib/db/schema'
+import { eq, and } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
+import { isLeadChannel, MAX_TAG_LENGTH, normalizeTag, PESSOA_TAG, type LeadChannel } from '@/lib/lead-tags'
+import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
 
 function cleanPhone(raw: string): string {
   let digits = raw.replace(/\D/g, '')
@@ -40,19 +42,41 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
   const body = await req.json()
 
-  const { items, defaultEventType = 'carrinho_abandonado', defaultSource = 'mineracao', triggerSequence = false } = body
+  const {
+    items,
+    defaultEventType = 'carrinho_abandonado',
+    defaultSource = 'mineracao',
+    triggerSequence = false,
+    tag: rawTag,
+    scopeChannel: rawScopeChannel,
+  } = body
 
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ error: 'Nenhum contato enviado para importação' }, { status: 400 })
   }
 
+  const hasTag = rawTag !== undefined && rawTag !== null && rawTag !== ''
+  const tag = hasTag && typeof rawTag === 'string' ? normalizeTag(rawTag) : null
+  if (hasTag && !tag) {
+    return NextResponse.json({ error: `Tag inválida (vazia ou só espaço, máx. ${MAX_TAG_LENGTH} caracteres)` }, { status: 400 })
+  }
+
+  let scopeChannel: LeadChannel | null = null
+  if (rawScopeChannel !== undefined && rawScopeChannel !== null) {
+    if (!tag || !isLeadChannel(rawScopeChannel)) {
+      return NextResponse.json({ error: 'Canal de escopo inválido ou informado sem tag' }, { status: 400 })
+    }
+    scopeChannel = rawScopeChannel
+  }
+
   let inserted = 0
   let updated = 0
   let skipped = 0
+  let tagFailed = 0
   const errors: string[] = []
 
   // Se for para disparar sequência, busca a sequência e mensagens correspondentes
-  let activeMessages: any[] = []
+  let activeMessages: (typeof sequenceMessages.$inferSelect)[] = []
   if (triggerSequence) {
     const [seq] = await db
       .select()
@@ -92,12 +116,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
       // Verificar existência por telefone e empresa para idempotência
       const [existing] = await db
-        .select({ id: recoveryLeads.id, status: recoveryLeads.status })
+        .select({
+          id: recoveryLeads.id,
+          status: recoveryLeads.status,
+          phone: recoveryLeads.phone,
+          channel: recoveryLeads.channel,
+        })
         .from(recoveryLeads)
         .where(and(eq(recoveryLeads.companyId, company.id), eq(recoveryLeads.phone, phone)))
         .limit(1)
 
       let leadId: number
+      let leadPhone: string
+      let leadChannel: string | null
 
       if (existing) {
         // Atualiza dados adicionais se ainda não convertido
@@ -114,6 +145,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           .where(eq(recoveryLeads.id, existing.id))
         
         leadId = existing.id
+        leadPhone = existing.phone
+        leadChannel = existing.channel
         updated++
       } else {
         const [created] = await db
@@ -130,9 +163,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             trackingSource,
             status: 'pending',
           })
-          .returning({ id: recoveryLeads.id })
+          .returning({
+            id: recoveryLeads.id,
+            phone: recoveryLeads.phone,
+            channel: recoveryLeads.channel,
+          })
 
         leadId = created.id
+        leadPhone = created.phone
+        leadChannel = created.channel
         inserted++
 
         // Enfileira mensagens da sequência se configurado
@@ -151,6 +190,26 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           }
         }
       }
+
+      if (tag) {
+        try {
+          await db
+            .insert(leadTags)
+            .values({ leadId, tag, scopeChannel, createdBy: 'import:csv' })
+            .onConflictDoNothing()
+
+          if (tag === PESSOA_TAG) {
+            await pauseBotForPessoaTag({ id: leadId, phone: leadPhone, channel: leadChannel })
+          }
+        } catch (err) {
+          // O lead já foi persistido de verdade. Não o classificar como
+          // skipped: isso sugeriria que nada aconteceu e falsearia os
+          // contadores. A falha da tag tem categoria própria e inserted /
+          // updated continuam descrevendo corretamente o estado do banco.
+          tagFailed++
+          errors.push(`Lead ${leadId} persistido, mas falhou ao aplicar a tag "${tag}": ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
     } catch (err) {
       skipped++
       errors.push(err instanceof Error ? err.message : String(err))
@@ -163,6 +222,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     inserted,
     updated,
     skipped,
+    tagFailed,
     errors: errors.slice(0, 10),
   })
 }

@@ -651,13 +651,46 @@ export function ensureSchema(client: any): Promise<void> {
               id SERIAL PRIMARY KEY,
               lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
               tag TEXT NOT NULL,
+              scope_channel TEXT,
               created_at TIMESTAMP DEFAULT NOW(),
               created_by TEXT
             )
           `
           await client`
-            CREATE UNIQUE INDEX IF NOT EXISTS lead_tags_lead_tag_unique
-            ON lead_tags (lead_id, tag)
+            ALTER TABLE lead_tags ADD COLUMN IF NOT EXISTS scope_channel TEXT
+          `
+          // Uma tentativa anterior, depois revertida, pode ter deixado tags
+          // gerais duplicadas porque NULL não era protegido pelo índice.
+          // Limpar antes do DROP + CREATE garante que dados legados não
+          // façam a criação do índice correto falhar silenciosamente.
+          await client`
+            DELETE FROM lead_tags
+            WHERE id IN (
+              SELECT id
+              FROM (
+                SELECT
+                  id,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY lead_id, tag, COALESCE(scope_channel, '')
+                    ORDER BY created_at ASC NULLS LAST, id ASC
+                  ) AS duplicate_position
+                FROM lead_tags
+              ) AS ranked_lead_tags
+              WHERE duplicate_position > 1
+            )
+          `
+          // Uma versão revertida já usou este mesmo nome com uma definição
+          // incorreta (sem COALESCE). DROP + CREATE é intencional: IF NOT
+          // EXISTS preservaria silenciosamente o índice malformado.
+          await client`
+            DROP INDEX IF EXISTS lead_tags_lead_tag_scope_unique
+          `
+          await client`
+            CREATE UNIQUE INDEX lead_tags_lead_tag_scope_unique
+            ON lead_tags (lead_id, tag, COALESCE(scope_channel, ''))
+          `
+          await client`
+            DROP INDEX IF EXISTS lead_tags_lead_tag_unique
           `
           await client`
             CREATE INDEX IF NOT EXISTS lead_tags_tag_idx

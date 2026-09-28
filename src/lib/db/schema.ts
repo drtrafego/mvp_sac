@@ -494,10 +494,18 @@ export const leadTags = pgTable('lead_tags', {
   // Normalizada (trim + lowercase) na escrita, pra "Pessoa" e "pessoa" não
   // virarem duas tags distintas no mesmo lead. Ver normalizeTag() na rota.
   tag: text('tag').notNull(),
+  // NULL = tag geral; preenchido = tag válida apenas naquele canal.
+  scopeChannel: text('scope_channel'),
   createdAt: timestamp('created_at').defaultNow(),
   createdBy: text('created_by'), // nome/e-mail de quem marcou (humano) ou 'tag:pessoa' quando é efeito de sistema
 }, (table) => [
-  uniqueIndex('lead_tags_lead_tag_unique').on(table.leadId, table.tag),
+  // COALESCE é obrigatório: Postgres considera NULLs distintos em índices
+  // únicos comuns e permitiria duplicar a mesma tag geral no mesmo lead.
+  uniqueIndex('lead_tags_lead_tag_scope_unique').on(
+    table.leadId,
+    table.tag,
+    sql`coalesce(${table.scopeChannel}, '')`,
+  ),
   index('lead_tags_tag_idx').on(table.tag),
 ])
 

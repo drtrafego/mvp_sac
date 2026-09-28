@@ -5,8 +5,8 @@ import { db } from '@/lib/db'
 import { leadTags, recoveryLeads } from '@/lib/db/schema'
 import { and, desc, eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
-import { normalizeTag, PESSOA_TAG, BOT_PAUSED_BY_TAG_PESSOA, MAX_TAG_LENGTH } from '@/lib/lead-tags'
-import { notifyNaoResponder } from '@/lib/nao-responder'
+import { normalizeTag, PESSOA_TAG, MAX_TAG_LENGTH, isLeadChannel, type LeadChannel } from '@/lib/lead-tags'
+import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -38,7 +38,7 @@ export async function GET(_req: NextRequest, { params }: Params): Promise<NextRe
 
 /**
  * POST /api/leads/[leadId]/tags
- * Body: { tag: string }
+ * Body: { tag: string, scopeChannel?: 'whatsapp' | 'instagram' | 'email' | 'mineracao' | null }
  *
  * Adiciona uma tag ao lead (idempotente: já existir a mesma tag não é erro).
  * A tag especial "pessoa" (normalizada, ver normalizeTag()) além de etiquetar
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   const company = await requireCompany()
   const user = await getCurrentUser()
 
-  let body: { tag?: string } = {}
+  let body: { tag?: string; scopeChannel?: unknown } = {}
   try {
     body = await req.json()
   } catch {
@@ -70,6 +70,14 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     return NextResponse.json({ error: `Tag inválida (vazia ou só espaço, máx. ${MAX_TAG_LENGTH} caracteres)` }, { status: 400 })
   }
 
+  let scopeChannel: LeadChannel | null = null
+  if (body.scopeChannel !== undefined && body.scopeChannel !== null) {
+    if (!isLeadChannel(body.scopeChannel)) {
+      return NextResponse.json({ error: 'Canal de escopo inválido' }, { status: 400 })
+    }
+    scopeChannel = body.scopeChannel
+  }
+
   const [lead] = await db
     .select()
     .from(recoveryLeads)
@@ -80,29 +88,21 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
 
   const [inserted] = await db
     .insert(leadTags)
-    .values({ leadId: id, tag, createdBy })
-    .onConflictDoNothing({ target: [leadTags.leadId, leadTags.tag] })
+    .values({ leadId: id, tag, scopeChannel, createdBy })
+    // Drizzle 0.45 só aceita colunas simples como conflict target. Sem alvo
+    // explícito, o Postgres usa qualquer constraint/índice único aplicável,
+    // incluindo o índice funcional com COALESCE(scope_channel, '').
+    .onConflictDoNothing()
     .returning()
 
   let warning: string | undefined
 
   if (tag === PESSOA_TAG) {
-    // Sempre reafirma a pausa, mesmo se a tag já existia (onConflictDoNothing
-    // não insere de novo, mas o efeito colateral tem que valer sempre que
-    // alguém chamar este endpoint com "pessoa" — idempotência da AÇÃO, não
-    // só da linha).
-    await db
-      .update(recoveryLeads)
-      .set({
-        botPaused: true,
-        botPausedAt: new Date(),
-        botPausedBy: BOT_PAUSED_BY_TAG_PESSOA,
-        updatedAt: new Date(),
-      })
-      .where(eq(recoveryLeads.id, id))
-
-    const result = await notifyNaoResponder(lead.phone, 'marcar', lead.channel)
-    if (!result.ok) warning = result.warning
+    // Reafirma a pausa se ela já era desta feature, mesmo quando a linha da
+    // tag já existia. O helper faz o UPDATE com CAS e, portanto, não toma a
+    // pausa se outro motivo concorrente/manual já estiver no lead.
+    const result = await pauseBotForPessoaTag(lead)
+    warning = result.warning
   }
 
   const tags = await db
@@ -111,5 +111,5 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     .where(eq(leadTags.leadId, id))
     .orderBy(desc(leadTags.createdAt))
 
-  return NextResponse.json({ ok: true, tag: inserted ?? { leadId: id, tag, createdBy }, tags, warning })
+  return NextResponse.json({ ok: true, tag: inserted ?? { leadId: id, tag, scopeChannel, createdBy }, tags, warning })
 }
