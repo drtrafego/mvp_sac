@@ -852,11 +852,47 @@ export function needsMineracaoTrackingSourceFix(currentTrackingSource: string | 
   return true
 }
 
+type ClassifiedAgentCompany = {
+  companySlug: string
+  companyName: string
+  knownTenantSlug: 'autonomia' | 'gramado-plaza' | 'drlucas' | null
+}
+
+export function classifyAgentCompany(rawSlugValue: string | null | undefined, rawNameValue: string | null | undefined): ClassifiedAgentCompany {
+  const rawSlug = (rawSlugValue || '').trim().toLowerCase()
+  const rawName = (rawNameValue || 'Agente IA').trim() || 'Agente IA'
+  const normalizedName = rawName.toLowerCase()
+
+  if (
+    rawSlug.includes('autonomia') ||
+    rawSlug.includes('gastao') ||
+    rawSlug.includes('24horas') ||
+    rawSlug.includes('casal') ||
+    rawSlug.includes('trafego') ||
+    normalizedName.includes('gast') ||
+    normalizedName.includes('casal') ||
+    normalizedName.includes('autonomia')
+  ) {
+    return { companySlug: 'autonomia', companyName: 'AutonomIA', knownTenantSlug: 'autonomia' }
+  }
+
+  if (rawSlug.includes('gramado') || rawSlug.includes('plaza')) {
+    return { companySlug: 'gramado-plaza', companyName: 'Gramado Plaza', knownTenantSlug: 'gramado-plaza' }
+  }
+
+  if (rawSlug.includes('lucas') || normalizedName.includes('lucas')) {
+    return { companySlug: 'drlucas', companyName: 'Dr. Lucas', knownTenantSlug: 'drlucas' }
+  }
+
+  return { companySlug: rawSlug, companyName: rawName, knownTenantSlug: null }
+}
+
 export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   const details: string[] = []
   let companiesCreated = 0
   let leadsCreated = 0
   let messagesImported = 0
+  let outreachUnknownOriginSkipped = 0
 
   const dbUrl = await getAgentsDbUrl()
   const dbUrlMasked = dbUrl ? dbUrl.replace(/:[^:@]+@/, ':****@') : 'Não configurado'
@@ -1012,20 +1048,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   for (const agent of agents) {
     const rawSlug = (agent.slug || agent.org_slug || agent.name.toLowerCase().replace(/\s+/g, '-')).toLowerCase()
     const rawName = agent.name || agent.org_name || 'Agente IA'
-
-    let companySlug = rawSlug
-    let companyName = rawName
-
-    if (rawSlug.includes('autonomia') || rawSlug.includes('gastao') || rawSlug.includes('24horas') || rawSlug.includes('casal') || rawSlug.includes('trafego') || rawName.toLowerCase().includes('gast') || rawName.toLowerCase().includes('casal') || rawName.toLowerCase().includes('autonomia')) {
-      companySlug = 'autonomia'
-      companyName = 'AutonomIA'
-    } else if (rawSlug.includes('gramado') || rawSlug.includes('plaza')) {
-      companySlug = 'gramado-plaza'
-      companyName = 'Gramado Plaza'
-    } else if (rawSlug.includes('lucas') || rawName.toLowerCase().includes('lucas')) {
-      companySlug = 'drlucas'
-      companyName = 'Dr. Lucas'
-    }
+    const { companySlug, companyName } = classifyAgentCompany(rawSlug, rawName)
 
     let company = companyMap.get(companySlug)
     if (!company) {
@@ -1680,18 +1703,70 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
     const outreachSortExpr = `coalesce(last_at, '${EPOCH_CURSOR_ISO}'::timestamp)`
     const outreachIdExpr = 'id::text'
+    const outreachKnownAgentSlugSql = [
+      "coalesce(agent_slug, '') ilike '%autonomia%'",
+      "coalesce(agent_slug, '') ilike '%gastao%'",
+      "coalesce(agent_slug, '') ilike '%24horas%'",
+      "coalesce(agent_slug, '') ilike '%casal%'",
+      "coalesce(agent_slug, '') ilike '%trafego%'",
+      "coalesce(agent_slug, '') ilike '%gramado%'",
+      "coalesce(agent_slug, '') ilike '%plaza%'",
+      "coalesce(agent_slug, '') ilike '%lucas%'",
+    ].join(' or ')
     const outreachScopes = [
       {
         sourceKey: 'autonomia',
         company: companyMap.get('autonomia'),
-        whereSql: "agent_slug not ilike '%lucas%' and agent_slug not ilike '%gramado%' and agent_slug not ilike '%plaza%'",
+        whereSql: "(coalesce(agent_slug, '') ilike '%autonomia%' or coalesce(agent_slug, '') ilike '%gastao%' or coalesce(agent_slug, '') ilike '%24horas%' or coalesce(agent_slug, '') ilike '%casal%' or coalesce(agent_slug, '') ilike '%trafego%')",
       },
       {
         sourceKey: 'gramado-plaza',
         company: companyMap.get('gramado-plaza'),
-        whereSql: "agent_slug not ilike '%lucas%' and (agent_slug ilike '%gramado%' or agent_slug ilike '%plaza%')",
+        whereSql: "(coalesce(agent_slug, '') ilike '%gramado%' or coalesce(agent_slug, '') ilike '%plaza%')",
       },
     ]
+
+    const quarantineCursorCompany = companyMap.get('autonomia')
+    if (quarantineCursorCompany) {
+      const unknownOutreachBatch = await loadTimedSyncBatch<OutreachConvoDbRow>({
+        companyId: quarantineCursorCompany.id,
+        source: 'outreach_convos',
+        sourceKey: 'unknown-origin-quarantine',
+        getPosition: outreachCursorPosition,
+        fetchNewRows: (cursor) =>
+          queryAgentsDb<OutreachConvoDbRow>(
+            `
+              select id, agent_slug, channel, source, lead_name, lead_handle, lead_company, status, last_at, msg_count${outreachTagSelect},
+                     ${outreachSortExpr} as __sync_sort_at,
+                     ${outreachIdExpr} as __sync_cursor_id
+              from public.outreach_convos
+              where not (${outreachKnownAgentSlugSql})
+                and (${outreachSortExpr}, ${outreachIdExpr}) > ($1::timestamp, $2::text)
+              order by ${outreachSortExpr} asc, ${outreachIdExpr} asc
+              limit ${SYNC_NEW_BATCH_SIZE}
+            `,
+            [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
+          ),
+        fetchBackfillRows: (cursor) => {
+          const hasBackfillCursor = !!cursor.backfillBeforeAt
+          return queryAgentsDb<OutreachConvoDbRow>(
+            `
+              select id, agent_slug, channel, source, lead_name, lead_handle, lead_company, status, last_at, msg_count${outreachTagSelect},
+                     ${outreachSortExpr} as __sync_sort_at,
+                     ${outreachIdExpr} as __sync_cursor_id
+              from public.outreach_convos
+              where not (${outreachKnownAgentSlugSql})
+              ${hasBackfillCursor ? `and (${outreachSortExpr}, ${outreachIdExpr}) < ($1::timestamp, $2::text)` : ''}
+              order by ${outreachSortExpr} desc, ${outreachIdExpr} desc
+              limit ${SYNC_BACKFILL_BATCH_SIZE}
+            `,
+            hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
+          )
+        },
+      })
+      outreachUnknownOriginSkipped += unknownOutreachBatch?.rows.length || 0
+      await unknownOutreachBatch?.markProcessed()
+    }
 
     for (const scope of outreachScopes) {
       if (!scope.company) continue
@@ -1752,13 +1827,14 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         }
 
         for (const oc of outreachConvos) {
-          const agentSlug = (oc.agent_slug || '').toLowerCase()
-          let companySlug = 'autonomia'
-          if (agentSlug.includes('gramado') || agentSlug.includes('plaza')) {
-            companySlug = 'gramado-plaza'
+          const classifiedCompany = classifyAgentCompany(oc.agent_slug, null)
+          if (!classifiedCompany.knownTenantSlug) {
+            outreachUnknownOriginSkipped++
+            continue
           }
+          if (classifiedCompany.knownTenantSlug === 'drlucas') continue
 
-          const comp = companyMap.get(companySlug) || companyMap.get('autonomia')
+          const comp = companyMap.get(classifiedCompany.companySlug)
           if (!comp) continue
 
           const rawHandle = (oc.lead_handle || '').trim()
@@ -1900,6 +1976,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     }
   } catch (outreachErr) {
     details.push(`Aviso ao sincronizar prospecção: ${String(outreachErr)}`)
+  }
+  if (outreachUnknownOriginSkipped > 0) {
+    details.push(`${outreachUnknownOriginSkipped} conversas de prospecção ignoradas por origem desconhecida/quarentena.`)
   }
 
   // 5. Sincroniza o CRM nativo de CADA schema de agente. Antes este bloco lia
