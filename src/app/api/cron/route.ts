@@ -9,6 +9,7 @@ import { eq, lte, and, gt, desc, inArray, or } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
 import { MAX_JOBS_PER_RUN, checkMetaWindowForJob } from '@/lib/message-jobs-policy'
+import { executeAndRecordDispatch } from '@/lib/mass-dispatch'
 
 function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a)
@@ -217,11 +218,22 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
           console.warn('[cron] job fora da janela de 24h (bloqueio desativado, enviando mesmo assim)', { jobId: job.id, leadId: job.leadId })
         }
 
-        const wamid = await sendWhatsAppMessage(lead.phone, {
-          type: 'text',
-          content: interpolate(job.upsellContent, lead),
-        }, companyId)
-        await db.update(messageJobs).set({ status: 'sent', sentAt: new Date(), externalWamid: wamid, deliveryStatus: 'sent' }).where(eq(messageJobs.id, job.id))
+        const outcome = await executeAndRecordDispatch(
+          () => sendWhatsAppMessage(lead.phone, {
+            type: 'text',
+            content: interpolate(job.upsellContent, lead),
+          }, companyId),
+          async result => {
+            await db.update(messageJobs).set(result.status === 'sent'
+              ? { status: 'sent', sentAt: result.sentAt, externalWamid: result.externalWamid, deliveryStatus: 'sent', error: null }
+              : { status: 'failed', error: result.error }
+            ).where(eq(messageJobs.id, job.id))
+          },
+        )
+        if (outcome.status === 'failed') {
+          failed++
+          continue
+        }
         // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead
         await markLeadContacted(lead.id)
         sent++
@@ -265,23 +277,28 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
         })
       }
 
-      const wamid = await sendWhatsAppMessage(lead.phone, {
-        type: msgType,
-        content: interpolate(message.content, lead),
-        mediaUrl: message.mediaUrl ?? undefined,
-        caption: interpolate(message.caption, lead),
-        buttons,
-        templateName: message.templateName ?? undefined,
-        templateLanguage: message.templateLanguage ?? undefined,
-        templateVariableValues,
-      }, companyId)
-
-      await db.update(messageJobs).set({
-        status: 'sent',
-        sentAt: new Date(),
-        externalWamid: wamid,
-        deliveryStatus: 'sent',
-      }).where(eq(messageJobs.id, job.id))
+      const outcome = await executeAndRecordDispatch(
+        () => sendWhatsAppMessage(lead.phone, {
+          type: msgType,
+          content: interpolate(message.content, lead),
+          mediaUrl: message.mediaUrl ?? undefined,
+          caption: interpolate(message.caption, lead),
+          buttons,
+          templateName: message.templateName ?? undefined,
+          templateLanguage: message.templateLanguage ?? undefined,
+          templateVariableValues,
+        }, companyId),
+        async result => {
+          await db.update(messageJobs).set(result.status === 'sent'
+            ? { status: 'sent', sentAt: result.sentAt, externalWamid: result.externalWamid, deliveryStatus: 'sent', error: null }
+            : { status: 'failed', error: result.error }
+          ).where(eq(messageJobs.id, job.id))
+        },
+      )
+      if (outcome.status === 'failed') {
+        failed++
+        continue
+      }
       await db.update(recoveryLeads).set({ status: 'in_progress', updatedAt: new Date() }).where(eq(recoveryLeads.id, lead.id))
       // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead
       await markLeadContacted(lead.id)

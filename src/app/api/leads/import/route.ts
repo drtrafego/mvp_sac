@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs } from '@/lib/db/schema'
+import { recoveryLeads, massDispatchBatches, massDispatchRecipients } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
   const body = await req.json()
 
-  const { items, defaultEventType = 'carrinho_abandonado', defaultSource = 'mineracao', triggerSequence = false } = body
+  const { items, defaultEventType = 'carrinho_abandonado', defaultSource = 'mineracao', fileName } = body
 
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ error: 'Nenhum contato enviado para importação' }, { status: 400 })
@@ -51,23 +51,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let skipped = 0
   const errors: string[] = []
 
-  // Se for para disparar sequência, busca a sequência e mensagens correspondentes
-  let activeMessages: any[] = []
-  if (triggerSequence) {
-    const [seq] = await db
-      .select()
-      .from(recoverySequences)
-      .where(and(eq(recoverySequences.companyId, company.id), eq(recoverySequences.eventType, defaultEventType)))
-      .limit(1)
-
-    if (seq && seq.isActive) {
-      activeMessages = await db
-        .select()
-        .from(sequenceMessages)
-        .where(and(eq(sequenceMessages.sequenceId, seq.id), eq(sequenceMessages.isActive, true)))
-        .orderBy(sequenceMessages.order)
-    }
-  }
+  // Regra de segurança: o upload cria somente um draft. Mesmo clientes antigos
+  // que ainda mandem triggerSequence=true não conseguem enfileirar nada aqui.
+  const [batch] = await db.insert(massDispatchBatches).values({
+    companyId: company.id,
+    fileName: typeof fileName === 'string' ? fileName.slice(0, 255) : null,
+    eventType: defaultEventType,
+    trackingSource: defaultSource,
+    status: 'draft',
+  }).returning({ id: massDispatchBatches.id })
 
   for (const item of items as ImportItem[]) {
     try {
@@ -135,30 +127,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         leadId = created.id
         inserted++
 
-        // Enfileira mensagens da sequência se configurado
-        if (triggerSequence && activeMessages.length > 0) {
-          const now = new Date()
-          for (const msg of activeMessages) {
-            const scheduledFor = new Date(now.getTime() + (msg.delayMinutes || 0) * 60 * 1000)
-            await db.insert(messageJobs).values({
-              leadId,
-              messageId: msg.id,
-              messageOrder: msg.order,
-              scheduledFor,
-              status: 'pending',
-              checkBeforeSend: true,
-            })
-          }
-        }
       }
+
+      await db.insert(massDispatchRecipients)
+        .values({ batchId: batch.id, leadId })
+        .onConflictDoNothing()
     } catch (err) {
       skipped++
       errors.push(err instanceof Error ? err.message : String(err))
     }
   }
 
+  const [recipientTotal] = await db
+    .select({ count: sql<number>`cast(count(*) as int)` })
+    .from(massDispatchRecipients)
+    .where(eq(massDispatchRecipients.batchId, batch.id))
+
+  await db.update(massDispatchBatches)
+    .set({ recipientCount: recipientTotal?.count ?? 0 })
+    .where(eq(massDispatchBatches.id, batch.id))
+
   return NextResponse.json({
     success: true,
+    batchId: batch.id,
+    batchStatus: 'draft',
+    recipientCount: recipientTotal?.count ?? 0,
     total: items.length,
     inserted,
     updated,

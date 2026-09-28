@@ -637,6 +637,44 @@ export function ensureSchema(client: any): Promise<void> {
         // no topo deste arquivo (achado A07, 26/09/2026).
         await consolidateAutonomiaCompany(client)
 
+        // Upload e disparo são etapas separadas. Estas tabelas guardam o
+        // draft e seus destinatários; message_jobs só nasce na confirmação.
+        try {
+          await client`
+            CREATE TABLE IF NOT EXISTS mass_dispatch_batches (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              file_name TEXT,
+              event_type TEXT NOT NULL,
+              tracking_source TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'draft',
+              recipient_count INTEGER NOT NULL DEFAULT 0,
+              confirmed_at TIMESTAMP,
+              created_at TIMESTAMP DEFAULT NOW()
+            )
+          `
+          await client`
+            CREATE TABLE IF NOT EXISTS mass_dispatch_recipients (
+              id SERIAL PRIMARY KEY,
+              batch_id INTEGER NOT NULL REFERENCES mass_dispatch_batches(id) ON DELETE CASCADE,
+              lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
+              created_at TIMESTAMP DEFAULT NOW()
+            )
+          `
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS mass_dispatch_recipients_batch_lead_unique
+            ON mass_dispatch_recipients (batch_id, lead_id)
+          `
+          await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS mass_dispatch_batch_id INTEGER REFERENCES mass_dispatch_batches(id) ON DELETE SET NULL`
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS message_jobs_mass_dispatch_unique
+            ON message_jobs (mass_dispatch_batch_id, lead_id, message_id)
+          `
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[DB Schema Sync Error] Falha ao criar infraestrutura de disparo em massa:', message)
+        }
+
         // ─── Tags livres de lead (25/09/2026) ──────────────────────────────
         // Ver comentário completo em src/lib/db/schema.ts (leadTags) e no
         // contrato da rota src/app/api/leads/[leadId]/tags/route.ts.
