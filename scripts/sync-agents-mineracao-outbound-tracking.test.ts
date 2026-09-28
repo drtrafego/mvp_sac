@@ -48,6 +48,8 @@ const CONTAINER_NAME = 'sync_agents_mineracao_outbound_tracking_test'
 
 const PHONE_HIJACKED = '5511988880001' // já tinha lead do bloco 3 (bot), mineração também abordou, nunca respondeu
 const PHONE_FRESH_NO_REPLY = '5511988880002' // só existe em outreach_convos, primeiro disparo, nunca respondeu
+const PHONE_GRAMADO = '5554998880003' // Gramado continua entrando no tenant Gramado Plaza
+const PHONE_UNKNOWN_ORIGIN = '5511988889999' // origem nova/desconhecida deve ficar em quarentena, sem cair na AutonomIA
 
 function dockerAvailable(): boolean {
   const r = spawnSync('docker', ['info'], { stdio: 'ignore' })
@@ -174,6 +176,36 @@ const OUTREACH_CONVOS_FIXTURE = [
   },
 ]
 
+const OUTREACH_CONVOS_GRAMADO_FIXTURE = [
+  {
+    id: 'convo-gramado',
+    agent_slug: 'gramado-prospeccao',
+    channel: 'whatsapp',
+    source: 'prospeccao',
+    lead_name: 'Lead Gramado',
+    lead_handle: PHONE_GRAMADO,
+    lead_company: null,
+    status: 'active',
+    last_at: '2026-09-23T09:10:00Z',
+    msg_count: 1,
+  },
+]
+
+const OUTREACH_CONVOS_UNKNOWN_FIXTURE = [
+  {
+    id: 'convo-unknown',
+    agent_slug: 'isabela-fanini',
+    channel: 'whatsapp',
+    source: 'prospeccao',
+    lead_name: 'Lead Desconhecido',
+    lead_handle: PHONE_UNKNOWN_ORIGIN,
+    lead_company: null,
+    status: 'active',
+    last_at: '2026-09-23T09:15:00Z',
+    msg_count: 1,
+  },
+]
+
 // Só mensagem OUTBOUND (o disparo em si) pras duas convos, direction nunca
 // 'inbound': é exatamente o caso "outbound sem resposta ainda" do briefing.
 const OUTREACH_MSGS_FIXTURE = [
@@ -194,6 +226,15 @@ const OUTREACH_MSGS_FIXTURE = [
     subject: null,
     body: 'Oi! Vi que você...',
     sent_at: '2026-09-23T09:05:00Z',
+  },
+  {
+    id: 'outreach-msg-gramado-1',
+    convo_id: 'convo-gramado',
+    direction: 'outbound',
+    status: 'sent',
+    subject: null,
+    body: 'Olá! Podemos falar sobre reservas?',
+    sent_at: '2026-09-23T09:10:00Z',
   },
 ]
 
@@ -241,13 +282,8 @@ async function main() {
         if (query.includes('from "autonomia".conversations')) return AGENT_CONVERSATIONS_FIXTURE
         if (query.includes('from "autonomia".messages')) return AGENT_MESSAGES_FIXTURE
         if (query.includes('from public.outreach_convos')) {
-          // bloco 4 roda a MESMA query (por texto) pros dois escopos
-          // (autonomia e gramado-plaza), só o whereSql muda. Os dois convos
-          // deste teste são agent_slug='casaldotrafego' (autonomia); o
-          // escopo gramado-plaza (reconhecível pelo "ilike '%gramado%' or"
-          // no texto da query) não deve ver nada, senão duplicaria os leads
-          // sob a empresa errada.
-          if (query.includes("ilike '%gramado%' or")) return []
+          if (query.includes('where not (')) return OUTREACH_CONVOS_UNKNOWN_FIXTURE
+          if (query.includes("'%gramado%'")) return OUTREACH_CONVOS_GRAMADO_FIXTURE
           return OUTREACH_CONVOS_FIXTURE
         }
         if (query.includes('from public.outreach_msgs')) return OUTREACH_MSGS_FIXTURE
@@ -258,7 +294,7 @@ async function main() {
     },
   })
 
-  const { syncAgentsAndCompanies } = await import('../src/lib/sync-agents')
+  const { syncAgentsAndCompanies, classifyAgentCompany } = await import('../src/lib/sync-agents')
   const { classifyChannelInMemory, channelWhereCondition } = await import('../src/lib/inbox-channel-filter')
 
   try {
@@ -277,6 +313,16 @@ async function main() {
       .select()
       .from(schema.recoveryLeads)
       .where(eq(schema.recoveryLeads.phone, PHONE_FRESH_NO_REPLY))
+
+    const [leadGramado] = await testDb
+      .select()
+      .from(schema.recoveryLeads)
+      .where(eq(schema.recoveryLeads.phone, PHONE_GRAMADO))
+
+    const unknownOriginLeads = await testDb
+      .select()
+      .from(schema.recoveryLeads)
+      .where(eq(schema.recoveryLeads.phone, PHONE_UNKNOWN_ORIGIN))
 
     await test('(a) outbound sem resposta ainda: lead nasce classificado como mineração na hora do disparo, sem precisar de resposta', () => {
       assert.ok(leadFresh, 'lead do primeiro disparo (sem resposta) deveria ter sido criado pelo bloco 4')
@@ -323,6 +369,29 @@ async function main() {
         .where(eq(schema.whatsappMessages.leadId, leadFresh!.id))
       assert.ok(msgs.length > 0, 'deveria ter importado a mensagem de disparo (outbound)')
       assert.ok(msgs.every((m) => m.direction === 'outbound'), 'nenhuma mensagem deveria ser inbound neste cenário')
+    })
+
+    await test('origem desconhecida em outreach_convos fica em quarentena: não cria lead em nenhuma empresa existente e aparece no relatório', () => {
+      assert.equal(unknownOriginLeads.length, 0, 'agent_slug desconhecido não pode cair no tenant AutonomIA nem em outro tenant')
+      assert.ok(
+        firstReport.details.some((line) => line.includes('1 conversas de prospecção ignoradas por origem desconhecida/quarentena')),
+        'relatório deveria expor a contagem de quarentena de outreach_convos'
+      )
+    })
+
+    await test('Gramado continua roteando outreach_convos para Gramado Plaza, e Lucas continua classificado como Dr. Lucas sem virar catch-all da AutonomIA', async () => {
+      assert.ok(leadGramado, 'lead do Gramado deveria ser criado pelo escopo gramado-plaza')
+
+      const [gramadoCompany] = await testDb
+        .select()
+        .from(schema.companies)
+        .where(eq(schema.companies.slug, 'gramado-plaza'))
+      assert.equal(leadGramado!.companyId, gramadoCompany.id)
+      assert.equal(leadGramado!.trackingSource, 'mineracao_prospeccao')
+
+      const lucasClassification = classifyAgentCompany('drlucas-mineracao', null)
+      assert.equal(lucasClassification.companySlug, 'drlucas')
+      assert.equal(lucasClassification.knownTenantSlug, 'drlucas')
     })
 
     const secondReport = await syncAgentsAndCompanies()
