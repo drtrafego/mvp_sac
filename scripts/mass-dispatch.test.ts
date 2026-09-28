@@ -187,10 +187,14 @@ test('cron sinaliza processing órfão vencido sem reenvio automático', () => {
 
 test('429 cria cooldown por número e bloqueia demais jobs do mesmo meta_phone_number_id', () => {
   const cronSource = readFileSync(resolve(process.cwd(), 'src/app/api/cron/route.ts'), 'utf8')
+  const lockSource = readFileSync(resolve(process.cwd(), 'src/lib/cron-advisory-lock.ts'), 'utf8')
   const schemaSource = readFileSync(resolve(process.cwd(), 'src/lib/db/schema.ts'), 'utf8')
   const migrationSource = readFileSync(resolve(process.cwd(), 'drizzle/0023_mass_dispatch_batches.sql'), 'utf8')
   assert.match(schemaSource, /massDispatchPhoneCooldowns/)
   assert.match(migrationSource, /mass_dispatch_phone_cooldowns/)
+  assert.match(lockSource, /pg_try_advisory_lock/)
+  assert.match(lockSource, /pg_advisory_unlock/)
+  assert.match(cronSource, /tryAcquireCronDispatchLock/)
   assert.match(cronSource, /NOT EXISTS \(/)
   assert.match(cronSource, /mass_dispatch_phone_cooldowns c/)
   assert.match(cronSource, /cooldownsByPhone\.set\(metaPhoneNumberId, outcome\.retryAt\)/)

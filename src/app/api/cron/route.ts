@@ -10,6 +10,7 @@ import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
 import { MAX_JOBS_PER_RUN, checkMetaWindowForJob } from '@/lib/message-jobs-policy'
 import { executeAndRecordDispatch, type DispatchOutcome, type MessageSnapshot } from '@/lib/mass-dispatch'
+import { releaseCronDispatchLock, tryAcquireCronDispatchLock } from '@/lib/cron-advisory-lock'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
 
@@ -143,6 +144,19 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const lockClient = await tryAcquireCronDispatchLock()
+  if (!lockClient) {
+    return NextResponse.json({ processed: 0, sent: 0, failed: 0, skipped: 'cron_already_running' })
+  }
+
+  try {
+    return await runDispatchPendingJobs()
+  } finally {
+    await releaseCronDispatchLock(lockClient)
+  }
+}
+
+async function runDispatchPendingJobs(): Promise<NextResponse> {
   const now = new Date()
   const staleProcessingBefore = new Date(now.getTime() - processingLeaseTimeoutMs())
   // Ordena por prioridade do lead (desc) para processar cartao_recusado antes de boleto/carrinho
