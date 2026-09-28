@@ -30,8 +30,9 @@
     "test:settings-agent-display-name": "tsx --experimental-test-module-mocks --test scripts/settings-agent-display-name.test.ts",
     "test:pipeline-stage-inference": "tsx scripts/pipeline-stage-inference.test.ts",
     "test:agenda-slot-validation": "tsx --test scripts/agenda-slot-validation.test.ts",
-    "test:lead-tags": "tsx --experimental-test-module-mocks --test scripts/lead-tags.test.ts",
+    "test:lead-tags": "node --import tsx --experimental-test-module-mocks scripts/lead-tags.test.ts",
     "test:message-jobs-policy": "tsx --test scripts/message-jobs-policy.test.ts",
+    "test:mass-dispatch": "node --experimental-test-module-mocks --import tsx scripts/mass-dispatch.test.ts && node --experimental-test-module-mocks --import tsx scripts/mass-dispatch-cron-lock.test.ts",
     "test:db-consolidacao-autonomia": "tsx --test scripts/db-consolidacao-autonomia.test.ts",
     "test:astra-security-quickwins": "node --import tsx --experimental-test-module-mocks --test scripts/astra-security-quickwins.test.ts"
   },

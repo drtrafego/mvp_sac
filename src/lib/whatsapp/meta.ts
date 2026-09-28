@@ -20,6 +20,23 @@ function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '')
 }
 
+export class MetaRateLimitError extends Error {
+  readonly status = 429
+
+  constructor(message: string, readonly retryAfterMs: number | null) {
+    super(message)
+    this.name = 'MetaRateLimitError'
+  }
+}
+
+export function parseRetryAfter(value: string | null, nowMs = Date.now()): number | null {
+  if (!value) return null
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000)
+  const dateMs = Date.parse(value)
+  return Number.isFinite(dateMs) ? Math.max(0, dateMs - nowMs) : null
+}
+
 async function metaPost(config: MetaConfig, body: unknown): Promise<string | null> {
   const res = await fetch(
     `https://graph.facebook.com/v19.0/${config.phoneNumberId}/messages`,
@@ -34,6 +51,12 @@ async function metaPost(config: MetaConfig, body: unknown): Promise<string | nul
   )
   if (!res.ok) {
     const err = await res.text()
+    if (res.status === 429) {
+      throw new MetaRateLimitError(
+        `Meta API rate limit 429: ${err}`,
+        parseRetryAfter(res.headers.get('Retry-After')),
+      )
+    }
     throw new Error(`Meta API erro ${res.status}: ${err}`)
   }
   const data = await res.json() as { messages?: { id: string }[] }
