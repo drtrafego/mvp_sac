@@ -9,16 +9,107 @@ import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
 import { eq, and, asc, or, sql } from 'drizzle-orm'
 import { markLeadContacted } from '@/lib/leads'
+import { type ContactIdentifier, parseContactIdentifier } from '@/lib/contact-resolution'
 
 type Params = { params: Promise<{ idOrSlug: string; contact: string }> }
+type ResolvedLeadForContact = {
+  lead: typeof recoveryLeads.$inferSelect | undefined
+  identifier: ContactIdentifier
+  ambiguous: boolean
+}
+
+async function resolveLeadForContact(companyId: number, contact: string): Promise<ResolvedLeadForContact> {
+  const identifier = parseContactIdentifier(contact)
+  if (identifier.kind === 'leadId') {
+    const [lead] = await db
+      .select()
+      .from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.id, identifier.leadId)))
+      .limit(1)
+    return { lead, identifier, ambiguous: false }
+  }
+
+  const exactMatches = await db
+    .select()
+    .from(recoveryLeads)
+    .where(
+      and(
+        eq(recoveryLeads.companyId, companyId),
+        or(
+          eq(recoveryLeads.phone, identifier.raw),
+          identifier.digits
+            ? sql`regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g') = ${identifier.digits}`
+            : undefined
+        )
+      )
+    )
+    .limit(2)
+
+  if (exactMatches.length === 1) return { lead: exactMatches[0], identifier, ambiguous: false }
+  if (exactMatches.length > 1) return { lead: undefined, identifier, ambiguous: true }
+
+  if (identifier.digits.length >= 9) {
+    const suffixMatches = await db
+      .select()
+      .from(recoveryLeads)
+      .where(
+        and(
+          eq(recoveryLeads.companyId, companyId),
+          sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${identifier.digits}, 9)`
+        )
+      )
+      .limit(2)
+
+    if (suffixMatches.length === 1) return { lead: suffixMatches[0], identifier, ambiguous: false }
+    if (suffixMatches.length > 1) return { lead: undefined, identifier, ambiguous: true }
+  }
+
+  return { lead: undefined, identifier, ambiguous: false }
+}
+
+function contactIdentifierErrorResponse(err: unknown): NextResponse | null {
+  if (!(err instanceof Error)) return null
+  if (!['Contato é obrigatório.', 'leadId inválido: use lead:<id> com um inteiro positivo.'].includes(err.message)) {
+    return null
+  }
+  return NextResponse.json({ error: err.message }, { status: 400 })
+}
 
 export async function GET(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { idOrSlug, contact } = await params
   const { error, context } = await authenticateAgentRequest(req, idOrSlug)
   if (error || !context) return error!
 
-  const cleanPhone = contact.replace(/\D/g, '')
-  const isLeadId = !isNaN(parseInt(contact)) && parseInt(contact) > 0
+  let resolved: ResolvedLeadForContact
+  try {
+    resolved = await resolveLeadForContact(context.company.id, contact)
+  } catch (err) {
+    const response = contactIdentifierErrorResponse(err)
+    if (response) return response
+    throw err
+  }
+  if (resolved.ambiguous) {
+    return NextResponse.json({
+      error: 'Contato ambíguo: informe o telefone completo em formato E.164 ou use lead:<id>.',
+    }, { status: 409 })
+  }
+
+  let contactFilter
+  if (resolved.lead) {
+    contactFilter = eq(whatsappMessages.leadId, resolved.lead.id)
+  } else {
+    const identifier = resolved.identifier
+    if (identifier.kind === 'phone') {
+      contactFilter = or(
+        eq(whatsappMessages.phone, identifier.raw),
+        identifier.digits
+          ? sql`regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g') = ${identifier.digits}`
+          : undefined
+      )
+    } else {
+      contactFilter = eq(whatsappMessages.leadId, identifier.leadId)
+    }
+  }
 
   const messages = await db
     .select()
@@ -26,13 +117,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     .where(
       and(
         eq(whatsappMessages.companyId, context.company.id),
-        or(
-          isLeadId ? eq(whatsappMessages.leadId, parseInt(contact)) : undefined,
-          eq(whatsappMessages.phone, contact),
-          cleanPhone.length >= 9
-            ? sql`right(regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g'), 9) = right(${cleanPhone}, 9)`
-            : undefined
-        )
+        contactFilter
       )
     )
     .orderBy(asc(whatsappMessages.createdAt))
@@ -59,26 +144,22 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       return NextResponse.json({ error: 'Conteúdo da mensagem ou mediaUrl é obrigatório' }, { status: 400 })
     }
 
-    const cleanPhone = contact.replace(/\D/g, '')
-    const isLeadId = !isNaN(parseInt(contact)) && parseInt(contact) > 0
+    let resolved: ResolvedLeadForContact
+    try {
+      resolved = await resolveLeadForContact(context.company.id, contact)
+    } catch (err) {
+      const response = contactIdentifierErrorResponse(err)
+      if (response) return response
+      throw err
+    }
+    if (resolved.ambiguous) {
+      return NextResponse.json({
+        error: 'Contato ambíguo: informe o telefone completo em formato E.164 ou use lead:<id>.',
+      }, { status: 409 })
+    }
 
     // Encontra lead correspondente
-    let [lead] = await db
-      .select()
-      .from(recoveryLeads)
-      .where(
-        and(
-          eq(recoveryLeads.companyId, context.company.id),
-          or(
-            isLeadId ? eq(recoveryLeads.id, parseInt(contact)) : undefined,
-            eq(recoveryLeads.phone, contact),
-            cleanPhone.length >= 9
-              ? sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${cleanPhone}, 9)`
-              : undefined
-          )
-        )
-      )
-      .limit(1)
+    let lead = resolved.lead
 
     // Se lead não existir, auto-cria
     if (!lead) {
@@ -86,7 +167,9 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         .insert(recoveryLeads)
         .values({
           companyId: context.company.id,
-          phone: cleanPhone || contact,
+          phone: resolved.identifier.kind === 'phone'
+            ? (resolved.identifier.digits || resolved.identifier.raw)
+            : contact,
           name: `Contato ${contact.slice(-4)}`,
           channel,
           status: 'in_conversation',

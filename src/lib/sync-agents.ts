@@ -3,6 +3,13 @@ import { appointmentMirror, companies, settings, syncCursors, recoveryLeads, wha
 import { queryAgentsDb, getAgentsDbUrl } from '@/lib/db/agents-db'
 import { eq, and, sql, type SQL } from 'drizzle-orm'
 import { backfillFirstContactFromMessages } from '@/lib/leads'
+import {
+  contactExactKey,
+  readUniqueLeadLookup,
+  rememberPhoneLeadLookup,
+  rememberUniqueLeadLookup,
+  resolvePhoneLeadLookup,
+} from '@/lib/contact-resolution'
 
 // ─── Decisão de arquitetura: cursores reais por fonte ───────────────────────
 // Este sync roda em produção a cada 10 minutos. Antes, os blocos de fonte
@@ -980,6 +987,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     .from(recoveryLeads)
 
   const leadMap = new Map<string, number>()
+  const ambiguousLeadKeys = new Set<string>()
   // Nome atualmente salvo por lead (id -> name), usado só pra decidir se vale
   // a pena sobrescrever com um nome melhor no bloco 3 (ver resolveLeadName /
   // shouldUpdateLeadName acima). Mantido em memória e atualizado localmente
@@ -1030,11 +1038,10 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     })
     if (row.phone) {
       const clean = row.phone.replace(/\D/g, '') || row.phone
-      leadMap.set(`${row.companyId}_${clean}`, row.id)
-      if (clean.length >= 9) leadMap.set(`${row.companyId}_${clean.slice(-9)}`, row.id)
+      rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, row.companyId, clean, row.id)
     }
     if (row.email) {
-      leadMap.set(`${row.companyId}_${row.email.trim().toLowerCase()}`, row.id)
+      rememberUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactExactKey(row.companyId, row.email.trim().toLowerCase()), row.id)
     }
   }
 
@@ -1235,7 +1242,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
             const crmLead = crmLeadByPhone.get(cleanPhone) || crmLeadByPhone.get(last9)
 
-            let leadId = leadMap.get(`${company.id}_${cleanPhone}`) || leadMap.get(`${company.id}_${last9}`)
+            let leadId = resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, company.id, cleanPhone)
             const isExistingLead = !!leadId
             const channelType = inferConversationChannel(cv)
 
@@ -1284,8 +1291,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 .returning()
 
               leadId = newLead.id
-              leadMap.set(`${company.id}_${cleanPhone}`, leadId)
-              if (cleanPhone.length >= 9) leadMap.set(`${company.id}_${last9}`, leadId)
+              rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, company.id, cleanPhone, leadId)
               leadNameMap.set(leadId, newLead.name)
               leadConversationMetadata.set(leadId, {
                 conversationId: newLead.agentConversationId,
@@ -1317,7 +1323,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 if (crmFirstContactAt) crmPatch.firstContactAt = crmFirstContactAt
                 if (Object.keys(crmPatch).length > 0) {
                   await db.update(recoveryLeads).set(crmPatch).where(eq(recoveryLeads.id, leadId))
-                  if (crmEmail) leadMap.set(`${company.id}_${crmEmail}`, leadId)
+                  if (crmEmail) rememberUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactExactKey(company.id, crmEmail), leadId)
                 }
               }
 
@@ -1519,8 +1525,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             for (const nativeLead of nativeCrmLeads || []) {
               const cleanPhone = normalizeDigits(nativeLead.phone)
               if (!cleanPhone) continue
-              const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
-              const leadId = leadMap.get(`${company.id}_${cleanPhone}`) || leadMap.get(`${company.id}_${last9}`)
+              const leadId = resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, company.id, cleanPhone)
               if (!leadId || leadId < 1) continue
 
               await db
@@ -1589,9 +1594,8 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
           for (const reservation of reservationBatch?.rows || []) {
             const phoneNorm = normalizeDigits(reservation.telefone_norm)
-            const last9 = phoneNorm.length >= 9 ? phoneNorm.slice(-9) : phoneNorm
             const leadId = phoneNorm
-              ? leadMap.get(`${company.id}_${phoneNorm}`) || leadMap.get(`${company.id}_${last9}`) || null
+              ? resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, company.id, phoneNorm) || null
               : null
             const atualizadoEm = parseCursorDate(
               reservation.atualizado_em || reservation.sincronizado_em || reservation.criado_em
@@ -1650,8 +1654,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           for (const nativeLead of nativeCrmLeads || []) {
             const phone = normalizeDigits(nativeLead.phone)
             if (!phone) continue
-            const last9 = phone.length >= 9 ? phone.slice(-9) : phone
-            const leadId = leadMap.get(`${company.id}_${phone}`) || leadMap.get(`${company.id}_${last9}`)
+            const leadId = resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, company.id, phone)
             if (!leadId) continue
 
             const sourceStage = nativeLead.column_title || nativeLead.status
@@ -1844,11 +1847,10 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
           const ch = oc.channel || (isEmail ? 'email' : 'whatsapp')
           const ocDate = oc.last_at ? new Date(oc.last_at) : new Date()
-          const last9 = !isEmail && phone.length >= 9 ? phone.slice(-9) : phone
 
           let leadId = isEmail
-            ? leadMap.get(`${comp.id}_${rawHandle.toLowerCase()}`)
-            : (leadMap.get(`${comp.id}_${phone}`) || leadMap.get(`${comp.id}_${last9}`))
+            ? readUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactExactKey(comp.id, rawHandle.toLowerCase()))
+            : resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, comp.id, phone)
           const isExistingLead = !!leadId
 
           // Tags de mineração: as 4 (nicho/origem/temperatura/outreach_status)
@@ -1889,10 +1891,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
             leadId = newLead.id
             if (isEmail) {
-              leadMap.set(`${comp.id}_${rawHandle.toLowerCase()}`, leadId)
+              rememberUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactExactKey(comp.id, rawHandle.toLowerCase()), leadId)
             } else {
-              leadMap.set(`${comp.id}_${phone}`, leadId)
-              if (phone.length >= 9) leadMap.set(`${comp.id}_${last9}`, leadId)
+              rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, comp.id, phone, leadId)
             }
             leadTrackingSourceMap.set(leadId, 'mineracao_prospeccao')
             leadsCreated++
@@ -2059,10 +2060,8 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const email = l.email ? l.email.trim().toLowerCase() : null
         if (!cleanPhone && !email) continue
 
-        const last9 = cleanPhone && cleanPhone.length >= 9 ? cleanPhone.slice(-9) : null
-        const existingId = (cleanPhone && leadMap.get(`${scope.company.id}_${cleanPhone}`)) ||
-          (last9 && leadMap.get(`${scope.company.id}_${last9}`)) ||
-          (email && leadMap.get(`${scope.company.id}_${email}`))
+        const existingId = (cleanPhone && resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, scope.company.id, cleanPhone)) ||
+          (email && readUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactExactKey(scope.company.id, email)))
         const nativeSource = realCampaignSource(l.campaign_source, isOutreachCompany) || realCampaignSource(l.utm_source, isOutreachCompany)
 
         if (existingId && existingId > 0) {
@@ -2125,9 +2124,8 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           lastActionAt: leadDate,
         }).returning({ id: recoveryLeads.id })
 
-        if (cleanPhone) leadMap.set(`${scope.company.id}_${cleanPhone}`, newLead.id)
-        if (last9) leadMap.set(`${scope.company.id}_${last9}`, newLead.id)
-        if (email) leadMap.set(`${scope.company.id}_${email}`, newLead.id)
+        if (cleanPhone) rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, scope.company.id, cleanPhone, newLead.id)
+        if (email) rememberUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactExactKey(scope.company.id, email), newLead.id)
         leadsCreated++
         insertedFromScope++
       }
