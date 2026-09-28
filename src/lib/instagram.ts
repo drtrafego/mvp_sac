@@ -150,7 +150,14 @@ export async function checkInstagramUserFollowsBusiness({
   const cleanId = igsid.replace(/^ig_/, '')
 
   try {
-    const url = `https://graph.facebook.com/v19.0/${cleanId}?fields=name,is_user_follow_business&access_token=${encodeURIComponent(token)}`
+    // Achado 28/09/2026: token de "instagramAccessToken" é do tipo IGAA
+    // (Instagram API with Instagram Login), que graph.facebook.com não
+    // consegue nem parsear ("Invalid OAuth access token - Cannot parse
+    // access token"). O resto deste arquivo já usa graph.instagram.com
+    // pra esse mesmo token (envio de DM, comentário, mídia); esta função
+    // era a exceção que ainda chamava o host errado, ficando sempre no
+    // fallback silencioso.
+    const url = `https://graph.instagram.com/v21.0/${cleanId}?fields=name,is_user_follow_business&access_token=${encodeURIComponent(token)}`
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
 
@@ -187,7 +194,10 @@ export async function fetchInstagramUserProfile({
     // SÍNCRONA no path do webhook de DM (route.ts / [slug]/route.ts), antes
     // do 200 sair. A Meta reenvia o evento se a resposta demorar demais, e o
     // nome é enriquecimento best-effort, não vale segurar o webhook por isso.
-    const url = `https://graph.facebook.com/v19.0/${cleanId}?fields=name,username&access_token=${encodeURIComponent(token)}`
+    // Mesmo achado de 28/09/2026 da função irmã acima: host tem que ser
+    // graph.instagram.com pro token IGAA (Instagram Login), não
+    // graph.facebook.com — era por isso que o nome nunca resolvia.
+    const url = `https://graph.instagram.com/v21.0/${cleanId}?fields=name,username&access_token=${encodeURIComponent(token)}`
     const res = await fetch(url, { signal: AbortSignal.timeout(5_000) })
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
 
