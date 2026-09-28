@@ -13,10 +13,10 @@ type Params = { params: Promise<{ leadId: string; tag: string }> }
 /**
  * DELETE /api/leads/[leadId]/tags/[tag]
  *
- * Remove uma tag do lead. Se a tag removida for "pessoa": avisa a ponte da
- * Nina pra voltar a responder (efeito não-bloqueante, mesmo tratamento de
- * falha do POST) e SÓ reverte botPaused=false quando botPausedBy for
- * exatamente 'tag:pessoa' — a pausa que ESTA feature causou.
+ * Remove uma tag do lead. Se for a ÚLTIMA variante de "pessoa": avisa a
+ * ponte da Nina pra voltar a responder (efeito não-bloqueante, mesmo
+ * tratamento de falha do POST) e SÓ reverte botPaused=false quando
+ * botPausedBy for exatamente 'tag:pessoa' — a pausa que ESTA feature causou.
  *
  * ‼️ Invariante importante: se o lead foi pausado por outro motivo nesse meio
  * tempo (atendente humano assumiu manualmente via /api/inbox/[leadId]/pause,
@@ -85,6 +85,20 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
   let botPaused = lead.botPaused
 
   if (tag === PESSOA_TAG) {
+    // Geral e variantes por canal podem coexistir. Remover uma linha não
+    // encerra o handoff enquanto qualquer outra tag "pessoa" ainda cobrir o
+    // lead; nesse caso não avisa a Nina nem toca na pausa/CAS.
+    const [remainingPessoaTag] = await db
+      .select({ id: leadTags.id })
+      .from(leadTags)
+      .where(and(eq(leadTags.leadId, id), eq(leadTags.tag, PESSOA_TAG)))
+      .limit(1)
+
+    if (remainingPessoaTag) {
+      const tags = await db.select().from(leadTags).where(eq(leadTags.leadId, id))
+      return NextResponse.json({ ok: true, tags, botPaused })
+    }
+
     // Capturado ANTES do await: identidade da pausa específica que este
     // DELETE está autorizado a desfazer. Se um POST concorrente re-tagear
     // "pessoa" enquanto esperamos, ele grava um botPausedAt novo — e esse

@@ -5,8 +5,8 @@ import { db } from '@/lib/db'
 import { leadTags, recoveryLeads } from '@/lib/db/schema'
 import { and, desc, eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
-import { normalizeTag, PESSOA_TAG, BOT_PAUSED_BY_TAG_PESSOA, MAX_TAG_LENGTH, isLeadChannel, type LeadChannel } from '@/lib/lead-tags'
-import { notifyNaoResponder } from '@/lib/nao-responder'
+import { normalizeTag, PESSOA_TAG, MAX_TAG_LENGTH, isLeadChannel, type LeadChannel } from '@/lib/lead-tags'
+import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -98,22 +98,11 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   let warning: string | undefined
 
   if (tag === PESSOA_TAG) {
-    // Sempre reafirma a pausa, mesmo se a tag já existia (onConflictDoNothing
-    // não insere de novo, mas o efeito colateral tem que valer sempre que
-    // alguém chamar este endpoint com "pessoa" — idempotência da AÇÃO, não
-    // só da linha).
-    await db
-      .update(recoveryLeads)
-      .set({
-        botPaused: true,
-        botPausedAt: new Date(),
-        botPausedBy: BOT_PAUSED_BY_TAG_PESSOA,
-        updatedAt: new Date(),
-      })
-      .where(eq(recoveryLeads.id, id))
-
-    const result = await notifyNaoResponder(lead.phone, 'marcar', lead.channel)
-    if (!result.ok) warning = result.warning
+    // Reafirma a pausa se ela já era desta feature, mesmo quando a linha da
+    // tag já existia. O helper faz o UPDATE com CAS e, portanto, não toma a
+    // pausa se outro motivo concorrente/manual já estiver no lead.
+    const result = await pauseBotForPessoaTag(lead)
+    warning = result.warning
   }
 
   const tags = await db

@@ -4,9 +4,11 @@
 
 ALTER TABLE "lead_tags" ADD COLUMN IF NOT EXISTS "scope_channel" TEXT;
 
--- Criado antes da remoção do índice antigo para não abrir uma janela sem
--- proteção contra duplicatas durante a migração.
-CREATE UNIQUE INDEX IF NOT EXISTS "lead_tags_lead_tag_scope_unique"
+-- O mesmo nome chegou a ser usado por uma versão antiga sem COALESCE.
+-- Recriar sempre garante a definição correta, independentemente do estado
+-- deixado por uma execução anterior ou por uma tentativa revertida.
+DROP INDEX IF EXISTS "lead_tags_lead_tag_scope_unique";
+CREATE UNIQUE INDEX "lead_tags_lead_tag_scope_unique"
   ON "lead_tags" ("lead_id", "tag", COALESCE("scope_channel", ''));
 
 DROP INDEX IF EXISTS "lead_tags_lead_tag_unique";

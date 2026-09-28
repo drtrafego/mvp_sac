@@ -17,3 +17,14 @@ export function isLeadChannel(value: unknown): value is LeadChannel {
 export function normalizeTag(raw: string): string {
   return raw.trim().toLowerCase().slice(0, MAX_TAG_LENGTH)
 }
+
+export function buildLeadTagDeleteUrl(
+  leadId: number,
+  tag: string,
+  scopeChannel: LeadChannel | null | undefined,
+): string {
+  const base = `/api/leads/${leadId}/tags/${encodeURIComponent(tag)}`
+  return scopeChannel == null
+    ? base
+    : `${base}?scopeChannel=${encodeURIComponent(scopeChannel)}`
+}

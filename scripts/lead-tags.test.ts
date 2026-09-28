@@ -32,6 +32,7 @@
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
@@ -125,6 +126,24 @@ async function main() {
   const sql = postgres(disposable.url)
   const testDb = drizzle(sql, { schema })
 
+  await test('migração 0022 corrige índice antigo malformado e pode rodar duas vezes', async () => {
+    await sql`DROP INDEX IF EXISTS lead_tags_lead_tag_scope_unique`
+    await sql`CREATE UNIQUE INDEX lead_tags_lead_tag_scope_unique ON lead_tags (lead_id, tag, scope_channel)`
+
+    const migration = readFileSync(path.join(PROJECT_ROOT, 'drizzle/0022_lead_tags_scope_channel.sql'), 'utf8')
+    await sql.unsafe(migration)
+    await sql.unsafe(migration)
+
+    const [index] = await sql<{ indexdef: string }[]>`
+      SELECT indexdef
+      FROM pg_indexes
+      WHERE schemaname = current_schema()
+        AND indexname = 'lead_tags_lead_tag_scope_unique'
+    `
+    assert.ok(index, 'o índice precisa existir depois das duas execuções')
+    assert.match(index.indexdef.toLowerCase(), /coalesce\(scope_channel, ''::text\)/)
+  })
+
   const [company] = await testDb
     .insert(schema.companies)
     .values({ name: 'Empresa Teste Tags', slug: 'empresa-teste-tags' })
@@ -147,6 +166,7 @@ async function main() {
   const { GET, POST } = await import('../src/app/api/leads/[leadId]/tags/route')
   const { DELETE } = await import('../src/app/api/leads/[leadId]/tags/[tag]/route')
   const { POST: IMPORT_POST } = await import('../src/app/api/leads/import/route')
+  const { buildLeadTagDeleteUrl } = await import('../src/lib/lead-tags')
 
   const originalFetch = globalThis.fetch
   const originalToken = process.env.NAO_RESPONDER_TOKEN
@@ -291,6 +311,14 @@ async function main() {
       assert.deepEqual(new Set(tags.map(row => row.scopeChannel)), new Set(['whatsapp', 'instagram']))
     })
 
+    await test('UI monta DELETE com o scopeChannel da variante específica', () => {
+      assert.equal(
+        buildLeadTagDeleteUrl(42, 'campanha vip', 'whatsapp'),
+        '/api/leads/42/tags/campanha%20vip?scopeChannel=whatsapp',
+      )
+      assert.equal(buildLeadTagDeleteUrl(42, 'campanha vip', null), '/api/leads/42/tags/campanha%20vip')
+    })
+
     await test('import CSV aplica tag e escopo a todos os leads novos e existentes do lote', async () => {
       const existente = await criarLead('5511911110023')
       const req = new NextRequest('https://sac.example.com/api/leads/import', {
@@ -325,6 +353,93 @@ async function main() {
       assert.ok(tags.every(row => row.createdBy === 'import:csv'))
     })
 
+    await test('import CSV com tag "pessoa" pausa o bot sem sobrescrever pausa de outro motivo', async () => {
+      mockFetchOk()
+      const pausaManual = 'Atendente assumiu manualmente'
+      const existente = await criarLead('5511911110025')
+      await testDb
+        .update(schema.recoveryLeads)
+        .set({ botPaused: true, botPausedBy: pausaManual, botPausedAt: new Date() })
+        .where(eq(schema.recoveryLeads.id, existente.id))
+
+      const req = new NextRequest('https://sac.example.com/api/leads/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          items: [
+            { phone: '11911110026', name: 'Novo Pessoa' },
+            { phone: existente.phone, name: 'Existente Pausado' },
+          ],
+          tag: 'Pessoa',
+          scopeChannel: 'whatsapp',
+        }),
+      })
+
+      const res = await IMPORT_POST(req)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.inserted, 1)
+      assert.equal(json.updated, 1)
+      assert.equal(json.skipped, 0)
+      assert.equal(json.tagFailed, 0)
+
+      const [novo] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.phone, '5511911110026'))
+      assert.equal(novo.botPaused, true)
+      assert.equal(novo.botPausedBy, 'tag:pessoa')
+      assert.ok(novo.botPausedAt)
+
+      const [preservado] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, existente.id))
+      assert.equal(preservado.botPaused, true)
+      assert.equal(preservado.botPausedBy, pausaManual, 'a tag não pode tomar posse de uma pausa alheia')
+
+      const pessoaTags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.tag, 'pessoa'))
+      assert.ok(pessoaTags.some(row => row.leadId === novo.id && row.scopeChannel === 'whatsapp'))
+      assert.ok(pessoaTags.some(row => row.leadId === existente.id && row.scopeChannel === 'whatsapp'))
+    })
+
+    await test('falha no insert da tag mantém contadores do lead coerentes e usa tagFailed, não skipped', async () => {
+      await sql.unsafe(`
+        CREATE OR REPLACE FUNCTION fail_selected_import_tag() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.tag = 'falha-tag' AND NEW.created_by = 'import:csv' THEN
+            RAISE EXCEPTION 'falha simulada no insert da tag';
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TRIGGER fail_selected_import_tag_trigger
+          BEFORE INSERT ON lead_tags
+          FOR EACH ROW EXECUTE FUNCTION fail_selected_import_tag();
+      `)
+
+      try {
+        const req = new NextRequest('https://sac.example.com/api/leads/import', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ items: [{ phone: '11911110027', name: 'Persistido Sem Tag' }], tag: 'falha-tag' }),
+        })
+        const res = await IMPORT_POST(req)
+        assert.equal(res.status, 200)
+        const json = await res.json()
+        assert.equal(json.inserted, 1, 'o lead foi criado e precisa constar como inserido')
+        assert.equal(json.updated, 0)
+        assert.equal(json.skipped, 0, 'item persistido não pode ser disfarçado de skipped')
+        assert.equal(json.tagFailed, 1)
+        assert.match(json.errors[0], /persistido, mas falhou ao aplicar a tag/)
+
+        const [lead] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.phone, '5511911110027'))
+        assert.ok(lead, 'pré-condição: o lead foi realmente persistido')
+        const tags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, lead.id))
+        assert.equal(tags.length, 0)
+      } finally {
+        await sql`DROP TRIGGER IF EXISTS fail_selected_import_tag_trigger ON lead_tags`
+        await sql`DROP FUNCTION IF EXISTS fail_selected_import_tag()`
+      }
+    })
+
     // ── 3. Remover "pessoa" com botPausedBy='tag:pessoa' reverte a pausa ──
     await test('remover "pessoa" reverte botPaused quando botPausedBy é tag:pessoa', async () => {
       mockFetchOk()
@@ -347,6 +462,37 @@ async function main() {
 
       const tags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, lead.id))
       assert.equal(tags.length, 0)
+    })
+
+    await test('remover uma variante de "pessoa" mantém a pausa e não desmarca Nina se outra variante restar', async () => {
+      mockFetchOk()
+      const lead = await criarLead('5511911110028')
+      await POST(makePostRequest(lead.id, 'pessoa'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+      await POST(makePostRequest(lead.id, 'pessoa', 'whatsapp'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+
+      let desmarcarCalls = 0
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        const body = init?.body ? JSON.parse(String(init.body)) as { acao?: string } : null
+        if (body?.acao === 'desmarcar') desmarcarCalls++
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }) as typeof fetch
+
+      const res = await DELETE(new NextRequest(`https://sac.example.com/api/leads/${lead.id}/tags/pessoa`, { method: 'DELETE' }), {
+        params: Promise.resolve({ leadId: String(lead.id), tag: 'pessoa' }),
+      })
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.botPaused, true)
+      assert.equal(desmarcarCalls, 0, 'não deve avisar desmarcar enquanto outra variante pessoa existir')
+
+      const [depois] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id))
+      assert.equal(depois.botPaused, true)
+      assert.equal(depois.botPausedBy, 'tag:pessoa')
+      const tags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, lead.id))
+      assert.equal(tags.length, 1)
+      assert.equal(tags[0].tag, 'pessoa')
+      assert.equal(tags[0].scopeChannel, 'whatsapp')
+      mockFetchOk()
     })
 
     // ── 4. Remover "pessoa" com botPausedBy de OUTRO motivo não reverte ──
@@ -632,7 +778,9 @@ async function main() {
 
 main()
   .then(() => {
-    console.log('\nOK: todos os cenários das rotas de tags de lead rodaram contra Postgres descartável real.')
+    if (!process.exitCode) {
+      console.log('\nOK: todos os cenários das rotas de tags de lead rodaram contra Postgres descartável real.')
+    }
   })
   .catch(err => {
     console.error('Erro fatal no teste de tags de lead:', err)

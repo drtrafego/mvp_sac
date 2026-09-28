@@ -101,6 +101,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     inserted: number
     updated: number
     skipped: number
+    tagFailed: number
     errors: string[]
   } | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -512,7 +513,9 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               <div className="h-12 w-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
                 <CheckCircle2 size={26} />
               </div>
-              <p className="text-h2 text-fg font-bold">Importação Concluída com Sucesso!</p>
+              <p className="text-h2 text-fg font-bold">
+                {importResult.tagFailed > 0 ? 'Importação concluída com ressalvas' : 'Importação Concluída com Sucesso!'}
+              </p>
               <p className="text-micro text-fg-muted">Os contatos já estão disponíveis no painel de Leads, Pipeline e Origens.</p>
             </div>
 
@@ -530,6 +533,19 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                 <span className="num text-h2 font-bold text-fg-subtle mt-1 block">{importResult.skipped}</span>
               </div>
             </div>
+
+            {importResult.tagFailed > 0 && (
+              <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-body text-amber-600 dark:text-amber-400">
+                <p className="font-semibold">
+                  {importResult.tagFailed} contato(s) foram salvos, mas a tag não pôde ser aplicada.
+                </p>
+                {importResult.errors.length > 0 && (
+                  <ul className="mt-1 list-disc pl-5 text-micro">
+                    {importResult.errors.map((error, index) => <li key={index}>{error}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
 
             <div className="flex justify-end pt-3 border-t border-line-subtle">
               <Button

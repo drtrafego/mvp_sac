@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Tag, X, Loader2, Plus, UserCog, TriangleAlert } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { buildLeadTagDeleteUrl, type LeadChannel } from '@/lib/lead-tags'
 
 const PESSOA_TAG = 'pessoa'
 const MAX_TAG_LENGTH = 50
 
 interface LeadTagRow {
   tag: string
+  scopeChannel: LeadChannel | null
   createdAt: string | null
   createdBy: string | null
 }
@@ -80,12 +82,12 @@ export function LeadTags({
     }
   }
 
-  async function removeTag(value: string) {
+  async function removeTag(value: string, scopeChannel: LeadChannel | null) {
     if (busy) return
     setBusy(true)
     setWarning(null)
     try {
-      const res = await fetch(`/api/leads/${leadId}/tags/${encodeURIComponent(value)}`, { method: 'DELETE' })
+      const res = await fetch(buildLeadTagDeleteUrl(leadId, value, scopeChannel), { method: 'DELETE' })
       const data = await res.json().catch(() => null)
       if (res.ok && data) {
         setTags(Array.isArray(data.tags) ? data.tags : [])
@@ -132,7 +134,7 @@ export function LeadTags({
           const isPessoa = t.tag === PESSOA_TAG
           return (
             <span
-              key={t.tag}
+              key={`${t.tag}:${t.scopeChannel ?? 'general'}`}
               title={t.createdBy ? `Marcada por ${t.createdBy}` : undefined}
               className={cn(
                 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold',
@@ -141,12 +143,12 @@ export function LeadTags({
                   : 'border-line-subtle bg-surface-raised text-fg-muted'
               )}
             >
-              {t.tag}
+              {t.tag}{t.scopeChannel ? ` · ${t.scopeChannel}` : ''}
               <button
                 type="button"
-                onClick={() => removeTag(t.tag)}
+                onClick={() => removeTag(t.tag, t.scopeChannel)}
                 disabled={busy}
-                aria-label={`Remover tag ${t.tag}`}
+                aria-label={`Remover tag ${t.tag}${t.scopeChannel ? ` do canal ${t.scopeChannel}` : ' geral'}`}
                 className="rounded-full hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-40 cursor-pointer"
               >
                 <X size={10} />

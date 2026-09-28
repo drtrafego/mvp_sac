@@ -659,11 +659,14 @@ export function ensureSchema(client: any): Promise<void> {
           await client`
             ALTER TABLE lead_tags ADD COLUMN IF NOT EXISTS scope_channel TEXT
           `
-          // Cria o índice novo antes de remover o antigo: os dados protegidos
-          // pelo índice antigo necessariamente satisfazem o novo, e assim não
-          // existe janela de startup sem proteção contra duplicatas.
+          // Uma versão revertida já usou este mesmo nome com uma definição
+          // incorreta (sem COALESCE). DROP + CREATE é intencional: IF NOT
+          // EXISTS preservaria silenciosamente o índice malformado.
           await client`
-            CREATE UNIQUE INDEX IF NOT EXISTS lead_tags_lead_tag_scope_unique
+            DROP INDEX IF EXISTS lead_tags_lead_tag_scope_unique
+          `
+          await client`
+            CREATE UNIQUE INDEX lead_tags_lead_tag_scope_unique
             ON lead_tags (lead_id, tag, COALESCE(scope_channel, ''))
           `
           await client`
