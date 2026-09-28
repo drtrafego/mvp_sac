@@ -67,12 +67,27 @@ async function resolveLeadForContact(companyId: number, contact: string): Promis
   return { lead: undefined, identifier, ambiguous: false }
 }
 
+function contactIdentifierErrorResponse(err: unknown): NextResponse | null {
+  if (!(err instanceof Error)) return null
+  if (!['Contato é obrigatório.', 'leadId inválido: use lead:<id> com um inteiro positivo.'].includes(err.message)) {
+    return null
+  }
+  return NextResponse.json({ error: err.message }, { status: 400 })
+}
+
 export async function GET(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { idOrSlug, contact } = await params
   const { error, context } = await authenticateAgentRequest(req, idOrSlug)
   if (error || !context) return error!
 
-  const resolved = await resolveLeadForContact(context.company.id, contact)
+  let resolved: ResolvedLeadForContact
+  try {
+    resolved = await resolveLeadForContact(context.company.id, contact)
+  } catch (err) {
+    const response = contactIdentifierErrorResponse(err)
+    if (response) return response
+    throw err
+  }
   if (resolved.ambiguous) {
     return NextResponse.json({
       error: 'Contato ambíguo: informe o telefone completo em formato E.164 ou use lead:<id>.',
@@ -129,7 +144,14 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       return NextResponse.json({ error: 'Conteúdo da mensagem ou mediaUrl é obrigatório' }, { status: 400 })
     }
 
-    const resolved = await resolveLeadForContact(context.company.id, contact)
+    let resolved: ResolvedLeadForContact
+    try {
+      resolved = await resolveLeadForContact(context.company.id, contact)
+    } catch (err) {
+      const response = contactIdentifierErrorResponse(err)
+      if (response) return response
+      throw err
+    }
     if (resolved.ambiguous) {
       return NextResponse.json({
         error: 'Contato ambíguo: informe o telefone completo em formato E.164 ou use lead:<id>.',

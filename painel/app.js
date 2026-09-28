@@ -379,7 +379,8 @@ async function loadMessages(conversationId){
   if(source.kind === SNAPSHOT_KIND) return;
   if(state.messages[conversationId]) return;
   try{
-    const payload = await api(agentPath(source, `/conversations/${encodeURIComponent(conversationId)}/messages?limit=50`));
+    const contact = `lead:${conversationId}`;
+    const payload = await api(agentPath(source, `/conversations/${encodeURIComponent(contact)}/messages?limit=50`));
     state.messages[conversationId] = [...(payload.messages || [])].reverse();
     state.messages[`${conversationId}:notes`] = payload.notes || [];
   }catch(error){

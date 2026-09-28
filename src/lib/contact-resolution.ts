@@ -9,18 +9,21 @@ export function normalizeContactDigits(value: string | null | undefined): string
 
 export function parseContactIdentifier(contact: string): ContactIdentifier {
   const trimmed = contact.trim()
-  const explicitLeadId = trimmed.match(/^lead:(\d+)$/i)
+  if (!trimmed) {
+    throw new Error('Contato é obrigatório.')
+  }
+
+  const explicitLeadId = trimmed.match(/^lead:(.*)$/i)
   if (explicitLeadId) {
-    const leadId = Number(explicitLeadId[1])
-    if (Number.isSafeInteger(leadId) && leadId > 0) return { kind: 'leadId', leadId }
+    const rawLeadId = explicitLeadId[1].trim()
+    const leadId = Number(rawLeadId)
+    if (/^\d+$/.test(rawLeadId) && Number.isSafeInteger(leadId) && leadId > 0) {
+      return { kind: 'leadId', leadId }
+    }
+    throw new Error('leadId inválido: use lead:<id> com um inteiro positivo.')
   }
 
   const digits = normalizeContactDigits(trimmed)
-  if (/^\d+$/.test(trimmed) && digits.length > 0 && digits.length <= 9) {
-    const leadId = Number(trimmed)
-    if (Number.isSafeInteger(leadId) && leadId > 0) return { kind: 'leadId', leadId }
-  }
-
   return { kind: 'phone', raw: trimmed, digits }
 }
 

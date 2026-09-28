@@ -134,14 +134,19 @@ async function testesPuros() {
     assert.deepEqual(parsed, { kind: 'phone', raw: '557581784614', digits: '557581784614' })
   })
 
-  await caso('leadId fica explícito: número curto ou prefixo lead:, telefone E.164 vira telefone', () => {
-    assert.deepEqual(parseContactIdentifier('482'), { kind: 'leadId', leadId: 482 })
+  await caso('leadId só fica explícito com prefixo lead:, número sem prefixo vira telefone e inválidos são rejeitados', () => {
+    assert.deepEqual(parseContactIdentifier('482'), { kind: 'phone', raw: '482', digits: '482' })
+    assert.deepEqual(parseContactIdentifier('581784614'), { kind: 'phone', raw: '581784614', digits: '581784614' })
     assert.deepEqual(parseContactIdentifier('lead:557581784614'), { kind: 'leadId', leadId: 557581784614 })
     assert.deepEqual(parseContactIdentifier('+55 75 8178-4614'), {
       kind: 'phone',
       raw: '+55 75 8178-4614',
       digits: '557581784614',
     })
+    assert.throws(() => parseContactIdentifier('lead:0'), /leadId inválido/)
+    assert.throws(() => parseContactIdentifier('lead:-1'), /leadId inválido/)
+    assert.throws(() => parseContactIdentifier(''), /Contato é obrigatório/)
+    assert.throws(() => parseContactIdentifier('   '), /Contato é obrigatório/)
   })
 
   await caso('chaves ambíguas não vazam para outra empresa', () => {
