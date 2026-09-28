@@ -51,7 +51,11 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
   const { error, context } = await authenticateAgentRequest(req, idOrSlug)
   if (error || !context) return error!
 
-  const body = await req.json()
+  const parsedBody: unknown = await req.json().catch(() => null)
+  if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
+  }
+  const body = parsedBody as Record<string, unknown>
   let agentDisplayName: string | undefined
   try {
     agentDisplayName = parseAgentDisplayName(body.agentDisplayName)
@@ -94,6 +98,11 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       'zoutiWebhookToken',
     ]
 
+    const invalidField = allowedKeys.find(key => body[key] != null && typeof body[key] !== 'string')
+    if (invalidField) {
+      return NextResponse.json({ error: `O campo ${invalidField} deve ser um texto.` }, { status: 400 })
+    }
+
     // Achado de QA (26/09/2026): campo de credencial (mascarado no GET acima)
     // com valor vazio ou começando em "****" é ignorado aqui, senão um
     // caller que faz round-trip GET -> PATCH sem filtrar os campos
@@ -101,7 +110,7 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     // agentBiaApiKey/agentLuanaApiKey/agentRenatoApiKey (bearer tokens que
     // autenticam os próprios agentes nesta API) e os demais tokens da
     // allowlist abaixo. Ver shouldWriteSettingsField() em settings-mask.ts.
-    const updateData: Record<string, any> = { updatedAt: new Date() }
+    const updateData: Record<string, unknown> = { updatedAt: new Date() }
     for (const k of allowedKeys) {
       if (shouldWriteSettingsField(k, body[k])) updateData[k] = body[k]
     }
@@ -137,7 +146,8 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       settings: updated ? maskSettingsRow(updated) : null,
       ...(warnings.length > 0 ? { warnings } : {}),
     })
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message || 'Erro ao atualizar configurações' }, { status: 500 })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erro ao atualizar configurações'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

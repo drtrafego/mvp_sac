@@ -184,8 +184,8 @@ export default async function AnalyticsVendasPage({ searchParams }: PageProps) {
         kiwifyCount: sql<number>`cast(count(*) filter (where ${recoveryLeads.platform} = 'kiwify') as int)`,
         kiwifyRevenue: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.platform} = 'kiwify'), 0) as bigint)`,
         withUtm: sql<number>`cast(count(*) filter (where ${recoveryLeads.trackingSource} is not null) as int)`,
-        topUtmSource: sql<string>`(select ${recoveryLeads.trackingSource} from ${recoveryLeads} where ${recoveryLeads.companyId} = ${cid} and ${recoveryLeads.eventType} = 'compra_aprovada' and ${recoveryLeads.trackingSource} is not null group by ${recoveryLeads.trackingSource} order by sum(${recoveryLeads.productValue}) desc nulls last limit 1)`,
-        topUtmRevenue: sql<number>`cast((select coalesce(sum(${recoveryLeads.productValue}),0) from ${recoveryLeads} where ${recoveryLeads.companyId} = ${cid} and ${recoveryLeads.eventType} = 'compra_aprovada' and ${recoveryLeads.trackingSource} is not null group by ${recoveryLeads.trackingSource} order by sum(${recoveryLeads.productValue}) desc nulls last limit 1) as bigint)`,
+        topUtmSource: sql<string>`(select ${recoveryLeads.trackingSource} from ${recoveryLeads} where ${whereClause} and ${recoveryLeads.trackingSource} is not null group by ${recoveryLeads.trackingSource} order by sum(${recoveryLeads.productValue}) desc nulls last limit 1)`,
+        topUtmRevenue: sql<number>`cast((select coalesce(sum(${recoveryLeads.productValue}),0) from ${recoveryLeads} where ${whereClause} and ${recoveryLeads.trackingSource} is not null group by ${recoveryLeads.trackingSource} order by sum(${recoveryLeads.productValue}) desc nulls last limit 1) as bigint)`,
       })
       .from(recoveryLeads)
       .where(whereClause),

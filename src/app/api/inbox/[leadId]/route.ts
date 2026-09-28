@@ -10,7 +10,13 @@ import { sendBrevoEmail } from '@/lib/email/brevo'
 import { requireCompany } from '@/lib/auth'
 import { markLeadContacted } from '@/lib/leads'
 import { getEmailEngagement } from '@/lib/email-engagement'
-import { decodeMessageCursor, INBOX_MESSAGE_PAGE_SIZE, loadInboxMessagePage } from '@/lib/inbox-messages'
+import {
+  decodeMessageCursor,
+  INBOX_MESSAGE_PAGE_SIZE,
+  INBOX_MESSAGE_PAGE_SIZE_MAX,
+  loadInboxMessagePage,
+} from '@/lib/inbox-messages'
+import { parseIntegerQuery } from '@/lib/request-validation'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -18,6 +24,20 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   const { leadId } = await params
   const id = parseInt(leadId)
   if (isNaN(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
+
+  const { searchParams } = new URL(req.url)
+  const parsedLimit = parseIntegerQuery(searchParams.get('limit'), {
+    defaultValue: INBOX_MESSAGE_PAGE_SIZE,
+    min: 1,
+    max: INBOX_MESSAGE_PAGE_SIZE_MAX,
+    label: 'limit',
+  })
+  if (!parsedLimit.ok) return NextResponse.json({ error: parsedLimit.error }, { status: 400 })
+
+  const before = searchParams.get('before')
+  if (before && !decodeMessageCursor(before)) {
+    return NextResponse.json({ error: 'Cursor inválido.' }, { status: 400 })
+  }
 
   const company = await requireCompany()
 
@@ -28,18 +48,12 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
 
   if (!lead) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
 
-  const { searchParams } = new URL(req.url)
-  const before = searchParams.get('before')
-  if (before && !decodeMessageCursor(before)) {
-    return NextResponse.json({ error: 'Cursor inválido.' }, { status: 400 })
-  }
-  const requestedLimit = Number(searchParams.get('limit') || INBOX_MESSAGE_PAGE_SIZE)
   const messagePage = await loadInboxMessagePage({
     companyId: company.id,
     leadId: id,
     phone: lead.phone,
     before,
-    limit: Number.isFinite(requestedLimit) ? requestedLimit : INBOX_MESSAGE_PAGE_SIZE,
+    limit: parsedLimit.value,
   })
   const messages = messagePage.messages
 
@@ -112,9 +126,27 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
 
   if (!lead) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
 
-  const body = (await req.json()) as { content: string; messageType?: string; mediaUrl?: string }
+  const parsedBody: unknown = await req.json().catch(() => null)
+  if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
+  }
+  const body = parsedBody as Record<string, unknown>
 
-  if (!body.content?.trim() && !body.mediaUrl) {
+  if (body.content != null && typeof body.content !== 'string') {
+    return NextResponse.json({ error: 'O campo content deve ser um texto.' }, { status: 400 })
+  }
+  if (body.mediaUrl != null && typeof body.mediaUrl !== 'string') {
+    return NextResponse.json({ error: 'O campo mediaUrl deve ser um texto.' }, { status: 400 })
+  }
+  if (body.messageType != null && typeof body.messageType !== 'string') {
+    return NextResponse.json({ error: 'O campo messageType deve ser um texto.' }, { status: 400 })
+  }
+
+  const content = typeof body.content === 'string' ? body.content : ''
+  const mediaUrl = typeof body.mediaUrl === 'string' ? body.mediaUrl : undefined
+  const messageType = typeof body.messageType === 'string' ? body.messageType : undefined
+
+  if (!content.trim() && !mediaUrl) {
     return NextResponse.json({ error: 'Mensagem vazia' }, { status: 400 })
   }
 
@@ -125,8 +157,8 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   if (channel === 'instagram' || lead.phone.startsWith('ig_')) {
     const igRes = await sendInstagramMessage({
       recipientId: lead.phone,
-      text: body.content,
-      mediaUrl: body.mediaUrl,
+      text: content,
+      mediaUrl,
       companyId: company.id,
     })
     if (!igRes.ok) {
@@ -137,8 +169,8 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     const emailRes = await sendBrevoEmail({
       to: [{ email: lead.email, name: lead.name || undefined }],
       subject: `Re: Atendimento - ${lead.productName || 'SAC'}`,
-      htmlContent: `<p>${body.content.replace(/\n/g, '<br/>')}</p>`,
-      textContent: body.content,
+      htmlContent: `<p>${content.replace(/\n/g, '<br/>')}</p>`,
+      textContent: content,
       companyId: company.id,
     })
     if (!emailRes.ok) {
@@ -150,9 +182,9 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       externalId = await sendWhatsAppMessage(
         lead.phone,
         {
-          type: (body.messageType ?? 'text') as 'text' | 'image' | 'video' | 'audio' | 'document',
-          content: body.content,
-          mediaUrl: body.mediaUrl,
+          type: (messageType ?? 'text') as 'text' | 'image' | 'video' | 'audio' | 'document',
+          content,
+          mediaUrl,
         },
         company.id
       )
@@ -171,9 +203,9 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       phone: lead.phone,
       channel: lead.channel || 'whatsapp',
       direction: 'outbound',
-      content: body.content ?? null,
-      messageType: body.messageType ?? 'text',
-      mediaUrl: body.mediaUrl ?? null,
+      content: content || null,
+      messageType: messageType ?? 'text',
+      mediaUrl: mediaUrl ?? null,
       sentBy: 'human',
       externalId,
     })

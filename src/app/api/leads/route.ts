@@ -5,6 +5,11 @@ import { eq, desc, and, gte, lte, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { getDateRange } from '@/lib/date-utils'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
+import { parseIntegerQuery } from '@/lib/request-validation'
+
+const LEADS_PAGE_SIZE_DEFAULT = 200
+const LEADS_PAGE_SIZE_MAX = 200
+const LEADS_OFFSET_MAX = 100_000
 
 function cleanPhone(raw: string): string {
   let digits = raw.replace(/\D/g, '')
@@ -28,18 +33,31 @@ function parseValueToCents(raw: string | number | null | undefined): number {
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  const company = await requireCompany()
   const { searchParams } = new URL(req.url)
+  const parsedLimit = parseIntegerQuery(searchParams.get('limit'), {
+    defaultValue: LEADS_PAGE_SIZE_DEFAULT,
+    min: 1,
+    max: LEADS_PAGE_SIZE_MAX,
+    label: 'limit',
+  })
+  if (!parsedLimit.ok) return NextResponse.json({ error: parsedLimit.error }, { status: 400 })
+
+  const parsedOffset = parseIntegerQuery(searchParams.get('offset'), {
+    defaultValue: 0,
+    min: 0,
+    max: LEADS_OFFSET_MAX,
+    label: 'offset',
+  })
+  if (!parsedOffset.ok) return NextResponse.json({ error: parsedOffset.error }, { status: 400 })
+
+  const company = await requireCompany()
   const eventType = searchParams.get('event_type')
   const status = searchParams.get('status')
   const product = searchParams.get('product')
   const source = searchParams.get('source')
   const platform = searchParams.get('platform')
-  const limitParam = searchParams.get('limit')
-  const limit = limitParam === 'all' || limitParam === '0' || limitParam === '-1'
-    ? undefined
-    : parseInt(limitParam ?? '5000')
-  const offset = parseInt(searchParams.get('offset') ?? '0')
+  const limit = parsedLimit.value
+  const offset = parsedOffset.value
   const period = searchParams.get('period') ?? '30d'
   const fromStr = searchParams.get('from') ?? undefined
   const toStr = searchParams.get('to') ?? undefined
@@ -92,12 +110,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     .where(and(...conditions))
     .orderBy(desc(recoveryLeads.createdAt))
 
-  if (limit !== undefined) {
-    // @ts-ignore
-    query = query.limit(limit)
-  }
+  // @ts-expect-error Drizzle preserva o tipo sem limit(), mas a query continua compatível em runtime.
+  query = query.limit(limit)
   if (offset > 0) {
-    // @ts-ignore
+    // @ts-expect-error Drizzle preserva o tipo sem offset(), mas a query continua compatível em runtime.
     query = query.offset(offset)
   }
 
@@ -111,7 +127,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
-  const body = await req.json()
+  const parsedBody: unknown = await req.json().catch(() => null)
+  if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
+  }
+  const body = parsedBody as Record<string, unknown>
 
   const {
     name,
@@ -129,6 +149,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!rawPhone || typeof rawPhone !== 'string') {
     return NextResponse.json({ error: 'O número de telefone/WhatsApp é obrigatório.' }, { status: 400 })
   }
+
+  const optionalTextFields = [
+    ['name', name],
+    ['email', email],
+    ['productName', productName],
+    ['eventType', eventType],
+    ['trackingSource', trackingSource],
+    ['utmMedium', utmMedium],
+    ['paymentType', paymentType],
+  ] as const
+  const invalidTextField = optionalTextFields.find(([, value]) => value != null && typeof value !== 'string')
+  if (invalidTextField) {
+    return NextResponse.json({ error: `O campo ${invalidTextField[0]} deve ser um texto.` }, { status: 400 })
+  }
+  if (productValue != null && typeof productValue !== 'string' && typeof productValue !== 'number') {
+    return NextResponse.json({ error: 'O campo productValue deve ser um texto ou número.' }, { status: 400 })
+  }
+
+  const cleanName = typeof name === 'string' ? name.trim() : ''
+  const cleanEmail = typeof email === 'string' ? email.trim() : ''
+  const cleanProductName = typeof productName === 'string' ? productName.trim() : ''
+  const cleanEventType = typeof eventType === 'string' ? eventType : 'carrinho_abandonado'
+  const cleanTrackingSource = typeof trackingSource === 'string' ? trackingSource : 'mineracao'
+  const cleanUtmMedium = typeof utmMedium === 'string' ? utmMedium : 'whatsapp'
+  const cleanPaymentType = typeof paymentType === 'string' ? paymentType : 'pix'
 
   const phone = cleanPhone(rawPhone)
   if (phone.length < 10) {
@@ -152,13 +197,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const [updated] = await db
       .update(recoveryLeads)
       .set({
-        name: name?.trim() || existing.name,
-        email: email?.trim() || existing.email,
-        productName: productName?.trim() || existing.productName,
+        name: cleanName || existing.name,
+        email: cleanEmail || existing.email,
+        productName: cleanProductName || existing.productName,
         productValue: cents > 0 ? cents : existing.productValue,
-        eventType: eventType || existing.eventType,
-        trackingSource: trackingSource || existing.trackingSource,
-        utmMedium: utmMedium || existing.utmMedium,
+        eventType: cleanEventType || existing.eventType,
+        trackingSource: cleanTrackingSource || existing.trackingSource,
+        utmMedium: cleanUtmMedium || existing.utmMedium,
         updatedAt: new Date(),
       })
       .where(eq(recoveryLeads.id, existing.id))
@@ -170,14 +215,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       .values({
         companyId: company.id,
         phone,
-        name: name?.trim() || null,
-        email: email?.trim() || null,
-        productName: productName?.trim() || 'Produto Principal',
+        name: cleanName || null,
+        email: cleanEmail || null,
+        productName: cleanProductName || 'Produto Principal',
         productValue: cents,
-        eventType,
-        trackingSource,
-        utmMedium,
-        paymentType,
+        eventType: cleanEventType,
+        trackingSource: cleanTrackingSource,
+        utmMedium: cleanUtmMedium,
+        paymentType: cleanPaymentType,
         status: 'pending',
       })
       .returning()
@@ -189,7 +234,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const [seq] = await db
       .select()
       .from(recoverySequences)
-      .where(and(eq(recoverySequences.companyId, company.id), eq(recoverySequences.eventType, eventType)))
+      .where(and(eq(recoverySequences.companyId, company.id), eq(recoverySequences.eventType, cleanEventType)))
       .limit(1)
 
     if (seq && seq.isActive) {
