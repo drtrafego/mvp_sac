@@ -5,8 +5,6 @@ import { db } from '@/lib/db'
 import {
   massDispatchBatches,
   messageJobs,
-  recoverySequences,
-  sequenceMessages,
   settings,
 } from '@/lib/db/schema'
 import { buildMassDispatchPreview, isApprovedTemplateOnlySequence, queueMassDispatchBatch } from '@/lib/mass-dispatch'
@@ -21,22 +19,55 @@ async function loadPreview(batchId: number, companyId: number) {
   )).limit(1)
   if (!batch) return null
 
-  const messages = await db.select({
-    id: sequenceMessages.id,
-    order: sequenceMessages.order,
-    delayMinutes: sequenceMessages.delayMinutes,
-    messageType: sequenceMessages.messageType,
-    content: sequenceMessages.content,
-    templateName: sequenceMessages.templateName,
-  }).from(sequenceMessages).innerJoin(
-    recoverySequences,
-    eq(sequenceMessages.sequenceId, recoverySequences.id),
-  ).where(and(
-    eq(recoverySequences.companyId, companyId),
-    eq(recoverySequences.eventType, batch.eventType),
-    eq(recoverySequences.isActive, true),
-    eq(sequenceMessages.isActive, true),
-  )).orderBy(sequenceMessages.order)
+  const eligibleRows = await db.execute<{
+    recipient_count: number
+    id: number
+    order: number
+    delay_minutes: number | null
+    message_type: string | null
+    content: string | null
+    template_name: string | null
+    template_language: string | null
+    template_variables_map: unknown
+  }>(sql`
+    WITH eligible_pairs AS (
+      SELECT r.lead_id, sm.id, sm."order", sm.delay_minutes, sm.message_type, sm.content,
+             sm.template_name, sm.template_language, sm.template_variables_map
+      FROM mass_dispatch_batches b
+      JOIN mass_dispatch_recipients r ON r.batch_id = b.id
+      JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = b.company_id
+      JOIN LATERAL (
+        SELECT candidate.id
+        FROM recovery_sequences candidate
+        WHERE candidate.company_id = b.company_id
+          AND candidate.event_type = b.event_type
+          AND candidate.is_active = true
+          AND (
+            nullif(candidate.product_filter, '') IS NULL
+            OR candidate.product_filter = l.product_id
+            OR candidate.product_filter = l.product_name
+          )
+        ORDER BY CASE WHEN nullif(candidate.product_filter, '') IS NULL THEN 1 ELSE 0 END
+        LIMIT 1
+      ) rs ON true
+      JOIN sequence_messages sm ON sm.sequence_id = rs.id AND sm.is_active = true
+      WHERE b.id = ${batchId}
+        AND b.company_id = ${companyId}
+    ), recipient_summary AS (
+      SELECT count(DISTINCT lead_id)::int AS recipient_count FROM eligible_pairs
+    )
+    SELECT (SELECT recipient_count FROM recipient_summary) AS recipient_count,
+           id, "order", delay_minutes, message_type, content, template_name,
+           template_language, template_variables_map
+    FROM (
+      SELECT DISTINCT id, "order", delay_minutes, message_type, content, template_name,
+             template_language, template_variables_map
+      FROM eligible_pairs
+    ) messages
+    ORDER BY "order"
+  `)
+  const rows = Array.isArray(eligibleRows) ? eligibleRows : eligibleRows.rows
+  const eligibleRecipientCount = Number(rows[0]?.recipient_count ?? 0)
 
   const statsRows = await db.select({
     status: messageJobs.status,
@@ -48,13 +79,17 @@ async function loadPreview(batchId: number, companyId: number) {
     ...buildMassDispatchPreview({
       batchId,
       status: batch.status,
-      recipientCount: batch.recipientCount,
+      recipientCount: eligibleRecipientCount,
       eventType: batch.eventType,
-      messages: messages.map(message => ({
-        ...message,
-        delayMinutes: message.delayMinutes ?? 0,
-        messageType: message.messageType ?? 'text',
+      messages: rows.map(message => ({
+        id: Number(message.id),
+        order: Number(message.order),
+        delayMinutes: message.delay_minutes ?? 0,
+        messageType: message.message_type ?? 'text',
         content: message.content ?? '',
+        templateName: message.template_name,
+        templateLanguage: message.template_language,
+        templateVariablesMap: message.template_variables_map,
       })),
     }),
     stats,

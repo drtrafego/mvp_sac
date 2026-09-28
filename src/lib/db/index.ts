@@ -668,9 +668,18 @@ export function ensureSchema(client: any): Promise<void> {
           await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS mass_dispatch_batch_id INTEGER REFERENCES mass_dispatch_batches(id) ON DELETE SET NULL`
           await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS message_snapshot JSONB`
           await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0`
+          await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP`
           await client`
             CREATE UNIQUE INDEX IF NOT EXISTS message_jobs_mass_dispatch_unique
             ON message_jobs (mass_dispatch_batch_id, lead_id, message_id)
+          `
+          await client`
+            CREATE TABLE IF NOT EXISTS mass_dispatch_phone_cooldowns (
+              meta_phone_number_id TEXT PRIMARY KEY,
+              cooldown_until TIMESTAMP NOT NULL,
+              reason TEXT,
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
           `
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)

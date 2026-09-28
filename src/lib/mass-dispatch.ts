@@ -8,6 +8,8 @@ export interface DispatchPreviewMessage {
   messageType: string
   content: string
   templateName: string | null
+  templateLanguage: string | null
+  templateVariablesMap: unknown
 }
 
 export interface MessageSnapshot {
@@ -53,6 +55,22 @@ export function buildMassDispatchPreview(input: {
     totalJobs: input.recipientCount * messages.length,
     messages,
   }
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, nested]) => [key, stableJsonValue(nested)])
+    )
+  }
+  return value
+}
+
+export function stableJsonStringify(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value))
 }
 
 export type DispatchOutcome =
@@ -207,7 +225,9 @@ export async function queueMassDispatchBatch(
           'delayMinutes', coalesce(p.delay_minutes, 0),
           'messageType', p.message_snapshot->>'messageType',
           'content', coalesce(p.message_snapshot->>'content', ''),
-          'templateName', p.message_snapshot->'templateName'
+          'templateName', p.message_snapshot->'templateName',
+          'templateLanguage', p.message_snapshot->'templateLanguage',
+          'templateVariablesMap', coalesce(p.message_snapshot->'templateVariablesMap', 'null'::jsonb)
         ) ORDER BY p."order"), '[]'::jsonb) AS messages
         FROM (SELECT DISTINCT message_id, "order", delay_minutes, message_snapshot FROM eligible_pairs) p
       ), summary AS (
@@ -218,7 +238,7 @@ export async function queueMassDispatchBatch(
             message_snapshot->>'messageType' <> 'template'
             OR nullif(message_snapshot->>'templateName', '') IS NULL
           )::int AS non_template_count,
-          (SELECT messages FROM current_preview) = ${JSON.stringify(approvedPreview)}::jsonb AS preview_matches
+          (SELECT messages FROM current_preview) = ${stableJsonStringify(approvedPreview)}::jsonb AS preview_matches
         FROM eligible_pairs
       ), usage AS (
         SELECT count(*)::int AS reserved_count
@@ -226,6 +246,10 @@ export async function queueMassDispatchBatch(
         JOIN recovery_leads l ON l.id = j.lead_id
         JOIN settings cfg ON cfg.company_id = l.company_id
         WHERE cfg.meta_phone_number_id = ${metaPhoneNumberId}
+          -- Limitação conhecida: este orçamento protege só disparos em massa.
+          -- Envios normais ficam em whatsapp_messages e não têm vínculo confiável
+          -- com message_jobs/meta_phone_number_id suficiente para compor o mesmo
+          -- contador sem redesenhar a mensageria.
           AND j.mass_dispatch_batch_id IS NOT NULL
           AND (
             j.status IN ('pending', 'processing')

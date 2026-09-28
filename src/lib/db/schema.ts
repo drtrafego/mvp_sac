@@ -545,10 +545,18 @@ export const messageJobs = pgTable('message_jobs', {
   massDispatchBatchId: integer('mass_dispatch_batch_id').references(() => massDispatchBatches.id, { onDelete: 'set null' }),
   messageSnapshot: jsonb('message_snapshot'),            // cópia imutável usada pelos disparos em massa
   retryCount: integer('retry_count').notNull().default(0),
+  processingStartedAt: timestamp('processing_started_at'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   uniqueIndex('message_jobs_mass_dispatch_unique').on(table.massDispatchBatchId, table.leadId, table.messageId),
 ])
+
+export const massDispatchPhoneCooldowns = pgTable('mass_dispatch_phone_cooldowns', {
+  metaPhoneNumberId: text('meta_phone_number_id').primaryKey(),
+  cooldownUntil: timestamp('cooldown_until').notNull(),
+  reason: text('reason'),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
 
 // ─── Histórico de mensagens WhatsApp / Instagram / E-mail ────────────────────
 export const whatsappMessages = pgTable('whatsapp_messages', {

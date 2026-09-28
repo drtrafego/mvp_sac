@@ -7,6 +7,7 @@ import {
   createMessageSnapshot,
   executeAndRecordDispatch,
   isApprovedTemplateOnlySequence,
+  stableJsonStringify,
   type DispatchOutcome,
 } from '../src/lib/mass-dispatch'
 import { MAX_JOBS_PER_RUN, estimateMaxMessagesPerHour } from '../src/lib/message-jobs-policy'
@@ -20,8 +21,14 @@ test('preview informa destinatários, mensagens ordenadas e total exato de jobs'
     recipientCount: 3,
     eventType: 'carrinho_abandonado',
     messages: [
-      { id: 2, order: 2, delayMinutes: 60, messageType: 'text', content: 'Lembrete', templateName: null },
-      { id: 1, order: 1, delayMinutes: 0, messageType: 'template', content: 'Olá {nome}', templateName: 'boas_vindas' },
+      {
+        id: 2, order: 2, delayMinutes: 60, messageType: 'text', content: 'Lembrete',
+        templateName: null, templateLanguage: null, templateVariablesMap: null,
+      },
+      {
+        id: 1, order: 1, delayMinutes: 0, messageType: 'template', content: 'Olá {nome}',
+        templateName: 'boas_vindas', templateLanguage: 'pt_BR', templateVariablesMap: { '1': '{nome}' },
+      },
     ],
   })
 
@@ -30,6 +37,32 @@ test('preview informa destinatários, mensagens ordenadas e total exato de jobs'
   assert.equal(preview.totalJobs, 6)
   assert.deepEqual(preview.messages.map(message => message.id), [1, 2])
   assert.equal(preview.messages[0].content, 'Olá {nome}')
+})
+
+test('confirmação invalida preview se templateLanguage ou templateVariablesMap mudarem', () => {
+  const approved = [{
+    id: 1,
+    order: 1,
+    delayMinutes: 0,
+    messageType: 'template',
+    content: 'Olá',
+    templateName: 'campanha_aprovada',
+    templateLanguage: 'pt_BR',
+    templateVariablesMap: { '1': '{nome}' },
+  }]
+  const changedVariables = [{ ...approved[0], templateVariablesMap: { '1': '{produto}' } }]
+  const changedLanguage = [{ ...approved[0], templateLanguage: 'en_US' }]
+
+  assert.notEqual(stableJsonStringify(approved), stableJsonStringify(changedVariables))
+  assert.notEqual(stableJsonStringify(approved), stableJsonStringify(changedLanguage))
+
+  const routeSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/import/[batchId]/dispatch/route.ts'), 'utf8')
+  const executorSource = readFileSync(resolve(process.cwd(), 'src/lib/mass-dispatch.ts'), 'utf8')
+  assert.match(routeSource, /templateLanguage/)
+  assert.match(routeSource, /templateVariablesMap/)
+  assert.match(executorSource, /'templateLanguage'/)
+  assert.match(executorSource, /'templateVariablesMap'/)
+  assert.match(executorSource, /stableJsonStringify\(approvedPreview\)/)
 })
 
 test('executor registra sucesso e falha separadamente por lead sem chamada real', async () => {
@@ -104,8 +137,12 @@ test('productFilter usa a mesma regra do webhook e restringe destinatários', ()
   assert.equal(sequenceMatchesProduct('Produto A', null, 'Produto B'), false)
 
   const queueSource = readFileSync(resolve(process.cwd(), 'src/lib/mass-dispatch.ts'), 'utf8')
+  const routeSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/import/[batchId]/dispatch/route.ts'), 'utf8')
   assert.match(queueSource, /candidate\.product_filter = l\.product_id/)
   assert.match(queueSource, /candidate\.product_filter = l\.product_name/)
+  assert.match(routeSource, /candidate\.product_filter = l\.product_id/)
+  assert.match(routeSource, /candidate\.product_filter = l\.product_name/)
+  assert.match(routeSource, /count\(DISTINCT lead_id\)::int AS recipient_count/)
 })
 
 test('falha de persistência após envio aceito vira sent_unconfirmed, nunca failed', async () => {
@@ -136,6 +173,28 @@ test('429 respeita Retry-After e usa backoff antes de recolocar na fila', async 
   })
   assert.deepEqual(recorded, outcome)
   assert.equal(parseRetryAfter('120'), 120_000)
+})
+
+test('cron sinaliza processing órfão vencido sem reenvio automático', () => {
+  const cronSource = readFileSync(resolve(process.cwd(), 'src/app/api/cron/route.ts'), 'utf8')
+  const schemaSource = readFileSync(resolve(process.cwd(), 'src/lib/db/schema.ts'), 'utf8')
+  assert.match(schemaSource, /processingStartedAt: timestamp\('processing_started_at'\)/)
+  assert.match(cronSource, /MASS_DISPATCH_PROCESSING_LEASE_TIMEOUT_MS/)
+  assert.match(cronSource, /status:\s*'failed'/)
+  assert.match(cronSource, /revisão manual necessária para evitar reenvio duplicado/)
+  assert.match(cronSource, /processingStartedAt:\s*now/)
+})
+
+test('429 cria cooldown por número e bloqueia demais jobs do mesmo meta_phone_number_id', () => {
+  const cronSource = readFileSync(resolve(process.cwd(), 'src/app/api/cron/route.ts'), 'utf8')
+  const schemaSource = readFileSync(resolve(process.cwd(), 'src/lib/db/schema.ts'), 'utf8')
+  const migrationSource = readFileSync(resolve(process.cwd(), 'drizzle/0023_mass_dispatch_batches.sql'), 'utf8')
+  assert.match(schemaSource, /massDispatchPhoneCooldowns/)
+  assert.match(migrationSource, /mass_dispatch_phone_cooldowns/)
+  assert.match(cronSource, /NOT EXISTS \(/)
+  assert.match(cronSource, /mass_dispatch_phone_cooldowns c/)
+  assert.match(cronSource, /cooldownsByPhone\.set\(metaPhoneNumberId, outcome\.retryAt\)/)
+  assert.match(cronSource, /Cooldown ativo para este número Meta após 429/)
 })
 
 test('limite do executor permanece conservador', () => {
