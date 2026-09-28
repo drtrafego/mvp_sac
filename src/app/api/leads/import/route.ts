@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs, leadTags } from '@/lib/db/schema'
+import { eq, and } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
+import { isLeadChannel, MAX_TAG_LENGTH, normalizeTag, type LeadChannel } from '@/lib/lead-tags'
 
 function cleanPhone(raw: string): string {
   let digits = raw.replace(/\D/g, '')
@@ -40,10 +41,31 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
   const body = await req.json()
 
-  const { items, defaultEventType = 'carrinho_abandonado', defaultSource = 'mineracao', triggerSequence = false } = body
+  const {
+    items,
+    defaultEventType = 'carrinho_abandonado',
+    defaultSource = 'mineracao',
+    triggerSequence = false,
+    tag: rawTag,
+    scopeChannel: rawScopeChannel,
+  } = body
 
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ error: 'Nenhum contato enviado para importação' }, { status: 400 })
+  }
+
+  const hasTag = rawTag !== undefined && rawTag !== null && rawTag !== ''
+  const tag = hasTag && typeof rawTag === 'string' ? normalizeTag(rawTag) : null
+  if (hasTag && !tag) {
+    return NextResponse.json({ error: `Tag inválida (vazia ou só espaço, máx. ${MAX_TAG_LENGTH} caracteres)` }, { status: 400 })
+  }
+
+  let scopeChannel: LeadChannel | null = null
+  if (rawScopeChannel !== undefined && rawScopeChannel !== null) {
+    if (!tag || !isLeadChannel(rawScopeChannel)) {
+      return NextResponse.json({ error: 'Canal de escopo inválido ou informado sem tag' }, { status: 400 })
+    }
+    scopeChannel = rawScopeChannel
   }
 
   let inserted = 0
@@ -52,7 +74,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const errors: string[] = []
 
   // Se for para disparar sequência, busca a sequência e mensagens correspondentes
-  let activeMessages: any[] = []
+  let activeMessages: (typeof sequenceMessages.$inferSelect)[] = []
   if (triggerSequence) {
     const [seq] = await db
       .select()
@@ -150,6 +172,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             })
           }
         }
+      }
+
+      if (tag) {
+        await db
+          .insert(leadTags)
+          .values({ leadId, tag, scopeChannel, createdBy: 'import:csv' })
+          .onConflictDoNothing()
       }
     } catch (err) {
       skipped++

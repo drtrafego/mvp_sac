@@ -146,6 +146,7 @@ async function main() {
 
   const { GET, POST } = await import('../src/app/api/leads/[leadId]/tags/route')
   const { DELETE } = await import('../src/app/api/leads/[leadId]/tags/[tag]/route')
+  const { POST: IMPORT_POST } = await import('../src/app/api/leads/import/route')
 
   const originalFetch = globalThis.fetch
   const originalToken = process.env.NAO_RESPONDER_TOKEN
@@ -172,11 +173,11 @@ async function main() {
     return lead
   }
 
-  function makePostRequest(leadId: number, tag: string) {
+  function makePostRequest(leadId: number, tag: string, scopeChannel?: string) {
     return new NextRequest(`https://sac.example.com/api/leads/${leadId}/tags`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tag }),
+      body: JSON.stringify({ tag, scopeChannel }),
     })
   }
 
@@ -241,6 +242,79 @@ async function main() {
       assert.equal(res.status, 200)
       const json = await res.json()
       assert.equal(json.tags.length, 2)
+    })
+
+    // ── Escopo de canal: coexistência e unicidade ──────────────────────
+    await test('mesma tag em dois canais não colide', async () => {
+      const lead = await criarLead('5511911110020')
+      const whatsapp = await POST(makePostRequest(lead.id, 'vip', 'whatsapp'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+      const instagram = await POST(makePostRequest(lead.id, 'vip', 'instagram'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+      assert.equal(whatsapp.status, 200)
+      assert.equal(instagram.status, 200)
+
+      const tags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, lead.id))
+      assert.equal(tags.length, 2)
+      assert.deepEqual(new Set(tags.map(row => row.scopeChannel)), new Set(['whatsapp', 'instagram']))
+    })
+
+    await test('mesma tag geral duas vezes continua bloqueada pelo índice funcional', async () => {
+      const lead = await criarLead('5511911110021')
+      await testDb.insert(schema.leadTags).values({ leadId: lead.id, tag: 'vip', scopeChannel: null })
+
+      await assert.rejects(
+        testDb.insert(schema.leadTags).values({ leadId: lead.id, tag: 'vip', scopeChannel: null }),
+        /duplicate key value violates unique constraint/,
+      )
+    })
+
+    await test('DELETE sem scopeChannel apaga só a tag geral e preserva variantes por canal', async () => {
+      const lead = await criarLead('5511911110022')
+      await POST(makePostRequest(lead.id, 'vip'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+      await POST(makePostRequest(lead.id, 'vip', 'whatsapp'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+      await POST(makePostRequest(lead.id, 'vip', 'instagram'), { params: Promise.resolve({ leadId: String(lead.id) }) })
+
+      const res = await DELETE(new NextRequest(`https://sac.example.com/api/leads/${lead.id}/tags/vip`, { method: 'DELETE' }), {
+        params: Promise.resolve({ leadId: String(lead.id), tag: 'vip' }),
+      })
+      assert.equal(res.status, 200)
+
+      const tags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, lead.id))
+      assert.equal(tags.length, 2)
+      assert.deepEqual(new Set(tags.map(row => row.scopeChannel)), new Set(['whatsapp', 'instagram']))
+    })
+
+    await test('import CSV aplica tag e escopo a todos os leads novos e existentes do lote', async () => {
+      const existente = await criarLead('5511911110023')
+      const req = new NextRequest('https://sac.example.com/api/leads/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          items: [
+            { phone: existente.phone, name: 'Existente' },
+            { phone: '11911110024', name: 'Novo' },
+          ],
+          tag: ' Campanha VIP ',
+          scopeChannel: 'whatsapp',
+        }),
+      })
+
+      const res = await IMPORT_POST(req)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.updated, 1)
+      assert.equal(json.inserted, 1)
+      assert.equal(json.skipped, 0)
+
+      const importedLeads = await testDb
+        .select({ id: schema.recoveryLeads.id })
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.companyId, company.id))
+      const importedIds = new Set(importedLeads.map(row => row.id))
+      const tags = (await testDb.select().from(schema.leadTags))
+        .filter(row => importedIds.has(row.leadId) && row.tag === 'campanha vip')
+      assert.equal(tags.length, 2)
+      assert.ok(tags.every(row => row.scopeChannel === 'whatsapp'))
+      assert.ok(tags.every(row => row.createdBy === 'import:csv'))
     })
 
     // ── 3. Remover "pessoa" com botPausedBy='tag:pessoa' reverte a pausa ──
@@ -372,7 +446,7 @@ async function main() {
         await testDb
           .insert(schema.leadTags)
           .values({ leadId: lead.id, tag: 'pessoa', createdBy: 'Operador B' })
-          .onConflictDoNothing({ target: [schema.leadTags.leadId, schema.leadTags.tag] })
+          .onConflictDoNothing()
 
         const [reTagged] = await testDb
           .update(schema.recoveryLeads)

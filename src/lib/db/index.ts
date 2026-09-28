@@ -651,13 +651,23 @@ export function ensureSchema(client: any): Promise<void> {
               id SERIAL PRIMARY KEY,
               lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
               tag TEXT NOT NULL,
+              scope_channel TEXT,
               created_at TIMESTAMP DEFAULT NOW(),
               created_by TEXT
             )
           `
           await client`
-            CREATE UNIQUE INDEX IF NOT EXISTS lead_tags_lead_tag_unique
-            ON lead_tags (lead_id, tag)
+            ALTER TABLE lead_tags ADD COLUMN IF NOT EXISTS scope_channel TEXT
+          `
+          // Cria o índice novo antes de remover o antigo: os dados protegidos
+          // pelo índice antigo necessariamente satisfazem o novo, e assim não
+          // existe janela de startup sem proteção contra duplicatas.
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS lead_tags_lead_tag_scope_unique
+            ON lead_tags (lead_id, tag, COALESCE(scope_channel, ''))
+          `
+          await client`
+            DROP INDEX IF EXISTS lead_tags_lead_tag_unique
           `
           await client`
             CREATE INDEX IF NOT EXISTS lead_tags_tag_idx

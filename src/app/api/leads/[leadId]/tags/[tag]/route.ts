@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { leadTags, recoveryLeads } from '@/lib/db/schema'
 import { and, eq, isNull } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
-import { normalizeTag, PESSOA_TAG, BOT_PAUSED_BY_TAG_PESSOA } from '@/lib/lead-tags'
+import { normalizeTag, PESSOA_TAG, BOT_PAUSED_BY_TAG_PESSOA, isLeadChannel } from '@/lib/lead-tags'
 import { notifyNaoResponder } from '@/lib/nao-responder'
 
 type Params = { params: Promise<{ leadId: string; tag: string }> }
@@ -47,13 +47,18 @@ type Params = { params: Promise<{ leadId: string; tag: string }> }
  * espera sempre produz um botPausedAt diferente, o CAS deixa de casar, e cai
  * no caminho de leitura fresca (não mexe na pausa nova).
  */
-export async function DELETE(_req: NextRequest, { params }: Params): Promise<NextResponse> {
+export async function DELETE(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { leadId, tag: rawTagParam } = await params
   const id = parseInt(leadId)
   if (isNaN(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
 
   const tag = normalizeTag(decodeURIComponent(rawTagParam))
   if (!tag) return NextResponse.json({ error: 'Tag inválida' }, { status: 400 })
+
+  const rawScopeChannel = req.nextUrl.searchParams.get('scopeChannel')
+  if (rawScopeChannel !== null && !isLeadChannel(rawScopeChannel)) {
+    return NextResponse.json({ error: 'Canal de escopo inválido' }, { status: 400 })
+  }
 
   const company = await requireCompany()
 
@@ -65,7 +70,13 @@ export async function DELETE(_req: NextRequest, { params }: Params): Promise<Nex
 
   const [deleted] = await db
     .delete(leadTags)
-    .where(and(eq(leadTags.leadId, id), eq(leadTags.tag, tag)))
+    .where(and(
+      eq(leadTags.leadId, id),
+      eq(leadTags.tag, tag),
+      rawScopeChannel === null
+        ? isNull(leadTags.scopeChannel)
+        : eq(leadTags.scopeChannel, rawScopeChannel),
+    ))
     .returning()
 
   if (!deleted) return NextResponse.json({ error: 'Tag não encontrada neste lead' }, { status: 404 })
