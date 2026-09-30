@@ -17,6 +17,8 @@ export const AGENDA_DAY_LABELS: Record<AgendaDay, string> = {
 }
 
 export const AGENDA_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+export const AGENDA_TIMEZONE_OFFSET_RE = /^[+-](?:[01]\d|2[0-3]):[0-5]\d$/
+export const AGENDA_SLOT_MINUTES = [10, 15, 20, 30, 45, 60] as const
 
 // Formato de data (AAAA-MM-DD) usado pelos bloqueios de agenda (agendaBlockedDates).
 export const AGENDA_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -63,15 +65,25 @@ export const NATIVE_AVAILABILITY_SOURCE_LABELS: Record<NativeAvailabilityCompany
 }
 
 export const DEFAULT_AVAILABILITY_SCHEDULE: AvailabilitySchedule = {
-  segunda: [{ inicio: '08:00', fim: '18:00' }],
-  terca: [{ inicio: '08:00', fim: '18:00' }],
-  quarta: [{ inicio: '08:00', fim: '18:00' }],
-  quinta: [{ inicio: '08:00', fim: '18:00' }],
-  sexta: [{ inicio: '08:00', fim: '18:00' }],
+  segunda: [{ inicio: '08:00', fim: '12:00' }],
+  terca: [{ inicio: '08:00', fim: '12:00' }],
+  quarta: [{ inicio: '08:00', fim: '12:00' }],
+  quinta: [{ inicio: '08:00', fim: '12:00' }],
+  sexta: [{ inicio: '08:00', fim: '12:00' }],
   sabado: null,
   domingo: null,
   timezone: 'America/Sao_Paulo',
   duracaoSlotMinutos: 30,
+}
+
+export function isValidAgendaTimezone(value: string): boolean {
+  if (AGENDA_TIMEZONE_OFFSET_RE.test(value)) return true
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date())
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function isValidDayRange(value: unknown): value is DayRange {
@@ -133,10 +145,88 @@ export function validateAvailabilitySchedule(
 
   const timezone =
     typeof input.timezone === 'string' && input.timezone.trim() ? input.timezone.trim() : DEFAULT_AVAILABILITY_SCHEDULE.timezone
+  if (!isValidAgendaTimezone(timezone)) {
+    return { ok: false, error: 'timezone inválido. Use um fuso IANA (ex.: America/Sao_Paulo) ou offset -03:00.' }
+  }
   const duracaoSlotMinutos = Number(input.duracaoSlotMinutos ?? DEFAULT_AVAILABILITY_SCHEDULE.duracaoSlotMinutos)
-  if (!Number.isInteger(duracaoSlotMinutos) || duracaoSlotMinutos < 5 || duracaoSlotMinutos > 480) {
-    return { ok: false, error: 'duracaoSlotMinutos precisa ser um inteiro entre 5 e 480.' }
+  if (!AGENDA_SLOT_MINUTES.includes(duracaoSlotMinutos as (typeof AGENDA_SLOT_MINUTES)[number])) {
+    return { ok: false, error: 'duracaoSlotMinutos precisa ser um destes valores: 10, 15, 20, 30, 45 ou 60.' }
   }
 
   return { ok: true, schedule: { ...schedule, timezone, duracaoSlotMinutos } as AvailabilitySchedule }
+}
+
+// Formato legado usado pelo painel antigo mvp_agente_ia/control API:
+// "0"=domingo, "1"=segunda ... "6"=sábado e cada faixa é ["HH:MM","HH:MM"].
+export type LegacyAgendaHours = Record<string, [string, string][]>
+
+const LEGACY_DAY_TO_AGENDA_DAY: Record<string, AgendaDay> = {
+  '0': 'domingo',
+  '1': 'segunda',
+  '2': 'terca',
+  '3': 'quarta',
+  '4': 'quinta',
+  '5': 'sexta',
+  '6': 'sabado',
+}
+
+export function legacyAgendaHoursToAvailabilitySchedule(input: {
+  timezone?: string | null
+  slotMinutes?: number | null
+  hours?: LegacyAgendaHours | null
+}): AvailabilitySchedule {
+  const slotMinutes = AGENDA_SLOT_MINUTES.includes(input.slotMinutes as (typeof AGENDA_SLOT_MINUTES)[number])
+    ? input.slotMinutes!
+    : DEFAULT_AVAILABILITY_SCHEDULE.duracaoSlotMinutos
+  const schedule: AvailabilitySchedule = {
+    segunda: null,
+    terca: null,
+    quarta: null,
+    quinta: null,
+    sexta: null,
+    sabado: null,
+    domingo: null,
+    timezone: input.timezone?.trim() || DEFAULT_AVAILABILITY_SCHEDULE.timezone,
+    duracaoSlotMinutos: slotMinutes,
+  }
+
+  for (const [legacyDay, day] of Object.entries(LEGACY_DAY_TO_AGENDA_DAY)) {
+    const ranges = input.hours?.[legacyDay] ?? []
+    const normalized = ranges
+      .map(([inicio, fim]) => ({ inicio, fim }))
+      .filter(isValidDayRange)
+    schedule[day] = normalized.length > 0 ? normalized : null
+  }
+
+  const validated = validateAvailabilitySchedule(schedule)
+  return validated.ok ? validated.schedule : DEFAULT_AVAILABILITY_SCHEDULE
+}
+
+export function normalizeAvailabilitySchedule(value: unknown): AvailabilitySchedule | null {
+  if (!value || typeof value !== 'object') return null
+  const input = value as Record<string, unknown>
+  const normalized: Record<string, unknown> = { ...input }
+
+  // Compatibilidade com duas formas antigas:
+  // 1) dia como objeto único { inicio, fim };
+  // 2) painel mvp_agente_ia com hours: { "1": [["08:00","12:00"]] }.
+  if (input.hours && typeof input.hours === 'object') {
+    return legacyAgendaHoursToAvailabilitySchedule({
+      timezone: typeof input.timezone === 'string' ? input.timezone : null,
+      slotMinutes: Number.isFinite(Number(input.slotMinutes ?? input.slot_minutes))
+        ? Number(input.slotMinutes ?? input.slot_minutes)
+        : null,
+      hours: input.hours as LegacyAgendaHours,
+    })
+  }
+
+  for (const day of AGENDA_DAYS) {
+    const raw = normalized[day]
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      normalized[day] = [raw]
+    }
+  }
+
+  const result = validateAvailabilitySchedule(normalized)
+  return result.ok ? result.schedule : null
 }

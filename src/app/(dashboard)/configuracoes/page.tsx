@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette, Columns3, CalendarClock, ChevronRight, PauseCircle, PlayCircle, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -920,6 +921,7 @@ function AparenciaSection() {
 }
 
 export default function ConfiguracoesPage() {
+  const router = useRouter()
   const [form, setForm] = useState<SettingsData>(defaults)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -1019,6 +1021,7 @@ export default function ConfiguracoesPage() {
       // depois desta linha é o que o banco tem de verdade, nunca o palpite
       // otimista de cima.
       await loadSettings()
+      router.refresh()
       setHotmartToggleBusy(false)
     }
   }
@@ -1039,6 +1042,8 @@ export default function ConfiguracoesPage() {
         body: JSON.stringify(form),
       })
       if (res.ok) {
+        await loadSettings()
+        router.refresh()
         setSaved(true)
         setTimeout(() => setSaved(false), 2500)
       } else {

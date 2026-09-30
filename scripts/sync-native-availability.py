@@ -40,9 +40,12 @@ def drlucas_snapshot():
         if not ranges:
             schedule[target_day] = None
             continue
-        if len(ranges) != 1 or len(ranges[0]) != 2:
-            raise ValueError(f"{target_day} tem múltiplas faixas; o formato do SAC ainda não as representa")
-        schedule[target_day] = [{"inicio": str(ranges[0][0]), "fim": str(ranges[0][1])}]
+        normalized = []
+        for item in ranges:
+            if not isinstance(item, list) or len(item) != 2:
+                raise ValueError(f"{target_day} tem faixa inválida no agenda_config.json")
+            normalized.append({"inicio": str(item[0]), "fim": str(item[1])})
+        schedule[target_day] = normalized
     schedule["timezone"] = str(raw.get("timezone") or "-03:00")
     schedule["duracaoSlotMinutos"] = int(raw.get("slot_minutes"))
     return schedule, "bot_file"

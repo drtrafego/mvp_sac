@@ -158,24 +158,26 @@ async function main() {
       assert.equal((row.schedule as typeof lucasSchedule).duracaoSlotMinutos, 15)
     })
 
-    await test('GET ignora o valor legado falso e entrega o espelho nativo como somente leitura', async () => {
+    await test('GET ignora valor legado sem edição manual e entrega o espelho nativo editável', async () => {
       const req = new NextRequest('http://localhost/api/v1/companies/drlucas/agenda/schedule')
       const res = await scheduleRoute.GET(req, { params: Promise.resolve({ idOrSlug: 'drlucas' }) })
       const body = await res.json()
       assert.equal(res.status, 200)
-      assert.equal(body.readOnly, true)
+      assert.equal(body.readOnly, false)
+      assert.equal(body.sourceStatus, 'native_snapshot_imported')
       assert.equal(body.sourceLabel, 'Arquivo nativo do bot (/opt/data/agenda_config.json)')
       assert.equal(body.schedule.duracaoSlotMinutos, 15, 'não pode vazar o valor legado 99 de settings')
     })
 
-    await test('PUT de empresa com bot nativo é recusado sem alterar fonte nem settings', async () => {
+    await test('PUT de empresa com bot nativo grava override manual sem alterar o snapshot', async () => {
       const req = new NextRequest('http://localhost/api/v1/companies/drlucas/agenda/schedule', {
         method: 'PUT', body: JSON.stringify({ ...lucasSchedule, duracaoSlotMinutos: 60 }),
       })
       const res = await scheduleRoute.PUT(req, { params: Promise.resolve({ idOrSlug: 'drlucas' }) })
-      assert.equal(res.status, 409)
+      assert.equal(res.status, 200)
       const [legacy] = await testDb.select().from(schema.settings).where(eq(schema.settings.companyId, drLucas.id))
-      assert.equal((legacy.availabilitySchedule as typeof lucasSchedule).duracaoSlotMinutos, 99)
+      assert.equal((legacy.availabilitySchedule as typeof lucasSchedule).duracaoSlotMinutos, 60)
+      assert.equal(legacy.availabilityScheduleManual, true)
       const [mirror] = await testDb.select().from(schema.nativeAvailabilitySchedules)
       assert.equal((mirror.schedule as typeof lucasSchedule).duracaoSlotMinutos, 15)
     })

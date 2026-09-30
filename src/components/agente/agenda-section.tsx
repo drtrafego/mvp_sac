@@ -333,8 +333,7 @@ export function AgendaSection() {
               Somente leitura
             </p>
             <p className="text-body text-fg-muted">
-              Este é o horário que o bot usa de verdade. O SAC apenas sincroniza e exibe essa fonte; alterar um campo
-              aqui não mudaria o atendimento.
+              Este é o horário que o bot usa de verdade. O SAC apenas sincroniza e exibe essa fonte.
             </p>
             {scheduleSourceLabel && (
               <p className={`text-micro flex items-center gap-1.5 ${scheduleSyncIsStale ? 'text-st-negativo' : 'text-fg-subtle'}`}>
@@ -352,10 +351,18 @@ export function AgendaSection() {
             </p>
           </div>
         ) : (
-          <p className="text-body text-fg-muted">
-            Grade semanal de horário em que a agenda pode oferecer atendimento. Desmarque um dia para fechá-lo por
-            completo.
-          </p>
+          <div className="space-y-2">
+            <p className="text-body text-fg-muted">
+              Grade semanal de horário em que a agenda e o follow-up podem atuar. Desmarque um dia para fechá-lo por
+              completo.
+            </p>
+            {scheduleSourceLabel && (
+              <p className={`text-micro flex items-center gap-1.5 ${scheduleSyncIsStale ? 'text-st-negativo' : 'text-fg-subtle'}`}>
+                <Database size={13} /> Fonte importada: {scheduleSourceLabel}
+                {scheduleSyncedAt ? ` · sincronizado em ${new Date(scheduleSyncedAt).toLocaleString('pt-BR')}` : ''}
+              </p>
+            )}
+          </div>
         )}
 
         {schedule && <div className="space-y-2">
@@ -446,8 +453,9 @@ export function AgendaSection() {
             <Label>Duração do slot (minutos)</Label>
             <Input
               type="number"
-              min={5}
-              max={480}
+              min={10}
+              max={60}
+              step={5}
               value={schedule.duracaoSlotMinutos}
               disabled={scheduleReadOnly}
               onChange={e => setSchedule(s => s ? ({ ...s, duracaoSlotMinutos: Number(e.target.value) }) : s)}

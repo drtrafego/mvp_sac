@@ -4,13 +4,15 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
-import { massDispatchPhoneCooldowns, messageJobs, recoveryLeads, sequenceMessages, settings, whatsappMessages } from '@/lib/db/schema'
+import { agendaBlockedDates, massDispatchPhoneCooldowns, messageJobs, nativeAvailabilitySchedules, recoveryLeads, sequenceMessages, settings, whatsappMessages } from '@/lib/db/schema'
 import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
 import { MAX_JOBS_PER_RUN, checkMetaWindowForJob } from '@/lib/message-jobs-policy'
 import { executeAndRecordDispatch, type DispatchOutcome, type MessageSnapshot } from '@/lib/mass-dispatch'
 import { releaseCronDispatchLock, tryAcquireCronDispatchLock } from '@/lib/cron-advisory-lock'
+import { evaluateDispatchWindow, firstDueJobPerLead, retryAtAfterPreviousFollowupStep, shouldApplyFollowupDispatchWindow } from '@/lib/followup-dispatch-policy'
+import { DEFAULT_AVAILABILITY_SCHEDULE, normalizeAvailabilitySchedule } from '@/lib/agenda-schedule'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
 
@@ -177,6 +179,9 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
         job: messageJobs,
         companyId: recoveryLeads.companyId,
         metaPhoneNumberId: settings.metaPhoneNumberId,
+        availabilitySchedule: settings.availabilitySchedule,
+        availabilityScheduleManual: settings.availabilityScheduleManual,
+        nativeAvailabilitySchedule: nativeAvailabilitySchedules.schedule,
         leadPhone: recoveryLeads.phone,
         leadCreatedAt: recoveryLeads.createdAt,
         leadPriority: recoveryLeads.priority,
@@ -185,6 +190,7 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
       .from(messageJobs)
       .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
       .innerJoin(settings, eq(settings.companyId, recoveryLeads.companyId))
+      .leftJoin(nativeAvailabilitySchedules, eq(nativeAvailabilitySchedules.companyId, recoveryLeads.companyId))
       .where(and(
         eq(messageJobs.status, 'pending'),
         lte(messageJobs.scheduledFor, now),
@@ -205,12 +211,30 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
     return rows
   })
 
+  const backlogEligibleRows = pendingJobs.filter(row => row.job.messageOrder != null && row.job.massDispatchBatchId == null)
+  const selection = firstDueJobPerLead(backlogEligibleRows.map(row => ({
+    id: row.job.id,
+    leadId: row.job.leadId,
+    messageOrder: row.job.messageOrder,
+  })))
+  const deferredBacklogIds = selection.defer.map(job => job.id)
+  const deferredBacklogIdSet = new Set(deferredBacklogIds)
+  if (deferredBacklogIds.length > 0) {
+    await db.update(messageJobs).set({
+      status: 'pending',
+      error: 'Aguardando envio do passo anterior de follow-up',
+      processingStartedAt: null,
+    }).where(inArray(messageJobs.id, deferredBacklogIds))
+  }
+  const runnableJobs = pendingJobs.filter(row => !deferredBacklogIdSet.has(row.job.id))
+
   // Janela de 24h da Meta: precisa da última mensagem INBOUND de cada lead
   // do batch (sem isso, mensagem livre pra contato frio fora da janela é
   // recusada pela Meta, ou pior, aceita por engano em algum canal). Um único
   // round-trip pro batch inteiro, igual ao padrão de src/app/api/inbox/route.ts.
-  const jobLeadIds = [...new Set(pendingJobs.map(p => p.job.leadId).filter((id): id is number => id != null))]
-  const jobPhones = [...new Set(pendingJobs.map(p => p.leadPhone).filter((p): p is string => Boolean(p)))]
+  const jobLeadIds = [...new Set(runnableJobs.map(p => p.job.leadId).filter((id): id is number => id != null))]
+  const jobPhones = [...new Set(runnableJobs.map(p => p.leadPhone).filter((p): p is string => Boolean(p)))]
+  const companyIds = [...new Set(runnableJobs.map(p => p.companyId))]
 
   const inboundMessages = jobLeadIds.length > 0
     ? await db
@@ -226,6 +250,19 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
         .limit(500)
     : []
 
+  const blockedRows = companyIds.length > 0
+    ? await db
+        .select({ companyId: agendaBlockedDates.companyId, date: agendaBlockedDates.date })
+        .from(agendaBlockedDates)
+        .where(inArray(agendaBlockedDates.companyId, companyIds))
+    : []
+  const blockedDatesByCompany = new Map<number, Set<string>>()
+  for (const row of blockedRows) {
+    const current = blockedDatesByCompany.get(row.companyId) ?? new Set<string>()
+    current.add(row.date)
+    blockedDatesByCompany.set(row.companyId, current)
+  }
+
   const lastInboundByLead = new Map<number, Date>()
   const lastInboundByPhone = new Map<string, Date>()
   for (const m of inboundMessages) {
@@ -239,11 +276,86 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
     return null
   }
 
+  async function followupSpacingDecision(job: typeof messageJobs.$inferSelect): Promise<{ allowed: true } | { allowed: false; retryAt: Date; reason: string }> {
+    if (job.massDispatchBatchId != null || job.messageOrder == null || job.leadId == null || job.messageId == null) {
+      return { allowed: true }
+    }
+
+    const [currentMessage] = await db
+      .select({
+        sequenceId: sequenceMessages.sequenceId,
+        order: sequenceMessages.order,
+        delayMinutes: sequenceMessages.delayMinutes,
+      })
+      .from(sequenceMessages)
+      .where(eq(sequenceMessages.id, job.messageId))
+      .limit(1)
+
+    if (!currentMessage || currentMessage.sequenceId == null) return { allowed: true }
+
+    const [previousConfiguredStep] = await db
+      .select({
+        order: sequenceMessages.order,
+        delayMinutes: sequenceMessages.delayMinutes,
+      })
+      .from(sequenceMessages)
+      .where(and(
+        eq(sequenceMessages.sequenceId, currentMessage.sequenceId),
+        eq(sequenceMessages.isActive, true),
+        sql`${sequenceMessages.order} < ${currentMessage.order}`,
+      ))
+      .orderBy(desc(sequenceMessages.order))
+      .limit(1)
+
+    if (!previousConfiguredStep) return { allowed: true }
+
+    const [previousSentJob] = await db
+      .select({
+        sentAt: messageJobs.sentAt,
+        messageId: messageJobs.messageId,
+      })
+      .from(messageJobs)
+      .where(and(
+        eq(messageJobs.leadId, job.leadId),
+        inArray(messageJobs.status, ['sent', 'sent_unconfirmed']),
+        sql`${messageJobs.messageOrder} < ${job.messageOrder}`,
+      ))
+      .orderBy(desc(messageJobs.messageOrder))
+      .limit(1)
+
+    if (!previousSentJob?.sentAt) {
+      return {
+        allowed: false,
+        retryAt: new Date(now.getTime() + 5 * 60_000),
+        reason: 'aguardando envio do passo anterior de follow-up',
+      }
+    }
+
+    const [previousMessage] = previousSentJob.messageId
+      ? await db
+          .select({ delayMinutes: sequenceMessages.delayMinutes })
+          .from(sequenceMessages)
+          .where(eq(sequenceMessages.id, previousSentJob.messageId))
+          .limit(1)
+      : []
+
+    const retryAt = retryAtAfterPreviousFollowupStep({
+      previousSentAt: previousSentJob.sentAt,
+      previousDelayMinutes: previousMessage?.delayMinutes ?? previousConfiguredStep.delayMinutes,
+      currentDelayMinutes: currentMessage.delayMinutes,
+      now,
+    })
+
+    return retryAt
+      ? { allowed: false, retryAt, reason: 'aguardando intervalo entre passos de follow-up' }
+      : { allowed: true }
+  }
+
   let sent = 0
   let failed = 0
   const cooldownsByPhone = new Map<string, Date>()
 
-  for (const { job, companyId, metaPhoneNumberId, leadPhone, leadCreatedAt, checkBeforeSend } of pendingJobs) {
+  for (const { job, companyId, metaPhoneNumberId, availabilitySchedule, availabilityScheduleManual, nativeAvailabilitySchedule, leadPhone, leadCreatedAt, checkBeforeSend } of runnableJobs) {
     let providerAccepted = false
     try {
       const activeCooldown = metaPhoneNumberId ? cooldownsByPhone.get(metaPhoneNumberId) : undefined
@@ -313,6 +425,39 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
             inArray(messageJobs.status, ['pending', 'processing'])
           ))
         continue
+      }
+
+      const spacing = await followupSpacingDecision(job)
+      if (!spacing.allowed) {
+        await db.update(messageJobs).set({
+          status: 'pending',
+          scheduledFor: spacing.retryAt,
+          error: `Adiado: ${spacing.reason}`,
+          processingStartedAt: null,
+        }).where(eq(messageJobs.id, job.id))
+        continue
+      }
+
+      if (shouldApplyFollowupDispatchWindow(job)) {
+        const storedSchedule = normalizeAvailabilitySchedule(availabilitySchedule)
+        const nativeSchedule = normalizeAvailabilitySchedule(nativeAvailabilitySchedule)
+        const schedule = availabilityScheduleManual
+          ? (storedSchedule ?? nativeSchedule ?? DEFAULT_AVAILABILITY_SCHEDULE)
+          : (nativeSchedule ?? storedSchedule ?? DEFAULT_AVAILABILITY_SCHEDULE)
+        const dispatchWindow = evaluateDispatchWindow({
+          schedule,
+          blockedDates: blockedDatesByCompany.get(companyId) ?? new Set<string>(),
+          now,
+        })
+        if (!dispatchWindow.allowed) {
+          await db.update(messageJobs).set({
+            status: 'pending',
+            scheduledFor: dispatchWindow.retryAt ?? new Date(now.getTime() + 24 * 60 * 60_000),
+            error: `Adiado: ${dispatchWindow.reason}`,
+            processingStartedAt: null,
+          }).where(eq(messageJobs.id, job.id))
+          continue
+        }
       }
 
       // Job de upsell: conteúdo direto, sem referência a sequenceMessages
@@ -453,7 +598,7 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
 
   // Marcar leads sem jobs pendentes como completed
   const completedLeadIds = new Set<number>()
-  for (const { job } of pendingJobs) {
+  for (const { job } of runnableJobs) {
     if (job.leadId && !completedLeadIds.has(job.leadId)) {
       const remaining = await db.select().from(messageJobs)
         .where(and(eq(messageJobs.leadId, job.leadId), inArray(messageJobs.status, ['pending', 'processing'])))
@@ -467,5 +612,5 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
     }
   }
 
-  return NextResponse.json({ processed: pendingJobs.length, sent, failed })
+  return NextResponse.json({ processed: runnableJobs.length, sent, failed })
 }

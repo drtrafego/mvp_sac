@@ -238,6 +238,7 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_schedule_state jsonb`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_reply_lock_at timestamp`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS availability_schedule jsonb`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS availability_schedule_manual boolean NOT NULL DEFAULT false`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_ads_access_token text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_ads_account_id text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS mining_tags jsonb`,

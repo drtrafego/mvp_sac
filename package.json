@@ -32,8 +32,10 @@
     "test:agenda-slot-validation": "tsx --test scripts/agenda-slot-validation.test.ts",
     "test:lead-tags": "node --import tsx --experimental-test-module-mocks scripts/lead-tags.test.ts",
     "test:message-jobs-policy": "tsx --test scripts/message-jobs-policy.test.ts",
+    "test:agenda-followup-policy": "tsx --test scripts/agenda-followup-policy.test.ts && tsx --test scripts/agenda-schedule-route-contract.test.ts",
     "test:mass-dispatch": "node --experimental-test-module-mocks --import tsx scripts/mass-dispatch.test.ts && node --experimental-test-module-mocks --import tsx scripts/mass-dispatch-cron-lock.test.ts",
     "test:meta-templates": "tsx --test scripts/meta-templates-pagination.test.ts",
+    "test:hotmart-disabled-state": "node --import tsx --experimental-test-module-mocks --test scripts/hotmart-disabled-state.test.ts",
     "test:db-consolidacao-autonomia": "tsx --test scripts/db-consolidacao-autonomia.test.ts",
     "test:astra-security-quickwins": "node --import tsx --experimental-test-module-mocks --test scripts/astra-security-quickwins.test.ts"
   },

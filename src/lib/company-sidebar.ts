@@ -42,7 +42,8 @@ export async function getCompanySidebarData(companyId: number): Promise<{
     const platformSet = new Set(leadsPlatforms.map(l => (l.platform || '').toLowerCase()))
     const sourceSet = new Set(leadsPlatforms.map(l => (l.source || '').toLowerCase()))
 
-    const hasHotmart = !!(settingsRow?.hotmartWebhookToken || settingsRow?.hotmartClientId || platformSet.has('hotmart'))
+    const hotmartEnabled = settingsRow?.hotmartEnabled !== false
+    const hasHotmart = hotmartEnabled && !!(settingsRow?.hotmartWebhookToken || settingsRow?.hotmartClientId || platformSet.has('hotmart'))
     const hasKiwify = !!(settingsRow?.kiwifyWebhookToken || platformSet.has('kiwify'))
     const hasGreenn = !!(settingsRow?.greennWebhookToken || settingsRow?.greennApiKey || platformSet.has('greenn'))
     const hasZouti = !!(settingsRow?.zoutiWebhookToken || settingsRow?.zoutiApiKey || platformSet.has('zouti'))
@@ -52,16 +53,22 @@ export async function getCompanySidebarData(companyId: number): Promise<{
     // Se nenhuma plataforma estiver configurada ainda, mantém Hotmart/Geral como padrão
     const noneConfigured = !hasHotmart && !hasKiwify && !hasGreenn && !hasZouti && !hasInstagram && !hasMineracao
 
+    const sidebarConfig = (settingsRow?.sidebarConfig as SidebarMenuConfig | undefined) || null
+    const effectiveSidebarConfig =
+      !hotmartEnabled && sidebarConfig
+        ? { ...sidebarConfig, showHotmart: false }
+        : sidebarConfig
+
     return {
       activeConnections: {
-        hotmart: hasHotmart || noneConfigured,
+        hotmart: hotmartEnabled && (hasHotmart || noneConfigured),
         kiwify: hasKiwify,
         greenn: hasGreenn,
         zouti: hasZouti,
         instagram: hasInstagram,
         mineracao: hasMineracao,
       },
-      sidebarConfig: (settingsRow?.sidebarConfig as SidebarMenuConfig | undefined) || null,
+      sidebarConfig: effectiveSidebarConfig,
     }
   } catch {
     return {

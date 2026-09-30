@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { recoveryLeads } from '@/lib/db/schema'
+import { recoveryLeads, settings } from '@/lib/db/schema'
 import { extractLeadOrigins } from '@/lib/origins'
 import type { db as productionDatabase } from '@/lib/db'
 
@@ -25,7 +25,7 @@ type OriginLeadRow = {
   channel: string | null
 }
 
-type OriginPillsDatabase = Pick<typeof productionDatabase, 'selectDistinct'>
+type OriginPillsDatabase = Pick<typeof productionDatabase, 'select' | 'selectDistinct'>
 
 const CHECKOUT_KEYS = new Set<DashboardOriginKey>(['hotmart', 'kiwify', 'greenn', 'zouti'])
 
@@ -50,9 +50,13 @@ function checkoutKey(row: OriginLeadRow, subcategory: string | undefined): Dashb
  * primeiro nível de tráfego pago é sempre "Anúncio"; Meta/Google ficam na
  * segunda dimensão, igual ao Inbox e a normalizeOrigin().
  */
-export function buildDashboardOriginPills(rows: OriginLeadRow[]): DashboardOriginPills {
+export function buildDashboardOriginPills(
+  rows: OriginLeadRow[],
+  options: { disabledCheckouts?: ReadonlySet<DashboardOriginKey> } = {},
+): DashboardOriginPills {
   const categories = new Set<DashboardOriginKey>()
   const anuncioSubcategories = new Set<'meta_ads' | 'google_ads'>()
+  const disabledCheckouts = options.disabledCheckouts ?? new Set<DashboardOriginKey>()
 
   for (const row of rows) {
     for (const origin of extractLeadOrigins(row)) {
@@ -71,7 +75,7 @@ export function buildDashboardOriginPills(rows: OriginLeadRow[]): DashboardOrigi
 
       if (origin.category === 'checkout') {
         const key = checkoutKey(row, origin.subcategory)
-        if (key) categories.add(key)
+        if (key && !disabledCheckouts.has(key)) categories.add(key)
       }
     }
   }
@@ -84,18 +88,27 @@ export async function loadDashboardOriginPills(
   database: OriginPillsDatabase,
   companyId: number,
 ): Promise<DashboardOriginPills> {
-  const rows = await database
-    .selectDistinct({
-      trackingSource: recoveryLeads.trackingSource,
-      platform: recoveryLeads.platform,
-      utmMedium: recoveryLeads.utmMedium,
-      eventType: recoveryLeads.eventType,
-      channel: recoveryLeads.channel,
-    })
-    .from(recoveryLeads)
-    .where(eq(recoveryLeads.companyId, companyId))
+  const [rows, [settingsRow]] = await Promise.all([
+    database
+      .selectDistinct({
+        trackingSource: recoveryLeads.trackingSource,
+        platform: recoveryLeads.platform,
+        utmMedium: recoveryLeads.utmMedium,
+        eventType: recoveryLeads.eventType,
+        channel: recoveryLeads.channel,
+      })
+      .from(recoveryLeads)
+      .where(eq(recoveryLeads.companyId, companyId)),
+    database
+      .select({ hotmartEnabled: settings.hotmartEnabled })
+      .from(settings)
+      .where(eq(settings.companyId, companyId)),
+  ])
 
-  return buildDashboardOriginPills(rows)
+  const disabledCheckouts = new Set<DashboardOriginKey>()
+  if (settingsRow?.hotmartEnabled === false) disabledCheckouts.add('hotmart')
+
+  return buildDashboardOriginPills(rows, { disabledCheckouts })
 }
 
 export function hasDashboardOrigin(

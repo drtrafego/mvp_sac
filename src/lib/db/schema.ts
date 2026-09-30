@@ -105,13 +105,17 @@ export const settings = pgTable('settings', {
   // Configuração personalizada de menus da barra lateral (visibilidade por cliente/empresa)
   sidebarConfig: jsonb('sidebar_config'),
   // Grade semanal de horário de atendimento da agenda (por dia da semana), fuso e
-  // duração do slot. Espelha o agenda_config.json que cada bot Hermes guarda hoje
-  // dentro do próprio container (ver agenda_tools.py no painel antigo). Aqui é
-  // só a CONFIGURAÇÃO: nenhum bot consome isto ainda (integração é trabalho futuro).
-  // Formato: { segunda: { inicio, fim } | null, terca: {...}, quarta: {...},
-  // quinta: {...}, sexta: {...}, sabado: {...}, domingo: {...}, timezone,
+  // duração do slot. Nasceu como espelho do agenda_config.json que cada Hermes
+  // guardava no container, mas agora é editável no SAC e consumido pelo executor
+  // de follow-up (/api/cron): fora da grade, ou em data bloqueada, o job é adiado.
+  // Formato: { segunda: [{ inicio, fim }] | null, terca: [...], quarta: [...],
+  // quinta: [...], sexta: [...], sabado: [...], domingo: [...], timezone,
   // duracaoSlotMinutos }. Dia com valor null = fechado naquele dia.
   availabilitySchedule: jsonb('availability_schedule'),
+  // TRUE só depois de uma edição explícita no SAC. Valores antigos de
+  // availability_schedule em bots nativos eram espelho/legado e não podem
+  // ganhar do snapshot operacional sem essa prova de override manual.
+  availabilityScheduleManual: boolean('availability_schedule_manual').notNull().default(false),
   // Resposta automática por IA (Nina/Amanda, via ponte da Luana): não é mais o
   // prompt enviado pra API nenhuma (a ponte tem o SOUL dela mesma), sobrou só
   // como o GATE manual: nulo = resposta automática desligada pra essa empresa,
