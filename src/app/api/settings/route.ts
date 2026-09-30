@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { companies, settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
-import { maskSettingsRow } from '@/lib/settings-mask'
+import { maskSettingsRow, shouldWriteSettingsField } from '@/lib/settings-mask'
 import { parseAgentDisplayName } from '@/lib/agent-display-name'
 
 /**
@@ -21,11 +21,45 @@ async function webhookTokenParaAdmin(): Promise<string | null> {
   return process.env.RECUPERAVENDAS_WEBHOOK_SECRET ?? null
 }
 
-function resolveSecret(bodyVal: string | undefined, existingVal: string | null | undefined): string | null {
-  if (!bodyVal) return existingVal ?? null
-  if (bodyVal.startsWith('****')) return existingVal ?? null
-  return bodyVal
-}
+const BOOLEAN_SETTING_KEYS = [
+  'hotmartEnabled',
+  'greennEnabled',
+  'zoutiEnabled',
+  'kiwifyEnabled',
+] as const
+
+const STRING_SETTING_KEYS = [
+  'hotmartWebhookToken',
+  'hotmartClientId',
+  'hotmartClientSecret',
+  'greennWebhookToken',
+  'greennPublicKey',
+  'greennApiKey',
+  'zoutiWebhookToken',
+  'zoutiApiKey',
+  'kiwifyWebhookToken',
+  'whatsappProvider',
+  'metaPhoneNumberId',
+  'metaAccessToken',
+  'metaVerifyToken',
+  'metaWabaId',
+  'metaAppSecret',
+  'metaAdsAccessToken',
+  'metaAdsAccountId',
+  'metaPixelId',
+  'uazapiBaseUrl',
+  'uazapiInstanceToken',
+  'notificationPhone',
+  'brevoApiKey',
+  'brevoSenderEmail',
+  'brevoSenderName',
+  'instagramUsername',
+  'instagramAccountId',
+  'instagramAccessToken',
+  'instagramVerifyToken',
+  'instagramPageId',
+  'instagramAppSecret',
+] as const
 
 export async function GET(): Promise<NextResponse> {
   const company = await requireCompany()
@@ -115,46 +149,23 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
   }
 
   if (existing) {
+    // Cada request grava apenas as colunas que recebeu. Reaproveitar valores do
+    // snapshot `existing` para preencher campos ausentes causa lost update
+    // quando dois toggles independentes chegam ao mesmo tempo.
+    const updateData: Record<string, unknown> = { updatedAt: new Date() }
+    for (const key of BOOLEAN_SETTING_KEYS) {
+      if (typeof body[key] === 'boolean') updateData[key] = body[key]
+    }
+    for (const key of STRING_SETTING_KEYS) {
+      if (typeof body[key] === 'string' && shouldWriteSettingsField(key, body[key])) {
+        updateData[key] = body[key]
+      }
+    }
+    if (body.sidebarConfig !== undefined) updateData.sidebarConfig = body.sidebarConfig
+
     const [updated] = await db
       .update(settings)
-      .set({
-        hotmartEnabled: typeof body.hotmartEnabled === 'boolean' ? body.hotmartEnabled : existing.hotmartEnabled,
-        hotmartWebhookToken: resolveSecret(body.hotmartWebhookToken, existing.hotmartWebhookToken),
-        hotmartClientId: body.hotmartClientId ?? existing.hotmartClientId,
-        hotmartClientSecret: resolveSecret(body.hotmartClientSecret, existing.hotmartClientSecret),
-        greennEnabled: typeof body.greennEnabled === 'boolean' ? body.greennEnabled : existing.greennEnabled,
-        greennWebhookToken: resolveSecret(body.greennWebhookToken, existing.greennWebhookToken),
-        greennPublicKey: body.greennPublicKey ?? existing.greennPublicKey,
-        greennApiKey: resolveSecret(body.greennApiKey, existing.greennApiKey),
-        zoutiEnabled: typeof body.zoutiEnabled === 'boolean' ? body.zoutiEnabled : existing.zoutiEnabled,
-        zoutiWebhookToken: resolveSecret(body.zoutiWebhookToken, existing.zoutiWebhookToken),
-        zoutiApiKey: resolveSecret(body.zoutiApiKey, existing.zoutiApiKey),
-        kiwifyEnabled: typeof body.kiwifyEnabled === 'boolean' ? body.kiwifyEnabled : existing.kiwifyEnabled,
-        kiwifyWebhookToken: resolveSecret(body.kiwifyWebhookToken, existing.kiwifyWebhookToken),
-        whatsappProvider: body.whatsappProvider ?? existing.whatsappProvider,
-        metaPhoneNumberId: body.metaPhoneNumberId ?? existing.metaPhoneNumberId,
-        metaAccessToken: resolveSecret(body.metaAccessToken, existing.metaAccessToken),
-        metaVerifyToken: body.metaVerifyToken ?? existing.metaVerifyToken,
-        metaWabaId: body.metaWabaId ?? existing.metaWabaId,
-        metaAppSecret: resolveSecret(body.metaAppSecret, existing.metaAppSecret),
-        metaAdsAccessToken: resolveSecret(body.metaAdsAccessToken, existing.metaAdsAccessToken),
-        metaAdsAccountId: body.metaAdsAccountId ?? existing.metaAdsAccountId,
-        metaPixelId: body.metaPixelId ?? existing.metaPixelId,
-        uazapiBaseUrl: body.uazapiBaseUrl ?? existing.uazapiBaseUrl,
-        uazapiInstanceToken: resolveSecret(body.uazapiInstanceToken, existing.uazapiInstanceToken),
-        notificationPhone: body.notificationPhone ?? existing.notificationPhone,
-        brevoApiKey: resolveSecret(body.brevoApiKey, existing.brevoApiKey),
-        brevoSenderEmail: body.brevoSenderEmail ?? existing.brevoSenderEmail,
-        brevoSenderName: body.brevoSenderName ?? existing.brevoSenderName,
-        instagramUsername: body.instagramUsername ?? existing.instagramUsername,
-        instagramAccountId: body.instagramAccountId ?? existing.instagramAccountId,
-        instagramAccessToken: resolveSecret(body.instagramAccessToken, existing.instagramAccessToken),
-        instagramVerifyToken: body.instagramVerifyToken ?? existing.instagramVerifyToken,
-        instagramPageId: body.instagramPageId ?? existing.instagramPageId,
-        instagramAppSecret: resolveSecret(body.instagramAppSecret, existing.instagramAppSecret),
-        sidebarConfig: body.sidebarConfig !== undefined ? body.sidebarConfig : existing.sidebarConfig,
-        updatedAt: new Date(),
-      })
+      .set(updateData)
       .where(eq(settings.id, existing.id))
       .returning()
     return NextResponse.json({ ...maskSettingsRow(updated), agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
