@@ -13,12 +13,9 @@ export interface ActiveConnectionsData {
 }
 
 // Extraído de (dashboard)/layout.tsx (era função local `getCompanySidebarData`,
-// duplicada implicitamente porque só a Sidebar a usava). O inbox/layout.tsx
-// passa a chamar esta mesma função pra saber se a empresa tem Instagram
-// configurado antes de mostrar o chip "Direct" no seletor de canal do Inbox:
-// sem isso, o chip aparecia pra QUALQUER empresa, inclusive uma sem Instagram
-// nenhum conectado, enquanto a seção "Instagram" do menu lateral (que usa o
-// mesmo activeConnections.instagram) já ficava escondida nesse caso.
+// duplicada implicitamente porque só a Sidebar a usava). A rota dedicada de
+// Instagram e a navegação usam o mesmo activeConnections.instagram; assim a
+// área não aparece nem abre para empresa sem Instagram configurado.
 export async function getCompanySidebarData(companyId: number): Promise<{
   activeConnections: ActiveConnectionsData
   sidebarConfig: SidebarMenuConfig | null

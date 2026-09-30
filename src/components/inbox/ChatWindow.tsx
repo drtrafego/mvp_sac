@@ -94,11 +94,13 @@ export function ChatWindow({
   initialMessages,
   appointments = [],
   initialHistory,
+  backHref = '/inbox',
 }: {
   lead: ChatLead
   initialMessages: InboxMessage[]
   appointments?: MirroredAppointment[]
   initialHistory: { hasMore: boolean; nextCursor: string | null }
+  backHref?: '/inbox' | '/instagram'
 }) {
   const [messages, setMessages] = useState<InboxMessage[]>(initialMessages)
   const [text, setText] = useState('')
@@ -403,7 +405,7 @@ export function ChatWindow({
         <div className="flex items-center justify-between gap-3 border-b border-line-subtle bg-surface-panel px-3.5 py-2.5 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <Link
-              href="/inbox"
+              href={backHref}
               aria-label="Voltar para conversas"
               className="focus-ring md:hidden flex items-center justify-center h-9 w-9 shrink-0 rounded-lg text-fg-muted transition-colors hover:text-fg hover:bg-surface-inset"
             >

@@ -87,11 +87,20 @@ test('sync de horário preserva campos existentes do agenda_config.json e sobres
     assert.equal(calls[1].url, 'https://hermes.example/agente/api/agenda-config')
     assert.equal(calls[1].init.method, 'POST')
     assert.equal((calls[1].init.headers as Record<string, string>).authorization, 'Bearer token-teste')
-    assert.equal(calls[1].body.agente, 'drlucas')
-    assert.equal(calls[1].body.config.slot_minutes, 15)
-    assert.deepEqual(calls[1].body.config.hours['5'], [['08:00', '12:30']])
-    assert.deepEqual(calls[1].body.config.webhook, { enabled: true, url_agenda: 'https://crm.example/agenda' })
-    assert.equal(calls[1].body.config.antecedencia_min, 60)
+    const postBody = calls[1].body as {
+      agente: string
+      config: {
+        slot_minutes: number
+        hours: Record<string, string[][]>
+        webhook: { enabled: boolean; url_agenda: string }
+        antecedencia_min: number
+      }
+    }
+    assert.equal(postBody.agente, 'drlucas')
+    assert.equal(postBody.config.slot_minutes, 15)
+    assert.deepEqual(postBody.config.hours['5'], [['08:00', '12:30']])
+    assert.deepEqual(postBody.config.webhook, { enabled: true, url_agenda: 'https://crm.example/agenda' })
+    assert.equal(postBody.config.antecedencia_min, 60)
   } finally {
     restore()
   }

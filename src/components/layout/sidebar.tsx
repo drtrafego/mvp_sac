@@ -164,13 +164,12 @@ export const zoutiNav = [
   { label: 'Compra aprovada', href: '/compra-aprovada?platform=zouti' },
 ]
 
-// ?channel= é o mesmo param que o Inbox já manda pro backend
-// (effectiveChannelParam em ConversationList.tsx); ?source= é o mesmo lido
-// por /leads (page.tsx) e /origens (matchesSourceFilter), reaproveitando a
-// classificação única de src/lib/inbox-channel-filter.ts e src/lib/origins.ts.
+// Conversas Direct tem rota própria; ?source= continua sendo o mesmo filtro
+// lido por /leads e /origens, reaproveitando a classificação única de
+// src/lib/inbox-channel-filter.ts e src/lib/origins.ts.
 export const instagramNav = [
   { label: 'Comentário → DM', href: '/comentarios-instagram' },
-  { label: 'Conversas Direct', href: '/inbox?channel=instagram' },
+  { label: 'Conversas Direct', href: '/instagram' },
   { label: 'Leads Instagram', href: '/leads?source=instagram' },
   { label: 'Performance Direct', href: '/origens?source=instagram' },
 ]
@@ -353,7 +352,10 @@ export function SidebarNavContent({
   const showKiwify = sidebarConfig?.showKiwify !== undefined ? sidebarConfig.showKiwify : !!activeConnections?.kiwify
   const showGreenn = sidebarConfig?.showGreenn !== undefined ? sidebarConfig.showGreenn : !!activeConnections?.greenn
   const showZouti = sidebarConfig?.showZouti !== undefined ? sidebarConfig.showZouti : !!activeConnections?.zouti
-  const showInstagram = sidebarConfig?.showInstagram !== undefined ? sidebarConfig.showInstagram : !!activeConnections?.instagram
+  // Instagram é uma área operacional real: configuração pode ocultá-la, mas
+  // não pode exibi-la para empresa sem conexão ativa. A detecção continua
+  // centralizada em getCompanySidebarData/activeConnections.instagram.
+  const showInstagram = !!activeConnections?.instagram && sidebarConfig?.showInstagram !== false
   const showMineracao = sidebarConfig?.showMineracao !== undefined ? sidebarConfig.showMineracao : !!activeConnections?.mineracao
 
   const showAgente = sidebarConfig?.showAgente !== undefined ? sidebarConfig.showAgente : true

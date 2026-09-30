@@ -32,7 +32,9 @@ export function MobileTabBar({ isAdmin, activeConnections, sidebarConfig }: Mobi
   }, [pathname])
 
   // Dentro de uma conversa o rodapé é o campo de digitação, então a tab bar some
-  const inConversation = pathname.startsWith('/inbox/') && pathname !== '/inbox'
+  const inConversation =
+    (pathname.startsWith('/inbox/') && pathname !== '/inbox') ||
+    (pathname.startsWith('/instagram/') && pathname !== '/instagram')
   if (inConversation) return null
 
   const isActive = (href: string) =>
