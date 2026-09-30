@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
@@ -37,6 +38,7 @@ const PROVIDER_OPTIONS: Record<string, string> = {
 interface SettingsData {
   companySlug: string
   webhookUrlToken?: string | null
+  hotmartEnabled: boolean
   hotmartWebhookToken: string
   hotmartClientId: string
   hotmartClientSecret: string
@@ -106,6 +108,7 @@ interface MembersData {
 const defaults: SettingsData = {
   companySlug: '',
   webhookUrlToken: null,
+  hotmartEnabled: true,
   hotmartWebhookToken: '',
   hotmartClientId: '',
   hotmartClientSecret: '',
@@ -941,12 +944,13 @@ export default function ConfiguracoesPage() {
   // instagramAccountId/instagramPageId do payload e já dispara a resposta automática da IA.
   const instagramWebhookUrl = slug ? `${origin}/api/webhooks/instagram` : null
 
-  useEffect(() => {
-    fetch('/api/settings')
-      .then(r => r.json())
-      .then(data => setForm({
+  const loadSettings = useCallback(async () => {
+    const r = await fetch('/api/settings')
+    const data = await r.json()
+    setForm({
         companySlug: data.companySlug ?? '',
         webhookUrlToken: data.webhookUrlToken ?? null,
+        hotmartEnabled: data.hotmartEnabled ?? true,
         hotmartWebhookToken: data.hotmartWebhookToken ?? '',
         hotmartClientId: data.hotmartClientId ?? '',
         hotmartClientSecret: data.hotmartClientSecret ?? '',
@@ -978,8 +982,46 @@ export default function ConfiguracoesPage() {
         instagramPageId: data.instagramPageId ?? '',
         instagramAppSecret: data.instagramAppSecret ?? '',
         sidebarConfig: data.sidebarConfig ?? null,
-      }))
+      })
   }, [])
+
+  useEffect(() => {
+    loadSettings()
+  }, [loadSettings])
+
+  const [hotmartToggleBusy, setHotmartToggleBusy] = useState(false)
+  const [hotmartToggleError, setHotmartToggleError] = useState<string | null>(null)
+
+  // Salva o toggle IMEDIATAMENTE (não espera o botão "Salvar" geral do
+  // formulário, que só grava no submit manual) e, depois de confirmado pelo
+  // servidor, REFAZ o fetch de /api/settings em vez de confiar só no estado
+  // local otimista — pra tela nunca mostrar "desligado" quando o banco
+  // ainda está "ligado" (ou vice-versa) por causa de uma falha de rede que
+  // o optimistic update escondeu.
+  async function handleHotmartToggle(next: boolean) {
+    setHotmartToggleError(null)
+    setHotmartToggleBusy(true)
+    setForm(f => ({ ...f, hotmartEnabled: next }))
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hotmartEnabled: next }),
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        setHotmartToggleError(errData.error || 'Falha ao salvar. Recarregando estado real.')
+      }
+    } catch {
+      setHotmartToggleError('Erro de conexão ao salvar. Recarregando estado real.')
+    } finally {
+      // Sempre reconfere no servidor, com sucesso ou erro: o valor exibido
+      // depois desta linha é o que o banco tem de verdade, nunca o palpite
+      // otimista de cima.
+      await loadSettings()
+      setHotmartToggleBusy(false)
+    }
+  }
 
   function set(key: keyof SettingsData, value: string) {
     setForm(f => ({ ...f, [key]: value }))
@@ -1276,11 +1318,31 @@ export default function ConfiguracoesPage() {
 
       {/* Hotmart */}
       <section className="panel space-y-4 p-[var(--space-card)]">
-        <h2 className="text-h2 text-fg">Hotmart</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-h2 text-fg">Hotmart</h2>
+          <div className="flex items-center gap-3 bg-surface-inset px-3 py-1.5 rounded-[var(--r-md)] border border-line-subtle shrink-0">
+            <span className="text-micro font-medium text-fg">
+              {form.hotmartEnabled ? 'Integração Ativa' : 'Integração Desabilitada'}
+            </span>
+            <Switch
+              checked={form.hotmartEnabled}
+              onCheckedChange={handleHotmartToggle}
+              disabled={hotmartToggleBusy}
+            />
+          </div>
+        </div>
         <Separator className="bg-line-subtle" />
+        {hotmartToggleError && (
+          <p className="text-micro text-st-negativo">{hotmartToggleError}</p>
+        )}
         <p className="text-body text-fg-muted">
           Configure em: Produto, Configurações, Notificações, Webhook v2.0.0.
         </p>
+        {!form.hotmartEnabled && (
+          <p className="text-micro text-st-atencao max-w-[var(--w-form)]">
+            Com a integração desabilitada, qualquer webhook que a Hotmart mandar pra sua URL é recusado (mesmo com token preenchido). Isso não impede a Hotmart de continuar chamando essa URL do lado dela; só bloqueia o processamento aqui.
+          </p>
+        )}
         <WebhookUrlBox url={hotmartWebhookUrl} label="URL do Webhook" />
         <div className="space-y-1.5">
           <Label>Token de Segurança (Hottok)</Label>

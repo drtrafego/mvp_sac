@@ -306,6 +306,18 @@ export async function POST(
 
   const [config] = await db.select().from(settings).where(eq(settings.companyId, company.id))
 
+  // Gate explícito de habilitado/desabilitado (30/09/2026). Checado ANTES do
+  // hottok: limpar o token não desliga o processamento (ver comentário em
+  // schema.ts), então essa é a única forma real de bloquear. mesmo que o
+  // token ainda esteja preenchido, hotmartEnabled=false recusa tudo.
+  if (config?.hotmartEnabled === false) {
+    await logReceived({
+      companyId: company.id, slug, event: body?.event ?? null, processed: false,
+      skipReason: 'hotmart_integration_disabled', rawBody: body, headers: headersObj,
+    })
+    return NextResponse.json({ error: 'Integração Hotmart desabilitada para esta empresa' }, { status: 403 })
+  }
+
   // Hottok do parceiro como camada ADICIONAL: so e exigido quando configurado.
   // Nosso token (checkWebhookToken) ja garante a barreira de autenticacao.
   if (config?.hotmartWebhookToken) {

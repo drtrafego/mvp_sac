@@ -26,6 +26,15 @@ export const companies = pgTable('companies', {
 export const settings = pgTable('settings', {
   id: serial('id').primaryKey(),
   companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull().unique(),
+  // Liga/desliga o PROCESSAMENTO do webhook da Hotmart para esta empresa,
+  // independente de token/credencial estarem preenchidos. Antes disso a
+  // única forma de "desligar" a integração era apagar o hotmartWebhookToken,
+  // e o efeito real era o OPOSTO do esperado: a checagem do hottok em
+  // webhooks/hotmart/[slug]/route.ts só roda QUANDO o token existe, então
+  // limpar o campo removia a única barreira e o webhook passava a processar
+  // tudo sem checagem nenhuma. Default true para não mudar o comportamento
+  // de quem já usa (30/09/2026, caso real: Dr. Lucas).
+  hotmartEnabled: boolean('hotmart_enabled').notNull().default(true),
   hotmartWebhookToken: text('hotmart_webhook_token').unique(),
   hotmartClientId: text('hotmart_client_id'),
   hotmartClientSecret: text('hotmart_client_secret'),

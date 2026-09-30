@@ -38,6 +38,7 @@ export async function GET(): Promise<NextResponse> {
       companySlug: company.slug,
       agentDisplayName: company.agentDisplayName ?? '',
       webhookUrlToken,
+      hotmartEnabled: true,
       hotmartWebhookToken: '',
       hotmartClientId: '',
       hotmartClientSecret: '',
@@ -114,6 +115,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     const [updated] = await db
       .update(settings)
       .set({
+        hotmartEnabled: typeof body.hotmartEnabled === 'boolean' ? body.hotmartEnabled : existing.hotmartEnabled,
         hotmartWebhookToken: resolveSecret(body.hotmartWebhookToken, existing.hotmartWebhookToken),
         hotmartClientId: body.hotmartClientId ?? existing.hotmartClientId,
         hotmartClientSecret: resolveSecret(body.hotmartClientSecret, existing.hotmartClientSecret),
@@ -156,6 +158,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     .insert(settings)
     .values({
       companyId: company.id,
+      hotmartEnabled: typeof body.hotmartEnabled === 'boolean' ? body.hotmartEnabled : true,
       hotmartWebhookToken: body.hotmartWebhookToken || null,
       hotmartClientId: body.hotmartClientId || null,
       hotmartClientSecret: body.hotmartClientSecret || null,

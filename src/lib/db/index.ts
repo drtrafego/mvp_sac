@@ -231,6 +231,10 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sidebar_config jsonb`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS ai_system_prompt text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_app_secret text`,
+          // Gate de habilitado/desabilitado da integração Hotmart (30/09/2026),
+          // ver comentário completo em schema.ts (settings.hotmartEnabled) e
+          // no webhook (src/app/api/webhooks/hotmart/[slug]/route.ts).
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS hotmart_enabled boolean NOT NULL DEFAULT true`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_schedule_state jsonb`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_reply_lock_at timestamp`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS availability_schedule jsonb`,
