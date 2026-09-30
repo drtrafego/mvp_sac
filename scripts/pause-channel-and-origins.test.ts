@@ -45,6 +45,13 @@ const normalWhatsappLead = {
 const normalClassification = classifyChannelInMemory(normalWhatsappLead)
 assert.equal(normalClassification.isWhatsapp, true, 'Ordinary WhatsApp lead falls into WhatsApp tab')
 assert.equal(normalClassification.isMineracao, false, 'Ordinary WhatsApp lead is NOT mineração')
+const sacOrigin = normalizeOrigin(null, null, 'sac', null, 'whatsapp')
+assert.equal(sacOrigin.key, 'sac_atendimento', 'platform=sac should remain SAC as origin, not generic WhatsApp')
+assert.equal(sacOrigin.subcategory, 'sac', 'SAC is origin/platform subcategory')
+const agenteIaOrigin = normalizeOrigin('agente_ia', null, 'sac', null, 'whatsapp')
+assert.equal(agenteIaOrigin.key, 'sac_atendimento', 'trackingSource=agente_ia should be displayed as SAC origin')
+const sacLeadOrigins = extractLeadOrigins({ channel: 'whatsapp', trackingSource: 'agente_ia', platform: 'sac' })
+assert.deepEqual(sacLeadOrigins.map(origin => origin.key), ['sac_atendimento'], 'SAC origin is deduplicated from trackingSource and platform')
 
 // Lead originating from mineração prospecção via WhatsApp
 const mineracaoWhatsappLead = {

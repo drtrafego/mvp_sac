@@ -1,5 +1,3 @@
-import React from 'react'
-
 export type OriginCategory =
   | 'mineracao'
   | 'anuncio'
@@ -335,6 +333,24 @@ export function normalizeOrigin(
   }
 
   // 7. Padrão / Direto / Orgânico
+  // SAC e WhatsApp sao dimensoes diferentes: SAC e a origem/plataforma do
+  // atendimento no painel, WhatsApp e o canal de contato. Quando todos chegam
+  // por channel='whatsapp', nao rotule a origem como WhatsApp nem jogue em
+  // "other"; preserve SAC como origem e deixe o ChannelBadge mostrar WhatsApp.
+  if (p === 'sac' || s === 'agente_ia' || s === 'whatsapp_sac') {
+    return {
+      key: 'sac_atendimento',
+      label: 'SAC',
+      shortLabel: 'SAC',
+      category: 'organico',
+      subcategory: 'sac',
+      color: 'bg-emerald-500',
+      badgeColor: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+      textColor: 'text-emerald-400',
+      iconName: 'whatsapp',
+    }
+  }
+
   if (!rawSource && !platform) {
     return {
       key: 'organico_direto',
