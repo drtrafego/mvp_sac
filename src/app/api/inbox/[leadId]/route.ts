@@ -17,6 +17,7 @@ import {
   loadInboxMessagePage,
 } from '@/lib/inbox-messages'
 import { parseIntegerQuery } from '@/lib/request-validation'
+import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -150,11 +151,11 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     return NextResponse.json({ error: 'Mensagem vazia' }, { status: 400 })
   }
 
-  const channel = (lead.channel || 'whatsapp').toLowerCase()
+  const deliveryChannel = resolveLeadDeliveryChannel(lead)
   let externalId: string | null = null
 
   // 1. Roteamento de envio pelo canal apropriado
-  if (channel === 'instagram' || lead.phone.startsWith('ig_')) {
+  if (deliveryChannel === 'instagram') {
     const igRes = await sendInstagramMessage({
       recipientId: lead.phone,
       text: content,
@@ -165,7 +166,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       console.warn('[Inbox Send Instagram Warning]:', igRes.error)
     }
     externalId = igRes.messageId ?? null
-  } else if (channel === 'email' && lead.email) {
+  } else if (deliveryChannel === 'email' && lead.email) {
     const emailRes = await sendBrevoEmail({
       to: [{ email: lead.email, name: lead.name || undefined }],
       subject: `Re: Atendimento - ${lead.productName || 'SAC'}`,
@@ -201,7 +202,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       companyId: company.id,
       leadId: lead.id,
       phone: lead.phone,
-      channel: lead.channel || 'whatsapp',
+      channel: deliveryChannel,
       direction: 'outbound',
       content: content || null,
       messageType: messageType ?? 'text',

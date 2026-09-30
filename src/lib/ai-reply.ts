@@ -19,6 +19,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads, settings, whatsappMessages, companies } from '@/lib/db/schema'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
+import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
 import { gerarResposta, type Bot, type HistoricoTurno } from '@/lib/ai/ai-bridge'
 import { executarAcaoDetectada, type AiScheduleState } from '@/lib/ai/agenda-actions'
 import { detectarBotDoOutroLado, type TurnoComTempo } from '@/lib/ai/bot-detector'
@@ -234,7 +235,8 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
       return
     }
 
-    if (lead.channel === 'instagram') {
+    const deliveryChannel = resolveLeadDeliveryChannel(lead)
+    if (deliveryChannel === 'instagram') {
       const result = await sendInstagramMessage({ recipientId: lead.phone, text: textoFinal, companyId: lead.companyId })
       if (!result.ok) {
         console.error(`[AI Reply] falha ao enviar Instagram lead=${leadId}: ${result.error}`)
@@ -248,7 +250,7 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
       companyId: lead.companyId,
       leadId: lead.id,
       phone: lead.phone,
-      channel: lead.channel || 'whatsapp',
+      channel: deliveryChannel === 'instagram' ? deliveryChannel : (lead.channel || 'whatsapp'),
       direction: 'outbound',
       content: textoFinal,
       messageType: 'text',

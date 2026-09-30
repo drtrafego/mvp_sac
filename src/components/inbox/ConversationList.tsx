@@ -33,6 +33,7 @@ import {
   matchesPhoneSearch,
 } from '@/lib/inbox-channel-filter'
 import { matchesInboxSourceFilter } from '@/lib/inbox-source-filter'
+import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
 import type { ConversationSummary, InboxPage } from '@/lib/inbox-conversations'
 export type { ConversationSummary } from '@/lib/inbox-conversations'
 
@@ -114,43 +115,35 @@ export function ConversationList({
   initialCursor = null,
   initialHasMore = false,
   initialError = null,
-  showInstagramChannel = true,
+  basePath = '/inbox',
+  fixedChannel,
+  title = 'Conversas',
 }: {
   initial: ConversationSummary[]
   initialCursor?: string | null
   initialHasMore?: boolean
   initialError?: string | null
-  // Mesmo flag que já esconde a seção "Instagram" do menu lateral quando a
-  // empresa não tem Instagram configurado (activeConnections.instagram em
-  // src/app/(dashboard)/layout.tsx, repassado por src/app/(dashboard)/inbox/layout.tsx).
-  // Default true preserva o comportamento anterior pra qualquer chamador que
-  // não passe a prop.
-  showInstagramChannel?: boolean
+  basePath?: '/inbox' | '/instagram'
+  fixedChannel?: Extract<ChannelFilter, 'instagram'>
+  title?: string
 }) {
   const pathname = usePathname()
   const router = useRouter()
   const searchParams = useSearchParams()
   const sourceFilter = searchParams.get('source')?.trim() || ''
 
-  // Estado inicial das abas lido de /inbox?channel=X (mandado pelo menu
-  // lateral, ex.: instagramNav → "Conversas Direct" → /inbox?channel=instagram
-  // em src/components/layout/sidebar.tsx). Sem isto, o link só filtrava a
-  // BUSCA no backend (effectiveChannelParam já mandava ?channel= pro
-  // /api/inbox) mas a aba visível continuava travada em "Todos": o usuário
-  // clicava em "Conversas Direct" e via a lista inteira sem indicação de
-  // filtro nenhum, parecendo estar na aba errada. Só a carga inicial lê a
-  // URL; depois disso quem manda é o clique na aba (mesmo comportamento de
-  // sempre, sem sincronizar de volta pra URL a cada troca).
+  // A área /instagram fixa o canal sem duplicar lista, paginação ou busca.
+  // No Inbox genérico, os demais filtros ainda podem chegar por query string.
   const initialChannelParam = searchParams.get('channel')?.trim() || ''
-  const initialChannelFilter: ChannelFilter = initialChannelParam.startsWith('mineracao')
-    ? 'mineracao'
-    : initialChannelParam.startsWith('anuncio')
-    ? 'anuncio'
-    : initialChannelParam === 'instagram' && !showInstagramChannel
-    ? 'all'
-    : initialChannelParam === 'whatsapp' || initialChannelParam === 'instagram' || initialChannelParam === 'email'
-    ? initialChannelParam
-    : 'all'
+  const initialChannelFilter: ChannelFilter = fixedChannel ?? (
+    initialChannelParam.startsWith('mineracao')
+      ? 'mineracao'
+      : initialChannelParam.startsWith('anuncio')
+      ? 'anuncio'
+      : initialChannelParam === 'whatsapp' || initialChannelParam === 'email'
+      ? initialChannelParam
+      : 'all'
+  )
   const initialMineracaoSub = initialChannelParam.startsWith('mineracao_')
     ? initialChannelParam.slice('mineracao_'.length)
     : ''
@@ -189,8 +182,9 @@ export function ConversationList({
   // channelWhereCondition (src/lib/inbox-channel-filter.ts) já sabe
   // interpretar como "mineracao E, dentro dela, este canal real".
   // 'anuncio' segue o mesmo padrão com 'anuncio_meta_ads'/'anuncio_google_ads'.
-  const effectiveChannelParam =
-    channelFilter === 'mineracao' && mineracaoSubFilter !== 'all'
+  const effectiveChannelParam = fixedChannel
+    ? 'instagram_direct'
+    : channelFilter === 'mineracao' && mineracaoSubFilter !== 'all'
       ? `mineracao_${mineracaoSubFilter}`
       : channelFilter === 'anuncio' && anuncioSubFilter !== 'all'
       ? `anuncio_${anuncioSubFilter}`
@@ -255,15 +249,12 @@ export function ConversationList({
     if (nextCursor && !loadingMore) fetchPage({ cursor: nextCursor, append: true })
   }, [fetchPage, loadingMore, nextCursor])
 
-  // Refetch imediato ao trocar de aba (não espera o poll de 15s). O
-  // carregamento inicial já veio do Server Component com "Todos" (loadInboxPage
-  // em src/app/(dashboard)/inbox/layout.tsx não recebe ?channel=/?source=),
-  // então pula a primeira execução pra não duplicar aquela busca... A MENOS
-  // que a própria URL já tenha chegado com um filtro (deep link do menu
-  // lateral, ex.: /inbox?channel=instagram): aí a lista "Todos" do servidor
-  // não bate com a aba já selecionada, e É PRECISO buscar de novo na hora.
+  // Refetch imediato ao trocar de aba (não espera o poll de 15s). A carga
+  // inicial do Inbox geral vem sem filtros de query; a da área dedicada já
+  // chega filtrada pelo transporte Instagram. Um source no deep link exige
+  // refetch também na área dedicada, pois o Server Component não recebe a URL.
   const didMountRef = useRef(false)
-  const hasDeepLinkFilterRef = useRef(Boolean(sourceFilter) || initialChannelFilter !== 'all')
+  const hasDeepLinkFilterRef = useRef(Boolean(sourceFilter) || (!fixedChannel && initialChannelFilter !== 'all'))
   useEffect(() => {
     if (!didMountRef.current) {
       didMountRef.current = true
@@ -402,7 +393,7 @@ export function ConversationList({
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
   }, [pathname, router, searchParams])
 
-  const activeId = pathname.split('/inbox/')[1]?.split('/')[0] || ''
+  const activeId = pathname.split(`${basePath}/`)[1]?.split('/')[0] || ''
 
   const filtered = useMemo(() => {
     return convs.filter(c => {
@@ -410,7 +401,9 @@ export function ConversationList({
       if (!matchesInboxSourceFilter(c, sourceFilter)) return false
 
       // 1. Filtro por canal
-      if (channelFilter !== 'all') {
+      if (fixedChannel) {
+        if (!isInstagramDelivery(c)) return false
+      } else if (channelFilter !== 'all') {
         const { isInstagram, isEmail, isMineracao, isAnuncio, isWhatsapp } = classifyChannel(c)
         if (channelFilter === 'instagram' && !isInstagram) return false
         if (channelFilter === 'email' && !isEmail) return false
@@ -442,7 +435,7 @@ export function ConversationList({
         c.lastMessage?.toLowerCase().includes(q)
       )
     })
-  }, [convs, sourceFilter, channelFilter, mineracaoSubFilter, anuncioSubFilter, statusFilter, search])
+  }, [convs, sourceFilter, fixedChannel, channelFilter, mineracaoSubFilter, anuncioSubFilter, statusFilter, search])
 
   return (
     <aside
@@ -455,7 +448,7 @@ export function ConversationList({
       <div className="border-b border-line-subtle p-3.5 space-y-2.5 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <h2 className="text-h3 text-fg font-bold">Conversas</h2>
+            <h2 className="text-h3 text-fg font-bold">{title}</h2>
             <span className="text-micro font-mono bg-surface-raised border border-line-subtle px-1.5 py-0.5 rounded-full text-fg-subtle">
               {filtered.length}
             </span>
@@ -490,8 +483,8 @@ export function ConversationList({
           )}
         </div>
 
-        {/* Abas Rápidas de Canal */}
-        <div className="relative space-y-1">
+        {/* Na área dedicada o canal é fixo; o seletor pertence só ao Inbox geral. */}
+        {!fixedChannel && <div className="relative space-y-1">
           <span className="block text-[10px] font-semibold uppercase tracking-wider text-fg-faint">
             Canal da conversa:
           </span>
@@ -521,21 +514,6 @@ export function ConversationList({
             <MessageCircle size={12} className="text-emerald-400 shrink-0" />
             WhatsApp ({counts.whatsapp})
           </button>
-          {showInstagramChannel && (
-            <button
-              type="button"
-              onClick={() => selectChannelFilter('instagram')}
-              className={cn(
-                'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
-                channelFilter === 'instagram'
-                  ? 'bg-pink-600 text-white shadow-xs'
-                  : 'bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised'
-              )}
-            >
-              <InstagramLogoIcon size={12} className="text-pink-400 shrink-0" />
-              Direct ({counts.instagram})
-            </button>
-          )}
           <button
             type="button"
             onClick={() => selectChannelFilter('email')}
@@ -577,7 +555,7 @@ export function ConversationList({
           </button>
           </div>
           <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-surface-panel to-transparent" />
-        </div>
+        </div>}
 
         {sourceFilter && (
           <div className="flex items-center justify-between gap-2 rounded-lg border border-brand-solid/20 bg-brand-glow px-2.5 py-1.5 text-[11px]">
@@ -785,7 +763,7 @@ export function ConversationList({
             return (
               <Link
                 key={conv.id}
-                href={sourceFilter ? `/inbox/${conv.id}?source=${encodeURIComponent(sourceFilter)}` : `/inbox/${conv.id}`}
+                href={sourceFilter ? `${basePath}/${conv.id}?source=${encodeURIComponent(sourceFilter)}` : `${basePath}/${conv.id}`}
                 scroll={false}
                 className="focus-ring block rounded-xl"
               >
