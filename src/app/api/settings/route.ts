@@ -139,7 +139,6 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       { status: 400 },
     )
   }
-  const [existing] = await db.select().from(settings).where(eq(settings.companyId, company.id))
 
   if (agentDisplayName !== undefined) {
     await db
@@ -148,30 +147,21 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       .where(eq(companies.id, company.id))
   }
 
-  if (existing) {
-    // Cada request grava apenas as colunas que recebeu. Reaproveitar valores do
-    // snapshot `existing` para preencher campos ausentes causa lost update
-    // quando dois toggles independentes chegam ao mesmo tempo.
-    const updateData: Record<string, unknown> = { updatedAt: new Date() }
-    for (const key of BOOLEAN_SETTING_KEYS) {
-      if (typeof body[key] === 'boolean') updateData[key] = body[key]
-    }
-    for (const key of STRING_SETTING_KEYS) {
-      if (typeof body[key] === 'string' && shouldWriteSettingsField(key, body[key])) {
-        updateData[key] = body[key]
-      }
-    }
-    if (body.sidebarConfig !== undefined) updateData.sidebarConfig = body.sidebarConfig
-
-    const [updated] = await db
-      .update(settings)
-      .set(updateData)
-      .where(eq(settings.id, existing.id))
-      .returning()
-    return NextResponse.json({ ...maskSettingsRow(updated), agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
+  // Tanto a criação quanto a atualização acontecem atomicamente. Em caso de
+  // conflito, cada request grava apenas as colunas que recebeu; os defaults do
+  // INSERT nunca entram no SET e não apagam toggles concorrentes.
+  const updateData: Record<string, unknown> = { updatedAt: new Date() }
+  for (const key of BOOLEAN_SETTING_KEYS) {
+    if (typeof body[key] === 'boolean') updateData[key] = body[key]
   }
+  for (const key of STRING_SETTING_KEYS) {
+    if (typeof body[key] === 'string' && shouldWriteSettingsField(key, body[key])) {
+      updateData[key] = body[key]
+    }
+  }
+  if (body.sidebarConfig !== undefined) updateData.sidebarConfig = body.sidebarConfig
 
-  const [created] = await db
+  const [saved] = await db
     .insert(settings)
     .values({
       companyId: company.id,
@@ -212,6 +202,10 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       sidebarConfig: body.sidebarConfig ?? null,
       updatedAt: new Date(),
     })
+    .onConflictDoUpdate({
+      target: settings.companyId,
+      set: updateData,
+    })
     .returning()
-  return NextResponse.json({ ...maskSettingsRow(created), agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
+  return NextResponse.json({ ...maskSettingsRow(saved), agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
 }

@@ -75,6 +75,11 @@ async function main(): Promise<void> {
     await database.insert(schema.companies).values([
       { id: 401, name: 'Empresa Race', slug: 'empresa-race' },
       { id: 402, name: 'Empresa Sem Settings', slug: 'empresa-sem-settings-race' },
+      ...Array.from({ length: ROUNDS }, (_, index) => ({
+        id: 501 + index,
+        name: `Empresa Insert Race ${index + 1}`,
+        slug: `empresa-insert-race-${index + 1}`,
+      })),
     ])
     await database.insert(schema.settings).values({
       companyId: 401,
@@ -139,8 +144,56 @@ async function main(): Promise<void> {
       .where(eq(schema.settings.companyId, 401))
     assert.equal(updatedCredentialRow.greennWebhookToken, 'greenn-updated-token')
 
-    const firstFive: string[] = []
-    let lostUpdates = 0
+    const insertRaceExamples: string[] = []
+    let insertRaceRejectedRequests = 0
+    let insertRaceLostIntents = 0
+
+    for (let round = 1; round <= ROUNDS; round += 1) {
+      currentCompanyId = 500 + round
+      const responses = await Promise.allSettled([
+        PUT(request({ hotmartEnabled: false })),
+        PUT(request({ greennEnabled: false })),
+        PUT(request({ kiwifyEnabled: false })),
+        PUT(request({ zoutiEnabled: false })),
+      ])
+      const rejected = responses.filter(result => result.status === 'rejected').length
+      const badStatuses = responses.filter(
+        result => result.status === 'fulfilled' && result.value.status !== 200,
+      ).length
+      insertRaceRejectedRequests += rejected
+
+      const [row] = await database
+        .select()
+        .from(schema.settings)
+        .where(eq(schema.settings.companyId, currentCompanyId))
+      const lostIntent = !row
+        || row.hotmartEnabled
+        || row.greennEnabled
+        || row.kiwifyEnabled
+        || row.zoutiEnabled
+        || badStatuses > 0
+        || rejected > 0
+      if (lostIntent) {
+        insertRaceLostIntents += 1
+        if (insertRaceExamples.length < 5) {
+          insertRaceExamples.push(JSON.stringify({
+            round,
+            rejected,
+            badStatuses,
+            gates: row && {
+              hotmart: row.hotmartEnabled,
+              greenn: row.greennEnabled,
+              kiwify: row.kiwifyEnabled,
+              zouti: row.zoutiEnabled,
+            },
+          }))
+        }
+      }
+    }
+
+    currentCompanyId = 401
+    const updateRaceExamples: string[] = []
+    let updateRaceLostIntents = 0
 
     for (let round = 1; round <= ROUNDS; round += 1) {
       await database
@@ -160,17 +213,33 @@ async function main(): Promise<void> {
         .from(schema.settings)
         .where(eq(schema.settings.companyId, 401))
       if (row.greennEnabled || row.kiwifyEnabled) {
-        lostUpdates += 1
-        if (firstFive.length < 5) {
-          firstFive.push(`round=${round}:greenn=${row.greennEnabled},kiwify=${row.kiwifyEnabled}`)
+        updateRaceLostIntents += 1
+        if (updateRaceExamples.length < 5) {
+          updateRaceExamples.push(`round=${round}:greenn=${row.greennEnabled},kiwify=${row.kiwifyEnabled}`)
         }
       }
       assert.equal(row.greennWebhookToken, 'greenn-updated-token')
     }
 
-    const result = { rounds: ROUNDS, lostUpdates, firstFive }
+    const result = {
+      insertRace: {
+        rounds: ROUNDS,
+        writersPerRound: 4,
+        rejectedRequests: insertRaceRejectedRequests,
+        lostIntents: insertRaceLostIntents,
+        firstFive: insertRaceExamples,
+      },
+      updateRace: {
+        rounds: ROUNDS,
+        writersPerRound: 2,
+        lostIntents: updateRaceLostIntents,
+        firstFive: updateRaceExamples,
+      },
+    }
     console.log(JSON.stringify(result))
-    assert.equal(lostUpdates, 0, `Lost updates detectados: ${JSON.stringify(firstFive)}`)
+    assert.equal(insertRaceRejectedRequests, 0, `Requests rejeitados no INSERT: ${JSON.stringify(insertRaceExamples)}`)
+    assert.equal(insertRaceLostIntents, 0, `Intenções perdidas no INSERT: ${JSON.stringify(insertRaceExamples)}`)
+    assert.equal(updateRaceLostIntents, 0, `Intenções perdidas no UPDATE: ${JSON.stringify(updateRaceExamples)}`)
   } finally {
     await sql.end({ timeout: 2 })
     disposable.stop()
