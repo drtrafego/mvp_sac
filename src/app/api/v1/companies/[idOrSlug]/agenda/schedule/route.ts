@@ -8,6 +8,7 @@ import { eq } from 'drizzle-orm'
 import { DEFAULT_AVAILABILITY_SCHEDULE, isNativeAvailabilityCompany, normalizeAvailabilitySchedule, validateAvailabilitySchedule } from '@/lib/agenda-schedule'
 import { maybeRefreshGoogleCalendarSync } from '@/lib/google-calendar-sync'
 import { getNativeAvailabilitySnapshot } from '@/lib/native-availability'
+import { syncHermesAgendaSchedule } from '@/lib/hermes-control-panel'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -53,6 +54,17 @@ export async function PUT(req: NextRequest, { params }: Params): Promise<NextRes
     const result = validateAvailabilitySchedule(body)
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 })
+    }
+
+    const hermesSync = await syncHermesAgendaSchedule(context.company.slug, result.schedule)
+    if (!hermesSync.ok) {
+      return NextResponse.json(
+        {
+          error: `Não salvei no SAC porque o Hermes não confirmou a nova agenda: ${hermesSync.error}`,
+          code: 'HERMES_AGENDA_SYNC_FAILED',
+        },
+        { status: 502 },
+      )
     }
 
     const [existing] = await db.select().from(settings).where(eq(settings.companyId, context.company.id))

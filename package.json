@@ -32,7 +32,7 @@
     "test:agenda-slot-validation": "tsx --test scripts/agenda-slot-validation.test.ts",
     "test:lead-tags": "node --import tsx --experimental-test-module-mocks scripts/lead-tags.test.ts",
     "test:message-jobs-policy": "tsx --test scripts/message-jobs-policy.test.ts",
-    "test:agenda-followup-policy": "tsx --test scripts/agenda-followup-policy.test.ts && tsx --test scripts/agenda-schedule-route-contract.test.ts",
+    "test:agenda-followup-policy": "tsx --test scripts/agenda-followup-policy.test.ts && tsx --test scripts/agenda-schedule-route-contract.test.ts && tsx --test scripts/agenda-blocked-date-delete-contract.test.ts && tsx --test scripts/hermes-control-panel.test.ts",
     "test:mass-dispatch": "node --experimental-test-module-mocks --import tsx scripts/mass-dispatch.test.ts && node --experimental-test-module-mocks --import tsx scripts/mass-dispatch-cron-lock.test.ts",
     "test:meta-templates": "tsx --test scripts/meta-templates-pagination.test.ts",
     "test:meta-templates-panel": "tsx --test scripts/meta-templates-panel.test.ts",

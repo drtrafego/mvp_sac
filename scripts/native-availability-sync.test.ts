@@ -91,6 +91,12 @@ async function main() {
   })
   mock.module('@/lib/google-calendar-sync', { namedExports: { maybeRefreshGoogleCalendarSync: async () => undefined } })
   mock.module('@/lib/webhook-auth', { namedExports: { checkHermesWebhookToken: () => ({ ok: true }) } })
+  mock.module('@/lib/hermes-control-panel', {
+    namedExports: {
+      syncHermesAgendaSchedule: async () => ({ ok: true, status: 200, data: {} }),
+      syncHermesAgendaBlockDate: async () => ({ ok: true, status: 200, data: {} }),
+    },
+  })
 
   try {
     const native = await import('../src/lib/native-availability')

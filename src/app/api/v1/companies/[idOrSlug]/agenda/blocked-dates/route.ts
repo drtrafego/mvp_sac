@@ -7,6 +7,7 @@ import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { isUniqueViolation } from '@/lib/webhook-dedup'
 import { DEFAULT_AVAILABILITY_SCHEDULE, isValidDate, type AvailabilitySchedule } from '@/lib/agenda-schedule'
 import { maybeRefreshGoogleCalendarSync } from '@/lib/google-calendar-sync'
+import { syncHermesAgendaBlockDate } from '@/lib/hermes-control-panel'
 import { eq, and, asc, gte } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
@@ -87,6 +88,17 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       return NextResponse.json(
         { error: `A data ${date} já está bloqueada.`, code: 'ALREADY_BLOCKED', blockedDate: existing },
         { status: 409 }
+      )
+    }
+
+    const hermesSync = await syncHermesAgendaBlockDate(context.company.slug, date, cleanReason, true)
+    if (!hermesSync.ok) {
+      return NextResponse.json(
+        {
+          error: `Não salvei no SAC porque o Hermes não confirmou o bloqueio: ${hermesSync.error}`,
+          code: 'HERMES_AGENDA_SYNC_FAILED',
+        },
+        { status: 502 }
       )
     }
 
