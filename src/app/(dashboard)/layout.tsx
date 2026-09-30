@@ -2,9 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { redirect } from 'next/navigation'
 import { getCurrentCompany, getCurrentUser } from '@/lib/auth'
-import { db } from '@/lib/db'
-import { settings, recoveryLeads } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { getCompanySidebarData } from '@/lib/company-sidebar'
 import { Sidebar } from '@/components/layout/sidebar'
 import { MobileTopbar } from '@/components/layout/mobile-topbar'
 import { MobileTabBar } from '@/components/layout/mobile-tabbar'
@@ -41,62 +39,6 @@ function Shell({ children }: { children: React.ReactNode }) {
       <BottomNavSpacer />
     </div>
   )
-}
-
-async function getCompanySidebarData(companyId: number) {
-  try {
-    const [settingsRow] = await db
-      .select()
-      .from(settings)
-      .where(eq(settings.companyId, companyId))
-
-    // Checar se há leads de cada plataforma/origem
-    const leadsPlatforms = await db
-      .select({
-        platform: recoveryLeads.platform,
-        source: recoveryLeads.trackingSource,
-      })
-      .from(recoveryLeads)
-      .where(eq(recoveryLeads.companyId, companyId))
-      .limit(200)
-
-    const platformSet = new Set(leadsPlatforms.map(l => (l.platform || '').toLowerCase()))
-    const sourceSet = new Set(leadsPlatforms.map(l => (l.source || '').toLowerCase()))
-
-    const hasHotmart = !!(settingsRow?.hotmartWebhookToken || settingsRow?.hotmartClientId || platformSet.has('hotmart'))
-    const hasKiwify = !!(settingsRow?.kiwifyWebhookToken || platformSet.has('kiwify'))
-    const hasGreenn = !!(settingsRow?.greennWebhookToken || settingsRow?.greennApiKey || platformSet.has('greenn'))
-    const hasZouti = !!(settingsRow?.zoutiWebhookToken || settingsRow?.zoutiApiKey || platformSet.has('zouti'))
-    const hasInstagram = !!(settingsRow?.instagramAccountId || settingsRow?.instagramUsername || settingsRow?.instagramAccessToken || platformSet.has('instagram') || sourceSet.has('instagram') || sourceSet.has('instagram_direct'))
-    const hasMineracao = !!(platformSet.has('mineracao') || sourceSet.has('mineracao') || sourceSet.has('prospeccao') || settingsRow?.brevoApiKey)
-
-    // Se nenhuma plataforma estiver configurada ainda, mantém Hotmart/Geral como padrão
-    const noneConfigured = !hasHotmart && !hasKiwify && !hasGreenn && !hasZouti && !hasInstagram && !hasMineracao
-
-    return {
-      activeConnections: {
-        hotmart: hasHotmart || noneConfigured,
-        kiwify: hasKiwify,
-        greenn: hasGreenn,
-        zouti: hasZouti,
-        instagram: hasInstagram,
-        mineracao: hasMineracao,
-      },
-      sidebarConfig: (settingsRow?.sidebarConfig as any) || null,
-    }
-  } catch {
-    return {
-      activeConnections: {
-        hotmart: true,
-        kiwify: false,
-        greenn: false,
-        zouti: false,
-        instagram: false,
-        mineracao: false,
-      },
-      sidebarConfig: null,
-    }
-  }
 }
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {

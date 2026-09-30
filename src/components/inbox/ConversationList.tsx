@@ -114,11 +114,18 @@ export function ConversationList({
   initialCursor = null,
   initialHasMore = false,
   initialError = null,
+  showInstagramChannel = true,
 }: {
   initial: ConversationSummary[]
   initialCursor?: string | null
   initialHasMore?: boolean
   initialError?: string | null
+  // Mesmo flag que já esconde a seção "Instagram" do menu lateral quando a
+  // empresa não tem Instagram configurado (activeConnections.instagram em
+  // src/app/(dashboard)/layout.tsx, repassado por src/app/(dashboard)/inbox/layout.tsx).
+  // Default true preserva o comportamento anterior pra qualquer chamador que
+  // não passe a prop.
+  showInstagramChannel?: boolean
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -139,6 +146,8 @@ export function ConversationList({
     ? 'mineracao'
     : initialChannelParam.startsWith('anuncio')
     ? 'anuncio'
+    : initialChannelParam === 'instagram' && !showInstagramChannel
+    ? 'all'
     : initialChannelParam === 'whatsapp' || initialChannelParam === 'instagram' || initialChannelParam === 'email'
     ? initialChannelParam
     : 'all'
@@ -512,19 +521,21 @@ export function ConversationList({
             <MessageCircle size={12} className="text-emerald-400 shrink-0" />
             WhatsApp ({counts.whatsapp})
           </button>
-          <button
-            type="button"
-            onClick={() => selectChannelFilter('instagram')}
-            className={cn(
-              'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
-              channelFilter === 'instagram'
-                ? 'bg-pink-600 text-white shadow-xs'
-                : 'bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised'
-            )}
-          >
-            <InstagramLogoIcon size={12} className="text-pink-400 shrink-0" />
-            Direct ({counts.instagram})
-          </button>
+          {showInstagramChannel && (
+            <button
+              type="button"
+              onClick={() => selectChannelFilter('instagram')}
+              className={cn(
+                'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
+                channelFilter === 'instagram'
+                  ? 'bg-pink-600 text-white shadow-xs'
+                  : 'bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised'
+              )}
+            >
+              <InstagramLogoIcon size={12} className="text-pink-400 shrink-0" />
+              Direct ({counts.instagram})
+            </button>
+          )}
           <button
             type="button"
             onClick={() => selectChannelFilter('email')}
