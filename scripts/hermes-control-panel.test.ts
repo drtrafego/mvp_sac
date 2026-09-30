@@ -83,15 +83,29 @@ test('sync de horário preserva campos existentes do agenda_config.json e sobres
     const result = await syncHermesAgendaSchedule('drlucas', schedule)
     assert.equal(result.ok, true)
     assert.equal(calls.length, 2)
-    assert.equal(calls[0].url, 'https://hermes.example/agente/api/agenda-config?agente=drlucas')
-    assert.equal(calls[1].url, 'https://hermes.example/agente/api/agenda-config')
-    assert.equal(calls[1].init.method, 'POST')
-    assert.equal((calls[1].init.headers as Record<string, string>).authorization, 'Bearer token-teste')
-    assert.equal(calls[1].body.agente, 'drlucas')
-    assert.equal(calls[1].body.config.slot_minutes, 15)
-    assert.deepEqual(calls[1].body.config.hours['5'], [['08:00', '12:30']])
-    assert.deepEqual(calls[1].body.config.webhook, { enabled: true, url_agenda: 'https://crm.example/agenda' })
-    assert.equal(calls[1].body.config.antecedencia_min, 60)
+    const getCall = calls[0]
+    const postCall = calls[1]
+    assert.ok(getCall)
+    assert.ok(postCall)
+    assert.equal(getCall.url, 'https://hermes.example/agente/api/agenda-config?agente=drlucas')
+    assert.equal(postCall.url, 'https://hermes.example/agente/api/agenda-config')
+    assert.equal(postCall.init.method, 'POST')
+    assert.equal((postCall.init.headers as Record<string, string>).authorization, 'Bearer token-teste')
+    const postedBody = postCall.body as {
+      agente?: string
+      config?: {
+        slot_minutes?: number
+        hours?: Record<string, string[][]>
+        webhook?: Record<string, unknown>
+        antecedencia_min?: number
+      }
+    } | undefined
+    assert.ok(postedBody?.config)
+    assert.equal(postedBody.agente, 'drlucas')
+    assert.equal(postedBody.config.slot_minutes, 15)
+    assert.deepEqual(postedBody.config.hours?.['5'], [['08:00', '12:30']])
+    assert.deepEqual(postedBody.config.webhook, { enabled: true, url_agenda: 'https://crm.example/agenda' })
+    assert.equal(postedBody.config.antecedencia_min, 60)
   } finally {
     restore()
   }

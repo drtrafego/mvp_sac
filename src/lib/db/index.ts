@@ -235,6 +235,9 @@ export function ensureSchema(client: any): Promise<void> {
           // ver comentário completo em schema.ts (settings.hotmartEnabled) e
           // no webhook (src/app/api/webhooks/hotmart/[slug]/route.ts).
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS hotmart_enabled boolean NOT NULL DEFAULT true`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS greenn_enabled boolean NOT NULL DEFAULT true`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS kiwify_enabled boolean NOT NULL DEFAULT true`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS zouti_enabled boolean NOT NULL DEFAULT true`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_schedule_state jsonb`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS ai_reply_lock_at timestamp`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS availability_schedule jsonb`,

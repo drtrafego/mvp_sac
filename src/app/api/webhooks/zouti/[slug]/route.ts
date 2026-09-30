@@ -322,6 +322,14 @@ export async function POST(
 
   const [config] = await db.select().from(settings).where(eq(settings.companyId, company.id))
 
+  if (config?.zoutiEnabled === false) {
+    await logReceived({
+      companyId: company.id, slug, event: body?.event ?? body?.status ?? null, processed: false,
+      skipReason: 'zouti_integration_disabled', rawBody: body, headers: headersObj,
+    })
+    return NextResponse.json({ error: 'Integração Zouti desabilitada para esta empresa' }, { status: 403 })
+  }
+
   // Assinatura HMAC Zouti como camada ADICIONAL: so e exigida quando o secret do
   // parceiro estiver configurado. Nosso token (checkWebhookToken) ja garante a
   // barreira de autenticacao.

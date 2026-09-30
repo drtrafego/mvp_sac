@@ -43,11 +43,14 @@ interface SettingsData {
   hotmartWebhookToken: string
   hotmartClientId: string
   hotmartClientSecret: string
+  greennEnabled: boolean
   greennWebhookToken: string
   greennPublicKey: string
   greennApiKey: string
+  zoutiEnabled: boolean
   zoutiWebhookToken: string
   zoutiApiKey: string
+  kiwifyEnabled: boolean
   kiwifyWebhookToken: string
   whatsappProvider: string
   metaPhoneNumberId: string
@@ -113,11 +116,14 @@ const defaults: SettingsData = {
   hotmartWebhookToken: '',
   hotmartClientId: '',
   hotmartClientSecret: '',
+  greennEnabled: true,
   greennWebhookToken: '',
   greennPublicKey: '',
   greennApiKey: '',
+  zoutiEnabled: true,
   zoutiWebhookToken: '',
   zoutiApiKey: '',
+  kiwifyEnabled: true,
   kiwifyWebhookToken: '',
   whatsappProvider: 'meta',
   metaPhoneNumberId: '',
@@ -956,11 +962,14 @@ export default function ConfiguracoesPage() {
         hotmartWebhookToken: data.hotmartWebhookToken ?? '',
         hotmartClientId: data.hotmartClientId ?? '',
         hotmartClientSecret: data.hotmartClientSecret ?? '',
+        greennEnabled: data.greennEnabled ?? true,
         greennWebhookToken: data.greennWebhookToken ?? '',
         greennPublicKey: data.greennPublicKey ?? '',
         greennApiKey: data.greennApiKey ?? '',
+        zoutiEnabled: data.zoutiEnabled ?? true,
         zoutiWebhookToken: data.zoutiWebhookToken ?? '',
         zoutiApiKey: data.zoutiApiKey ?? '',
+        kiwifyEnabled: data.kiwifyEnabled ?? true,
         kiwifyWebhookToken: data.kiwifyWebhookToken ?? '',
         whatsappProvider: data.whatsappProvider ?? 'meta',
         metaPhoneNumberId: data.metaPhoneNumberId ?? '',
@@ -991,8 +1000,27 @@ export default function ConfiguracoesPage() {
     loadSettings()
   }, [loadSettings])
 
-  const [hotmartToggleBusy, setHotmartToggleBusy] = useState(false)
-  const [hotmartToggleError, setHotmartToggleError] = useState<string | null>(null)
+  type CheckoutProvider = 'hotmart' | 'greenn' | 'kiwify' | 'zouti'
+  type CheckoutEnabledField = 'hotmartEnabled' | 'greennEnabled' | 'kiwifyEnabled' | 'zoutiEnabled'
+  const enabledFieldByProvider: Record<CheckoutProvider, CheckoutEnabledField> = {
+    hotmart: 'hotmartEnabled',
+    greenn: 'greennEnabled',
+    kiwify: 'kiwifyEnabled',
+    zouti: 'zoutiEnabled',
+  }
+  const [toggleBusy, setToggleBusy] = useState<Record<CheckoutProvider, boolean>>({
+    hotmart: false,
+    greenn: false,
+    kiwify: false,
+    zouti: false,
+  })
+  const [toggleError, setToggleError] = useState<Record<CheckoutProvider, string | null>>({
+    hotmart: null,
+    greenn: null,
+    kiwify: null,
+    zouti: null,
+  })
+  const anyToggleBusy = Object.values(toggleBusy).some(Boolean)
 
   // Salva o toggle IMEDIATAMENTE (não espera o botão "Salvar" geral do
   // formulário, que só grava no submit manual) e, depois de confirmado pelo
@@ -1000,29 +1028,30 @@ export default function ConfiguracoesPage() {
   // local otimista — pra tela nunca mostrar "desligado" quando o banco
   // ainda está "ligado" (ou vice-versa) por causa de uma falha de rede que
   // o optimistic update escondeu.
-  async function handleHotmartToggle(next: boolean) {
-    setHotmartToggleError(null)
-    setHotmartToggleBusy(true)
-    setForm(f => ({ ...f, hotmartEnabled: next }))
+  async function handleProviderToggle(provider: CheckoutProvider, next: boolean) {
+    const field = enabledFieldByProvider[provider]
+    setToggleError(errors => ({ ...errors, [provider]: null }))
+    setToggleBusy(busy => ({ ...busy, [provider]: true }))
+    setForm(f => ({ ...f, [field]: next }))
     try {
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hotmartEnabled: next }),
+        body: JSON.stringify({ [field]: next }),
       })
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}))
-        setHotmartToggleError(errData.error || 'Falha ao salvar. Recarregando estado real.')
+        setToggleError(errors => ({ ...errors, [provider]: errData.error || 'Falha ao salvar. Recarregando estado real.' }))
       }
     } catch {
-      setHotmartToggleError('Erro de conexão ao salvar. Recarregando estado real.')
+      setToggleError(errors => ({ ...errors, [provider]: 'Erro de conexão ao salvar. Recarregando estado real.' }))
     } finally {
       // Sempre reconfere no servidor, com sucesso ou erro: o valor exibido
       // depois desta linha é o que o banco tem de verdade, nunca o palpite
       // otimista de cima.
       await loadSettings()
       router.refresh()
-      setHotmartToggleBusy(false)
+      setToggleBusy(busy => ({ ...busy, [provider]: false }))
     }
   }
 
@@ -1331,14 +1360,14 @@ export default function ConfiguracoesPage() {
             </span>
             <Switch
               checked={form.hotmartEnabled}
-              onCheckedChange={handleHotmartToggle}
-              disabled={hotmartToggleBusy}
+              onCheckedChange={next => handleProviderToggle('hotmart', next)}
+              disabled={anyToggleBusy}
             />
           </div>
         </div>
         <Separator className="bg-line-subtle" />
-        {hotmartToggleError && (
-          <p className="text-micro text-st-negativo">{hotmartToggleError}</p>
+        {toggleError.hotmart && (
+          <p className="text-micro text-st-negativo">{toggleError.hotmart}</p>
         )}
         <p className="text-body text-fg-muted">
           Configure em: Produto, Configurações, Notificações, Webhook v2.0.0.
@@ -1366,11 +1395,31 @@ export default function ConfiguracoesPage() {
 
       {/* Greenn */}
       <section className="panel space-y-4 p-[var(--space-card)]">
-        <h2 className="text-h2 text-fg">Greenn</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-h2 text-fg">Greenn</h2>
+          <div className="flex items-center gap-3 bg-surface-inset px-3 py-1.5 rounded-[var(--r-md)] border border-line-subtle shrink-0">
+            <span className="text-micro font-medium text-fg">
+              {form.greennEnabled ? 'Integração Ativa' : 'Integração Desabilitada'}
+            </span>
+            <Switch
+              checked={form.greennEnabled}
+              onCheckedChange={next => handleProviderToggle('greenn', next)}
+              disabled={anyToggleBusy}
+            />
+          </div>
+        </div>
         <Separator className="bg-line-subtle" />
+        {toggleError.greenn && (
+          <p className="text-micro text-st-negativo">{toggleError.greenn}</p>
+        )}
         <p className="text-body text-fg-muted">
           No painel Greenn: Sistema, Controle de Acesso, Integração e Tokens. Cole a URL abaixo no campo Webhook da Greenn e copie o Webhook Token para o campo abaixo.
         </p>
+        {!form.greennEnabled && (
+          <p className="text-micro text-st-atencao max-w-[var(--w-form)]">
+            Com a integração desabilitada, qualquer webhook que a Greenn mandar pra sua URL é recusado (mesmo com token preenchido). Isso não impede a Greenn de continuar chamando essa URL do lado dela; só bloqueia o processamento aqui.
+          </p>
+        )}
         <WebhookUrlBox url={greennWebhookUrl} label="URL do Webhook (colar na Greenn)" />
         <div className="space-y-1.5">
           <Label>Webhook Token</Label>
@@ -1391,11 +1440,31 @@ export default function ConfiguracoesPage() {
 
       {/* Zouti */}
       <section className="panel space-y-4 p-[var(--space-card)]">
-        <h2 className="text-h2 text-fg">Zouti</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-h2 text-fg">Zouti</h2>
+          <div className="flex items-center gap-3 bg-surface-inset px-3 py-1.5 rounded-[var(--r-md)] border border-line-subtle shrink-0">
+            <span className="text-micro font-medium text-fg">
+              {form.zoutiEnabled ? 'Integração Ativa' : 'Integração Desabilitada'}
+            </span>
+            <Switch
+              checked={form.zoutiEnabled}
+              onCheckedChange={next => handleProviderToggle('zouti', next)}
+              disabled={anyToggleBusy}
+            />
+          </div>
+        </div>
         <Separator className="bg-line-subtle" />
+        {toggleError.zouti && (
+          <p className="text-micro text-st-negativo">{toggleError.zouti}</p>
+        )}
         <p className="text-body text-fg-muted">
           No painel Zouti: Integrações, Webhooks, Criar Webhook. Cole a URL abaixo no campo URL do site e selecione os eventos (pedido pago, aguardando pagamento, cartão recusado, carrinho abandonado).
         </p>
+        {!form.zoutiEnabled && (
+          <p className="text-micro text-st-atencao max-w-[var(--w-form)]">
+            Com a integração desabilitada, qualquer webhook que a Zouti mandar pra sua URL é recusado (mesmo com token preenchido). Isso não impede a Zouti de continuar chamando essa URL do lado dela; só bloqueia o processamento aqui.
+          </p>
+        )}
         <WebhookUrlBox url={zoutiWebhookUrl} label="URL do Webhook (colar na Zouti)" />
         <div className="space-y-1.5">
           <Label>Signing Secret</Label>
@@ -1411,14 +1480,34 @@ export default function ConfiguracoesPage() {
 
       {/* Kiwify */}
       <section className="panel space-y-4 p-[var(--space-card)]">
-        <h2 className="text-h2 text-fg">Kiwify</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-h2 text-fg">Kiwify</h2>
+          <div className="flex items-center gap-3 bg-surface-inset px-3 py-1.5 rounded-[var(--r-md)] border border-line-subtle shrink-0">
+            <span className="text-micro font-medium text-fg">
+              {form.kiwifyEnabled ? 'Integração Ativa' : 'Integração Desabilitada'}
+            </span>
+            <Switch
+              checked={form.kiwifyEnabled}
+              onCheckedChange={next => handleProviderToggle('kiwify', next)}
+              disabled={anyToggleBusy}
+            />
+          </div>
+        </div>
         <Separator className="bg-line-subtle" />
+        {toggleError.kiwify && (
+          <p className="text-micro text-st-negativo">{toggleError.kiwify}</p>
+        )}
         <p className="text-body text-fg-muted">
           No painel Kiwify: Apps, Webhooks, Criar Webhook. Em Produtos selecione{' '}
           <strong className="font-semibold text-fg">Todos os produtos</strong>{' '}
           (a Kiwify aceita um produto só por webhook, se escolher um, os demais ficam mudos). Marque os eventos Boleto gerado, Pix gerado, Carrinho abandonado, Compra recusada e{' '}
           <strong className="font-semibold text-fg">Compra aprovada</strong>. Compra aprovada é obrigatório: é ele que faz o sistema parar de cobrar quem já pagou.
         </p>
+        {!form.kiwifyEnabled && (
+          <p className="text-micro text-st-atencao max-w-[var(--w-form)]">
+            Com a integração desabilitada, qualquer webhook que a Kiwify mandar pra sua URL é recusado (mesmo com token preenchido). Isso não impede a Kiwify de continuar chamando essa URL do lado dela; só bloqueia o processamento aqui.
+          </p>
+        )}
         <WebhookUrlBox url={kiwifyWebhookUrl} label="URL do Webhook (colar na Kiwify)" />
         <div className="space-y-1.5">
           <Label>Token do Webhook</Label>

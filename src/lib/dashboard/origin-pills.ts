@@ -100,13 +100,21 @@ export async function loadDashboardOriginPills(
       .from(recoveryLeads)
       .where(eq(recoveryLeads.companyId, companyId)),
     database
-      .select({ hotmartEnabled: settings.hotmartEnabled })
+      .select({
+        hotmartEnabled: settings.hotmartEnabled,
+        kiwifyEnabled: settings.kiwifyEnabled,
+        greennEnabled: settings.greennEnabled,
+        zoutiEnabled: settings.zoutiEnabled,
+      })
       .from(settings)
       .where(eq(settings.companyId, companyId)),
   ])
 
   const disabledCheckouts = new Set<DashboardOriginKey>()
   if (settingsRow?.hotmartEnabled === false) disabledCheckouts.add('hotmart')
+  if (settingsRow?.kiwifyEnabled === false) disabledCheckouts.add('kiwify')
+  if (settingsRow?.greennEnabled === false) disabledCheckouts.add('greenn')
+  if (settingsRow?.zoutiEnabled === false) disabledCheckouts.add('zouti')
 
   return buildDashboardOriginPills(rows, { disabledCheckouts })
 }

@@ -102,8 +102,10 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     if (invalidField) {
       return NextResponse.json({ error: `O campo ${invalidField} deve ser um texto.` }, { status: 400 })
     }
-    if (body.hotmartEnabled != null && typeof body.hotmartEnabled !== 'boolean') {
-      return NextResponse.json({ error: 'O campo hotmartEnabled deve ser um booleano.' }, { status: 400 })
+    const booleanKeys = ['hotmartEnabled', 'greennEnabled', 'kiwifyEnabled', 'zoutiEnabled'] as const
+    const invalidBooleanField = booleanKeys.find(key => body[key] != null && typeof body[key] !== 'boolean')
+    if (invalidBooleanField) {
+      return NextResponse.json({ error: `O campo ${invalidBooleanField} deve ser um booleano.` }, { status: 400 })
     }
 
     // Achado de QA (26/09/2026): campo de credencial (mascarado no GET acima)
@@ -117,12 +119,10 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     for (const k of allowedKeys) {
       if (shouldWriteSettingsField(k, body[k])) updateData[k] = body[k]
     }
-    // hotmartEnabled é booleano (não-secreto), fora da allowlist de string
-    // acima de propósito: shouldWriteSettingsField() existe pra filtrar
-    // placeholder mascarado ("****xxxx") de campo de credencial, e não se
-    // aplica aqui.
-    if (typeof body.hotmartEnabled === 'boolean') {
-      updateData.hotmartEnabled = body.hotmartEnabled
+    // Os gates são booleanos não-secretos e ficam fora da allowlist de strings:
+    // shouldWriteSettingsField() filtra placeholders mascarados de credenciais.
+    for (const key of booleanKeys) {
+      if (typeof body[key] === 'boolean') updateData[key] = body[key]
     }
 
     if (agentDisplayName !== undefined) {

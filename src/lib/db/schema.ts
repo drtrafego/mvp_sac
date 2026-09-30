@@ -38,11 +38,17 @@ export const settings = pgTable('settings', {
   hotmartWebhookToken: text('hotmart_webhook_token').unique(),
   hotmartClientId: text('hotmart_client_id'),
   hotmartClientSecret: text('hotmart_client_secret'),
+  // Gates explícitos de processamento, independentes da presença das
+  // credenciais. Apagar um token opcional remove a validação daquele parceiro;
+  // portanto, nunca pode ser usado como sinal de integração desabilitada.
+  greennEnabled: boolean('greenn_enabled').notNull().default(true),
   greennWebhookToken: text('greenn_webhook_token').unique(),
   greennPublicKey: text('greenn_public_key'),
   greennApiKey: text('greenn_api_key'),
+  zoutiEnabled: boolean('zouti_enabled').notNull().default(true),
   zoutiWebhookToken: text('zouti_webhook_token').unique(),
   zoutiApiKey: text('zouti_api_key'),
+  kiwifyEnabled: boolean('kiwify_enabled').notNull().default(true),
   kiwifyWebhookToken: text('kiwify_webhook_token').unique(),   // segredo do HMAC-SHA1 do webhook Kiwify
   // WhatsApp: meta (oficial) ou uazapi
   whatsappProvider: text('whatsapp_provider').default('meta'),

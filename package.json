@@ -37,6 +37,9 @@
     "test:meta-templates": "tsx --test scripts/meta-templates-pagination.test.ts",
     "test:meta-templates-panel": "tsx --test scripts/meta-templates-panel.test.ts",
     "test:hotmart-disabled-state": "node --import tsx --experimental-test-module-mocks --test scripts/hotmart-disabled-state.test.ts",
+    "test:greenn-disabled-state": "node --import tsx --experimental-test-module-mocks --test scripts/greenn-disabled-state.test.ts",
+    "test:kiwify-disabled-state": "node --import tsx --experimental-test-module-mocks --test scripts/kiwify-disabled-state.test.ts",
+    "test:zouti-disabled-state": "node --import tsx --experimental-test-module-mocks --test scripts/zouti-disabled-state.test.ts",
     "test:db-consolidacao-autonomia": "tsx --test scripts/db-consolidacao-autonomia.test.ts",
     "test:astra-security-quickwins": "node --import tsx --experimental-test-module-mocks --test scripts/astra-security-quickwins.test.ts"
   },
