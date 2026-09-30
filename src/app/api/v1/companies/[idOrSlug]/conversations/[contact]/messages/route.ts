@@ -10,6 +10,7 @@ import { sendBrevoEmail } from '@/lib/email/brevo'
 import { eq, and, asc, or, sql } from 'drizzle-orm'
 import { markLeadContacted } from '@/lib/leads'
 import { type ContactIdentifier, parseContactIdentifier } from '@/lib/contact-resolution'
+import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
 
 type Params = { params: Promise<{ idOrSlug: string; contact: string }> }
 type ResolvedLeadForContact = {
@@ -138,7 +139,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
 
   try {
     const body = await req.json()
-    const { content, messageType = 'text', mediaUrl, channel = 'whatsapp', sentBy = 'agent' } = body
+    const { content, messageType = 'text', mediaUrl, channel: requestedChannel = 'whatsapp' } = body
 
     if (!content && !mediaUrl) {
       return NextResponse.json({ error: 'Conteúdo da mensagem ou mediaUrl é obrigatório' }, { status: 400 })
@@ -171,7 +172,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
             ? (resolved.identifier.digits || resolved.identifier.raw)
             : contact,
           name: `Contato ${contact.slice(-4)}`,
-          channel,
+          channel: requestedChannel,
           status: 'in_conversation',
           eventType: 'api_outbound',
         })
@@ -179,10 +180,14 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       lead = newLead
     }
 
+    // O canal informado pela API só inicializa um lead novo. Para leads
+    // existentes (e após a criação), o próprio lead é a fonte única do
+    // transporte; um override conflitante no body é deliberadamente ignorado.
+    const deliveryChannel = resolveLeadDeliveryChannel(lead)
     let externalId: string | null = null
 
     // Disparo real conforme canal
-    if (channel === 'instagram') {
+    if (deliveryChannel === 'instagram') {
       try {
         const igRes = await sendInstagramMessage({
           recipientId: lead.phone,
@@ -193,7 +198,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       } catch (igErr) {
         console.warn('[API Outbound Instagram Warning]:', igErr)
       }
-    } else if (channel === 'email' && lead.email) {
+    } else if (deliveryChannel === 'email' && lead.email) {
       try {
         await sendBrevoEmail({
           to: [{ email: lead.email, name: lead.name || 'Cliente' }],
@@ -211,7 +216,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         externalId = await sendWhatsAppMessage(
           lead.phone,
           {
-            type: messageType as any,
+            type: messageType,
             content,
             mediaUrl,
           },
@@ -230,7 +235,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         companyId: context.company.id,
         leadId: lead.id,
         phone: lead.phone,
-        channel,
+        channel: deliveryChannel,
         direction: 'outbound',
         content: content || null,
         messageType,
@@ -266,7 +271,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       entityId: String(msg.id),
       details: {
         leadId: lead.id,
-        channel,
+        channel: deliveryChannel,
         phone: lead.phone,
         preview: (content || '').slice(0, 80),
       },
@@ -277,7 +282,8 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       message: 'Mensagem enviada e registrada com sucesso',
       sentMessage: msg,
     }, { status: 201 })
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message || 'Erro ao enviar mensagem' }, { status: 500 })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Erro ao enviar mensagem'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
