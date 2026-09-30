@@ -5,9 +5,10 @@ import { readFileSync } from 'node:fs'
 const source = readFileSync('src/app/api/v1/companies/[idOrSlug]/agenda/schedule/route.ts', 'utf8')
 const uiSource = readFileSync('src/components/agente/agenda-section.tsx', 'utf8')
 
-test('rota de horário não bloqueia Dr. Lucas/Gramado como somente leitura', () => {
-  assert.doesNotMatch(source, /status:\s*409[\s\S]{0,200}readOnly:\s*true/)
-  assert.match(source, /readOnly:\s*false/)
+test('rota mantém Dr. Lucas editável e Gramado fechado sem API de escrita real', () => {
+  assert.match(source, /shouldSyncHermesAgenda/)
+  assert.match(source, /NATIVE_AGENDA_WRITE_UNAVAILABLE/)
+  assert.match(source, /readOnly:\s*scheduleReadOnly/)
   assert.match(source, /availabilityScheduleManual/)
 })
 
