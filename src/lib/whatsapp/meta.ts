@@ -140,16 +140,31 @@ export async function sendMetaTemplate(
   })
 }
 
-// Lista templates aprovados do WABA
+const META_TEMPLATES_MAX_PAGES = 10
+
+// Lista templates aprovados do WABA, seguindo paginação (paging.next) até esgotar
+// ou até o limite de segurança de páginas, pra não entrar em loop infinito se a
+// Graph API devolver um cursor que não avança.
 export async function listMetaTemplates(wabaId: string, accessToken: string): Promise<MetaTemplate[]> {
-  const res = await fetch(
-    `https://graph.facebook.com/v19.0/${wabaId}/message_templates?fields=name,status,language,category,components&limit=100`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  )
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Meta API erro ${res.status}: ${err}`)
+  let url: string | undefined =
+    `https://graph.facebook.com/v19.0/${wabaId}/message_templates?fields=name,status,language,category,components&limit=100`
+
+  const allTemplates: MetaTemplate[] = []
+  let page = 0
+
+  while (url && page < META_TEMPLATES_MAX_PAGES) {
+    const res: Response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Meta API erro ${res.status}: ${err}`)
+    }
+    const data = await res.json() as { data?: MetaTemplate[]; paging?: { next?: string } }
+    allTemplates.push(...(data.data ?? []))
+
+    const next = data.paging?.next
+    url = next && next !== url ? next : undefined
+    page += 1
   }
-  const data = await res.json() as { data?: MetaTemplate[] }
-  return (data.data ?? []).filter(t => t.status === 'APPROVED')
+
+  return allTemplates.filter(t => t.status === 'APPROVED')
 }
