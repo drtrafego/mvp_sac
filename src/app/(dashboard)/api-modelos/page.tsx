@@ -14,6 +14,18 @@ export default async function ApiModelosPage() {
   const metaTemplates = await loadApprovedMetaTemplates(companySettings)
 
   const hasMeta = metaTemplates.kind === 'ready' || metaTemplates.kind === 'empty'
+  const metaBadgeLabel = hasMeta
+    ? 'Meta WABA Conectada'
+    : metaTemplates.kind === 'error'
+      ? 'Erro ao consultar Meta'
+      : metaTemplates.kind === 'disabled'
+        ? 'Meta Cloud inativa'
+        : 'Pendente de WABA ID'
+  const metaBadgeTone = hasMeta
+    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+    : metaTemplates.kind === 'error'
+      ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+      : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
 
   return (
     <div className="flex flex-col gap-[var(--space-section)]">
@@ -23,12 +35,8 @@ export default async function ApiModelosPage() {
             <FileCheck size={12} />
             Empresa: {company.name} · Meta HSM Templates
           </span>
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-            hasMeta
-              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-              : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-          }`}>
-            {hasMeta ? 'Meta WABA Conectada' : 'Pendente de WABA ID'}
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${metaBadgeTone}`}>
+            {metaBadgeLabel}
           </span>
         </div>
         <h1 className="text-h1 text-fg">Mensagens Aprovadas (Meta Cloud API)</h1>

@@ -137,6 +137,10 @@ const emptyForm = {
   templateVariablesMap: {} as Record<string, string>,
 }
 
+function metaTemplateKey(template: Pick<MetaTemplate, 'name' | 'language'>): string {
+  return `${template.name}::${template.language}`
+}
+
 const statusDots: Record<string, string> = {
   pending: 'bg-st-atencao text-st-atencao',
   in_progress: 'bg-st-info text-st-info',
@@ -573,6 +577,9 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
   const flowNote = isRecovery
     ? 'O delay é contado a partir do momento em que o webhook chegou. Cada mensagem tem seu próprio delay independente.'
     : 'A sequência de onboarding respeita o delay de cada mensagem. O upsell é disparado após o tempo configurado.'
+  const selectedMetaTemplateKey = form.templateName
+    ? metaTemplateKey({ name: form.templateName, language: form.templateLanguage || 'pt_BR' })
+    : ''
 
   const webhookRows = [
     { label: 'Hotmart', url: hotmartWebhookUrl, dot: 'bg-plat-hotmart' },
@@ -1260,19 +1267,19 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
                 <div className="space-y-1.5">
                   <label className="block text-label uppercase text-fg-subtle">Template Meta</label>
                   <Select
-                    value={form.templateName}
+                    value={selectedMetaTemplateKey}
                     onValueChange={(v) => {
-                      const tpl = metaTemplates.find(t => t.name === v)
-                      setForm(f => ({ ...f, templateName: v ?? '', templateLanguage: tpl?.language ?? 'pt_BR' }))
+                      const tpl = metaTemplates.find(t => metaTemplateKey(t) === v)
+                      setForm(f => ({ ...f, templateName: tpl?.name ?? '', templateLanguage: tpl?.language ?? 'pt_BR' }))
                     }}
-                    items={Object.fromEntries(metaTemplates.map(t => [t.name, `${t.name} (${t.language})`]))}
+                    items={Object.fromEntries(metaTemplates.map(t => [metaTemplateKey(t), `${t.name} (${t.language})`]))}
                   >
                     <SelectTrigger className={cn(FIELD, CONTROL_H, 'w-full text-body')}>
                       <SelectValue placeholder="Selecione um template aprovado..." />
                     </SelectTrigger>
                     <SelectContent className="border border-line-subtle bg-surface-overlay text-fg">
                       {metaTemplates.map(t => (
-                        <SelectItem key={t.name} value={t.name}>
+                        <SelectItem key={metaTemplateKey(t)} value={metaTemplateKey(t)}>
                           {t.name} ({t.language})
                         </SelectItem>
                       ))}
