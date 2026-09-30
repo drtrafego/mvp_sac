@@ -33,6 +33,7 @@
     "test:lead-tags": "node --import tsx --experimental-test-module-mocks scripts/lead-tags.test.ts",
     "test:message-jobs-policy": "tsx --test scripts/message-jobs-policy.test.ts",
     "test:mass-dispatch": "node --experimental-test-module-mocks --import tsx scripts/mass-dispatch.test.ts && node --experimental-test-module-mocks --import tsx scripts/mass-dispatch-cron-lock.test.ts",
+    "test:meta-templates": "tsx --test scripts/meta-templates-pagination.test.ts",
     "test:db-consolidacao-autonomia": "tsx --test scripts/db-consolidacao-autonomia.test.ts",
     "test:astra-security-quickwins": "node --import tsx --experimental-test-module-mocks --test scripts/astra-security-quickwins.test.ts"
   },

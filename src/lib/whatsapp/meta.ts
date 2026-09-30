@@ -166,5 +166,9 @@ export async function listMetaTemplates(wabaId: string, accessToken: string): Pr
     page += 1
   }
 
+  if (url) {
+    console.warn(`listMetaTemplates: atingiu o teto de ${META_TEMPLATES_MAX_PAGES} páginas para WABA ${wabaId}, resultado pode estar incompleto`)
+  }
+
   return allTemplates.filter(t => t.status === 'APPROVED')
 }
