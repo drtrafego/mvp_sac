@@ -1,5 +1,6 @@
 import { or, sql, type SQL } from 'drizzle-orm'
 import { recoveryLeads } from '@/lib/db/schema'
+import { INSTAGRAM_DELIVERY_CHANNEL, INSTAGRAM_PHONE_PREFIX } from '@/lib/lead-delivery-channel'
 
 // mineracao_email/mineracao_whatsapp/mineracao_instagram e
 // anuncio_meta_ads/anuncio_google_ads são FILTROS COMPOSTOS: dentro do
@@ -10,6 +11,7 @@ export type InboxChannelFilter =
   | 'all'
   | 'whatsapp'
   | 'instagram'
+  | 'instagram_direct'
   | 'email'
   | 'mineracao'
   | 'mineracao_email'
@@ -316,6 +318,17 @@ const ANUNCIO_COMPOUND_PREFIX = 'anuncio_'
  *   E, dentro dela, a plataforma paga reconhecida.
  */
 export function channelWhereCondition(chFilter: string | null | undefined): SQL | undefined {
+  // Filtro operacional da área dedicada: ao contrário da categoria principal
+  // `instagram`, considera somente os mesmos sinais usados pelo transporte.
+  // Assim origem/plataforma Instagram sem canal real nunca entra em /instagram.
+  if (chFilter === 'instagram_direct') {
+    return sql<boolean>`coalesce(
+      lower(${recoveryLeads.channel}) = ${INSTAGRAM_DELIVERY_CHANNEL}
+      or left(lower(${recoveryLeads.phone}), ${INSTAGRAM_PHONE_PREFIX.length}) = ${INSTAGRAM_PHONE_PREFIX},
+      false
+    )`
+  }
+
   if (chFilter && chFilter.startsWith(MINERACAO_COMPOUND_PREFIX)) {
     const sub = chFilter.slice(MINERACAO_COMPOUND_PREFIX.length)
     if (sub === 'email' || sub === 'whatsapp' || sub === 'instagram') {

@@ -4,8 +4,8 @@ import { db } from '@/lib/db'
 import { appointmentMirror, gramadoReservations, recoveryLeads } from '@/lib/db/schema'
 import { requireCompany } from '@/lib/auth'
 import { getEmailEngagement } from '@/lib/email-engagement'
-import { classifyChannelInMemory } from '@/lib/inbox-channel-filter'
 import { loadInboxMessagePage } from '@/lib/inbox-messages'
+import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
 import { ChatWindow } from '@/components/inbox/ChatWindow'
 
 interface ConversationChatPageProps {
@@ -34,7 +34,7 @@ export async function ConversationChatPage({
     .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
 
   if (!lead) notFound()
-  if (requiredChannel === 'instagram' && !classifyChannelInMemory(lead).isInstagram) notFound()
+  if (requiredChannel === 'instagram' && !isInstagramDelivery(lead)) notFound()
 
   const cleanPhone = (lead.phone || '').replace(/\D/g, '')
   const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone

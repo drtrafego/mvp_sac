@@ -12,6 +12,18 @@ export interface ActiveConnectionsData {
   mineracao: boolean
 }
 
+type InstagramCredentialFields = Pick<
+  typeof settings.$inferSelect,
+  'instagramAccountId' | 'instagramPageId' | 'instagramAccessToken' | 'metaAccessToken'
+>
+
+/** Credenciais mínimas para receber/identificar a conta e enviar Direct. */
+export function hasInstagramCredentials(row: InstagramCredentialFields | null | undefined): boolean {
+  const accountId = row?.instagramAccountId?.trim() || row?.instagramPageId?.trim()
+  const accessToken = row?.instagramAccessToken?.trim() || row?.metaAccessToken?.trim()
+  return Boolean(accountId && accessToken)
+}
+
 // Extraído de (dashboard)/layout.tsx (era função local `getCompanySidebarData`,
 // duplicada implicitamente porque só a Sidebar a usava). A rota dedicada de
 // Instagram e a navegação usam o mesmo activeConnections.instagram; assim a
@@ -44,7 +56,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
     const hasKiwify = !!(settingsRow?.kiwifyWebhookToken || platformSet.has('kiwify'))
     const hasGreenn = !!(settingsRow?.greennWebhookToken || settingsRow?.greennApiKey || platformSet.has('greenn'))
     const hasZouti = !!(settingsRow?.zoutiWebhookToken || settingsRow?.zoutiApiKey || platformSet.has('zouti'))
-    const hasInstagram = !!(settingsRow?.instagramAccountId || settingsRow?.instagramUsername || settingsRow?.instagramAccessToken || platformSet.has('instagram') || sourceSet.has('instagram') || sourceSet.has('instagram_direct'))
+    const hasInstagram = hasInstagramCredentials(settingsRow)
     const hasMineracao = !!(platformSet.has('mineracao') || sourceSet.has('mineracao') || sourceSet.has('prospeccao') || settingsRow?.brevoApiKey)
 
     // Se nenhuma plataforma estiver configurada ainda, mantém Hotmart/Geral como padrão

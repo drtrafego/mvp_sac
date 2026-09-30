@@ -17,7 +17,7 @@ export default async function InstagramLayout({ children }: { children: React.Re
   let page: InboxPage = { conversations: [], nextCursor: null, hasMore: false }
   let error: string | null = null
   try {
-    page = await loadInboxPage({ companyId: company.id, channel: 'instagram' })
+    page = await loadInboxPage({ companyId: company.id, channel: 'instagram_direct' })
   } catch (loadError) {
     console.error('[Instagram layout loadInboxPage error]:', loadError)
     error = 'Falha ao carregar as conversas do Instagram Direct.'

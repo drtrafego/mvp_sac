@@ -33,6 +33,7 @@ import {
   matchesPhoneSearch,
 } from '@/lib/inbox-channel-filter'
 import { matchesInboxSourceFilter } from '@/lib/inbox-source-filter'
+import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
 import type { ConversationSummary, InboxPage } from '@/lib/inbox-conversations'
 export type { ConversationSummary } from '@/lib/inbox-conversations'
 
@@ -181,8 +182,9 @@ export function ConversationList({
   // channelWhereCondition (src/lib/inbox-channel-filter.ts) já sabe
   // interpretar como "mineracao E, dentro dela, este canal real".
   // 'anuncio' segue o mesmo padrão com 'anuncio_meta_ads'/'anuncio_google_ads'.
-  const effectiveChannelParam =
-    channelFilter === 'mineracao' && mineracaoSubFilter !== 'all'
+  const effectiveChannelParam = fixedChannel
+    ? 'instagram_direct'
+    : channelFilter === 'mineracao' && mineracaoSubFilter !== 'all'
       ? `mineracao_${mineracaoSubFilter}`
       : channelFilter === 'anuncio' && anuncioSubFilter !== 'all'
       ? `anuncio_${anuncioSubFilter}`
@@ -249,9 +251,10 @@ export function ConversationList({
 
   // Refetch imediato ao trocar de aba (não espera o poll de 15s). A carga
   // inicial do Inbox geral vem sem filtros de query; a da área dedicada já
-  // chega filtrada por Instagram, por isso fixedChannel pula o fetch duplicado.
+  // chega filtrada pelo transporte Instagram. Um source no deep link exige
+  // refetch também na área dedicada, pois o Server Component não recebe a URL.
   const didMountRef = useRef(false)
-  const hasDeepLinkFilterRef = useRef(!fixedChannel && (Boolean(sourceFilter) || initialChannelFilter !== 'all'))
+  const hasDeepLinkFilterRef = useRef(Boolean(sourceFilter) || (!fixedChannel && initialChannelFilter !== 'all'))
   useEffect(() => {
     if (!didMountRef.current) {
       didMountRef.current = true
@@ -398,7 +401,9 @@ export function ConversationList({
       if (!matchesInboxSourceFilter(c, sourceFilter)) return false
 
       // 1. Filtro por canal
-      if (channelFilter !== 'all') {
+      if (fixedChannel) {
+        if (!isInstagramDelivery(c)) return false
+      } else if (channelFilter !== 'all') {
         const { isInstagram, isEmail, isMineracao, isAnuncio, isWhatsapp } = classifyChannel(c)
         if (channelFilter === 'instagram' && !isInstagram) return false
         if (channelFilter === 'email' && !isEmail) return false
@@ -430,7 +435,7 @@ export function ConversationList({
         c.lastMessage?.toLowerCase().includes(q)
       )
     })
-  }, [convs, sourceFilter, channelFilter, mineracaoSubFilter, anuncioSubFilter, statusFilter, search])
+  }, [convs, sourceFilter, fixedChannel, channelFilter, mineracaoSubFilter, anuncioSubFilter, statusFilter, search])
 
   return (
     <aside
