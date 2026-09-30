@@ -217,6 +217,7 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
   const [savingUpsell, setSavingUpsell] = useState(false)
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
   const [metaTemplatesError, setMetaTemplatesError] = useState<string | null>(null)
+  const [metaTemplatesLoading, setMetaTemplatesLoading] = useState(false)
   
   // Filtering & Search
   const [searchQuery, setSearchQuery] = useState('')
@@ -272,8 +273,10 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
       setUpsellMessage(seqData.sequence?.upsellMessage ?? '')
       setUpsellDelayMinutes(seqData.sequence?.upsellDelayMinutes ?? 1440)
       setCompanySlug(settingsData.companySlug ?? null)
-      setWhatsappProvider(settingsData.whatsappProvider ?? 'meta')
-      if (settingsData.whatsappProvider === 'meta' && settingsData.metaWabaId) {
+      const provider = settingsData.whatsappProvider || 'meta'
+      setWhatsappProvider(provider)
+      if (provider === 'meta') {
+        setMetaTemplatesLoading(true)
         fetch('/api/meta/templates')
           .then(async (r) => {
             if (r.ok) return r.json()
@@ -292,6 +295,11 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
             setMetaTemplates([])
             setMetaTemplatesError(err instanceof Error ? err.message : 'Não foi possível buscar os templates aprovados na Meta.')
           })
+          .finally(() => setMetaTemplatesLoading(false))
+      } else {
+        setMetaTemplates([])
+        setMetaTemplatesError(null)
+        setMetaTemplatesLoading(false)
       }
     }).finally(() => setLoading(false))
   }, [eventType, platformFilter])
@@ -1138,7 +1146,7 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
                 </SelectTrigger>
                 <SelectContent className="border border-line-subtle bg-surface-overlay text-fg">
                   {Object.entries(MESSAGE_TYPE_OPTIONS)
-                    .filter(([value]) => value !== 'template' || metaTemplates.length > 0 || metaTemplatesError)
+                    .filter(([value]) => value !== 'template' || whatsappProvider === 'meta' || metaTemplates.length > 0 || metaTemplatesError)
                     .map(([value, label]) => (
                       <SelectItem key={value} value={value}>{label}</SelectItem>
                     ))}
@@ -1232,10 +1240,21 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
 
             {form.messageType === 'template' && (
               <div className="space-y-3">
+                {metaTemplatesLoading && (
+                  <div className="p-3 rounded-xl bg-surface-inset border border-line-subtle text-fg-muted text-micro">
+                    Buscando templates aprovados na Meta...
+                  </div>
+                )}
                 {metaTemplatesError && (
                   <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-micro flex items-center gap-2">
                     <AlertCircle size={15} className="shrink-0" />
                     <span>{metaTemplatesError}</span>
+                  </div>
+                )}
+                {!metaTemplatesLoading && !metaTemplatesError && metaTemplates.length === 0 && (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-micro flex items-center gap-2">
+                    <AlertCircle size={15} className="shrink-0" />
+                    <span>Nenhum template APPROVED retornou da Meta para esta empresa.</span>
                   </div>
                 )}
                 <div className="space-y-1.5">

@@ -13,6 +13,11 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: 'Configure o WABA ID e o Access Token Meta primeiro.' }, { status: 400 })
   }
 
-  const templates = await listMetaTemplates(cfg.metaWabaId, cfg.metaAccessToken)
-  return NextResponse.json(templates)
+  try {
+    const templates = await listMetaTemplates(cfg.metaWabaId, cfg.metaAccessToken)
+    return NextResponse.json(templates)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Não foi possível buscar os templates aprovados na Meta.'
+    return NextResponse.json({ error: message.replaceAll(cfg.metaAccessToken, '[token-redigido]') }, { status: 502 })
+  }
 }
