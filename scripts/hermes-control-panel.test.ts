@@ -62,29 +62,30 @@ test('sync de horário preserva campos existentes do agenda_config.json e sobres
   process.env.PAINEL_API_TOKEN = 'token-teste'
   process.env.HERMES_PANEL_URL = 'https://hermes.example/agente/'
   const calls: FetchCall[] = []
+  let storedConfig: Record<string, unknown> = {
+    timezone: '-03:00',
+    slot_minutes: 30,
+    hours: { '1': [['09:00', '10:00']] },
+    webhook: { enabled: true, url_agenda: 'https://crm.example/agenda' },
+    antecedencia_min: 60,
+  }
   global.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
     calls.push({ url: String(url), init: init || {}, body })
     if (String(url).includes('/api/agenda-config?')) {
-      return Response.json({
-        config: {
-          timezone: '-03:00',
-          slot_minutes: 30,
-          hours: { '1': [['09:00', '10:00']] },
-          webhook: { enabled: true, url_agenda: 'https://crm.example/agenda' },
-          antecedencia_min: 60,
-        },
-      })
+      return Response.json({ config: storedConfig })
     }
-    return Response.json({ ok: true, config: body.config })
+    storedConfig = body.config
+    return Response.json({ ok: true, config: storedConfig })
   }) as typeof fetch
 
   try {
     const result = await syncHermesAgendaSchedule('drlucas', schedule)
     assert.equal(result.ok, true)
-    assert.equal(calls.length, 2)
+    assert.equal(calls.length, 3)
     assert.equal(calls[0].url, 'https://hermes.example/agente/api/agenda-config?agente=drlucas')
     assert.equal(calls[1].url, 'https://hermes.example/agente/api/agenda-config')
+    assert.equal(calls[2].url, 'https://hermes.example/agente/api/agenda-config?agente=drlucas')
     assert.equal(calls[1].init.method, 'POST')
     assert.equal((calls[1].init.headers as Record<string, string>).authorization, 'Bearer token-teste')
     assert.equal(calls[1].body.agente, 'drlucas')
@@ -92,6 +93,38 @@ test('sync de horário preserva campos existentes do agenda_config.json e sobres
     assert.deepEqual(calls[1].body.config.hours['5'], [['08:00', '12:30']])
     assert.deepEqual(calls[1].body.config.webhook, { enabled: true, url_agenda: 'https://crm.example/agenda' })
     assert.equal(calls[1].body.config.antecedencia_min, 60)
+  } finally {
+    restore()
+  }
+})
+
+test('sync falha e restaura a configuração anterior quando a releitura não confirma', async () => {
+  restore()
+  process.env.PAINEL_API_TOKEN = 'token-teste'
+  process.env.HERMES_PANEL_URL = 'https://hermes.example/agente'
+  const originalConfig = {
+    timezone: '-03:00',
+    slot_minutes: 30,
+    hours: { '1': [['09:00', '10:00']] as [string, string][] },
+    webhook: { enabled: false, url: '' },
+  }
+  const posted: Array<Record<string, unknown>> = []
+  let reads = 0
+  global.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).includes('/api/agenda-config?')) {
+      reads += 1
+      return Response.json({ config: reads === 2 ? { ...originalConfig, timezone: 'UTC' } : originalConfig })
+    }
+    const body = JSON.parse(String(init?.body))
+    posted.push(body.config)
+    return Response.json({ ok: true, config: body.config })
+  }) as typeof fetch
+
+  try {
+    const result = await syncHermesAgendaSchedule('drlucas', schedule)
+    assert.equal(result.ok, false)
+    assert.equal(posted.length, 2, 'segundo POST restaura o config anterior')
+    assert.deepEqual(posted[1], originalConfig)
   } finally {
     restore()
   }

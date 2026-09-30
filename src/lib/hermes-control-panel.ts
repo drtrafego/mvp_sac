@@ -9,7 +9,7 @@ type PanelResult<T = unknown> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; error: string; data?: unknown }
 
-type LegacyAgendaConfig = Record<string, unknown> & {
+export type LegacyAgendaConfig = Record<string, unknown> & {
   timezone?: string
   slot_minutes?: number
   hours?: Record<string, [string, string][]>
@@ -56,6 +56,7 @@ async function callPanel<T = unknown>(path: string, init: RequestInit): Promise<
         ...(init.headers || {}),
       },
       cache: 'no-store',
+      signal: init.signal ?? AbortSignal.timeout(15_000),
     })
     let data: unknown = null
     try {
@@ -111,33 +112,103 @@ export function availabilityScheduleToLegacyHours(schedule: AvailabilitySchedule
   return hours
 }
 
-async function readHermesAgendaConfig(slug: string): Promise<PanelResult<{ config?: LegacyAgendaConfig }>> {
+export async function readHermesAgendaConfig(slug: string): Promise<PanelResult<{ config?: LegacyAgendaConfig }>> {
   return callPanel<{ config?: LegacyAgendaConfig }>(
     `/api/agenda-config?agente=${encodeURIComponent(slug)}`,
     { method: 'GET' },
   )
 }
 
+function supportedHermesConfigMatches(
+  actual: LegacyAgendaConfig | undefined,
+  expected: LegacyAgendaConfig,
+): boolean {
+  if (!actual) return false
+  return actual.timezone === expected.timezone
+    && actual.slot_minutes === expected.slot_minutes
+    && JSON.stringify(actual.hours) === JSON.stringify(expected.hours)
+    && JSON.stringify(actual.webhook) === JSON.stringify(expected.webhook)
+}
+
+function scheduleMatchesHermesConfig(config: LegacyAgendaConfig | undefined, schedule: AvailabilitySchedule): boolean {
+  if (!config) return false
+  return config.timezone === schedule.timezone
+    && config.slot_minutes === schedule.duracaoSlotMinutos
+    && JSON.stringify(config.hours) === JSON.stringify(availabilityScheduleToLegacyHours(schedule))
+}
+
+export async function restoreHermesAgendaConfig(
+  slug: string,
+  config: LegacyAgendaConfig,
+): Promise<PanelResult<{ config?: LegacyAgendaConfig }>> {
+  if (!shouldSyncHermesAgenda(slug)) return { ok: true, status: 200, data: {} }
+  const written = await callPanel<{ config?: LegacyAgendaConfig }>('/api/agenda-config', {
+    method: 'POST',
+    body: JSON.stringify({ agente: slug, config }),
+  })
+  if (!written.ok) return written
+  const confirmed = await readHermesAgendaConfig(slug)
+  if (!confirmed.ok) return confirmed
+  if (!supportedHermesConfigMatches(confirmed.data.config, config)) {
+    return {
+      ok: false,
+      status: confirmed.status,
+      error: 'Hermes respondeu ao rollback, mas a releitura não confirmou a configuração anterior.',
+      data: confirmed.data,
+    }
+  }
+  return confirmed
+}
+
 export async function syncHermesAgendaSchedule(
   slug: string,
   schedule: AvailabilitySchedule,
-): Promise<PanelResult<{ config?: LegacyAgendaConfig }>> {
+): Promise<PanelResult<{ config?: LegacyAgendaConfig; previousConfig?: LegacyAgendaConfig }>> {
   if (!shouldSyncHermesAgenda(slug)) return { ok: true, status: 200, data: {} }
 
   const current = await readHermesAgendaConfig(slug)
   if (!current.ok) return current
 
+  const previousConfig = current.data.config
+
   const config: LegacyAgendaConfig = {
-    ...(current.data.config || {}),
+    ...(previousConfig || {}),
     timezone: schedule.timezone,
     slot_minutes: schedule.duracaoSlotMinutos,
     hours: availabilityScheduleToLegacyHours(schedule),
   }
 
-  return callPanel<{ config?: LegacyAgendaConfig }>('/api/agenda-config', {
+  const written = await callPanel<{ config?: LegacyAgendaConfig }>('/api/agenda-config', {
     method: 'POST',
     body: JSON.stringify({ agente: slug, config }),
   })
+  if (!written.ok) return written
+
+  // O POST do painel antigo pode responder 200 mesmo depois de sanitizar ou
+  // descartar campos. A confirmação real é reler o arquivo consumido pelo bot.
+  const confirmed = await readHermesAgendaConfig(slug)
+  if (confirmed.ok && scheduleMatchesHermesConfig(confirmed.data.config, schedule)) {
+    return {
+      ok: true,
+      status: confirmed.status,
+      data: { config: confirmed.data.config, previousConfig },
+    }
+  }
+
+  let rollbackError = ''
+  if (previousConfig) {
+    const rollback = await restoreHermesAgendaConfig(slug, previousConfig)
+    if (!rollback.ok) rollbackError = ` Rollback também falhou: ${rollback.error}`
+  }
+
+  return {
+    ok: false,
+    status: confirmed.status,
+    error: confirmed.ok
+      ? `Hermes respondeu ao POST, mas a releitura não confirmou a grade.${rollbackError}`
+      : `Hermes respondeu ao POST, mas a releitura falhou: ${confirmed.error}.${rollbackError}`,
+    data: confirmed.data,
+  }
 }
 
 export async function syncHermesAgendaBlockDate(

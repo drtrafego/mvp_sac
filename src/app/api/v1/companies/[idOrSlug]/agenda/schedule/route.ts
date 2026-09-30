@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm'
 import { DEFAULT_AVAILABILITY_SCHEDULE, isNativeAvailabilityCompany, normalizeAvailabilitySchedule, validateAvailabilitySchedule } from '@/lib/agenda-schedule'
 import { maybeRefreshGoogleCalendarSync } from '@/lib/google-calendar-sync'
 import { getNativeAvailabilitySnapshot } from '@/lib/native-availability'
-import { syncHermesAgendaSchedule } from '@/lib/hermes-control-panel'
+import { restoreHermesAgendaConfig, syncHermesAgendaSchedule } from '@/lib/hermes-control-panel'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -56,6 +56,10 @@ export async function PUT(req: NextRequest, { params }: Params): Promise<NextRes
       return NextResponse.json({ error: result.error }, { status: 400 })
     }
 
+    // Leia antes de tocar a fonte externa. Além de evitar uma escrita remota
+    // quando o banco já está indisponível, este estado é o alvo da persistência.
+    const [existing] = await db.select().from(settings).where(eq(settings.companyId, context.company.id))
+
     const hermesSync = await syncHermesAgendaSchedule(context.company.slug, result.schedule)
     if (!hermesSync.ok) {
       return NextResponse.json(
@@ -67,15 +71,30 @@ export async function PUT(req: NextRequest, { params }: Params): Promise<NextRes
       )
     }
 
-    const [existing] = await db.select().from(settings).where(eq(settings.companyId, context.company.id))
-
-    if (existing) {
-      await db
-        .update(settings)
-        .set({ availabilitySchedule: result.schedule, availabilityScheduleManual: true, updatedAt: new Date() })
-        .where(eq(settings.id, existing.id))
-    } else {
-      await db.insert(settings).values({ companyId: context.company.id, availabilitySchedule: result.schedule, availabilityScheduleManual: true })
+    try {
+      if (existing) {
+        await db
+          .update(settings)
+          .set({ availabilitySchedule: result.schedule, availabilityScheduleManual: true, updatedAt: new Date() })
+          .where(eq(settings.id, existing.id))
+      } else {
+        await db.insert(settings).values({ companyId: context.company.id, availabilitySchedule: result.schedule, availabilityScheduleManual: true })
+      }
+    } catch (dbError) {
+      const previousConfig = hermesSync.data.previousConfig
+      const rollback = previousConfig
+        ? await restoreHermesAgendaConfig(context.company.slug, previousConfig)
+        : { ok: true as const }
+      const detail = dbError instanceof Error ? dbError.message : 'falha ao persistir no banco'
+      return NextResponse.json(
+        {
+          error: rollback.ok
+            ? `Não salvei no SAC; a alteração no Hermes foi revertida: ${detail}`
+            : `Não salvei no SAC e não consegui reverter o Hermes: ${detail}. ${rollback.error}`,
+          code: rollback.ok ? 'SAC_AGENDA_SAVE_FAILED_ROLLED_BACK' : 'SAC_AGENDA_SAVE_FAILED_ROLLBACK_FAILED',
+        },
+        { status: 500 },
+      )
     }
 
     await logAgentActivity({
