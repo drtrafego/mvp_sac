@@ -75,7 +75,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
     const hasKiwify = kiwifyEnabled && !!(settingsRow?.kiwifyWebhookToken || platformSet.has('kiwify'))
     const hasGreenn = greennEnabled && !!(settingsRow?.greennWebhookToken || settingsRow?.greennApiKey || platformSet.has('greenn'))
     const hasZouti = zoutiEnabled && !!(settingsRow?.zoutiWebhookToken || settingsRow?.zoutiApiKey || platformSet.has('zouti'))
-    const hasInstagram = hasInstagramCredentials(settingsRow)
+    const hasInstagram = hasInstagramCredentials(settingsRow) || platformSet.has('instagram') || sourceSet.has('instagram')
     const hasMineracao = !!(platformSet.has('mineracao') || sourceSet.has('mineracao') || sourceSet.has('prospeccao') || settingsRow?.brevoApiKey)
 
     // Se nenhuma plataforma estiver configurada ainda, mantém Hotmart/Geral como padrão
@@ -98,7 +98,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
         kiwify: kiwifyEnabled && hasKiwify,
         greenn: greennEnabled && hasGreenn,
         zouti: zoutiEnabled && hasZouti,
-        instagram: hasInstagram,
+        instagram: hasInstagram || sidebarConfig?.showInstagram === true,
         instagramCommentAutomation: activeCommentAutomations.length > 0,
         mineracao: hasMineracao,
       },

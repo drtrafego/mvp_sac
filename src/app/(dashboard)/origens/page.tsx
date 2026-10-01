@@ -87,7 +87,8 @@ export default async function OrigensPage({ searchParams }: PageProps) {
   const toDate = new Date(`${to}T23:59:59.999-03:00`)
   const source = params.source?.trim() || null
 
-  const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
+  const activityDateSql = sql`coalesce(${recoveryLeads.lastActionAt}, ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`
+  const dateFilter = and(gte(activityDateSql, fromDate), lte(activityDateSql, toDate))
   const businessModel = resolveDashboardBusinessModel(company.slug)
   const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
 

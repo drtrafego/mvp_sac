@@ -389,7 +389,7 @@ export function SidebarNavContent({
   // Instagram é uma área operacional real: configuração pode ocultá-la, mas
   // não pode exibi-la para empresa sem conexão ativa. A detecção continua
   // centralizada em getCompanySidebarData/activeConnections.instagram.
-  const showInstagram = !!activeConnections?.instagram && sidebarConfig?.showInstagram !== false
+  const showInstagram = sidebarConfig?.showInstagram === true || (!!activeConnections?.instagram && sidebarConfig?.showInstagram !== false)
   const showMineracao = sidebarConfig?.showMineracao !== undefined ? sidebarConfig.showMineracao : !!activeConnections?.mineracao
 
   const visibleAtendimentoNav = filterAvailableNavItems(atendimentoNav, activeConnections)

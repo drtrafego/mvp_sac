@@ -74,7 +74,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const currentSource = params.source?.trim() || null
   const sourceFilter = currentSource ? sql`(${recoveryLeads.trackingSource} ILIKE ${'%' + currentSource + '%'} OR ${recoveryLeads.platform} ILIKE ${'%' + currentSource + '%'})` : undefined
 
-  const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
+  const activityDateSql = sql`coalesce(${recoveryLeads.lastActionAt}, ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`
+  const dateFilter = and(gte(activityDateSql, fromDate), lte(activityDateSql, toDate))
   const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter, sourceFilter)
 
   // 1. Identificar modelo de negócio da empresa
