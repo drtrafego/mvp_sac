@@ -35,7 +35,7 @@
     "test:agenda-followup-policy": "tsx --test scripts/agenda-followup-policy.test.ts && tsx --test scripts/agenda-schedule-route-contract.test.ts && tsx --test scripts/agenda-blocked-date-delete-contract.test.ts && tsx --test scripts/hermes-control-panel.test.ts",
     "test:hermes-control-panel-live": "node --import tsx --experimental-test-module-mocks scripts/hermes-control-panel.live-smoke.ts",
     "test:hermes-blocked-date-live": "node --import tsx --experimental-test-module-mocks scripts/hermes-blocked-date.live-smoke.ts",
-    "test:mass-dispatch": "node --experimental-test-module-mocks --import tsx scripts/mass-dispatch.test.ts && node --experimental-test-module-mocks --import tsx scripts/mass-dispatch-cron-lock.test.ts",
+    "test:mass-dispatch": "node --experimental-test-module-mocks --import tsx scripts/mass-dispatch.test.ts && node --experimental-test-module-mocks --import tsx scripts/mass-dispatch-cron-lock.test.ts && node --experimental-test-module-mocks --import tsx scripts/mass-dispatch-flow.test.ts",
     "test:meta-templates": "tsx --test scripts/meta-templates-pagination.test.ts",
     "test:meta-templates-panel": "tsx --test scripts/meta-templates-panel.test.ts",
     "test:hotmart-disabled-state": "node --import tsx --experimental-test-module-mocks --test scripts/hotmart-disabled-state.test.ts",
