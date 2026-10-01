@@ -865,17 +865,48 @@ type ClassifiedAgentCompany = {
   knownTenantSlug: 'autonomia' | 'gramado-plaza' | 'drlucas' | null
 }
 
-export function classifyAgentCompany(rawSlugValue: string | null | undefined, rawNameValue: string | null | undefined): ClassifiedAgentCompany {
+export function classifyAgentCompany(
+  rawSlugValue: string | null | undefined,
+  rawNameValue: string | null | undefined,
+  rawSchemaValue?: string | null | undefined
+): ClassifiedAgentCompany {
   const rawSlug = (rawSlugValue || '').trim().toLowerCase()
   const rawName = (rawNameValue || 'Agente IA').trim() || 'Agente IA'
+  const rawSchema = (rawSchemaValue || '').trim().toLowerCase()
   const normalizedName = rawName.toLowerCase()
 
+  // 1. Gramado Plaza / Plazza: sempre tem precedência sobre slugs genéricos de agência (casal/trafego)
+  if (
+    rawSlug.includes('gramado') ||
+    rawSlug.includes('plaza') ||
+    rawSlug.includes('plazza') ||
+    rawSchema.includes('gramado') ||
+    rawSchema.includes('plaza') ||
+    rawSchema.includes('plazza') ||
+    normalizedName.includes('gramado') ||
+    normalizedName.includes('plaza') ||
+    normalizedName.includes('plazza')
+  ) {
+    return { companySlug: 'gramado-plaza', companyName: 'Gramado Plaza', knownTenantSlug: 'gramado-plaza' }
+  }
+
+  // 2. Dr. Lucas: prioridade sobre slugs genéricos
+  if (
+    rawSlug.includes('lucas') ||
+    rawSchema.includes('lucas') ||
+    normalizedName.includes('lucas')
+  ) {
+    return { companySlug: 'drlucas', companyName: 'Dr. Lucas', knownTenantSlug: 'drlucas' }
+  }
+
+  // 3. AutonomIA / Casal do Tráfego / Gastão
   if (
     rawSlug.includes('autonomia') ||
     rawSlug.includes('gastao') ||
     rawSlug.includes('24horas') ||
     rawSlug.includes('casal') ||
     rawSlug.includes('trafego') ||
+    rawSchema.includes('autonomia') ||
     normalizedName.includes('gast') ||
     normalizedName.includes('casal') ||
     normalizedName.includes('autonomia')
@@ -883,15 +914,7 @@ export function classifyAgentCompany(rawSlugValue: string | null | undefined, ra
     return { companySlug: 'autonomia', companyName: 'AutonomIA', knownTenantSlug: 'autonomia' }
   }
 
-  if (rawSlug.includes('gramado') || rawSlug.includes('plaza')) {
-    return { companySlug: 'gramado-plaza', companyName: 'Gramado Plaza', knownTenantSlug: 'gramado-plaza' }
-  }
-
-  if (rawSlug.includes('lucas') || normalizedName.includes('lucas')) {
-    return { companySlug: 'drlucas', companyName: 'Dr. Lucas', knownTenantSlug: 'drlucas' }
-  }
-
-  return { companySlug: rawSlug, companyName: rawName, knownTenantSlug: null }
+  return { companySlug: rawSlug || rawSchema, companyName: rawName, knownTenantSlug: null }
 }
 
 export async function syncAgentsAndCompanies(): Promise<SyncReport> {
@@ -1055,7 +1078,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   for (const agent of agents) {
     const rawSlug = (agent.slug || agent.org_slug || agent.name.toLowerCase().replace(/\s+/g, '-')).toLowerCase()
     const rawName = agent.name || agent.org_name || 'Agente IA'
-    const { companySlug, companyName } = classifyAgentCompany(rawSlug, rawName)
+    const { companySlug, companyName } = classifyAgentCompany(rawSlug, rawName, agent.schema_name)
 
     let company = companyMap.get(companySlug)
     if (!company) {
@@ -1103,7 +1126,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const conversationMetadataColumns = await detectAgentsTableColumns(
           schema,
           'conversations',
-          ['cost_usd', 'input_tokens', 'output_tokens', 'synced_at', 'updated_at', 'last_message_at']
+          ['cost_usd', 'input_tokens', 'output_tokens', 'synced_at', 'updated_at', 'last_message_at', 'created_at']
         )
         const conversationMetadataSelect = [
           conversationMetadataColumns.has('cost_usd') ? 'cost_usd' : 'null::numeric as cost_usd',
@@ -1125,7 +1148,8 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           conversationMetadataColumns.has('last_message_at') ? 'last_message_at' : null,
           'ended_at',
           'started_at',
-          `'${EPOCH_CURSOR_ISO}'::timestamp`,
+          conversationMetadataColumns.has('created_at') ? 'created_at' : null,
+          `'${EPOCH_CURSOR_ISO}'::timestamptz`,
         ].filter(Boolean)
         const conversationSortExpr = `coalesce(${conversationSortCandidates.join(', ')})`
         const conversationIdExpr = 'session_id::text'
@@ -1142,7 +1166,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                        ${conversationSortExpr} as __sync_sort_at,
                        ${conversationIdExpr} as __sync_cursor_id
                 from "${schema}".conversations
-                where (${conversationSortExpr}, ${conversationIdExpr}) > ($1::timestamp, $2::text)
+                where (${conversationSortExpr}, ${conversationIdExpr}) > ($1::timestamptz, $2::text)
                 order by ${conversationSortExpr} asc, ${conversationIdExpr} asc
                 limit ${SYNC_NEW_BATCH_SIZE}
               `,
@@ -1157,7 +1181,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                        ${conversationSortExpr} as __sync_sort_at,
                        ${conversationIdExpr} as __sync_cursor_id
                 from "${schema}".conversations
-                ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamp, $2::text)` : ''}
+                ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamptz, $2::text)` : ''}
                 order by ${conversationSortExpr} desc, ${conversationIdExpr} desc
                 limit ${SYNC_BACKFILL_BATCH_SIZE}
               `,
@@ -1179,7 +1203,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                        ${conversationSortExpr} as __sync_sort_at,
                        ${conversationIdExpr} as __sync_cursor_id
                 from "${schema}".conversations
-                ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamp, $2::text)` : ''}
+                ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamptz, $2::text)` : ''}
                 order by ${conversationSortExpr} desc, ${conversationIdExpr} desc
                 limit ${SYNC_BACKFILL_BATCH_SIZE}
               `,
@@ -1721,6 +1745,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       "coalesce(agent_slug, '') ilike '%trafego%'",
       "coalesce(agent_slug, '') ilike '%gramado%'",
       "coalesce(agent_slug, '') ilike '%plaza%'",
+      "coalesce(agent_slug, '') ilike '%plazza%'",
       "coalesce(agent_slug, '') ilike '%lucas%'",
     ].join(' or ')
     const outreachScopes = [
@@ -1732,7 +1757,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       {
         sourceKey: 'gramado-plaza',
         company: companyMap.get('gramado-plaza'),
-        whereSql: "(coalesce(agent_slug, '') ilike '%gramado%' or coalesce(agent_slug, '') ilike '%plaza%')",
+        whereSql: "(coalesce(agent_slug, '') ilike '%gramado%' or coalesce(agent_slug, '') ilike '%plaza%' or coalesce(agent_slug, '') ilike '%plazza%')",
       },
     ]
 
@@ -2012,16 +2037,17 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       const crmColumns = await detectAgentsTableColumns(scope.schema, 'crm_leads', [
         'id', 'organization_id', 'whatsapp', 'phone', 'email', 'name', 'company', 'notes', 'value', 'status',
         'follow_up_date', 'follow_up_note', 'campaign_source', 'utm_source', 'utm_medium', 'utm_campaign',
-        'utm_content', 'utm_term', 'ai_agent', 'created_at', 'first_contact_at',
+        'utm_content', 'utm_term', 'ai_agent', 'created_at', 'first_contact_at', 'updated_at',
       ])
       if (!crmColumns.has('id') || (!crmColumns.has('whatsapp') && !crmColumns.has('phone'))) continue
 
       const col = (name: string, fallback = 'null::text') => crmColumns.has(name) ? name : `${fallback} as ${name}`
       const phoneExpr = crmColumns.has('whatsapp') ? 'whatsapp' : 'phone'
       const sortParts = [
+        crmColumns.has('updated_at') ? 'updated_at' : null,
         crmColumns.has('created_at') ? 'created_at' : null,
         crmColumns.has('first_contact_at') ? 'first_contact_at' : null,
-        `'${EPOCH_CURSOR_ISO}'::timestamp`,
+        `'${EPOCH_CURSOR_ISO}'::timestamptz`,
       ].filter((part): part is string => !!part)
       const crmLeadSortExpr = `coalesce(${sortParts.join(', ')})`
       const crmLeadIdExpr = 'id::text'
@@ -2044,7 +2070,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         getPosition: crmLeadCursorPosition,
         fetchNewRows: (cursor) => queryAgentsDb<CrmLeadDbRow>(
           `select ${selectColumns} from ${sourceTable}
-           where (${crmLeadSortExpr}, ${crmLeadIdExpr}) > ($1::timestamp, $2::text)
+           where (${crmLeadSortExpr}, ${crmLeadIdExpr}) > ($1::timestamptz, $2::text)
            order by ${crmLeadSortExpr} asc, ${crmLeadIdExpr} asc limit ${SYNC_NEW_BATCH_SIZE}`,
           [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
         ),
@@ -2052,7 +2078,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           const hasBackfillCursor = !!cursor.backfillBeforeAt
           return queryAgentsDb<CrmLeadDbRow>(
             `select ${selectColumns} from ${sourceTable}
-             ${hasBackfillCursor ? `where (${crmLeadSortExpr}, ${crmLeadIdExpr}) < ($1::timestamp, $2::text)` : ''}
+             ${hasBackfillCursor ? `where (${crmLeadSortExpr}, ${crmLeadIdExpr}) < ($1::timestamptz, $2::text)` : ''}
              order by ${crmLeadSortExpr} desc, ${crmLeadIdExpr} desc limit ${SYNC_BACKFILL_BATCH_SIZE}`,
             hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
           )
