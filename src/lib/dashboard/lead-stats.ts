@@ -67,7 +67,8 @@ export function dashboardFunnelStageSql(model: DashboardBusinessModel): SQL<stri
     return sql<string>`case
       when ${stageLower} in ('compareceu', 'cliente_compareceu') or ${statusLower} in ('compareceu', 'cliente compareceu') or ${eventLower} in ('compareceu') then 'compareceu'
       when ${stageLower} in ('perdido', 'cancelado') or ${statusLower} in ('perdido', 'cancelado') then 'perdido'
-      when ${statusLower} in ('reserva confirmada', 'reserva_confirmada', 'completed') or ${stageLower} in ('fechado', 'contrato_fechado', 'reserva_confirmada', 'reserva confirmada', 'agendado', 'reserva_agendada') or ${eventLower} in ('reserva_confirmada', 'reserva confirmada', 'agendado') then 'fechado'
+      when ${statusLower} in ('reserva confirmada', 'reserva_confirmada', 'completed') or ${stageLower} in ('fechado', 'contrato_fechado', 'reserva_confirmada', 'reserva confirmada', 'reserva_agendada') or ${eventLower} in ('reserva_confirmada', 'reserva confirmada') then 'fechado'
+      when ${stageLower} = 'agendado' or ${eventLower} = 'agendado' then 'agendado'
       when ${stageLower} in ('proposta', 'proposta_enviada', 'negociacao', 'cardapio', 'cardapio_pacote') or ${statusLower} in ('cardapio / pacote', 'cardápio / pacote', 'cardapio_pacote') then 'proposta'
       when ${stageLower} in ('qualificado', 'duvida', 'avaliacao', 'data_consultada') or ${statusLower} in ('data consultada', 'data_consultada') then 'qualificado'
       else 'novo_contato'

@@ -129,6 +129,7 @@ async function main() {
       { id: 12, name: 'Checkout Sem Conversa Teste', slug: 'checkout-sem-conversa-teste' },
       { id: 13, name: 'Isabela Fanini Teste 2', slug: 'isabela-fanini-teste-2' },
       { id: 14, name: 'Isabela Fanini Teste 3', slug: 'isabela-fanini-teste-3' },
+      { id: 15, name: 'Gramado Agendado Regressao', slug: 'gramado-agendado-regressao' },
     ])
 
     await test('Gramado conta status real "Reserva Confirmada" sem duplicar no funil', async () => {
@@ -161,8 +162,57 @@ async function main() {
       assert.equal(stats.perdido, 1)
 
       const cards = gramadoDashboardCardCounts(stats)
-      assert.equal(cards.reservaConfirmada, 5, 'Reserva Confirmada deve incluir pipeline_stage=agendado')
+      assert.equal(cards.reservaConfirmada, 5, 'Reserva Confirmada deve usar somente a metrica de negocio ganho')
       assert.equal(cards.compareceu, 5, 'Compareceu deve usar a mesma metrica cumulativa de negocio ganho')
+    })
+
+    await test('Gramado nao conta agendado sem confirmacao como reserva fechada', async () => {
+      const agendadosEmConversa = Array.from({ length: 474 }, (_, index) =>
+        lead(15, String(1_000 + index), {
+          status: 'in_conversation',
+          pipelineStage: 'agendado',
+          eventType: 'atendimento_ia',
+          firstContactAt: NOW,
+        })
+      )
+
+      await testDb.insert(schema.recoveryLeads).values([
+        ...agendadosEmConversa,
+        lead(15, '2000', {
+          status: 'in_conversation',
+          eventType: 'agendado',
+          firstContactAt: NOW,
+        }),
+        lead(15, '2001', {
+          status: 'completed',
+          pipelineStage: 'agendado',
+          eventType: 'atendimento_ia',
+          firstContactAt: NOW,
+        }),
+        lead(15, '2002', {
+          status: 'in_conversation',
+          pipelineStage: 'agendado',
+          eventType: 'reserva_confirmada',
+          firstContactAt: NOW,
+        }),
+        lead(15, '2003', {
+          status: 'compareceu',
+          pipelineStage: 'compareceu',
+          eventType: 'atendimento_ia',
+          firstContactAt: NOW,
+        }),
+      ])
+
+      const [stats] = await testDb
+        .select(dashboardLeadStatsSelect('gramado'))
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.companyId, 15))
+
+      assert.equal(stats.total, 478)
+      assert.equal(stats.agendado, 475, '474 stages + 1 evento agendado ficam no estagio intermediario')
+      assert.equal(stats.fechado, 2, 'completed e reserva_confirmada continuam fechados')
+      assert.equal(stats.compareceu, 1)
+      assert.equal(stats.fechadosTotal, 3, 'business won inclui somente fechado + compareceu')
     })
 
     await test('Dr. Lucas usa pipeline agendado como consulta agendada e nao como novo contato', async () => {
