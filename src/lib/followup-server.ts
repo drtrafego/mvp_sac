@@ -14,13 +14,14 @@ import {
   FOLLOWUP_DEFAULT_SPACING,
   resolveAgentSlugForCompany,
   sanitizeSteps,
+  validateStepsStrict,
   sanitizeWindow,
   sanitizeSpacing,
 } from '@/lib/followup'
 
 export async function getFollowupConfigReal(companySlug: string, companyId?: number): Promise<{
   config: FollowupConfig
-  agentSlug: string
+  agentSlug: string | null
   isSharedDbConnected: boolean
 }> {
   const agentSlug = resolveAgentSlugForCompany(companySlug)
@@ -29,6 +30,10 @@ export async function getFollowupConfigReal(companySlug: string, companyId?: num
     steps: FOLLOWUP_DEFAULT_STEPS,
     window: FOLLOWUP_DEFAULT_WINDOW,
     spacing: FOLLOWUP_DEFAULT_SPACING,
+  }
+
+  if (!agentSlug) {
+    return { config: fallback, agentSlug: null, isSharedDbConnected: false }
   }
 
   try {
@@ -117,68 +122,105 @@ export async function saveFollowupConfigReal(
 ): Promise<{ ok: boolean; message?: string }> {
   const agentSlug = resolveAgentSlugForCompany(companySlug)
   try {
-    const sanitizedSteps = sanitizeSteps(input.steps)
-    if (sanitizedSteps.length === 0) {
+    if (!agentSlug) {
+      return { ok: false, message: 'Esta empresa não usa o follow-up do Hermes.' }
+    }
+
+    if (agentSlug === 'gramadoplazza' && input.enabled === true) {
+      return {
+        ok: false,
+        message: 'Ativar o disparo do Gramado Plazza em produção exige autorização explícita e teste ao vivo do Gastão — ainda não está liberado.',
+      }
+    }
+
+    let validatedSteps: FollowupStep[]
+    let stepsAdClean: FollowupStep[] | undefined
+    try {
+      validatedSteps = validateStepsStrict(input.steps)
+      stepsAdClean = input.stepsByOrigin?.ad ? validateStepsStrict(input.stepsByOrigin.ad, 'stepsByOrigin.ad') : undefined
+    } catch (validationErr) {
+      const message = validationErr instanceof Error ? validationErr.message : String(validationErr)
+      return { ok: false, message }
+    }
+
+    if (validatedSteps.length === 0) {
       return { ok: false, message: 'É necessário pelo menos 1 degrau de tempo válido.' }
     }
 
     const windowClean = sanitizeWindow(input.window) ?? FOLLOWUP_DEFAULT_WINDOW
     const spacingClean = sanitizeSpacing(input.spacing) ?? FOLLOWUP_DEFAULT_SPACING
 
-    const stepsAdClean = input.stepsByOrigin?.ad ? sanitizeSteps(input.stepsByOrigin.ad) : undefined
     const stepsByOriginClean = stepsAdClean && stepsAdClean.length > 0 ? { ad: stepsAdClean } : null
 
     // 1. Grava no banco compartilhado dos agentes (Supabase/Neon) onde o orchestrate.py lê
-    const agentsSql = await getAgentsDb()
-    if (agentsSql) {
-      try {
-        await queryAgentsDb(
-          `INSERT INTO public.followup_config (agent_slug, enabled, steps, send_window, spacing, steps_by_origin, updated_at)
-           VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, now())
-           ON CONFLICT (agent_slug) DO UPDATE SET
-             enabled = EXCLUDED.enabled,
-             steps = EXCLUDED.steps,
-             send_window = EXCLUDED.send_window,
-             spacing = EXCLUDED.spacing,
-             steps_by_origin = EXCLUDED.steps_by_origin,
-             updated_at = now()`,
-          [
-            agentSlug,
-            Boolean(input.enabled),
-            JSON.stringify(sanitizedSteps),
-            JSON.stringify(windowClean),
-            JSON.stringify(spacingClean),
-            stepsByOriginClean ? JSON.stringify(stepsByOriginClean) : null,
-          ],
-        )
-      } catch (sharedErr) {
-        console.error('[saveFollowupConfigReal shared DB error]', sharedErr)
+    let agentsSql: Awaited<ReturnType<typeof getAgentsDb>>
+    try {
+      agentsSql = await getAgentsDb()
+    } catch (sharedErr) {
+      console.error('[saveFollowupConfigReal shared DB error]', sharedErr)
+      return { ok: false, message: 'Não consegui salvar no banco compartilhado dos agentes — a mudança real não foi aplicada.' }
+    }
+
+    if (!agentsSql) {
+      return { ok: false, message: 'Não consegui salvar no banco compartilhado dos agentes — a mudança real não foi aplicada.' }
+    }
+
+    try {
+      const sharedRows = await queryAgentsDb(
+        `INSERT INTO public.followup_config (agent_slug, enabled, steps, send_window, spacing, steps_by_origin, updated_at)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, now())
+         ON CONFLICT (agent_slug) DO UPDATE SET
+           enabled = EXCLUDED.enabled,
+           steps = EXCLUDED.steps,
+           send_window = EXCLUDED.send_window,
+           spacing = EXCLUDED.spacing,
+           steps_by_origin = EXCLUDED.steps_by_origin,
+           updated_at = now()`,
+        [
+          agentSlug,
+          Boolean(input.enabled),
+          JSON.stringify(validatedSteps),
+          JSON.stringify(windowClean),
+          JSON.stringify(spacingClean),
+          stepsByOriginClean ? JSON.stringify(stepsByOriginClean) : null,
+        ],
+      )
+
+      if (sharedRows === null) {
+        return { ok: false, message: 'Não consegui salvar no banco compartilhado dos agentes — a mudança real não foi aplicada.' }
       }
+    } catch (sharedErr) {
+      console.error('[saveFollowupConfigReal shared DB error]', sharedErr)
+      return { ok: false, message: 'Não consegui salvar no banco compartilhado dos agentes — a mudança real não foi aplicada.' }
     }
 
     // 2. Grava também no banco local do mvp_sac para redundância
-    await db
-      .insert(followupConfig)
-      .values({
-        companyId,
-        enabled: Boolean(input.enabled),
-        steps: sanitizedSteps,
-        sendWindow: windowClean,
-        spacing: spacingClean,
-        stepsByOrigin: stepsByOriginClean,
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: followupConfig.companyId,
-        set: {
+    try {
+      await db
+        .insert(followupConfig)
+        .values({
+          companyId,
           enabled: Boolean(input.enabled),
-          steps: sanitizedSteps,
+          steps: validatedSteps,
           sendWindow: windowClean,
           spacing: spacingClean,
           stepsByOrigin: stepsByOriginClean,
           updatedAt: new Date(),
-        },
-      })
+        })
+        .onConflictDoUpdate({
+          target: followupConfig.companyId,
+          set: {
+            enabled: Boolean(input.enabled),
+            steps: validatedSteps,
+            sendWindow: windowClean,
+            spacing: spacingClean,
+            stepsByOrigin: stepsByOriginClean,
+            updatedAt: new Date(),
+          },
+        })
+    } catch (localErr) {
+      console.error('[saveFollowupConfigReal local DB error]', localErr)
+    }
 
     return { ok: true }
   } catch (err) {
@@ -191,6 +233,10 @@ export async function saveFollowupConfigReal(
 export async function getFollowupSentStatsReal(companySlug: string, companyId?: number): Promise<FollowupSentStats> {
   const agentSlug = resolveAgentSlugForCompany(companySlug)
   const fallback: FollowupSentStats = { sent24h: 0, sent7d: 0, lastSentAt: null }
+
+  if (!agentSlug) {
+    return fallback
+  }
 
   try {
     const agentsSql = await getAgentsDb()

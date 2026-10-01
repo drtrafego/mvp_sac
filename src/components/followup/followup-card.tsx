@@ -178,7 +178,7 @@ export function FollowupCard({
 }: {
   initialConfig?: FollowupConfig
   initialStats?: FollowupSentStats
-  initialAgentSlug?: string
+  initialAgentSlug?: string | null
   initialIsSharedDbConnected?: boolean
 }) {
   const [loadingConfig, setLoadingConfig] = React.useState(!initialConfig)
@@ -199,7 +199,7 @@ export function FollowupCard({
   const [stats, setStats] = React.useState<FollowupSentStats>(
     initialStats || { sent24h: 0, sent7d: 0, lastSentAt: null },
   )
-  const [agentSlug, setAgentSlug] = React.useState<string>(initialAgentSlug || '')
+  const [agentSlug, setAgentSlug] = React.useState<string | null>(initialAgentSlug ?? null)
   const [isSharedDbConnected, setIsSharedDbConnected] = React.useState<boolean>(
     Boolean(initialIsSharedDbConnected),
   )
@@ -239,7 +239,7 @@ export function FollowupCard({
               setUsaAd(data.config.stepsByOrigin.ad.length > 0)
             }
             if (data.stats) setStats(data.stats)
-            if (data.agentSlug) setAgentSlug(data.agentSlug)
+            if (data.agentSlug !== undefined) setAgentSlug(data.agentSlug)
             if (data.isSharedDbConnected !== undefined) setIsSharedDbConnected(data.isSharedDbConnected)
           }
         })
@@ -321,6 +321,24 @@ export function FollowupCard({
       <div className="card p-6 flex items-center justify-center gap-2 text-fg-subtle">
         <Loader2 size={16} className="animate-spin" />
         <span className="text-xs">Carregando configuração de follow-up real do agente...</span>
+      </div>
+    )
+  }
+
+  if (!agentSlug) {
+    return (
+      <div className="card p-6 border border-line-subtle rounded-xl bg-surface-raised">
+        <div className="flex items-start gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-surface-inset text-fg-subtle">
+            <Clock3 size={20} />
+          </span>
+          <div>
+            <h3 className="font-semibold text-fg">Follow-up Automático do Agente IA</h3>
+            <p className="mt-1 max-w-xl text-xs text-fg-subtle">
+              Esta empresa não usa o follow-up do Hermes.
+            </p>
+          </div>
+        </div>
       </div>
     )
   }
