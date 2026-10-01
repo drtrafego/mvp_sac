@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { agendaBlockedDates } from '@/lib/db/schema'
 import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { isValidDate } from '@/lib/agenda-schedule'
-import { shouldSyncHermesAgendaBlockRemoval, syncHermesAgendaBlockDate } from '@/lib/hermes-control-panel'
+import { restoreHermesAgendaBlockDate, shouldSyncHermesAgendaBlockRemoval, syncHermesAgendaBlockDate } from '@/lib/hermes-control-panel'
 import { eq, and } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string; date: string }> }
@@ -38,6 +38,7 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
     )
   }
 
+  let hermesPreviousReason: string | null | undefined
   if (shouldSyncHermesAgendaBlockRemoval(context.company.slug, existing.source)) {
     const hermesSync = await syncHermesAgendaBlockDate(context.company.slug, date, '', false)
     if (!hermesSync.ok) {
@@ -49,31 +50,48 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
         { status: 502 }
       )
     }
+    hermesPreviousReason = hermesSync.data.previousReason ?? null
   }
 
-  if (existing.source === 'google_calendar+bot_bloqueios') {
-    const googleReason = existing.googleReason || existing.reason || null
+  try {
+    if (existing.source === 'google_calendar+bot_bloqueios') {
+      const googleReason = existing.googleReason || existing.reason || null
+      await db
+        .update(agendaBlockedDates)
+        .set({ source: 'google_calendar', botReason: null, reason: googleReason })
+        .where(and(eq(agendaBlockedDates.companyId, context.company.id), eq(agendaBlockedDates.date, date)))
+
+      await logAgentActivity({
+        companyId: context.company.id,
+        agentName: context.agentName,
+        agentId: context.agentId,
+        action: 'agenda_unblock_date',
+        entityType: 'settings',
+        entityId: date,
+        details: { date, preservedSource: 'google_calendar' },
+      })
+
+      return NextResponse.json({ ok: true, message: `Bloqueio do bot removido; bloqueio do Google Calendar preservado em ${date}.` })
+    }
+
     await db
-      .update(agendaBlockedDates)
-      .set({ source: 'google_calendar', botReason: null, reason: googleReason })
+      .delete(agendaBlockedDates)
       .where(and(eq(agendaBlockedDates.companyId, context.company.id), eq(agendaBlockedDates.date, date)))
-
-    await logAgentActivity({
-      companyId: context.company.id,
-      agentName: context.agentName,
-      agentId: context.agentId,
-      action: 'agenda_unblock_date',
-      entityType: 'settings',
-      entityId: date,
-      details: { date, preservedSource: 'google_calendar' },
-    })
-
-    return NextResponse.json({ ok: true, message: `Bloqueio do bot removido; bloqueio do Google Calendar preservado em ${date}.` })
+  } catch (dbError) {
+    const rollback = hermesPreviousReason === undefined
+      ? { ok: true as const }
+      : await restoreHermesAgendaBlockDate(context.company.slug, date, hermesPreviousReason)
+    const detail = dbError instanceof Error ? dbError.message : 'falha ao persistir no banco'
+    return NextResponse.json(
+      {
+        error: rollback.ok
+          ? `Não removi no SAC; o desbloqueio no Hermes foi revertido: ${detail}`
+          : `Não removi no SAC e não consegui reverter o Hermes: ${detail}. ${rollback.error}`,
+        code: rollback.ok ? 'SAC_AGENDA_UNBLOCK_SAVE_FAILED_ROLLED_BACK' : 'SAC_AGENDA_UNBLOCK_SAVE_FAILED_ROLLBACK_FAILED',
+      },
+      { status: 500 },
+    )
   }
-
-  await db
-    .delete(agendaBlockedDates)
-    .where(and(eq(agendaBlockedDates.companyId, context.company.id), eq(agendaBlockedDates.date, date)))
 
   await logAgentActivity({
     companyId: context.company.id,

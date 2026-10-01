@@ -762,10 +762,11 @@ export const instagramCommentLogs = pgTable('instagram_comment_logs', {
 
 // ─── Bloqueios de agenda por data (férias, congresso, feriado) ───────────────
 // Espelha o comando `bloquear <data> [motivo]` do agenda_tools.py do painel
-// antigo (roda dentro do container Hermes de cada bot). Aqui é só a
-// CONFIGURAÇÃO ficando salva no banco do SAC: nenhum bot consulta isto ainda,
-// a integração ("o bot pergunta ao SAC antes de oferecer horário") é trabalho
-// futuro, fora do escopo desta tarefa.
+// antigo. O cron de follow-up do SAC consulta esta tabela antes de disparar.
+// No Dr. Lucas, bloqueios manuais também passam pela Control API do Hermes e
+// só ficam gravados localmente depois de uma releitura confirmar bloqueios.json.
+// No Gramado, esta tabela não escreve na agenda nativa: a API de reservas é a
+// fonte real e segue somente leitura no SAC.
 // 22/09/2026: a tela de Agenda do Dr. Lucas (company_id=3, slug 'drlucas')
 // passou a refletir o Google Calendar real dele além do bloqueio manual e do
 // bloqueio gravado pelo bot via WhatsApp (Hermes). `source` diz de onde veio

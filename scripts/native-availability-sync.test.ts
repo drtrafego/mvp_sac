@@ -72,6 +72,7 @@ async function main() {
   const sql = postgres(disposable.url)
   const testDb = drizzle(sql, { schema })
   const [drLucas] = await testDb.insert(schema.companies).values({ name: 'Dr. Lucas', slug: 'drlucas' }).returning()
+  const [gramado] = await testDb.insert(schema.companies).values({ name: 'Gramado Plazza', slug: 'gramado-plaza' }).returning()
   const [other] = await testDb.insert(schema.companies).values({ name: 'Outra', slug: 'outra' }).returning()
   await testDb.insert(schema.settings).values([
     { companyId: drLucas.id, availabilitySchedule: { ...lucasSchedule, duracaoSlotMinutos: 99 } },
@@ -93,7 +94,9 @@ async function main() {
   mock.module('@/lib/webhook-auth', { namedExports: { checkHermesWebhookToken: () => ({ ok: true }) } })
   mock.module('@/lib/hermes-control-panel', {
     namedExports: {
+      shouldSyncHermesAgenda: (slug: string) => slug === 'drlucas',
       syncHermesAgendaSchedule: async () => ({ ok: true, status: 200, data: {} }),
+      restoreHermesAgendaConfig: async () => ({ ok: true, status: 200, data: {} }),
       syncHermesAgendaBlockDate: async () => ({ ok: true, status: 200, data: {} }),
     },
   })
@@ -186,6 +189,40 @@ async function main() {
       assert.equal(legacy.availabilityScheduleManual, true)
       const [mirror] = await testDb.select().from(schema.nativeAvailabilitySchedules)
       assert.equal((mirror.schedule as typeof lucasSchedule).duracaoSlotMinutos, 15)
+    })
+
+    await test('Gramado continua somente leitura enquanto a fonte real não oferece escrita', async () => {
+      const gramadoSchedule = {
+        ...lucasSchedule,
+        segunda: [{ inicio: '18:00', fim: '22:30' }],
+        timezone: 'America/Sao_Paulo',
+        duracaoSlotMinutos: 30,
+      }
+      await native.upsertNativeAvailabilitySnapshot('gramado-plaza', {
+        schedule: gramadoSchedule,
+        source: 'reservations_api',
+        sourceCursor: 'sha256:gramado-v1',
+        capturedAt: new Date('2026-09-30T20:00:00.000Z'),
+      })
+      authenticatedCompany = gramado
+
+      const getReq = new NextRequest('http://localhost/api/v1/companies/gramado-plaza/agenda/schedule')
+      const getRes = await scheduleRoute.GET(getReq, { params: Promise.resolve({ idOrSlug: 'gramado-plaza' }) })
+      const getBody = await getRes.json()
+      assert.equal(getRes.status, 200)
+      assert.equal(getBody.readOnly, true)
+      assert.equal(getBody.sourceStatus, 'native_snapshot_imported')
+      assert.deepEqual(getBody.schedule, gramadoSchedule)
+
+      const putReq = new NextRequest('http://localhost/api/v1/companies/gramado-plaza/agenda/schedule', {
+        method: 'PUT', body: JSON.stringify({ ...gramadoSchedule, duracaoSlotMinutos: 60 }),
+      })
+      const putRes = await scheduleRoute.PUT(putReq, { params: Promise.resolve({ idOrSlug: 'gramado-plaza' }) })
+      const putBody = await putRes.json()
+      assert.equal(putRes.status, 409)
+      assert.equal(putBody.code, 'NATIVE_AGENDA_WRITE_UNAVAILABLE')
+      const gramadoSettings = await testDb.select().from(schema.settings).where(eq(schema.settings.companyId, gramado.id))
+      assert.equal(gramadoSettings.length, 0)
     })
 
     await test('empresa sem bot nativo preserva edição manual', async () => {

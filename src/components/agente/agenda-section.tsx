@@ -27,6 +27,22 @@ interface BlockedDate {
   createdAt: string
 }
 
+interface ScheduleResponse {
+  httpOk: boolean
+  ok?: boolean
+  readOnly?: boolean
+  error?: string
+  schedule?: AvailabilitySchedule
+  sourceLabel?: string
+  syncedAt?: string
+}
+
+async function fetchPersistedSchedule(companySlug: string): Promise<ScheduleResponse> {
+  const res = await fetch(`/api/v1/companies/${companySlug}/agenda/schedule`, { cache: 'no-store' })
+  const json = await res.json()
+  return { ...json, httpOk: res.ok }
+}
+
 const SOURCE_LABELS: Record<BlockedDateSource, string> = {
   manual: 'Manual',
   google_calendar: 'Google Calendar',
@@ -82,7 +98,7 @@ export function AgendaSection() {
 
       const [blockedRes, scheduleRes] = await Promise.all([
         fetch(`/api/v1/companies/${slug}/agenda/blocked-dates`).then(r => r.json()),
-        fetch(`/api/v1/companies/${slug}/agenda/schedule`).then(r => r.json()),
+        fetchPersistedSchedule(slug),
       ])
 
       if (blockedRes.ok) setBlockedDates(blockedRes.blockedDates)
@@ -211,11 +227,48 @@ export function AgendaSection() {
     setSavingSchedule(false)
 
     if (!res.ok) {
-      setScheduleError(json.error ?? 'Erro ao salvar a grade de horários.')
+      let reloaded = false
+      try {
+        const persisted = await fetchPersistedSchedule(companySlug)
+        if (persisted.httpOk && persisted.ok && persisted.schedule) {
+          setSchedule(persisted.schedule)
+          setScheduleReadOnly(Boolean(persisted.readOnly))
+          setScheduleSourceLabel(persisted.sourceLabel ?? '')
+          setScheduleSyncedAt(persisted.syncedAt ?? '')
+          setScheduleCheckedAt(Date.now())
+          reloaded = true
+        }
+      } catch {
+        // A mensagem principal do PUT é mais útil; apenas sinalize abaixo que
+        // não foi possível substituir o rascunho pela leitura confirmada.
+      }
+      setScheduleError(
+        `${json.error ?? 'Erro ao salvar a grade de horários.'}${
+          reloaded
+            ? ' Os valores confirmados foram recarregados.'
+            : ' Recarregue a página antes de tentar novamente.'
+        }`,
+      )
       return
     }
 
-    setSchedule(json.schedule)
+    // O save só fica visualmente concluído depois de uma leitura nova da rota,
+    // que por sua vez já confirmou o Hermes. Evita deixar um estado otimista na
+    // tela se qualquer metade do fluxo falhar.
+    try {
+      const persisted = await fetchPersistedSchedule(companySlug)
+      if (persisted.httpOk && persisted.ok) {
+        setSchedule(persisted.schedule ?? json.schedule)
+        setScheduleReadOnly(Boolean(persisted.readOnly))
+        setScheduleSourceLabel(persisted.sourceLabel ?? '')
+        setScheduleSyncedAt(persisted.syncedAt ?? '')
+        setScheduleCheckedAt(Date.now())
+      } else {
+        setSchedule(json.schedule)
+      }
+    } catch {
+      setSchedule(json.schedule)
+    }
     setScheduleSaved(true)
     setTimeout(() => setScheduleSaved(false), 2000)
   }

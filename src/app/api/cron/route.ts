@@ -4,15 +4,16 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
-import { agendaBlockedDates, massDispatchPhoneCooldowns, messageJobs, nativeAvailabilitySchedules, recoveryLeads, sequenceMessages, settings, whatsappMessages } from '@/lib/db/schema'
+import { agendaBlockedDates, companies, massDispatchPhoneCooldowns, messageJobs, nativeAvailabilitySchedules, recoveryLeads, sequenceMessages, settings, whatsappMessages } from '@/lib/db/schema'
 import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
 import { MAX_JOBS_PER_RUN, checkMetaWindowForJob } from '@/lib/message-jobs-policy'
 import { executeAndRecordDispatch, type DispatchOutcome, type MessageSnapshot } from '@/lib/mass-dispatch'
 import { releaseCronDispatchLock, tryAcquireCronDispatchLock } from '@/lib/cron-advisory-lock'
-import { evaluateDispatchWindow, firstDueJobPerLead, retryAtAfterPreviousFollowupStep, shouldApplyFollowupDispatchWindow } from '@/lib/followup-dispatch-policy'
-import { DEFAULT_AVAILABILITY_SCHEDULE, normalizeAvailabilitySchedule } from '@/lib/agenda-schedule'
+import { evaluateDispatchWindow, firstDueJobPerLead, retryAtAfterPreviousFollowupStep, selectFollowupDispatchSchedule, shouldApplyFollowupDispatchWindow } from '@/lib/followup-dispatch-policy'
+import { isNativeAvailabilityCompany, normalizeAvailabilitySchedule } from '@/lib/agenda-schedule'
+import { shouldSyncHermesAgenda } from '@/lib/hermes-control-panel'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
 
@@ -178,6 +179,7 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
       .select({
         job: messageJobs,
         companyId: recoveryLeads.companyId,
+        companySlug: companies.slug,
         metaPhoneNumberId: settings.metaPhoneNumberId,
         availabilitySchedule: settings.availabilitySchedule,
         availabilityScheduleManual: settings.availabilityScheduleManual,
@@ -189,6 +191,7 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
       })
       .from(messageJobs)
       .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
+      .innerJoin(companies, eq(companies.id, recoveryLeads.companyId))
       .innerJoin(settings, eq(settings.companyId, recoveryLeads.companyId))
       .leftJoin(nativeAvailabilitySchedules, eq(nativeAvailabilitySchedules.companyId, recoveryLeads.companyId))
       .where(and(
@@ -355,7 +358,7 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
   let failed = 0
   const cooldownsByPhone = new Map<string, Date>()
 
-  for (const { job, companyId, metaPhoneNumberId, availabilitySchedule, availabilityScheduleManual, nativeAvailabilitySchedule, leadPhone, leadCreatedAt, checkBeforeSend } of runnableJobs) {
+  for (const { job, companyId, companySlug, metaPhoneNumberId, availabilitySchedule, availabilityScheduleManual, nativeAvailabilitySchedule, leadPhone, leadCreatedAt, checkBeforeSend } of runnableJobs) {
     let providerAccepted = false
     try {
       const activeCooldown = metaPhoneNumberId ? cooldownsByPhone.get(metaPhoneNumberId) : undefined
@@ -441,9 +444,13 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
       if (shouldApplyFollowupDispatchWindow(job)) {
         const storedSchedule = normalizeAvailabilitySchedule(availabilitySchedule)
         const nativeSchedule = normalizeAvailabilitySchedule(nativeAvailabilitySchedule)
-        const schedule = availabilityScheduleManual
-          ? (storedSchedule ?? nativeSchedule ?? DEFAULT_AVAILABILITY_SCHEDULE)
-          : (nativeSchedule ?? storedSchedule ?? DEFAULT_AVAILABILITY_SCHEDULE)
+        const nativeCompany = isNativeAvailabilityCompany(companySlug)
+        const schedule = selectFollowupDispatchSchedule({
+          storedSchedule,
+          nativeSchedule,
+          manualOverride: availabilityScheduleManual,
+          manualWriteThroughAvailable: !nativeCompany || shouldSyncHermesAgenda(companySlug),
+        })
         const dispatchWindow = evaluateDispatchWindow({
           schedule,
           blockedDates: blockedDatesByCompany.get(companyId) ?? new Set<string>(),

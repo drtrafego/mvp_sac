@@ -398,8 +398,9 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS pending_follow_check_attempts INTEGER DEFAULT 0`,
 
           // ─── Bloqueios de agenda por data (férias, congresso, feriado) ─────────
-          // Só a CONFIGURAÇÃO fica salva aqui: nenhum bot consulta isto ainda
-          // (ver comentário no schema.ts em agendaBlockedDates).
+          // Fonte local usada pelo cron de follow-up. Para o Dr. Lucas, as
+          // escritas manuais também são propagadas e confirmadas no Hermes.
+          // Ver comentário completo no schema.ts em agendaBlockedDates.
           client`
             CREATE TABLE IF NOT EXISTS agenda_blocked_dates (
               id SERIAL PRIMARY KEY,
