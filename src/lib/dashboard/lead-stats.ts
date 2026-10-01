@@ -125,13 +125,11 @@ export function dashboardLeadStatsSelect(model: DashboardBusinessModel) {
   // deve contar no numero principal depois de trocar mensagem real. Pra
   // infoproduto o lead nasce de webhook de checkout (Hotmart/Kiwify/Greenn/
   // Zouti), que nunca chama markLeadContacted, entao first_contact_at fica
-  // nulo mesmo com evento de negocio real acontecendo. Sem este gate,
-  // "Leads Totais" (e o resto do funil de conversa: Aguardando Abordagem,
-  // Responderam, Avancaram) ficava zerado pra QUALQUER empresa infoproduto,
-  // igual ao bug ja corrigido abaixo pro funil de checkout propriamente dito
-  // (boleto/pix/carrinho/cartao/aprovada), medido na Isabela Fanini
-  // (company_id=2): 100% dos 35 leads do periodo com first_contact_at nulo.
-  const contactGate = model === 'infoproduto' ? sql`true` : sql`${recoveryLeads.firstContactAt} is not null`
+  // nulo mesmo com evento de negocio real acontecendo. Para gramado/lucas/agencia,
+  // se o lead ja foi ganho/convertido ou veio do Hermes, ele e um lead contatado por definicao.
+  const contactGate = model === 'infoproduto'
+    ? sql`true`
+    : sql`(${recoveryLeads.firstContactAt} is not null or ${won} or ${recoveryLeads.platform} = 'hermes')`
 
   return {
     total: sql<number>`cast(count(*) filter (where ${contactGate}) as int)`,

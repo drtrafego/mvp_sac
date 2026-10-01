@@ -809,6 +809,35 @@ export const agendaBlockedDates = pgTable('agenda_blocked_dates', {
   uniqueIndex('agenda_blocked_dates_company_date_unique').on(table.companyId, table.date),
 ])
 
+// ─── Configuração e Histórico de Follow-up de Conversa Parada ───────────────
+export const followupConfig = pgTable('followup_config', {
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).primaryKey(),
+  enabled: boolean('enabled').notNull().default(false),
+  steps: jsonb('steps'),
+  sendWindow: jsonb('send_window'),
+  spacing: jsonb('spacing'),
+  stepsByOrigin: jsonb('steps_by_origin'),
+  updatedAt: timestamp('updated_at').defaultNow(),
+})
+
+export const followupSent = pgTable('followup_sent', {
+  id: text('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  chatId: text('chat_id'),
+  stepIndex: integer('step_index').notNull(),
+  basedOnTs: timestamp('based_on_ts').notNull(),
+  sentAt: timestamp('sent_at').defaultNow(),
+  status: text('status').default('sent'),
+}, (table) => [
+  uniqueIndex('followup_sent_company_lead_step_based_uniq').on(
+    table.companyId,
+    table.leadId,
+    table.stepIndex,
+    table.basedOnTs,
+  ),
+])
+
 // ─── Rate limit local da ponte de IA (Nina/Amanda, ver src/lib/ai/ai-bridge.ts) ─
 // Contagem GLOBAL, não por empresa: o serviço do outro lado (claude -p) é
 // single-thread e compartilha fila com o atendimento REAL do WhatsApp de

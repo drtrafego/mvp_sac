@@ -40,7 +40,7 @@ import { KanbanBoard, KanbanLead } from '@/components/pipeline/kanban-board'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
-import { dashboardLeadStatsSelect, gramadoDashboardCardCounts, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
+import { dashboardLeadStatsSelect, gramadoDashboardCardCounts, resolveDashboardBusinessModel, dashboardBusinessWonSql } from '@/lib/dashboard/lead-stats'
 import { hasDashboardOrigin, loadDashboardOriginPills } from '@/lib/dashboard/origin-pills'
 import { inferPipelineStage } from '@/lib/pipeline-stage'
 
@@ -84,18 +84,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const isAgencia = businessModel === 'agencia'
   const isInfoproduto = businessModel === 'infoproduto'
 
-  // Decisão de negócio: lead só conta no número principal depois de ser
-  // ABORDADO de verdade (mensagem real trocada). Sem isso ele existe no banco
-  // mas fica de fora de "Leads Captados" / "Total de Contatos" e aparece só
-  // no card separado de "Aguardando Abordagem". Só faz sentido pra quem tem
-  // conversa 1:1 humana: infoproduto nasce de webhook de checkout e o evento
-  // já é o fato de negócio real (ver src/lib/dashboard/lead-stats.ts).
-  const contactedWhere = businessModel === 'infoproduto' ? baseWhere : and(baseWhere, isNotNull(recoveryLeads.firstContactAt))
-  // Espelho do gate acima: infoproduto não tem o conceito de "aguardando
-  // abordagem por WhatsApp" (achado do @qa na revisão do PR — toda venda de
-  // checkout tem first_contact_at nulo por definição, então sem este gate
-  // "Aguardando Abordagem" contaria vendas JÁ APROVADAS como não abordadas).
-  const notContactedWhere = businessModel === 'infoproduto' ? sql`false` : and(baseWhere, isNull(recoveryLeads.firstContactAt))
+  const contactedGateSql = sql`(${recoveryLeads.firstContactAt} is not null or ${dashboardBusinessWonSql(businessModel)} or ${recoveryLeads.platform} = 'hermes')`
+  const contactedWhere = businessModel === 'infoproduto' ? baseWhere : and(baseWhere, contactedGateSql)
+  const notContactedWhere = businessModel === 'infoproduto' ? sql`false` : and(baseWhere, sql`not ${contactedGateSql}`)
 
   const rangeDurationMs = toDate.getTime() - fromDate.getTime()
   const prevFrom = new Date(fromDate.getTime() - rangeDurationMs)

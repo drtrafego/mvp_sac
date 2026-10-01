@@ -8,9 +8,15 @@ import { eq, and, sql, gte } from 'drizzle-orm'
 import { Info, ListOrdered, ArrowRight, Columns3 } from 'lucide-react'
 import { AgentNameCard } from '@/components/agente/agent-name-card'
 import { AgendaSection } from '@/components/agente/agenda-section'
+import { FollowupCard } from '@/components/followup/followup-card'
+import { getFollowupConfigReal, getFollowupSentStatsReal } from '@/lib/followup-server'
 
 export default async function AgentePage() {
   const company = await requireCompany()
+  const [{ config: followupConfigData, agentSlug, isSharedDbConnected }, followupStats] = await Promise.all([
+    getFollowupConfigReal(company.slug, company.id),
+    getFollowupSentStatsReal(company.slug, company.id),
+  ])
 
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
@@ -69,6 +75,13 @@ export default async function AgentePage() {
       </div>
 
       <AgentNameCard />
+
+      <FollowupCard
+        initialConfig={followupConfigData}
+        initialStats={followupStats}
+        initialAgentSlug={agentSlug}
+        initialIsSharedDbConnected={isSharedDbConnected}
+      />
 
       <AgendaSection />
 
