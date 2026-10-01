@@ -33,16 +33,20 @@ o mesmo requisito, e ambas passam pelo filtro compartilhado usado pela
 renderização. Uma regra pausada (`is_active=false`) não libera o item, coerente
 com o fato de que o processador não executa essa regra.
 
-## Commit
+## Commits
 
-Commit de implementação e testes:
+- Implementação e testes do gate:
+  `7f70b05a338ae0b63f99879bcb606be1a8f966bb`.
+- Primeiro relatório da entrega: `dd00fe5974a13b203bbace5c97d9b2fb0dbcfbec`.
+- Correção do baseline de lint do `sidebar.tsx`:
+  `d6bec1b772efb66e93efb399ac705878201361ad`.
 
-`7f70b05a338ae0b63f99879bcb606be1a8f966bb`
-
-O `.git` compartilhado estava somente leitura no sandbox. Por isso, o commit
-foi produzido sobre um clone temporário baseado no mesmo `main` atualizado
-(`bd2867d5`) e será entregue em `comentario-dm-menu.bundle` na raiz deste
-worktree. Este relatório é incluído em um segundo commit no mesmo bundle.
+O `.git` compartilhado continua somente leitura no sandbox: o `git add`
+nominal falhou ao tentar criar `.git/worktrees/comentario-dm-menu/index.lock`.
+Os commits novos foram, portanto, produzidos em clone temporário baseado
+exatamente em `dd00fe59` e entregues em
+`comentario-dm-menu-qa-fix.bundle` na raiz deste worktree. Este relatório fica
+em um commit documental posterior ao commit de lint dentro do mesmo bundle.
 
 ## Provas
 
@@ -60,10 +64,52 @@ persistidos em um Postgres 16 real e descartável pelo teste
 - Caso pausado: empresa `303`, com regra cadastrada e `is_active=false`, recebeu
   `instagramCommentAutomation=false`; o item ficou ausente nas duas seções.
 
-Validações executadas com sucesso:
+## Correção do lint bloqueante
 
-- `npx tsc --noEmit`
-- `npx eslint src/lib/company-sidebar.ts src/components/layout/sidebar.tsx scripts/instagram-direct-access-gate.test.ts scripts/instagram-comment-menu-gate.test.ts`
-- `npm run test:instagram-comment-menu-gate` — 3/3 testes passaram
-- `npm run test:instagram-direct-regressions` — 6/6 testes passaram
-- `npx tsx scripts/sidebar-nav-filters.reconcile.test.ts` — 16/16 testes passaram
+Antes desta correção, o comando solicitado pelo QA retornava código `1` e
+reportava exatamente **11 problemas: 3 erros e 8 warnings**, todos em
+`src/components/layout/sidebar.tsx`:
+
+- `3:31` — warning `@typescript-eslint/no-unused-vars` (`Fragment`);
+- `25:3` — warning `@typescript-eslint/no-unused-vars` (`Filter`);
+- `337:9` — error `react-hooks/set-state-in-effect`;
+- `347:7` — error `react-hooks/set-state-in-effect`;
+- `364:6` — warning `react-hooks/exhaustive-deps` (`isActive`);
+- `379:9` — warning `@typescript-eslint/no-unused-vars`
+  (`showSectionAtendimento`);
+- `380:9` — warning `@typescript-eslint/no-unused-vars`
+  (`showSectionAnalise`);
+- `381:9` — warning `@typescript-eslint/no-unused-vars`
+  (`showSectionApiOficial`);
+- `978:15` — warning `@next/next/no-img-element`;
+- `1018:10` — warning `@typescript-eslint/no-unused-vars` (`mounted`);
+- `1021:5` — error `react-hooks/set-state-in-effect`.
+
+Foram removidos os imports, constantes e estado sem uso. As restaurações de
+preferências após a hidratação e a abertura de seção após mudança de rota foram
+preservadas e receberam exceções locais justificadas para
+`react-hooks/set-state-in-effect`; reestruturá-las poderia mudar hidratação e
+comportamento. A dependência deliberadamente restrita a `pathname` recebeu
+justificativa local, assim como o `<img>` cuja URL externa vem do provedor de
+identidade e não possui host estático para `next/image`. Nenhuma lógica do gate
+ou da navegação foi alterada.
+
+Resultado final e reproduzível:
+
+```bash
+pnpm exec eslint src/lib/company-sidebar.ts src/components/layout/sidebar.tsx scripts/instagram-direct-access-gate.test.ts scripts/instagram-comment-menu-gate.test.ts
+```
+
+Código de saída: `0`. Saída exata: **vazia** (`stdout` e `stderr` sem conteúdo).
+
+## Revalidação após a correção de lint
+
+- `npm run test:instagram-comment-menu-gate` — código `0`; saída final exata:
+  **3 testes, 3 passaram, 0 falharam, 0 cancelados, 0 pulados, 0 todo**.
+- `npm run test:instagram-direct-regressions` — código `0`; saída final exata:
+  **6 testes, 6 passaram, 0 falharam, 0 cancelados, 0 pulados, 0 todo**.
+- `npx tsx scripts/sidebar-nav-filters.reconcile.test.ts` — código `0`; saída
+  final exata: **16 passaram, 0 falharam**.
+- `npx tsc --noEmit` — código `0`; saída exata: **vazia** (`stdout` e `stderr`
+  sem conteúdo).
+- `git diff --check` — código `0`; saída exata: **vazia**.
