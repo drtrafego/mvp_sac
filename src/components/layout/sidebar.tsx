@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
@@ -22,7 +22,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Filter,
   Bot,
   Code2,
   MessageCircle,
@@ -334,6 +333,8 @@ export function SidebarNavContent({
     try {
       const saved = localStorage.getItem(SECTIONS_STORAGE_KEY)
       if (saved) {
+        // A preferência só existe no navegador e precisa ser restaurada após a hidratação.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setSectionsOpen(prev => ({ ...prev, ...JSON.parse(saved) }))
       }
     } catch {
@@ -344,6 +345,8 @@ export function SidebarNavContent({
   // Garantir que a seção ativa esteja sempre aberta
   useEffect(() => {
     if (analiseNav.some(item => isActive(item.href))) {
+      // Abre a seção correspondente quando a rota muda.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSectionsOpen(prev => ({ ...prev, analise: true }))
     }
     if (apiOficialNav.some(item => isActive(item.href))) {
@@ -361,6 +364,9 @@ export function SidebarNavContent({
     if (ajustesNav.some(item => isActive(item.href))) {
       setSectionsOpen(prev => ({ ...prev, ajustes: true }))
     }
+    // isActive também depende de searchParams; pathname é a dependência histórica
+    // deliberada para abrir seções apenas durante navegação entre rotas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
 
   const toggleSection = (key: string) => {
@@ -376,10 +382,6 @@ export function SidebarNavContent({
   }
 
   // Filtragem de seções baseada em sidebarConfig ou conexões ativas
-  const showSectionAtendimento = sidebarConfig?.showVisaoGeral !== false || sidebarConfig?.showConversas !== false || sidebarConfig?.showPipeline !== false || sidebarConfig?.showLeads !== false
-  const showSectionAnalise = sidebarConfig ? (sidebarConfig.showAnalise ?? false) : true
-  const showSectionApiOficial = sidebarConfig ? (sidebarConfig.showApiOficial ?? true) : true
-
   const showHotmart = sidebarConfig?.showHotmart !== undefined ? sidebarConfig.showHotmart : (activeConnections?.hotmart ?? true)
   const showKiwify = sidebarConfig?.showKiwify !== undefined ? sidebarConfig.showKiwify : !!activeConnections?.kiwify
   const showGreenn = sidebarConfig?.showGreenn !== undefined ? sidebarConfig.showGreenn : !!activeConnections?.greenn
@@ -975,6 +977,8 @@ export function SidebarFooter({ isAdmin, collapsed = false }: SidebarProps & { c
         <div className={cn('flex items-center rounded-xl bg-surface-base border border-line-subtle', collapsed ? 'justify-center p-1.5' : 'gap-2.5 p-2')}>
           <div className="w-8 h-8 rounded-full bg-brand-glow border border-brand-solid/30 flex items-center justify-center text-brand-ink font-bold text-micro shrink-0 overflow-hidden" title={`${displayName} (${email})`}>
             {user.profileImageUrl ? (
+              // A URL vem do provedor de identidade e não possui host estático configurável no next/image.
+              // eslint-disable-next-line @next/next/no-img-element
               <img src={user.profileImageUrl} alt={displayName} className="w-full h-full object-cover" />
             ) : (
               displayName.slice(0, 2).toUpperCase()
@@ -1015,12 +1019,12 @@ export function SidebarFooter({ isAdmin, collapsed = false }: SidebarProps & { c
 
 export function Sidebar({ isAdmin, activeConnections, sidebarConfig }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
-  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    setMounted(true)
     const saved = localStorage.getItem('sac_sidebar_collapsed')
     if (saved === 'true') {
+      // A preferência só existe no navegador e precisa ser restaurada após a hidratação.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCollapsed(true)
     }
   }, [])
