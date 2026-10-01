@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mock } from 'node:test'
 import path from 'node:path'
@@ -80,6 +81,11 @@ async function main(): Promise<void> {
         name: `Empresa Insert Race ${index + 1}`,
         slug: `empresa-insert-race-${index + 1}`,
       })),
+      ...Array.from({ length: ROUNDS * 2 }, (_, index) => ({
+        id: 1001 + index,
+        name: `Empresa Placeholder Race ${index + 1}`,
+        slug: `empresa-placeholder-race-${index + 1}`,
+      })),
     ])
     await database.insert(schema.settings).values({
       companyId: 401,
@@ -91,11 +97,13 @@ async function main(): Promise<void> {
     })
 
     let currentCompanyId = 402
+    const requestCompanyId = new AsyncLocalStorage<number>()
     const requireCompany = async () => {
+      const companyId = requestCompanyId.getStore() ?? currentCompanyId
       const [company] = await database
         .select()
         .from(schema.companies)
-        .where(eq(schema.companies.id, currentCompanyId))
+        .where(eq(schema.companies.id, companyId))
       return company
     }
 
@@ -114,6 +122,9 @@ async function main(): Promise<void> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
+    const putForCompany = (companyId: number, body: Record<string, unknown>) => (
+      requestCompanyId.run(companyId, () => PUT(request(body)))
+    )
 
     // O ramo INSERT continua preenchendo os gates omitidos com true.
     const createResponse = await PUT(request({ greennEnabled: false }))
@@ -143,6 +154,60 @@ async function main(): Promise<void> {
       .from(schema.settings)
       .where(eq(schema.settings.companyId, 401))
     assert.equal(updatedCredentialRow.greennWebhookToken, 'greenn-updated-token')
+
+    let maskedPlaceholderRejectedRequests = 0
+    let maskedPlaceholderLiteralWrites = 0
+    let maskedPlaceholderNonNullCredentials = 0
+    let maskedPlaceholderMissingRowsOrLostIntents = 0
+    const maskedPlaceholderExamples: string[] = []
+
+    for (let round = 1; round <= ROUNDS; round += 1) {
+      const companyIds = [999 + round * 2, 1000 + round * 2]
+      const responses = await Promise.allSettled(companyIds.map(companyId => (
+        putForCompany(companyId, {
+          greennEnabled: false,
+          hotmartClientSecret: '****1234',
+          hotmartWebhookToken: '****1234',
+        })
+      )))
+      const rejected = responses.filter(result => result.status === 'rejected').length
+      const badStatuses = responses.filter(
+        result => result.status === 'fulfilled' && result.value.status !== 200,
+      ).length
+      maskedPlaceholderRejectedRequests += rejected + badStatuses
+
+      const rows = await Promise.all(companyIds.map(async companyId => {
+        const [row] = await database
+          .select()
+          .from(schema.settings)
+          .where(eq(schema.settings.companyId, companyId))
+        return row
+      }))
+      const literalWrites = rows.filter(row => (
+        row?.hotmartClientSecret === '****1234'
+        || row?.hotmartWebhookToken === '****1234'
+      )).length
+      const nonNullCredentials = rows.filter(row => row && (
+        row.hotmartClientSecret !== null
+        || row.hotmartWebhookToken !== null
+      )).length
+      const missingRowsOrLostIntents = rows.filter(row => !row || row.greennEnabled).length
+      maskedPlaceholderLiteralWrites += literalWrites
+      maskedPlaceholderNonNullCredentials += nonNullCredentials
+      maskedPlaceholderMissingRowsOrLostIntents += missingRowsOrLostIntents
+
+      if ((rejected > 0 || badStatuses > 0 || nonNullCredentials > 0 || missingRowsOrLostIntents > 0)
+        && maskedPlaceholderExamples.length < 5) {
+        maskedPlaceholderExamples.push(JSON.stringify({
+          round,
+          rejected,
+          badStatuses,
+          literalWrites,
+          nonNullCredentials,
+          missingRowsOrLostIntents,
+        }))
+      }
+    }
 
     const insertRaceExamples: string[] = []
     let insertRaceRejectedRequests = 0
@@ -222,6 +287,15 @@ async function main(): Promise<void> {
     }
 
     const result = {
+      maskedPlaceholderCreateRace: {
+        rounds: ROUNDS,
+        companiesPerRound: 2,
+        rejectedRequests: maskedPlaceholderRejectedRequests,
+        literalWrites: maskedPlaceholderLiteralWrites,
+        nonNullCredentials: maskedPlaceholderNonNullCredentials,
+        missingRowsOrLostIntents: maskedPlaceholderMissingRowsOrLostIntents,
+        firstFive: maskedPlaceholderExamples,
+      },
       insertRace: {
         rounds: ROUNDS,
         writersPerRound: 4,
@@ -237,6 +311,10 @@ async function main(): Promise<void> {
       },
     }
     console.log(JSON.stringify(result))
+    assert.equal(maskedPlaceholderRejectedRequests, 0, `Requests com placeholder rejeitados: ${JSON.stringify(maskedPlaceholderExamples)}`)
+    assert.equal(maskedPlaceholderLiteralWrites, 0, `Placeholders persistidos: ${JSON.stringify(maskedPlaceholderExamples)}`)
+    assert.equal(maskedPlaceholderNonNullCredentials, 0, `Credenciais mascaradas não viraram null: ${JSON.stringify(maskedPlaceholderExamples)}`)
+    assert.equal(maskedPlaceholderMissingRowsOrLostIntents, 0, `Linhas/toggles perdidos: ${JSON.stringify(maskedPlaceholderExamples)}`)
     assert.equal(insertRaceRejectedRequests, 0, `Requests rejeitados no INSERT: ${JSON.stringify(insertRaceExamples)}`)
     assert.equal(insertRaceLostIntents, 0, `Intenções perdidas no INSERT: ${JSON.stringify(insertRaceExamples)}`)
     assert.equal(updateRaceLostIntents, 0, `Intenções perdidas no UPDATE: ${JSON.stringify(updateRaceExamples)}`)
