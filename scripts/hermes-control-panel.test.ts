@@ -88,11 +88,12 @@ test('sync de horário preserva campos existentes do agenda_config.json e sobres
     assert.equal(calls[2].url, 'https://hermes.example/agente/api/agenda-config?agente=drlucas')
     assert.equal(calls[1].init.method, 'POST')
     assert.equal((calls[1].init.headers as Record<string, string>).authorization, 'Bearer token-teste')
-    assert.equal(calls[1].body.agente, 'drlucas')
-    assert.equal(calls[1].body.config.slot_minutes, 15)
-    assert.deepEqual(calls[1].body.config.hours['5'], [['08:00', '12:30']])
-    assert.deepEqual(calls[1].body.config.webhook, { enabled: true, url_agenda: 'https://crm.example/agenda' })
-    assert.equal(calls[1].body.config.antecedencia_min, 60)
+    const writeBody = calls[1].body as { agente: string; config: Record<string, unknown> }
+    assert.equal(writeBody.agente, 'drlucas')
+    assert.equal(writeBody.config.slot_minutes, 15)
+    assert.deepEqual((writeBody.config.hours as Record<string, unknown>)['5'], [['08:00', '12:30']])
+    assert.deepEqual(writeBody.config.webhook, { enabled: true, url_agenda: 'https://crm.example/agenda' })
+    assert.equal(writeBody.config.antecedencia_min, 60)
   } finally {
     restore()
   }
@@ -134,8 +135,18 @@ test('sync de bloqueio usa os endpoints antigos que escrevem bloqueios.json', as
   restore()
   process.env.PAINEL_API_TOKEN = 'token-teste'
   const calls: Array<{ url: string; body?: Record<string, unknown> }> = []
+  const bloqueios: Record<string, string> = {}
   global.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-    calls.push({ url: String(url), body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined })
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+    calls.push({ url: String(url), body })
+    if (String(url).includes('/api/agenda-bloqueios?')) {
+      return Response.json({ bloqueios })
+    }
+    if (String(url).endsWith('/api/agenda-bloquear')) {
+      bloqueios[String(body.data)] = String(body.motivo)
+    } else if (String(url).endsWith('/api/agenda-desbloquear')) {
+      delete bloqueios[String(body.data)]
+    }
     return Response.json({ ok: true })
   }) as typeof fetch
 
@@ -144,10 +155,54 @@ test('sync de bloqueio usa os endpoints antigos que escrevem bloqueios.json', as
     const unblock = await syncHermesAgendaBlockDate('drlucas', '2026-10-12', '', false)
     assert.equal(block.ok, true)
     assert.equal(unblock.ok, true)
-    assert.equal(calls[0].url, 'https://hermes.casaldotrafego.com/agente/api/agenda-bloquear')
-    assert.deepEqual(calls[0].body, { agente: 'drlucas', data: '2026-10-12', motivo: 'Viagem' })
-    assert.equal(calls[1].url, 'https://hermes.casaldotrafego.com/agente/api/agenda-desbloquear')
-    assert.deepEqual(calls[1].body, { agente: 'drlucas', data: '2026-10-12' })
+    assert.equal(calls.length, 6)
+    assert.equal(calls[0].url, 'https://hermes.casaldotrafego.com/agente/api/agenda-bloqueios?agente=drlucas')
+    assert.equal(calls[1].url, 'https://hermes.casaldotrafego.com/agente/api/agenda-bloquear')
+    assert.deepEqual(calls[1].body, { agente: 'drlucas', data: '2026-10-12', motivo: 'Viagem' })
+    assert.equal(calls[2].url, 'https://hermes.casaldotrafego.com/agente/api/agenda-bloqueios?agente=drlucas')
+    assert.equal(calls[4].url, 'https://hermes.casaldotrafego.com/agente/api/agenda-desbloquear')
+    assert.deepEqual(calls[4].body, { agente: 'drlucas', data: '2026-10-12' })
+    assert.deepEqual(bloqueios, {})
+    if (!block.ok || !unblock.ok) throw new Error('resultado inesperado')
+    assert.equal(block.data.previousReason, null)
+    assert.equal(unblock.data.previousReason, 'Viagem')
+  } finally {
+    restore()
+  }
+})
+
+test('sync de bloqueio restaura o estado anterior quando a releitura não confirma', async () => {
+  restore()
+  process.env.PAINEL_API_TOKEN = 'token-teste'
+  const calls: Array<{ url: string; body?: Record<string, unknown> }> = []
+  let bloqueios: Record<string, string> = { '2026-10-12': 'Motivo anterior' }
+  let ignorarPrimeiraEscrita = true
+  global.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+    calls.push({ url: String(url), body })
+    if (String(url).includes('/api/agenda-bloqueios?')) {
+      return Response.json({ bloqueios })
+    }
+    if (String(url).endsWith('/api/agenda-bloquear')) {
+      if (ignorarPrimeiraEscrita) {
+        ignorarPrimeiraEscrita = false
+      } else {
+        bloqueios = { ...bloqueios, [String(body.data)]: String(body.motivo) }
+      }
+    }
+    return Response.json({ ok: true })
+  }) as typeof fetch
+
+  try {
+    const result = await syncHermesAgendaBlockDate('drlucas', '2026-10-12', 'Motivo novo', true)
+    assert.equal(result.ok, false)
+    assert.equal(calls.length, 5)
+    assert.deepEqual(calls[3].body, {
+      agente: 'drlucas',
+      data: '2026-10-12',
+      motivo: 'Motivo anterior',
+    })
+    assert.equal(bloqueios['2026-10-12'], 'Motivo anterior')
   } finally {
     restore()
   }

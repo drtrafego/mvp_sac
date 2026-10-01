@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { evaluateDispatchWindow, firstDueJobPerLead, retryAtAfterPreviousFollowupStep, shouldApplyFollowupDispatchWindow } from '../src/lib/followup-dispatch-policy'
+import { readFileSync } from 'node:fs'
+import { evaluateDispatchWindow, firstDueJobPerLead, retryAtAfterPreviousFollowupStep, selectFollowupDispatchSchedule, shouldApplyFollowupDispatchWindow } from '../src/lib/followup-dispatch-policy'
 import { DEFAULT_AVAILABILITY_SCHEDULE, legacyAgendaHoursToAvailabilitySchedule, type AvailabilitySchedule } from '../src/lib/agenda-schedule'
 
 const BASE_SCHEDULE: AvailabilitySchedule = {
@@ -107,6 +108,40 @@ test('cada agente usa sua própria grade, sem vazar configuração entre empresa
   const decisionB = evaluateDispatchWindow({ schedule: scheduleB, now })
   assert.equal(decisionB.allowed, false)
   assert.equal(decisionB.retryAt?.toISOString(), '2026-09-28T17:00:00.000Z')
+})
+
+test('Dr. Lucas usa override confirmado e Gramado prefere snapshot nativo sem write-back', () => {
+  const stored: AvailabilitySchedule = {
+    ...BASE_SCHEDULE,
+    segunda: [{ inicio: '08:00', fim: '12:00' }],
+  }
+  const native: AvailabilitySchedule = {
+    ...BASE_SCHEDULE,
+    segunda: [{ inicio: '18:00', fim: '22:30' }],
+  }
+
+  assert.equal(selectFollowupDispatchSchedule({
+    storedSchedule: stored,
+    nativeSchedule: native,
+    manualOverride: true,
+    manualWriteThroughAvailable: true,
+  }), stored, 'Dr. Lucas: edição manual confirmada vence o snapshot')
+
+  assert.equal(selectFollowupDispatchSchedule({
+    storedSchedule: stored,
+    nativeSchedule: native,
+    manualOverride: true,
+    manualWriteThroughAvailable: false,
+  }), native, 'Gramado: override sem API de escrita não pode vencer a fonte real')
+})
+
+test('cron identifica a empresa antes de escolher entre override e snapshot nativo', () => {
+  const cronSource = readFileSync(new URL('../src/app/api/cron/route.ts', import.meta.url), 'utf8')
+
+  assert.match(cronSource, /companySlug:\s*companies\.slug/)
+  assert.match(cronSource, /isNativeAvailabilityCompany\(companySlug\)/)
+  assert.match(cronSource, /manualWriteThroughAvailable:\s*!nativeCompany\s*\|\|\s*shouldSyncHermesAgenda\(companySlug\)/)
+  assert.match(cronSource, /selectFollowupDispatchSchedule\(/)
 })
 
 test('quando vários passos vencem juntos, só o primeiro fica para envio', () => {

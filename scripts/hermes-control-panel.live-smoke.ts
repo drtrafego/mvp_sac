@@ -140,7 +140,6 @@ async function main() {
     assert.equal(activity.some(row => row.action === 'agenda_update_schedule'), true)
 
     const remote = await readHermesAgendaConfig('drlucas')
-    assert.equal(remote.ok, true, remote.ok ? '' : remote.error)
     if (!remote.ok) throw new Error(remote.error)
     assert.equal(remote.data.config?.timezone, temporarySchedule.timezone)
     assert.equal(remote.data.config?.slot_minutes, originalConfig.slot_minutes)
@@ -158,9 +157,8 @@ async function main() {
     }))
   } finally {
     const restored = await syncHermesAgendaSchedule('drlucas', originalSchedule)
-    assert.equal(restored.ok, true, restored.ok ? '' : restored.error)
+    if (!restored.ok) throw new Error(restored.error)
     const finalRead = await readHermesAgendaConfig('drlucas')
-    assert.equal(finalRead.ok, true, finalRead.ok ? '' : finalRead.error)
     if (!finalRead.ok) throw new Error(finalRead.error)
     assert.deepEqual(finalRead.data.config, originalConfig, 'Hermes não voltou ao JSON original')
     console.log(JSON.stringify({ ok: true, exactOriginalRestored: true }))

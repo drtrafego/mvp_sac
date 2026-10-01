@@ -7,16 +7,16 @@ import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { isUniqueViolation } from '@/lib/webhook-dedup'
 import { DEFAULT_AVAILABILITY_SCHEDULE, isValidDate, type AvailabilitySchedule } from '@/lib/agenda-schedule'
 import { maybeRefreshGoogleCalendarSync } from '@/lib/google-calendar-sync'
-import { syncHermesAgendaBlockDate } from '@/lib/hermes-control-panel'
+import { restoreHermesAgendaBlockDate, syncHermesAgendaBlockDate } from '@/lib/hermes-control-panel'
 import { eq, and, asc, gte } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
 // O corte de "hoje" abaixo (GET) usa o timezone salvo em
 // settings.availabilitySchedule.timezone quando existe; sem isso, cai em UTC do
-// servidor. Hoje não tem consumidor real (nenhum bot lê essa rota ainda, é
-// config pura), então o fallback UTC nunca gerou bug em produção, mas fica
-// resolvido de origem pra quando a integração com o bot acontecer.
+// servidor. O cron de follow-up do SAC usa essas datas e, no Dr. Lucas, as
+// escritas são confirmadas na Control API antes do commit local. O fallback
+// UTC continua sendo só a proteção para configurações antigas/inválidas.
 function resolveTodayInTimezone(timezone: string): string {
   try {
     return new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(
@@ -102,10 +102,38 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       )
     }
 
-    const [created] = await db
-      .insert(agendaBlockedDates)
-      .values({ companyId: context.company.id, date, reason: cleanReason })
-      .returning()
+    let created: typeof agendaBlockedDates.$inferSelect
+    try {
+      ;[created] = await db
+        .insert(agendaBlockedDates)
+        .values({ companyId: context.company.id, date, reason: cleanReason })
+        .returning()
+    } catch (dbError) {
+      // Outra requisição pode ter vencido a corrida depois do SELECT. Nesse
+      // caso o bloqueio remoto continua correto e não deve ser desfeito.
+      if (isUniqueViolation(dbError)) {
+        return NextResponse.json(
+          { error: `A data ${date} já está bloqueada.`, code: 'ALREADY_BLOCKED' },
+          { status: 409 }
+        )
+      }
+
+      const rollback = await restoreHermesAgendaBlockDate(
+        context.company.slug,
+        date,
+        hermesSync.data.previousReason ?? null,
+      )
+      const detail = dbError instanceof Error ? dbError.message : 'falha ao persistir no banco'
+      return NextResponse.json(
+        {
+          error: rollback.ok
+            ? `Não salvei no SAC; o bloqueio no Hermes foi revertido: ${detail}`
+            : `Não salvei no SAC e não consegui reverter o Hermes: ${detail}. ${rollback.error}`,
+          code: rollback.ok ? 'SAC_AGENDA_BLOCK_SAVE_FAILED_ROLLED_BACK' : 'SAC_AGENDA_BLOCK_SAVE_FAILED_ROLLBACK_FAILED',
+        },
+        { status: 500 },
+      )
+    }
 
     await logAgentActivity({
       companyId: context.company.id,

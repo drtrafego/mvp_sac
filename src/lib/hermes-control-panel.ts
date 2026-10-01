@@ -16,6 +16,13 @@ export type LegacyAgendaConfig = Record<string, unknown> & {
   webhook?: unknown
 }
 
+export type HermesAgendaBlockedDates = Record<string, string>
+
+export type HermesAgendaBlockSyncData = {
+  bloqueios?: HermesAgendaBlockedDates
+  previousReason?: string | null
+}
+
 const DEFAULT_PANEL_URL = 'https://hermes.casaldotrafego.com/agente'
 const DRLUCAS_SLUG = 'drlucas'
 
@@ -216,9 +223,74 @@ export async function syncHermesAgendaBlockDate(
   date: string,
   reason: string,
   blocked: boolean,
-): Promise<PanelResult> {
+): Promise<PanelResult<HermesAgendaBlockSyncData>> {
   if (!shouldSyncHermesAgenda(slug)) return { ok: true, status: 200, data: {} }
 
+  const current = await readHermesAgendaBlockedDates(slug)
+  if (!current.ok) return current
+
+  const previousReason = Object.prototype.hasOwnProperty.call(current.data.bloqueios, date)
+    ? String(current.data.bloqueios[date])
+    : null
+
+  const written = await writeHermesAgendaBlockDate(slug, date, reason, blocked)
+  if (!written.ok) return written
+
+  const confirmed = await readHermesAgendaBlockedDates(slug)
+  const actualReason = confirmed.ok && Object.prototype.hasOwnProperty.call(confirmed.data.bloqueios, date)
+    ? String(confirmed.data.bloqueios[date])
+    : null
+  const expectedReason = blocked ? reason : null
+  if (confirmed.ok && actualReason === expectedReason) {
+    return {
+      ok: true,
+      status: confirmed.status,
+      data: { bloqueios: confirmed.data.bloqueios, previousReason },
+    }
+  }
+
+  const rollback = await restoreHermesAgendaBlockDate(slug, date, previousReason)
+  const rollbackError = rollback.ok ? '' : ` Rollback também falhou: ${rollback.error}`
+  return {
+    ok: false,
+    status: confirmed.status,
+    error: confirmed.ok
+      ? `Hermes respondeu ao POST, mas a releitura não confirmou o ${blocked ? 'bloqueio' : 'desbloqueio'}.${rollbackError}`
+      : `Hermes respondeu ao POST, mas a releitura dos bloqueios falhou: ${confirmed.error}.${rollbackError}`,
+    data: confirmed.ok ? { bloqueios: confirmed.data.bloqueios, previousReason } : { previousReason },
+  }
+}
+
+export async function readHermesAgendaBlockedDates(
+  slug: string,
+): Promise<PanelResult<{ bloqueios: HermesAgendaBlockedDates }>> {
+  const result = await callPanel<{ bloqueios?: unknown }>(
+    `/api/agenda-bloqueios?agente=${encodeURIComponent(slug)}`,
+    { method: 'GET' },
+  )
+  if (!result.ok) return result
+  const raw = result.data.bloqueios
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      ok: false,
+      status: result.status,
+      error: 'Hermes respondeu sem o mapa de bloqueios esperado.',
+      data: result.data,
+    }
+  }
+  return {
+    ok: true,
+    status: result.status,
+    data: { bloqueios: raw as HermesAgendaBlockedDates },
+  }
+}
+
+async function writeHermesAgendaBlockDate(
+  slug: string,
+  date: string,
+  reason: string,
+  blocked: boolean,
+): Promise<PanelResult> {
   return callPanel(blocked ? '/api/agenda-bloquear' : '/api/agenda-desbloquear', {
     method: 'POST',
     body: JSON.stringify({
@@ -227,4 +299,31 @@ export async function syncHermesAgendaBlockDate(
       ...(blocked ? { motivo: reason } : {}),
     }),
   })
+}
+
+export async function restoreHermesAgendaBlockDate(
+  slug: string,
+  date: string,
+  previousReason: string | null,
+): Promise<PanelResult<{ bloqueios: HermesAgendaBlockedDates }>> {
+  if (!shouldSyncHermesAgenda(slug)) return { ok: true, status: 200, data: { bloqueios: {} } }
+
+  const blocked = previousReason !== null
+  const written = await writeHermesAgendaBlockDate(slug, date, previousReason || 'bloqueado', blocked)
+  if (!written.ok) return written
+
+  const confirmed = await readHermesAgendaBlockedDates(slug)
+  if (!confirmed.ok) return confirmed
+  const actualReason = Object.prototype.hasOwnProperty.call(confirmed.data.bloqueios, date)
+    ? String(confirmed.data.bloqueios[date])
+    : null
+  if (actualReason !== previousReason) {
+    return {
+      ok: false,
+      status: confirmed.status,
+      error: 'Hermes respondeu ao rollback, mas a releitura não confirmou o bloqueio anterior.',
+      data: confirmed.data,
+    }
+  }
+  return confirmed
 }

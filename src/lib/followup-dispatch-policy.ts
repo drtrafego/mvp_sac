@@ -23,6 +23,19 @@ function resolveSchedule(schedule: AvailabilitySchedule | null | undefined): Ava
   return schedule ?? DEFAULT_AVAILABILITY_SCHEDULE
 }
 
+export function selectFollowupDispatchSchedule(params: {
+  storedSchedule?: AvailabilitySchedule | null
+  nativeSchedule?: AvailabilitySchedule | null
+  manualOverride?: boolean
+  manualWriteThroughAvailable?: boolean
+}): AvailabilitySchedule {
+  const preferStored = Boolean(params.manualOverride) && params.manualWriteThroughAvailable !== false
+  return (preferStored
+    ? (params.storedSchedule ?? params.nativeSchedule)
+    : (params.nativeSchedule ?? params.storedSchedule))
+    ?? DEFAULT_AVAILABILITY_SCHEDULE
+}
+
 function timezoneOffsetMinutes(timezone: string): number | null {
   const match = /^([+-])(\d{2}):([0-5]\d)$/.exec(timezone)
   if (!match) return null
