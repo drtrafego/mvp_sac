@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { db } from '@/lib/db'
-import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs } from '@/lib/db/schema'
+import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived } from '@/lib/db/schema'
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
+import { maskedHeaders } from '@/lib/webhook-headers'
 import { purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 
 type SaleMeta = { meta_key?: string; meta_value?: string }
@@ -60,6 +61,30 @@ type GreennPayload = {
   contract?: {
     id?: string | number
     subscriber_code?: string
+  }
+}
+
+async function logReceived(args: {
+  companyId: number
+  slug: string
+  event: string | null
+  skipReason: string
+  rawBody: unknown
+  headers: Record<string, string>
+}) {
+  try {
+    await db.insert(webhookReceived).values({
+      companyId: args.companyId,
+      slug: args.slug,
+      source: 'greenn',
+      event: args.event,
+      processed: false,
+      skipReason: args.skipReason,
+      rawBody: args.rawBody as object,
+      headers: args.headers,
+    })
+  } catch (error) {
+    console.error('[webhook_received greenn insert failed]', error)
   }
 }
 
@@ -150,6 +175,18 @@ export async function POST(
   if (!company) return NextResponse.json({ error: 'Empresa não encontrada' }, { status: 404 })
 
   const [config] = await db.select().from(settings).where(eq(settings.companyId, company.id))
+
+  if (config?.greennEnabled === false) {
+    await logReceived({
+      companyId: company.id,
+      slug,
+      event: body?.event ?? null,
+      skipReason: 'greenn_integration_disabled',
+      rawBody: body,
+      headers: maskedHeaders(req),
+    })
+    return NextResponse.json({ error: 'Integração Greenn desabilitada para esta empresa' }, { status: 403 })
+  }
 
   // Token Greenn do parceiro como camada ADICIONAL: so e exigido quando configurado.
   // Nosso token (checkWebhookToken) ja garante a barreira de autenticacao.

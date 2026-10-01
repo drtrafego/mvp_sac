@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { companies, settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
-import { maskSettingsRow } from '@/lib/settings-mask'
+import { maskSettingsRow, shouldWriteSettingsField } from '@/lib/settings-mask'
 import { parseAgentDisplayName } from '@/lib/agent-display-name'
 
 /**
@@ -21,10 +21,59 @@ async function webhookTokenParaAdmin(): Promise<string | null> {
   return process.env.RECUPERAVENDAS_WEBHOOK_SECRET ?? null
 }
 
-function resolveSecret(bodyVal: string | undefined, existingVal: string | null | undefined): string | null {
-  if (!bodyVal) return existingVal ?? null
-  if (bodyVal.startsWith('****')) return existingVal ?? null
-  return bodyVal
+const WRITABLE_SETTING_FIELDS = [
+  ['hotmartEnabled', 'boolean'],
+  ['greennEnabled', 'boolean'],
+  ['zoutiEnabled', 'boolean'],
+  ['kiwifyEnabled', 'boolean'],
+  ['hotmartWebhookToken', 'string'],
+  ['hotmartClientId', 'string'],
+  ['hotmartClientSecret', 'string'],
+  ['greennWebhookToken', 'string'],
+  ['greennPublicKey', 'string'],
+  ['greennApiKey', 'string'],
+  ['zoutiWebhookToken', 'string'],
+  ['zoutiApiKey', 'string'],
+  ['kiwifyWebhookToken', 'string'],
+  ['whatsappProvider', 'string'],
+  ['metaPhoneNumberId', 'string'],
+  ['metaAccessToken', 'string'],
+  ['metaVerifyToken', 'string'],
+  ['metaWabaId', 'string'],
+  ['metaAppSecret', 'string'],
+  ['metaAdsAccessToken', 'string'],
+  ['metaAdsAccountId', 'string'],
+  ['metaPixelId', 'string'],
+  ['uazapiBaseUrl', 'string'],
+  ['uazapiInstanceToken', 'string'],
+  ['notificationPhone', 'string'],
+  ['brevoApiKey', 'string'],
+  ['brevoSenderEmail', 'string'],
+  ['brevoSenderName', 'string'],
+  ['instagramUsername', 'string'],
+  ['instagramAccountId', 'string'],
+  ['instagramAccessToken', 'string'],
+  ['instagramVerifyToken', 'string'],
+  ['instagramPageId', 'string'],
+  ['instagramAppSecret', 'string'],
+  ['sidebarConfig', 'present'],
+] as const
+
+function buildWritableSettingsFields(body: Record<string, unknown>): Record<string, unknown> {
+  const writableFields: Record<string, unknown> = {}
+
+  for (const [key, expectedType] of WRITABLE_SETTING_FIELDS) {
+    const value = body[key]
+    const hasExpectedType = expectedType === 'present'
+      ? value !== undefined
+      : typeof value === expectedType
+
+    if (hasExpectedType && shouldWriteSettingsField(key, value)) {
+      writableFields[key] = value
+    }
+  }
+
+  return writableFields
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -42,11 +91,14 @@ export async function GET(): Promise<NextResponse> {
       hotmartWebhookToken: '',
       hotmartClientId: '',
       hotmartClientSecret: '',
+      greennEnabled: true,
       greennWebhookToken: '',
       greennPublicKey: '',
       greennApiKey: '',
+      zoutiEnabled: true,
       zoutiWebhookToken: '',
       zoutiApiKey: '',
+      kiwifyEnabled: true,
       kiwifyWebhookToken: '',
       whatsappProvider: 'meta',
       metaPhoneNumberId: '',
@@ -92,7 +144,7 @@ export async function GET(): Promise<NextResponse> {
 
 export async function PUT(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
-  const body = await req.json()
+  const body = await req.json() as Record<string, unknown>
   let agentDisplayName: string | undefined
   try {
     agentDisplayName = parseAgentDisplayName(body.agentDisplayName)
@@ -102,7 +154,6 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       { status: 400 },
     )
   }
-  const [existing] = await db.select().from(settings).where(eq(settings.companyId, company.id))
 
   if (agentDisplayName !== undefined) {
     await db
@@ -111,87 +162,28 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       .where(eq(companies.id, company.id))
   }
 
-  if (existing) {
-    const [updated] = await db
-      .update(settings)
-      .set({
-        hotmartEnabled: typeof body.hotmartEnabled === 'boolean' ? body.hotmartEnabled : existing.hotmartEnabled,
-        hotmartWebhookToken: resolveSecret(body.hotmartWebhookToken, existing.hotmartWebhookToken),
-        hotmartClientId: body.hotmartClientId ?? existing.hotmartClientId,
-        hotmartClientSecret: resolveSecret(body.hotmartClientSecret, existing.hotmartClientSecret),
-        greennWebhookToken: resolveSecret(body.greennWebhookToken, existing.greennWebhookToken),
-        greennPublicKey: body.greennPublicKey ?? existing.greennPublicKey,
-        greennApiKey: resolveSecret(body.greennApiKey, existing.greennApiKey),
-        zoutiWebhookToken: resolveSecret(body.zoutiWebhookToken, existing.zoutiWebhookToken),
-        zoutiApiKey: resolveSecret(body.zoutiApiKey, existing.zoutiApiKey),
-        kiwifyWebhookToken: resolveSecret(body.kiwifyWebhookToken, existing.kiwifyWebhookToken),
-        whatsappProvider: body.whatsappProvider ?? existing.whatsappProvider,
-        metaPhoneNumberId: body.metaPhoneNumberId ?? existing.metaPhoneNumberId,
-        metaAccessToken: resolveSecret(body.metaAccessToken, existing.metaAccessToken),
-        metaVerifyToken: body.metaVerifyToken ?? existing.metaVerifyToken,
-        metaWabaId: body.metaWabaId ?? existing.metaWabaId,
-        metaAppSecret: resolveSecret(body.metaAppSecret, existing.metaAppSecret),
-        metaAdsAccessToken: resolveSecret(body.metaAdsAccessToken, existing.metaAdsAccessToken),
-        metaAdsAccountId: body.metaAdsAccountId ?? existing.metaAdsAccountId,
-        metaPixelId: body.metaPixelId ?? existing.metaPixelId,
-        uazapiBaseUrl: body.uazapiBaseUrl ?? existing.uazapiBaseUrl,
-        uazapiInstanceToken: resolveSecret(body.uazapiInstanceToken, existing.uazapiInstanceToken),
-        notificationPhone: body.notificationPhone ?? existing.notificationPhone,
-        brevoApiKey: resolveSecret(body.brevoApiKey, existing.brevoApiKey),
-        brevoSenderEmail: body.brevoSenderEmail ?? existing.brevoSenderEmail,
-        brevoSenderName: body.brevoSenderName ?? existing.brevoSenderName,
-        instagramUsername: body.instagramUsername ?? existing.instagramUsername,
-        instagramAccountId: body.instagramAccountId ?? existing.instagramAccountId,
-        instagramAccessToken: resolveSecret(body.instagramAccessToken, existing.instagramAccessToken),
-        instagramVerifyToken: body.instagramVerifyToken ?? existing.instagramVerifyToken,
-        instagramPageId: body.instagramPageId ?? existing.instagramPageId,
-        instagramAppSecret: resolveSecret(body.instagramAppSecret, existing.instagramAppSecret),
-        sidebarConfig: body.sidebarConfig !== undefined ? body.sidebarConfig : existing.sidebarConfig,
-        updatedAt: new Date(),
-      })
-      .where(eq(settings.id, existing.id))
-      .returning()
-    return NextResponse.json({ ...maskSettingsRow(updated), agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
-  }
+  // O body passa por uma única barreira antes de chegar a qualquer escrita.
+  // O mesmo objeto parcial alimenta INSERT e UPDATE, então placeholders
+  // mascarados não podem escapar por um caminho diferente.
+  const writableFields = buildWritableSettingsFields(body)
+  const updatedAt = new Date()
 
-  const [created] = await db
+  const [saved] = await db
     .insert(settings)
     .values({
       companyId: company.id,
-      hotmartEnabled: typeof body.hotmartEnabled === 'boolean' ? body.hotmartEnabled : true,
-      hotmartWebhookToken: body.hotmartWebhookToken || null,
-      hotmartClientId: body.hotmartClientId || null,
-      hotmartClientSecret: body.hotmartClientSecret || null,
-      greennWebhookToken: body.greennWebhookToken || null,
-      greennPublicKey: body.greennPublicKey || null,
-      greennApiKey: body.greennApiKey || null,
-      zoutiWebhookToken: body.zoutiWebhookToken || null,
-      zoutiApiKey: body.zoutiApiKey || null,
-      kiwifyWebhookToken: body.kiwifyWebhookToken || null,
-      whatsappProvider: body.whatsappProvider || 'meta',
-      metaPhoneNumberId: body.metaPhoneNumberId || null,
-      metaAccessToken: body.metaAccessToken || null,
-      metaVerifyToken: body.metaVerifyToken || null,
-      metaWabaId: body.metaWabaId || null,
-      metaAppSecret: body.metaAppSecret || null,
-      metaAdsAccessToken: body.metaAdsAccessToken || null,
-      metaAdsAccountId: body.metaAdsAccountId || null,
-      metaPixelId: body.metaPixelId || null,
-      uazapiBaseUrl: body.uazapiBaseUrl || null,
-      uazapiInstanceToken: body.uazapiInstanceToken || null,
-      notificationPhone: body.notificationPhone || null,
-      brevoApiKey: body.brevoApiKey || null,
-      brevoSenderEmail: body.brevoSenderEmail || null,
-      brevoSenderName: body.brevoSenderName || null,
-      instagramUsername: body.instagramUsername || null,
-      instagramAccountId: body.instagramAccountId || null,
-      instagramAccessToken: body.instagramAccessToken || null,
-      instagramVerifyToken: body.instagramVerifyToken || null,
-      instagramPageId: body.instagramPageId || null,
-      instagramAppSecret: body.instagramAppSecret || null,
-      sidebarConfig: body.sidebarConfig ?? null,
-      updatedAt: new Date(),
+      hotmartEnabled: true,
+      greennEnabled: true,
+      zoutiEnabled: true,
+      kiwifyEnabled: true,
+      whatsappProvider: 'meta',
+      ...writableFields,
+      updatedAt,
+    })
+    .onConflictDoUpdate({
+      target: settings.companyId,
+      set: { ...writableFields, updatedAt },
     })
     .returning()
-  return NextResponse.json({ ...maskSettingsRow(created), agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
+  return NextResponse.json({ ...maskSettingsRow(saved), agentDisplayName: agentDisplayName ?? company.agentDisplayName ?? '' })
 }

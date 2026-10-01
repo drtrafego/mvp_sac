@@ -52,10 +52,13 @@ export async function getCompanySidebarData(companyId: number): Promise<{
     const sourceSet = new Set(leadsPlatforms.map(l => (l.source || '').toLowerCase()))
 
     const hotmartEnabled = settingsRow?.hotmartEnabled !== false
+    const kiwifyEnabled = settingsRow?.kiwifyEnabled !== false
+    const greennEnabled = settingsRow?.greennEnabled !== false
+    const zoutiEnabled = settingsRow?.zoutiEnabled !== false
     const hasHotmart = hotmartEnabled && !!(settingsRow?.hotmartWebhookToken || settingsRow?.hotmartClientId || platformSet.has('hotmart'))
-    const hasKiwify = !!(settingsRow?.kiwifyWebhookToken || platformSet.has('kiwify'))
-    const hasGreenn = !!(settingsRow?.greennWebhookToken || settingsRow?.greennApiKey || platformSet.has('greenn'))
-    const hasZouti = !!(settingsRow?.zoutiWebhookToken || settingsRow?.zoutiApiKey || platformSet.has('zouti'))
+    const hasKiwify = kiwifyEnabled && !!(settingsRow?.kiwifyWebhookToken || platformSet.has('kiwify'))
+    const hasGreenn = greennEnabled && !!(settingsRow?.greennWebhookToken || settingsRow?.greennApiKey || platformSet.has('greenn'))
+    const hasZouti = zoutiEnabled && !!(settingsRow?.zoutiWebhookToken || settingsRow?.zoutiApiKey || platformSet.has('zouti'))
     const hasInstagram = hasInstagramCredentials(settingsRow)
     const hasMineracao = !!(platformSet.has('mineracao') || sourceSet.has('mineracao') || sourceSet.has('prospeccao') || settingsRow?.brevoApiKey)
 
@@ -63,17 +66,22 @@ export async function getCompanySidebarData(companyId: number): Promise<{
     const noneConfigured = !hasHotmart && !hasKiwify && !hasGreenn && !hasZouti && !hasInstagram && !hasMineracao
 
     const sidebarConfig = (settingsRow?.sidebarConfig as SidebarMenuConfig | undefined) || null
-    const effectiveSidebarConfig =
-      !hotmartEnabled && sidebarConfig
-        ? { ...sidebarConfig, showHotmart: false }
-        : sidebarConfig
+    const effectiveSidebarConfig = sidebarConfig
+      ? {
+          ...sidebarConfig,
+          ...(!hotmartEnabled ? { showHotmart: false } : {}),
+          ...(!kiwifyEnabled ? { showKiwify: false } : {}),
+          ...(!greennEnabled ? { showGreenn: false } : {}),
+          ...(!zoutiEnabled ? { showZouti: false } : {}),
+        }
+      : null
 
     return {
       activeConnections: {
         hotmart: hotmartEnabled && (hasHotmart || noneConfigured),
-        kiwify: hasKiwify,
-        greenn: hasGreenn,
-        zouti: hasZouti,
+        kiwify: kiwifyEnabled && hasKiwify,
+        greenn: greennEnabled && hasGreenn,
+        zouti: zoutiEnabled && hasZouti,
         instagram: hasInstagram,
         mineracao: hasMineracao,
       },

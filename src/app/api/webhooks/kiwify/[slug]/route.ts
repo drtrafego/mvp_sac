@@ -574,6 +574,14 @@ export async function POST(
 
   const [config] = await db.select().from(settings).where(eq(settings.companyId, company.id))
 
+  if (config?.kiwifyEnabled === false) {
+    await logReceived({
+      companyId: company.id, slug, event: firstLabel, processed: false,
+      skipReason: 'kiwify_integration_disabled', rawBody: parsed, headers: headersObj,
+    })
+    return NextResponse.json({ error: 'Integração Kiwify desabilitada para esta empresa' }, { status: 403 })
+  }
+
   // 3) Assinatura HMAC-SHA1 como camada ADICIONAL: só é exigida quando o segredo
   //    da cliente está configurado, igual Zouti e Greenn.
   if (config?.kiwifyWebhookToken) {
