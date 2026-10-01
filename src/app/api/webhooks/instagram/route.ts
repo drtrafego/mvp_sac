@@ -17,25 +17,44 @@ import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 
+export class AmbiguousCredentialError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AmbiguousCredentialError'
+  }
+}
+
 // Resolve a empresa dona de um pageId (Instagram Account ID ou Page ID) e,
 // junto, o slug dela pra registrar em webhook_received (mesmo padrão de log
 // que a rota [slug] já grava sempre, ver POST abaixo).
 async function resolveCompanyForPageId(pageId: string): Promise<{ companyId: number; slug: string } | null> {
-  const [byAccountId] = await db
-    .select({ companyId: settings.companyId, slug: companies.slug })
-    .from(settings)
-    .innerJoin(companies, eq(companies.id, settings.companyId))
-    .where(eq(settings.instagramAccountId, pageId))
-    .limit(1)
-  if (byAccountId) return byAccountId
+  const cleanId = pageId ? pageId.trim() : ''
+  if (!cleanId) return null
 
-  const [byPageId] = await db
+  const byAccountId = await db
     .select({ companyId: settings.companyId, slug: companies.slug })
     .from(settings)
     .innerJoin(companies, eq(companies.id, settings.companyId))
-    .where(eq(settings.instagramPageId, pageId))
-    .limit(1)
-  return byPageId ?? null
+    .where(eq(settings.instagramAccountId, cleanId))
+
+  if (byAccountId.length > 1) {
+    console.error(`[Instagram Webhook AMBIGUIDADE CRÍTICA] Múltiplas empresas possuem instagramAccountId="${cleanId}". Fail-closed 409.`)
+    throw new AmbiguousCredentialError(`Ambiguous instagramAccountId "${cleanId}"`)
+  }
+  if (byAccountId.length === 1) return byAccountId[0]
+
+  const byPageId = await db
+    .select({ companyId: settings.companyId, slug: companies.slug })
+    .from(settings)
+    .innerJoin(companies, eq(companies.id, settings.companyId))
+    .where(eq(settings.instagramPageId, cleanId))
+
+  if (byPageId.length > 1) {
+    console.error(`[Instagram Webhook AMBIGUIDADE CRÍTICA] Múltiplas empresas possuem instagramPageId="${cleanId}". Fail-closed 409.`)
+    throw new AmbiguousCredentialError(`Ambiguous instagramPageId "${cleanId}"`)
+  }
+
+  return byPageId[0] ?? null
 }
 
 // Extrai o pageId do primeiro entry, só pra resolver qual empresa validar o
@@ -44,7 +63,7 @@ function extractFirstPageIdForSecret(body: Record<string, unknown>): string | nu
   if (body.object !== 'instagram' || !Array.isArray(body.entry)) return null
   for (const entry of body.entry as Record<string, unknown>[]) {
     const pageId = entry.id as string | undefined
-    if (pageId) return pageId
+    if (pageId && pageId.trim()) return pageId.trim()
   }
   return null
 }
@@ -103,13 +122,19 @@ export async function POST(req: NextRequest) {
   let companyMetaSecret: string | null = null
   const pageIdForSecret = extractFirstPageIdForSecret(rawBody)
   if (pageIdForSecret) {
-    let [matchedForSecret] = await db.select().from(settings).where(eq(settings.instagramAccountId, pageIdForSecret)).limit(1)
-    if (!matchedForSecret) {
-      const [byPageId] = await db.select().from(settings).where(eq(settings.instagramPageId, pageIdForSecret)).limit(1)
-      matchedForSecret = byPageId
+    try {
+      const resolvedSecretCompany = await resolveCompanyForPageId(pageIdForSecret)
+      if (resolvedSecretCompany) {
+        const [row] = await db.select().from(settings).where(eq(settings.companyId, resolvedSecretCompany.companyId))
+        companySecret = row?.instagramAppSecret ?? null
+        companyMetaSecret = row?.metaAppSecret ?? null
+      }
+    } catch (err) {
+      if (err instanceof AmbiguousCredentialError) {
+        return NextResponse.json({ error: "Ambiguous tenant configuration" }, { status: 409 })
+      }
+      throw err
     }
-    companySecret = matchedForSecret?.instagramAppSecret ?? null
-    companyMetaSecret = matchedForSecret?.metaAppSecret ?? null
   }
   const secret =
     companySecret ||
@@ -130,17 +155,20 @@ export async function POST(req: NextRequest) {
   try {
     if (rawBody.object === 'instagram' && Array.isArray(rawBody.entry)) {
       for (const entry of rawBody.entry as Record<string, unknown>[]) {
-        // Cada entry roda isolado: uma exceção aqui (ex.: entry malformado de
-        // uma empresa) não pode abortar o processamento dos entries seguintes
-        // no mesmo payload, que podem ser de empresas totalmente diferentes
-        // sem nenhuma relação com o erro (achado do QA, 2ª rodada).
         try {
-        const pageId = (entry.id as string) || ''
-        const messagingList = (entry.messaging as Record<string, unknown>[]) ?? []
+          const pageId = (entry.id as string) || ''
+          const messagingList = (entry.messaging as Record<string, unknown>[]) ?? []
 
-        // Encontra a empresa correspondente pelo instagramAccountId ou instagramPageId
-        const resolved = await resolveCompanyForPageId(pageId)
-        const companyId = resolved?.companyId ?? null
+          let resolved: { companyId: number; slug: string } | null = null
+          try {
+            resolved = await resolveCompanyForPageId(pageId)
+          } catch (err) {
+            if (err instanceof AmbiguousCredentialError) {
+              return NextResponse.json({ error: "Ambiguous tenant configuration" }, { status: 409 })
+            }
+            throw err
+          }
+          const companyId = resolved?.companyId ?? null
 
         // Registra o webhook_received pra ESTE entry, tanto no sucesso quanto
         // na falha de resolução: antes disso a rota global nunca gravava

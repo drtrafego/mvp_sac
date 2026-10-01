@@ -148,21 +148,33 @@ async function logReceived(args: {
   rawBody: unknown
   headers: Record<string, string>
 }) {
+  const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('timeout'), 500))
+  const dbPromise = (async () => {
+    try {
+      await db.insert(webhookReceived).values({
+        companyId: args.companyId,
+        slug: args.slug,
+        source: 'hermes',
+        event: args.event || 'reserva_confirmada',
+        processed: args.processed,
+        skipReason: args.skipReason ?? null,
+        errorMessage: args.errorMessage ?? null,
+        leadId: args.leadId ?? null,
+        rawBody: args.rawBody as object,
+        headers: args.headers,
+      })
+    } catch (e) {
+      console.error('[webhook_received hermes insert failed]', e)
+    }
+  })()
+
   try {
-    await db.insert(webhookReceived).values({
-      companyId: args.companyId,
-      slug: args.slug,
-      source: 'hermes',
-      event: args.event || 'reserva_confirmada',
-      processed: args.processed,
-      skipReason: args.skipReason ?? null,
-      errorMessage: args.errorMessage ?? null,
-      leadId: args.leadId ?? null,
-      rawBody: args.rawBody as object,
-      headers: args.headers,
-    })
+    const res = await Promise.race([dbPromise, timeoutPromise])
+    if (res === 'timeout') {
+      console.warn('[webhook_received hermes timeout] gravação de log em background excedeu 500ms, liberando resposta')
+    }
   } catch (e) {
-    console.error('[webhook_received hermes insert failed]', e)
+    console.error('[logReceived error]', e)
   }
 }
 

@@ -128,7 +128,12 @@ export const settings = pgTable('settings', {
   // preenchido = ligada (ver src/lib/ai-reply.ts).
   aiSystemPrompt: text('ai_system_prompt'),
   updatedAt: timestamp('updated_at').defaultNow(),
-})
+}, (table) => [
+  uniqueIndex('settings_meta_phone_number_id_unique').on(table.metaPhoneNumberId),
+  uniqueIndex('settings_uazapi_instance_token_unique').on(table.uazapiInstanceToken),
+  uniqueIndex('settings_instagram_account_id_unique').on(table.instagramAccountId),
+  uniqueIndex('settings_instagram_page_id_unique').on(table.instagramPageId),
+])
 
 // ─── Cursores de sincronização incremental dos Agents/CRM ───────────────────
 export const syncCursors = pgTable('sync_cursors', {

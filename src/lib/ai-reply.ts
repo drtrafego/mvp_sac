@@ -236,14 +236,16 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
     }
 
     const deliveryChannel = resolveLeadDeliveryChannel(lead)
+    let externalWamid: string | null = null
     if (deliveryChannel === 'instagram') {
       const result = await sendInstagramMessage({ recipientId: lead.phone, text: textoFinal, companyId: lead.companyId })
       if (!result.ok) {
         console.error(`[AI Reply] falha ao enviar Instagram lead=${leadId}: ${result.error}`)
         return
       }
+      externalWamid = result.messageId ?? null
     } else {
-      await sendWhatsAppMessage(lead.phone, { type: 'text', content: textoFinal }, lead.companyId)
+      externalWamid = await sendWhatsAppMessage(lead.phone, { type: 'text', content: textoFinal }, lead.companyId)
     }
 
     await db.insert(whatsappMessages).values({
@@ -257,6 +259,7 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
       sentBy: 'bot',
       senderName: nomeExibicaoDoBot(bot),
       agentId: bot,
+      externalId: externalWamid,
     })
 
     // Sem isto, a resposta do bot nunca bumpava lastActionAt/updatedAt:

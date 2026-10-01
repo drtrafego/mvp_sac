@@ -168,13 +168,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       let companySecret: string | null = null
       let companyId: number | null = null
       const phoneNumberIdForSecret = extractPhoneNumberIdForSecret(body)
-      if (phoneNumberIdForSecret) {
-        const [cfgForSecret] = await db
+      if (phoneNumberIdForSecret && phoneNumberIdForSecret.trim()) {
+        const cleanPhoneId = phoneNumberIdForSecret.trim()
+        const cfgsForSecret = await db
           .select({ companyId: settings.companyId, metaAppSecret: settings.metaAppSecret })
           .from(settings)
-          .where(eq(settings.metaPhoneNumberId, phoneNumberIdForSecret))
-        companySecret = cfgForSecret?.metaAppSecret ?? null
-        companyId = cfgForSecret?.companyId ?? null
+          .where(eq(settings.metaPhoneNumberId, cleanPhoneId))
+
+        if (cfgsForSecret.length > 1) {
+          console.error(`[WhatsApp Webhook AMBIGUIDADE CRÍTICA] Múltiplas empresas cadastradas com metaPhoneNumberId="${cleanPhoneId}". Fail-closed 409.`)
+          return NextResponse.json({ error: 'Ambiguous metaPhoneNumberId' }, { status: 409 })
+        }
+        companySecret = cfgsForSecret[0]?.metaAppSecret ?? null
+        companyId = cfgsForSecret[0]?.companyId ?? null
       }
       const secret = companySecret || process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET
       if (!secret) {
@@ -190,8 +196,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // UazAPI ou Webhook genérico
       const instanceToken = (body.instanceToken as string) || (body.instance as string) || null
       if (instanceToken) {
-        const [cfg] = await db.select().from(settings).where(eq(settings.uazapiInstanceToken, instanceToken))
-        if (!cfg) {
+        const cleanToken = instanceToken.trim()
+        if (!cleanToken) {
+          return NextResponse.json({ error: 'Não autorizado (token em branco)' }, { status: 401 })
+        }
+        const cfgs = await db.select().from(settings).where(eq(settings.uazapiInstanceToken, cleanToken))
+        if (cfgs.length > 1) {
+          console.error('[WhatsApp Webhook AMBIGUIDADE CRÍTICA] Múltiplas empresas com uazapiInstanceToken. Fail-closed 409.')
+          return NextResponse.json({ error: 'Ambiguous uazapiInstanceToken' }, { status: 409 })
+        }
+        if (cfgs.length === 0) {
           return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
         }
       } else {
@@ -220,12 +234,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     let companyId: number | null = null
 
-    if (parsed.provider === 'meta' && 'phoneNumberId' in parsed && parsed.phoneNumberId) {
-      const [cfg] = await db.select().from(settings).where(eq(settings.metaPhoneNumberId, parsed.phoneNumberId))
-      companyId = cfg?.companyId ?? null
-    } else if (parsed.provider === 'uazapi' && 'instanceToken' in parsed && parsed.instanceToken) {
-      const [cfg] = await db.select().from(settings).where(eq(settings.uazapiInstanceToken, parsed.instanceToken))
-      companyId = cfg?.companyId ?? null
+    if (parsed.provider === 'meta' && 'phoneNumberId' in parsed && parsed.phoneNumberId && parsed.phoneNumberId.trim()) {
+      const cleanPhoneId = parsed.phoneNumberId.trim()
+      const cfgs = await db.select().from(settings).where(eq(settings.metaPhoneNumberId, cleanPhoneId))
+      if (cfgs.length > 1) {
+        console.error(`[WhatsApp Webhook AMBIGUIDADE CRÍTICA] Múltiplas empresas com metaPhoneNumberId="${cleanPhoneId}". Fail-closed 409.`)
+        return NextResponse.json({ error: 'Ambiguous metaPhoneNumberId' }, { status: 409 })
+      }
+      companyId = cfgs[0]?.companyId ?? null
+    } else if (parsed.provider === 'uazapi' && 'instanceToken' in parsed && parsed.instanceToken && parsed.instanceToken.trim()) {
+      const cleanToken = parsed.instanceToken.trim()
+      const cfgs = await db.select().from(settings).where(eq(settings.uazapiInstanceToken, cleanToken))
+      if (cfgs.length > 1) {
+        console.error(`[WhatsApp Webhook AMBIGUIDADE CRÍTICA] Múltiplas empresas com uazapiInstanceToken. Fail-closed 409.`)
+        return NextResponse.json({ error: 'Ambiguous uazapiInstanceToken' }, { status: 409 })
+      }
+      companyId = cfgs[0]?.companyId ?? null
     }
 
     if (!companyId) return NextResponse.json({ ok: true, skipped: true })
