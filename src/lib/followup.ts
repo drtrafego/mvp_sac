@@ -37,13 +37,20 @@ export const FOLLOWUP_DEFAULT_SPACING: FollowupSpacing = {
   maxSeconds: 170,
 }
 
-export function resolveAgentSlugForCompany(slug: string): string {
-  const s = (slug || '').toLowerCase()
-  if (s.includes('gramado')) return 'gramadoplazza'
-  if (s.includes('lucas')) return 'drlucas'
-  if (s.includes('autonomia') || s.includes('gastao')) return 'agente24horas'
-  if (s.includes('casal')) return 'casaldotrafego'
-  return slug
+export const MAX_FOLLOWUP_STEPS = 20
+
+// Mapeamento explicito reconstruido de duas fontes do codigo:
+// src/lib/sync-agents.ts classifyAgentCompany() e src/lib/ai-reply.ts BOT_POR_SLUG.
+const AGENT_SLUG_POR_COMPANY_SLUG: Record<string, string> = {
+  drlucas: 'drlucas',
+  autonomia: 'agente24horas',
+  amanda: 'casaldotrafego',
+  'gramado-plaza': 'gramadoplazza',
+}
+
+export function resolveAgentSlugForCompany(slug: string): string | null {
+  const s = (slug || '').toLowerCase().trim()
+  return AGENT_SLUG_POR_COMPANY_SLUG[s] ?? null
 }
 
 export function isDelayStep(s: FollowupStep): s is { delayMinutes: number } {
@@ -80,6 +87,50 @@ export function sanitizeSteps(steps: unknown): FollowupStep[] {
   porTempo.sort((a, b) => a.delayMinutes - b.delayMinutes)
   noDiaSeguinte.sort((a, b) => a.nextDayAtHour - b.nextDayAtHour)
   return [...porTempo, ...noDiaSeguinte]
+}
+
+export function validateStepsStrict(steps: unknown, fieldName = 'steps'): FollowupStep[] {
+  if (!Array.isArray(steps)) {
+    throw new Error(`${fieldName} precisa ser uma lista.`)
+  }
+
+  if (steps.length > MAX_FOLLOWUP_STEPS) {
+    throw new Error(`${fieldName} deve ter no máximo ${MAX_FOLLOWUP_STEPS} itens.`)
+  }
+
+  return steps.map((step, index) => {
+    if (!step || typeof step !== 'object' || Array.isArray(step)) {
+      throw new Error(`${fieldName}[${index}] precisa ser um objeto de degrau.`)
+    }
+
+    const record = step as Record<string, unknown>
+    const keys = Object.keys(record)
+    const hasDelay = Object.prototype.hasOwnProperty.call(record, 'delayMinutes')
+    const hasNextDay = Object.prototype.hasOwnProperty.call(record, 'nextDayAtHour')
+    const unknownKey = keys.find((key) => key !== 'delayMinutes' && key !== 'nextDayAtHour')
+
+    if (unknownKey) {
+      throw new Error(`${fieldName}[${index}] contém campo desconhecido "${unknownKey}".`)
+    }
+
+    if ((hasDelay ? 1 : 0) + (hasNextDay ? 1 : 0) !== 1) {
+      throw new Error(`${fieldName}[${index}] precisa ter exatamente um entre delayMinutes e nextDayAtHour.`)
+    }
+
+    if (hasDelay) {
+      const value = record.delayMinutes
+      if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+        throw new Error(`${fieldName}[${index}].delayMinutes precisa ser um inteiro positivo.`)
+      }
+      return { delayMinutes: value }
+    }
+
+    const value = record.nextDayAtHour
+    if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value < 0 || value > 23) {
+      throw new Error(`${fieldName}[${index}].nextDayAtHour precisa ser um inteiro de 0 a 23.`)
+    }
+    return { nextDayAtHour: value }
+  })
 }
 
 export function sanitizeWindow(v: unknown): FollowupWindow | undefined {
