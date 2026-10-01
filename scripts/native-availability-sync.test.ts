@@ -24,7 +24,7 @@ async function freePort(): Promise<number> {
 }
 
 async function startPostgres(): Promise<{ url: string; stop: () => void }> {
-  spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', CONTAINER], { stdio: 'ignore' })
   const port = await freePort()
   execFileSync('docker', [
     'run', '--rm', '-d', '--name', CONTAINER,
@@ -49,7 +49,7 @@ async function startPostgres(): Promise<{ url: string; stop: () => void }> {
     env: { ...process.env, DATABASE_URL: url },
     stdio: 'inherit',
   })
-  return { url, stop: () => spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' }) }
+  return { url, stop: () => spawnSync('docker', ['rm', '-f', '-v', CONTAINER], { stdio: 'ignore' }) }
 }
 
 const lucasSchedule = {
@@ -243,6 +243,6 @@ async function main() {
 
 main().catch(error => {
   console.error(error)
-  spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', CONTAINER], { stdio: 'ignore' })
   process.exitCode = 1
 })

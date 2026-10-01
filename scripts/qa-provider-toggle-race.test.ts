@@ -32,7 +32,7 @@ async function pickFreePort(): Promise<number> {
 }
 
 async function startPostgres(): Promise<{ url: string; stop: () => void }> {
-  spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
   const port = await pickFreePort()
   execFileSync('docker', [
     'run', '--rm', '-d', '--name', CONTAINER_NAME,
@@ -49,7 +49,7 @@ async function startPostgres(): Promise<{ url: string; stop: () => void }> {
       await probe.end({ timeout: 1 })
       return {
         url,
-        stop: () => { spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' }) },
+        stop: () => { spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' }) },
       }
     } catch {
       await probe.end({ timeout: 1 }).catch(() => undefined)

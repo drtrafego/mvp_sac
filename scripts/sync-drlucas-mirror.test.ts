@@ -27,7 +27,7 @@ async function main() {
     throw new Error('Docker indisponível')
   }
 
-  spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
   const port = await freePort()
   execFileSync('docker', [
     'run', '--rm', '-d', '--name', CONTAINER_NAME,
@@ -176,7 +176,7 @@ async function main() {
     })
   } finally {
     await sourceSql?.end({ timeout: 2 }).catch(() => undefined)
-    spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' })
+    spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
   }
 }
 

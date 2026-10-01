@@ -45,7 +45,7 @@ async function pickFreePortAsync(): Promise<number> {
 }
 
 async function startDisposablePostgres(): Promise<{ url: string; stop: () => void }> {
-  spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
   const port = await pickFreePortAsync()
   console.log(`[setup] subindo postgres:16-alpine descartavel na porta ${port}...`)
   execFileSync('docker', [
@@ -79,7 +79,7 @@ async function startDisposablePostgres(): Promise<{ url: string; stop: () => voi
     url,
     stop: () => {
       console.log('[teardown] derrubando container descartavel...')
-      spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' })
+      spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
     },
   }
 }
