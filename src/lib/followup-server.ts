@@ -121,12 +121,18 @@ export async function saveFollowupConfigReal(
   },
 ): Promise<{ ok: boolean; message?: string }> {
   const agentSlug = resolveAgentSlugForCompany(companySlug)
+  // Normalizado uma vez, aqui, e reutilizado em TUDO abaixo (trava do
+  // Gramado e as duas escritas no banco). `input.enabled` é tipo declarado,
+  // não validado em runtime — um valor não-booleano (string, número) só
+  // pode virar `false`, nunca `true` por coerção (`Boolean("false")` dá
+  // `true`, por isso não se usa `Boolean(input.enabled)` aqui).
+  const enabledStrict = input.enabled === true
   try {
     if (!agentSlug) {
       return { ok: false, message: 'Esta empresa não usa o follow-up do Hermes.' }
     }
 
-    if (agentSlug === 'gramadoplazza' && input.enabled === true) {
+    if (agentSlug === 'gramadoplazza' && enabledStrict) {
       return {
         ok: false,
         message: 'Ativar o disparo do Gramado Plazza em produção exige autorização explícita e teste ao vivo do Gastão — ainda não está liberado.',
@@ -178,7 +184,7 @@ export async function saveFollowupConfigReal(
            updated_at = now()`,
         [
           agentSlug,
-          Boolean(input.enabled),
+          enabledStrict,
           JSON.stringify(validatedSteps),
           JSON.stringify(windowClean),
           JSON.stringify(spacingClean),
@@ -200,7 +206,7 @@ export async function saveFollowupConfigReal(
         .insert(followupConfig)
         .values({
           companyId,
-          enabled: Boolean(input.enabled),
+          enabled: enabledStrict,
           steps: validatedSteps,
           sendWindow: windowClean,
           spacing: spacingClean,
@@ -210,7 +216,7 @@ export async function saveFollowupConfigReal(
         .onConflictDoUpdate({
           target: followupConfig.companyId,
           set: {
-            enabled: Boolean(input.enabled),
+            enabled: enabledStrict,
             steps: validatedSteps,
             sendWindow: windowClean,
             spacing: spacingClean,

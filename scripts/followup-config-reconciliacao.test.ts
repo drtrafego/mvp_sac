@@ -142,6 +142,45 @@ test('saveFollowupConfigReal bloqueia enabled=true do Gramado no servidor', asyn
   assert.equal(localWriteCount, 0)
 })
 
+test('saveFollowupConfigReal trata enabled="true" (string) como desligado, nunca liga o Gramado por coercao', async () => {
+  // Reproduz o bypass real: um corpo de requisicao sem validacao de schema
+  // pode mandar `enabled` como string. A trava antiga comparava
+  // `input.enabled === true` (ja nao disparava aqui, string nao e `true`
+  // estrito) mas a ESCRITA usava `Boolean(input.enabled)`, que para QUALQUER
+  // string nao-vazia -- inclusive "false" -- da `true`: o Gramado podia sair
+  // gravado como ligado mesmo sem passar pela trava. O comportamento certo
+  // (fail-closed): valor nao-booleano nunca vira `true` gravado, a trava so
+  // existe pra bloquear quando o valor normalizado FOR true de verdade.
+  resetMocks()
+
+  const res = await saveFollowupConfigReal('gramado-plaza', 4, {
+    enabled: 'true' as unknown as boolean,
+    steps: [{ delayMinutes: 10 }],
+  })
+
+  assert.equal(res.ok, true)
+  assert.equal(queryCalls.length, 1)
+  assert.equal(queryCalls[0]?.params[1], false)
+})
+
+test('saveFollowupConfigReal grava enabled=false quando o valor nao e booleano, nunca true por coercao', async () => {
+  // Caso mais perigoso: alguem tentando EXPLICITAMENTE desligar manda
+  // `enabled: "false"` (string). `Boolean("false")` e `true` em JS -- a
+  // escrita antiga ligaria o follow-up fazendo o oposto do pedido. Aqui o
+  // agente nao e o Gramado (sem trava especial), entao o bug so aparece no
+  // valor gravado no banco compartilhado.
+  resetMocks()
+
+  const res = await saveFollowupConfigReal('amanda', 2, {
+    enabled: 'false' as unknown as boolean,
+    steps: [{ delayMinutes: 30 }],
+  })
+
+  assert.equal(res.ok, true)
+  assert.equal(queryCalls.length, 1)
+  assert.equal(queryCalls[0]?.params[1], false)
+})
+
 test('saveFollowupConfigReal propaga falha do banco compartilhado e nao grava copia local', async () => {
   resetMocks()
   sharedMode = 'null'
