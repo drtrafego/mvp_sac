@@ -43,7 +43,11 @@ export async function POST(req: NextRequest) {
     }
 
     const res = await saveFollowupConfigReal(company.slug, company.id, {
-      enabled: body.enabled,
+      // Normalizado aqui, não só em saveFollowupConfigReal: `body` vem de
+      // JSON não validado (o `as` acima é só tipo, não runtime), então
+      // qualquer valor não-booleano (string "true"/"false", número) tem que
+      // virar `false` por padrão — nunca ligar follow-up por coerção.
+      enabled: body.enabled === true,
       steps: body.steps,
       window: body.window,
       spacing: body.spacing,
