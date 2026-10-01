@@ -26,7 +26,7 @@ async function startPostgres(): Promise<{ url: string; stop: () => void }> {
     throw new Error('Docker não disponível: o teste exige Postgres descartável real')
   }
 
-  spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
   const port = await freePort()
   execFileSync('docker', [
     'run', '--rm', '-d', '--name', CONTAINER_NAME,
@@ -41,7 +41,7 @@ async function startPostgres(): Promise<{ url: string; stop: () => void }> {
     try {
       await probe`select 1`
       await probe.end({ timeout: 1 })
-      return { url, stop: () => { spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' }) } }
+      return { url, stop: () => { spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' }) } }
     } catch {
       await probe.end({ timeout: 1 }).catch(() => undefined)
       await new Promise(resolve => setTimeout(resolve, 400))

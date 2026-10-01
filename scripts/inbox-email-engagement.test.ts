@@ -32,7 +32,7 @@ async function pickFreePort(): Promise<number> {
 }
 
 async function startPostgres(): Promise<{ url: string; stop: () => void }> {
-  spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
   const port = await pickFreePort()
   execFileSync('docker', [
     'run', '--rm', '-d', '--name', CONTAINER_NAME,
@@ -55,7 +55,7 @@ async function startPostgres(): Promise<{ url: string; stop: () => void }> {
     }
   }
   if (!ready) throw new Error('Postgres descartável não respondeu em 30s')
-  return { url, stop: () => { spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' }) } }
+  return { url, stop: () => { spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' }) } }
 }
 
 async function main() {

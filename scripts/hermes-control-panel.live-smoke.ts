@@ -44,7 +44,7 @@ async function startPostgres(): Promise<{ url: string; stop: () => void }> {
     const ready = spawnSync('docker', ['exec', CONTAINER, 'pg_isready', '-U', 'postgres', '-d', 'test'])
     if (ready.status === 0) return {
       url,
-      stop: () => { spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' }) },
+      stop: () => { spawnSync('docker', ['rm', '-f', '-v', CONTAINER], { stdio: 'ignore' }) },
     }
     await new Promise(resolve => setTimeout(resolve, 250))
   }
@@ -170,6 +170,6 @@ async function main() {
 
 main().catch(error => {
   console.error(error)
-  spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', CONTAINER], { stdio: 'ignore' })
   process.exitCode = 1
 })

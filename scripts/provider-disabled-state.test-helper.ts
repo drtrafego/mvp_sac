@@ -61,7 +61,7 @@ async function pickFreePort(): Promise<number> {
 
 async function startPostgres(provider: Provider): Promise<{ url: string; stop: () => void }> {
   const containerName = `${provider}_disabled_state_test`
-  spawnSync('docker', ['rm', '-f', containerName], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', containerName], { stdio: 'ignore' })
   const port = await pickFreePort()
   execFileSync('docker', [
     'run', '--rm', '-d', '--name', containerName,
@@ -78,7 +78,7 @@ async function startPostgres(provider: Provider): Promise<{ url: string; stop: (
       await probe.end({ timeout: 1 })
       return {
         url,
-        stop: () => { spawnSync('docker', ['rm', '-f', containerName], { stdio: 'ignore' }) },
+        stop: () => { spawnSync('docker', ['rm', '-f', '-v', containerName], { stdio: 'ignore' }) },
       }
     } catch {
       await probe.end({ timeout: 1 }).catch(() => undefined)
