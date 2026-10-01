@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
-import { settings, recoveryLeads } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { settings, recoveryLeads, instagramCommentAutomations } from '@/lib/db/schema'
+import { and, eq } from 'drizzle-orm'
 import type { SidebarMenuConfig } from '@/components/layout/sidebar'
 
 export interface ActiveConnectionsData {
@@ -9,6 +9,7 @@ export interface ActiveConnectionsData {
   greenn: boolean
   zouti: boolean
   instagram: boolean
+  instagramCommentAutomation: boolean
   mineracao: boolean
 }
 
@@ -33,20 +34,35 @@ export async function getCompanySidebarData(companyId: number): Promise<{
   sidebarConfig: SidebarMenuConfig | null
 }> {
   try {
-    const [settingsRow] = await db
-      .select()
-      .from(settings)
-      .where(eq(settings.companyId, companyId))
-
-    // Checar se há leads de cada plataforma/origem
-    const leadsPlatforms = await db
-      .select({
-        platform: recoveryLeads.platform,
-        source: recoveryLeads.trackingSource,
-      })
-      .from(recoveryLeads)
-      .where(eq(recoveryLeads.companyId, companyId))
-      .limit(200)
+    const [settingsRows, leadsPlatforms, activeCommentAutomations] = await Promise.all([
+      db
+        .select()
+        .from(settings)
+        .where(eq(settings.companyId, companyId)),
+      // Checar se há leads de cada plataforma/origem
+      db
+        .select({
+          platform: recoveryLeads.platform,
+          source: recoveryLeads.trackingSource,
+        })
+        .from(recoveryLeads)
+        .where(eq(recoveryLeads.companyId, companyId))
+        .limit(200),
+      // Comentário → DM é uma capacidade própria. Ter credenciais de Direct
+      // não significa ter uma regra configurada, e regra pausada não processa
+      // comentários (mesma condição usada pelo instagram-comment-processor).
+      db
+        .select({ id: instagramCommentAutomations.id })
+        .from(instagramCommentAutomations)
+        .where(
+          and(
+            eq(instagramCommentAutomations.companyId, companyId),
+            eq(instagramCommentAutomations.isActive, true),
+          ),
+        )
+        .limit(1),
+    ])
+    const settingsRow = settingsRows[0]
 
     const platformSet = new Set(leadsPlatforms.map(l => (l.platform || '').toLowerCase()))
     const sourceSet = new Set(leadsPlatforms.map(l => (l.source || '').toLowerCase()))
@@ -83,6 +99,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
         greenn: greennEnabled && hasGreenn,
         zouti: zoutiEnabled && hasZouti,
         instagram: hasInstagram,
+        instagramCommentAutomation: activeCommentAutomations.length > 0,
         mineracao: hasMineracao,
       },
       sidebarConfig: effectiveSidebarConfig,
@@ -95,6 +112,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
         greenn: false,
         zouti: false,
         instagram: false,
+        instagramCommentAutomation: false,
         mineracao: false,
       },
       sidebarConfig: null,

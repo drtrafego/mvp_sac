@@ -36,7 +36,21 @@ export interface ActiveConnections {
   greenn?: boolean
   zouti?: boolean
   instagram?: boolean
+  instagramCommentAutomation?: boolean
   mineracao?: boolean
+}
+
+type NavigationRequirement = 'instagramCommentAutomation'
+
+interface ConditionalNavigationItem {
+  requires?: NavigationRequirement
+}
+
+export function filterAvailableNavItems<T extends ConditionalNavigationItem>(
+  items: readonly T[],
+  activeConnections?: ActiveConnections,
+): T[] {
+  return items.filter(item => !item.requires || activeConnections?.[item.requires] === true)
 }
 
 export function MetaInfinityIcon({ size = 15, className = 'text-sky-400' }: { size?: number; className?: string }) {
@@ -103,10 +117,20 @@ export function MineracaoLogoIcon({ size = 15, className = 'text-amber-400' }: {
   )
 }
 
-export const atendimentoNav = [
+export const atendimentoNav: Array<{
+  label: string
+  href: string
+  icon: typeof Activity
+  requires?: NavigationRequirement
+}> = [
   { label: 'Visão geral', href: '/', icon: Activity },
   { label: 'Conversas', href: '/inbox', icon: MessageSquare },
-  { label: 'Comentário → DM', href: '/comentarios-instagram', icon: MessageCircle },
+  {
+    label: 'Comentário → DM',
+    href: '/comentarios-instagram',
+    icon: MessageCircle,
+    requires: 'instagramCommentAutomation',
+  },
   { label: 'Pipeline', href: '/pipeline', icon: Columns3 },
   { label: 'Leads Recentes', href: '/leads', icon: Users },
 ]
@@ -167,8 +191,16 @@ export const zoutiNav = [
 // Conversas Direct tem rota própria; ?source= continua sendo o mesmo filtro
 // lido por /leads e /origens, reaproveitando a classificação única de
 // src/lib/inbox-channel-filter.ts e src/lib/origins.ts.
-export const instagramNav = [
-  { label: 'Comentário → DM', href: '/comentarios-instagram' },
+export const instagramNav: Array<{
+  label: string
+  href: string
+  requires?: NavigationRequirement
+}> = [
+  {
+    label: 'Comentário → DM',
+    href: '/comentarios-instagram',
+    requires: 'instagramCommentAutomation',
+  },
   { label: 'Conversas Direct', href: '/instagram' },
   { label: 'Leads Instagram', href: '/leads?source=instagram' },
   { label: 'Performance Direct', href: '/origens?source=instagram' },
@@ -358,6 +390,9 @@ export function SidebarNavContent({
   const showInstagram = !!activeConnections?.instagram && sidebarConfig?.showInstagram !== false
   const showMineracao = sidebarConfig?.showMineracao !== undefined ? sidebarConfig.showMineracao : !!activeConnections?.mineracao
 
+  const visibleAtendimentoNav = filterAvailableNavItems(atendimentoNav, activeConnections)
+  const visibleInstagramNav = filterAvailableNavItems(instagramNav, activeConnections)
+
   const showAgente = sidebarConfig?.showAgente !== undefined ? sidebarConfig.showAgente : true
   const showWebhooksLog = sidebarConfig?.showWebhooksLog !== undefined ? sidebarConfig.showWebhooksLog : true
   const showBiblioteca = sidebarConfig?.showBiblioteca !== undefined ? sidebarConfig.showBiblioteca : true
@@ -417,7 +452,7 @@ export function SidebarNavContent({
 
           {(collapsed || sectionsOpen.atendimento) && (
             <div className="space-y-0.5">
-              {atendimentoNav.map(({ label, href, icon: Icon }) => {
+              {visibleAtendimentoNav.map(({ label, href, icon: Icon }) => {
                 const active = isActive(href)
                 return (
                   <Link
@@ -784,7 +819,7 @@ export function SidebarNavContent({
 
           {(collapsed || sectionsOpen.instagram) && (
             <div className={cn('space-y-0.5', !collapsed && 'border-l-2 border-pink-500/80 ml-3 pl-2.5')}>
-              {instagramNav.map(({ label, href }) => {
+              {visibleInstagramNav.map(({ label, href }) => {
                 const active = isActive(href)
                 return (
                   <Link

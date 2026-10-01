@@ -20,7 +20,9 @@ const db = {
     from: (table: unknown) => ({
       where: () => {
         if (table === schema.settings) return Promise.resolve([settingsWithoutCredentials])
-        return { limit: async () => [historicalInstagramLead] }
+        if (table === schema.recoveryLeads) return { limit: async () => [historicalInstagramLead] }
+        if (table === schema.instagramCommentAutomations) return { limit: async () => [] }
+        throw new Error('Tabela inesperada no teste')
       },
     }),
   }),
@@ -56,6 +58,7 @@ async function main() {
   await test('B2: histórico Instagram sem credencial não ativa conexão nem acessa /instagram', async () => {
     const sidebar = await getCompanySidebarData(88)
     assert.equal(sidebar.activeConnections.instagram, false)
+    assert.equal(sidebar.activeConnections.instagramCommentAutomation, false)
 
     await assert.rejects(
       () => InstagramLayout({ children: null }),
