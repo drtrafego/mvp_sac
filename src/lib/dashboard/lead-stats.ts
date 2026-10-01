@@ -120,26 +120,15 @@ export function dashboardLeadStatsSelect(model: DashboardBusinessModel) {
   const stage = dashboardFunnelStageSql(model)
   const won = dashboardBusinessWonSql(model)
 
-  // Gate de "abordado de verdade" (first_contact_at): faz sentido para os
-  // negocios com conversa 1:1 humana (gramado/lucas/agencia), onde o lead so
-  // deve contar no numero principal depois de trocar mensagem real. Pra
-  // infoproduto o lead nasce de webhook de checkout (Hotmart/Kiwify/Greenn/
-  // Zouti), que nunca chama markLeadContacted, entao first_contact_at fica
-  // nulo mesmo com evento de negocio real acontecendo. Para gramado/lucas/agencia,
-  // se o lead ja foi ganho/convertido ou veio do Hermes, ele e um lead contatado por definicao.
-  const contactGate = model === 'infoproduto'
-    ? sql`true`
-    : sql`(${recoveryLeads.firstContactAt} is not null or ${won} or ${recoveryLeads.platform} = 'hermes')`
-
   return {
-    total: sql<number>`cast(count(*) filter (where ${contactGate}) as int)`,
-    aguardandoAbordagem: sql<number>`cast(count(*) filter (where ${contactGate} and (${statusLower} in ('pending', 'new', 'aguardando') or ${recoveryLeads.status} is null)) as int)`,
+    total: sql<number>`cast(count(*) as int)`,
+    aguardandoAbordagem: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is null and not ${won}) as int)`,
 
     // Funil de engajamento equivalente ao painel nativo do Hermes: conta pelo
     // historico REAL de mensagens (whatsapp_messages), independente do
     // pipeline_stage do CRM. "Avancou" = 4+ mensagens trocadas na conversa.
-    respondeuTotal: sql<number>`cast(count(*) filter (where ${contactGate} and ${leadRespondedExistsSql}) as int)`,
-    avancouTotal: sql<number>`cast(count(*) filter (where ${contactGate} and ${leadMessageCountSql} >= 4) as int)`,
+    respondeuTotal: sql<number>`cast(count(*) filter (where ${leadRespondedExistsSql}) as int)`,
+    avancouTotal: sql<number>`cast(count(*) filter (where ${leadMessageCountSql} >= 4) as int)`,
     fechadosTotal: sql<number>`cast(count(*) filter (where ${won}) as int)`,
     valorFechadoCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${won}), 0) as bigint)`,
     qualificadosTotal: sql<number>`cast(count(*) filter (where ${stage} in ('qualificado', 'agendado', 'proposta', 'fechado', 'compareceu')) as int)`,

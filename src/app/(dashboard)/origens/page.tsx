@@ -89,11 +89,9 @@ export default async function OrigensPage({ searchParams }: PageProps) {
 
   const dateFilter = and(gte(recoveryLeads.createdAt, fromDate), lte(recoveryLeads.createdAt, toDate))
   const businessModel = resolveDashboardBusinessModel(company.slug)
-  const contactedGateSql = sql`(${recoveryLeads.firstContactAt} is not null or ${dashboardBusinessWonSql(businessModel)} or ${recoveryLeads.platform} = 'hermes')`
-  const contactCondition = businessModel === 'infoproduto' ? undefined : contactedGateSql
-  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter, contactCondition)
+  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
 
-  const notContactedCondition = businessModel === 'infoproduto' ? sql`false` : sql`not ${contactedGateSql}`
+  const notContactedCondition = and(isNull(recoveryLeads.firstContactAt), sql`not ${dashboardBusinessWonSql(businessModel)}`)
 
   const [[awaitingRow], rawOrigensRows] = await Promise.all([
     db

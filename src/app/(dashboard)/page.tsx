@@ -84,9 +84,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const isAgencia = businessModel === 'agencia'
   const isInfoproduto = businessModel === 'infoproduto'
 
-  const contactedGateSql = sql`(${recoveryLeads.firstContactAt} is not null or ${dashboardBusinessWonSql(businessModel)} or ${recoveryLeads.platform} = 'hermes')`
-  const contactedWhere = businessModel === 'infoproduto' ? baseWhere : and(baseWhere, contactedGateSql)
-  const notContactedWhere = businessModel === 'infoproduto' ? sql`false` : and(baseWhere, sql`not ${contactedGateSql}`)
+  const notContactedWhere = and(baseWhere, isNull(recoveryLeads.firstContactAt), sql`not ${dashboardBusinessWonSql(businessModel)}`)
 
   const rangeDurationMs = toDate.getTime() - fromDate.getTime()
   const prevFrom = new Date(fromDate.getTime() - rangeDurationMs)
@@ -152,14 +150,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         count: sql<number>`cast(count(*) as int)`,
       })
       .from(recoveryLeads)
-      .where(contactedWhere)
+      .where(baseWhere)
       .groupBy(sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`)
       .orderBy(desc(sql<number>`count(*)`))
       .limit(5),
 
     // Leads que existem no banco mas nunca foram abordados de verdade (nenhuma
-    // mensagem trocada ainda): ficam fora do total principal, mas aparecem
-    // aqui separado para o Gastão saber que a fila de contato não está vazia.
+    // mensagem trocada ainda): aparecem aqui separado para saber a fila.
     db
       .select({ total: count() })
       .from(recoveryLeads)
