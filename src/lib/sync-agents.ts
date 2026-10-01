@@ -1103,7 +1103,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const conversationMetadataColumns = await detectAgentsTableColumns(
           schema,
           'conversations',
-          ['cost_usd', 'input_tokens', 'output_tokens', 'synced_at']
+          ['cost_usd', 'input_tokens', 'output_tokens', 'synced_at', 'updated_at', 'last_message_at']
         )
         const conversationMetadataSelect = [
           conversationMetadataColumns.has('cost_usd') ? 'cost_usd' : 'null::numeric as cost_usd',
@@ -1120,7 +1120,14 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           messageMetadataColumns.has('reasoning') ? 'reasoning' : 'null::text as reasoning',
           messageMetadataColumns.has('sent_email') ? 'sent_email' : 'null::text as sent_email',
         ].join(', ')
-        const conversationSortExpr = `coalesce(ended_at, started_at, '${EPOCH_CURSOR_ISO}'::timestamp)`
+        const conversationSortCandidates = [
+          conversationMetadataColumns.has('updated_at') ? 'updated_at' : null,
+          conversationMetadataColumns.has('last_message_at') ? 'last_message_at' : null,
+          'ended_at',
+          'started_at',
+          `'${EPOCH_CURSOR_ISO}'::timestamp`,
+        ].filter(Boolean)
+        const conversationSortExpr = `coalesce(${conversationSortCandidates.join(', ')})`
         const conversationIdExpr = 'session_id::text'
         const conversationBatch = await loadTimedSyncBatch<ConversationDbRow>({
           companyId: company.id,

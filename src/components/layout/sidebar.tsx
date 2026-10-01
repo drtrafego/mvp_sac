@@ -145,6 +145,7 @@ export const analiseNav = [
 export const apiOficialNav = [
   { label: 'Mensagens aprovadas', href: '/api-modelos' },
   { label: 'Campanhas ativas', href: '/api-campanhas' },
+  { label: 'Disparo em massa', href: '/disparo-em-massa' },
   { label: 'Follow-up', href: '/api-followup' },
 ]
 
