@@ -11,7 +11,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import path from 'node:path'
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
-import { and, eq } from 'drizzle-orm'
+import { and, count, eq } from 'drizzle-orm'
 import * as schema from '../src/lib/db/schema'
 import { NextRequest } from 'next/server'
 
@@ -198,6 +198,27 @@ async function main() {
       assert.equal(audit.entityId, String(saved.id))
     })
 
+    await test('rejeita dm_message acima de 4000 caracteres com 400', async () => {
+      const response = await POST(
+        request(companyA.slug, masterKey, {
+          media_id: 'media-dm-message-too-long',
+          keyword: 'TRILHA',
+          dm_message: 'a'.repeat(4001),
+        }),
+        { params: Promise.resolve({ idOrSlug: companyA.slug }) },
+      )
+      const body = await response.json()
+
+      assert.equal(response.status, 400)
+      assert.equal(body.error, 'dm_message excede o limite de 4000 caracteres')
+
+      const rows = await testDb
+        .select()
+        .from(schema.instagramCommentAutomations)
+        .where(eq(schema.instagramCommentAutomations.mediaId, 'media-dm-message-too-long'))
+      assert.equal(rows.length, 0)
+    })
+
     await test('segunda chamada para o mesmo media_id atualiza sem duplicar', async () => {
       await testDb
         .update(schema.instagramCommentAutomations)
@@ -239,6 +260,43 @@ async function main() {
       assert.equal(rows[0].isActive, true)
       assert.equal(rows[0].name, 'Entrega da trilha', 'campo opcional ausente não deve apagar o nome existente')
       assert.equal(rows[0].matchType, 'exact', 'campo opcional ausente não deve alterar o match type existente')
+    })
+
+    await test('duas chamadas concorrentes para o mesmo media_id criam apenas uma linha', async () => {
+      const mediaId = 'media-race-condition'
+      const [firstResponse, secondResponse] = await Promise.all([
+        POST(
+          request(companyA.slug, masterKey, {
+            media_id: mediaId,
+            keyword: 'TRILHA',
+            dm_message: 'Mensagem da corrida A',
+          }),
+          { params: Promise.resolve({ idOrSlug: companyA.slug }) },
+        ),
+        POST(
+          request(companyA.slug, masterKey, {
+            media_id: mediaId,
+            keyword: 'TRILHA',
+            dm_message: 'Mensagem da corrida B',
+          }),
+          { params: Promise.resolve({ idOrSlug: companyA.slug }) },
+        ),
+      ])
+
+      assert.equal(firstResponse.status, 200)
+      assert.equal(secondResponse.status, 200)
+
+      const [rowCount] = await testDb
+        .select({ value: count() })
+        .from(schema.instagramCommentAutomations)
+        .where(
+          and(
+            eq(schema.instagramCommentAutomations.companyId, companyA.id),
+            eq(schema.instagramCommentAutomations.mediaId, mediaId),
+          ),
+        )
+
+      assert.equal(rowCount.value, 1, 'requisições concorrentes para o mesmo media_id não podem duplicar')
     })
 
     await test('autenticação inválida é rejeitada com 401', async () => {

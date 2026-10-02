@@ -362,6 +362,11 @@ export function ensureSchema(client: any): Promise<void> {
             )
           `,
           client`
+            CREATE UNIQUE INDEX IF NOT EXISTS instagram_comment_automations_company_media_unique
+            ON instagram_comment_automations (company_id, media_id)
+            WHERE media_id IS NOT NULL AND media_id != ''
+          `,
+          client`
             CREATE TABLE IF NOT EXISTS instagram_comment_logs (
               id SERIAL PRIMARY KEY,
               company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,

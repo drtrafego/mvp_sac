@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { instagramCommentAutomations } from '@/lib/db/schema'
 import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -40,6 +40,13 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     if (missingFields.length > 0) {
       return NextResponse.json(
         { error: `Campos obrigatórios ausentes ou vazios: ${missingFields.join(', ')}.` },
+        { status: 400 },
+      )
+    }
+
+    if (typeof body.dm_message === 'string' && body.dm_message.length > 4000) {
+      return NextResponse.json(
+        { error: 'dm_message excede o limite de 4000 caracteres' },
         { status: 400 },
       )
     }
@@ -80,51 +87,36 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       )
       .limit(1)
 
-    let result: {
-      automation: typeof instagramCommentAutomations.$inferSelect
-      created: boolean
+    const updateData: Partial<typeof instagramCommentAutomations.$inferInsert> = {
+      keywords: keyword,
+      dmMessage,
+      isActive: true,
+      updatedAt: new Date(),
     }
+    if (suppliedName !== undefined) updateData.name = suppliedName.trim()
+    if (suppliedMediaUrl !== undefined) updateData.mediaUrl = suppliedMediaUrl.trim()
+    if (suppliedMatchType !== undefined) updateData.matchType = suppliedMatchType
 
-    if (existing) {
-      const updateData: Partial<typeof instagramCommentAutomations.$inferInsert> = {
+    const [upsertedAutomation] = await db
+      .insert(instagramCommentAutomations)
+      .values({
+        companyId,
+        name: suppliedName?.trim() || `Instagram ${keyword}`,
+        mediaId,
+        mediaUrl: suppliedMediaUrl?.trim() || null,
         keywords: keyword,
+        matchType: suppliedMatchType || 'contains',
         dmMessage,
         isActive: true,
-        updatedAt: new Date(),
-      }
-      if (suppliedName !== undefined) updateData.name = suppliedName.trim()
-      if (suppliedMediaUrl !== undefined) updateData.mediaUrl = suppliedMediaUrl.trim()
-      if (suppliedMatchType !== undefined) updateData.matchType = suppliedMatchType
+      })
+      .onConflictDoUpdate({
+        target: [instagramCommentAutomations.companyId, instagramCommentAutomations.mediaId],
+        targetWhere: sql`${instagramCommentAutomations.mediaId} is not null and ${instagramCommentAutomations.mediaId} != ''`,
+        set: updateData,
+      })
+      .returning()
 
-      const [automation] = await db
-        .update(instagramCommentAutomations)
-        .set(updateData)
-        .where(
-          and(
-            eq(instagramCommentAutomations.id, existing.id),
-            eq(instagramCommentAutomations.companyId, companyId),
-          ),
-        )
-        .returning()
-
-      result = { automation, created: false }
-    } else {
-      const [automation] = await db
-        .insert(instagramCommentAutomations)
-        .values({
-          companyId,
-          name: suppliedName?.trim() || `Instagram ${keyword}`,
-          mediaId,
-          mediaUrl: suppliedMediaUrl?.trim() || null,
-          keywords: keyword,
-          matchType: suppliedMatchType || 'contains',
-          dmMessage,
-          isActive: true,
-        })
-        .returning()
-
-      result = { automation, created: true }
-    }
+    const result = { automation: upsertedAutomation, created: !existing }
 
     await logAgentActivity({
       companyId,
