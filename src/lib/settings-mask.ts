@@ -19,8 +19,8 @@ export function mask(val: string | null | undefined): string {
  * esquecimento de alguém copiar a lista manualmente numa rota nova.
  *
  * Achado de auditoria (26/09/2026): supabaseDatabaseUrl, agentBiaApiKey,
- * agentLuanaApiKey e agentRenatoApiKey vazavam em claro no GET humano e no
- * GET/PATCH v1 porque essas rotas espalhavam `...row` inteiro e só
+ * agentLuanaApiKey, agentRenatoApiKey e agentPublicadorApiKey vazavam em claro
+ * no GET humano e no GET/PATCH v1 porque essas rotas espalhavam `...row` inteiro e só
  * sobrescreviam uma lista manual de campos (que nunca incluía esses 4).
  * instagramAppSecret vazava só na rota v1 pelo mesmo motivo.
  *
@@ -51,6 +51,7 @@ const SETTINGS_SECRET_FIELDS = [
   'agentBiaApiKey',
   'agentLuanaApiKey',
   'agentRenatoApiKey',
+  'agentPublicadorApiKey',
 ] as const
 
 /**
@@ -88,7 +89,8 @@ function isMaskedPlaceholderOrEmpty(val: unknown): boolean {
  * o placeholder "****xxxx" por cima da credencial real (regressão de
  * escrita introduzida pelo próprio fix de vazamento de leitura). Vale pra
  * TODO campo que é credencial (está em SETTINGS_SECRET_FIELDS) e também é
- * gravável por essa rota: agentBiaApiKey/agentLuanaApiKey/agentRenatoApiKey
+ * gravável por essa rota: agentBiaApiKey/agentLuanaApiKey/agentRenatoApiKey/
+ * agentPublicadorApiKey
  * (os bearer tokens que autenticam os próprios agentes nesta API, ver
  * src/lib/agent-auth.ts) são o caso mais grave, mas o mesmo risco já
  * existia sem correção nenhuma para metaAccessToken, metaAdsAccessToken,

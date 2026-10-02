@@ -105,6 +105,7 @@ export const settings = pgTable('settings', {
   agentBiaApiKey: text('agent_bia_api_key'),
   agentLuanaApiKey: text('agent_luana_api_key'),
   agentRenatoApiKey: text('agent_renato_api_key'),
+  agentPublicadorApiKey: text('agent_publicador_api_key'),
   allowedIps: text('allowed_ips'),
   // Configuração e personalização de colunas do Pipeline
   pipelineColumns: jsonb('pipeline_columns'),

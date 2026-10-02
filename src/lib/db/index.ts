@@ -226,6 +226,7 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_bia_api_key text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_luana_api_key text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_renato_api_key text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS agent_publicador_api_key text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS allowed_ips text`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS pipeline_columns jsonb`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sidebar_config jsonb`,

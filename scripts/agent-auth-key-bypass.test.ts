@@ -124,10 +124,12 @@ async function main() {
   // gera em produção (src/lib/db/index.ts): sac_<agente>_<slug>_<md5(id_agente)>
   const realBiaKey = `sac_bia_${company.slug}_${crypto.createHash('md5').update(`${company.id}_bia`).digest('hex')}`
   const realInviteToken = `sac_company_${company.slug}_${crypto.createHash('md5').update(`${company.id}_token`).digest('hex')}`
+  const realPublicadorKey = `sac_publicador_${company.slug}_${crypto.randomBytes(24).toString('hex')}`
 
   await testDb.insert(schema.settings).values({
     companyId: company.id,
     agentBiaApiKey: realBiaKey,
+    agentPublicadorApiKey: realPublicadorKey,
   })
   await testDb.update(schema.companies).set({ inviteToken: realInviteToken }).where(eq(schema.companies.id, company.id))
 
@@ -190,6 +192,18 @@ async function main() {
         assert.equal(context.company.id, company.id)
         assert.equal(context.isAdmin, true)
         assert.equal(context.agentId, 'bia')
+      }
+    })
+
+    await test('chave REAL do publicador autentica como publicador, não como admin genérico', async () => {
+      const req = makeRequest(realPublicadorKey)
+      const { error, context } = await authenticateAgentRequest(req, company.slug)
+      assert.equal(error, undefined, `chave publicador real não deveria ser rejeitada (error: ${error ? (await error.json()).error : ''})`)
+      assert.ok(context)
+      if (context) {
+        assert.equal(context.company.id, company.id)
+        assert.equal(context.isAdmin, true)
+        assert.equal(context.agentId, 'publicador')
       }
     })
 
