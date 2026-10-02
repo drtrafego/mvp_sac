@@ -65,3 +65,25 @@ export function checkMetaWindowForJob(params: {
   }
   return { allowed: true }
 }
+
+// Espaçamento padrão por segundo entre disparos consecutivos dentro da mesma rodada do cron.
+// Evita rajadas de dezenas de mensagens no mesmo segundo para a Graph API da Meta.
+export const DEFAULT_DISPATCH_SPACING = {
+  minSeconds: 1,
+  maxSeconds: 2,
+}
+
+export function calculateDispatchSpacingMs(
+  spacing: { minSeconds: number; maxSeconds: number } = DEFAULT_DISPATCH_SPACING,
+  randomFn: () => number = Math.random,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): number {
+  if (env.NODE_ENV === 'test' || env.SKIP_DISPATCH_SPACING === '1') {
+    return 0
+  }
+  const min = Math.max(0, spacing.minSeconds)
+  const max = Math.max(min, spacing.maxSeconds)
+  const seconds = min + randomFn() * (max - min)
+  return Math.round(seconds * 1000)
+}
+

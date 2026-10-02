@@ -287,7 +287,7 @@ export async function POST(req: NextRequest) {
                   .where(and(
                     eq(recoveryLeads.companyId, companyId),
                     eq(recoveryLeads.phone, igPhone),
-                    sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes')`,
+                    sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')`,
                   ))
                   .limit(1)
 
@@ -342,7 +342,7 @@ export async function POST(req: NextRequest) {
                     // incluir 'hermes' em 22/09/2026 junto com a migration
                     // 0010 (fix de concorrência no webhook de conversão do
                     // Hermes) — mudou lá, muda aqui também.
-                    targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes')`,
+                    targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')`,
                     // lastActionAt precisa entrar aqui: o COALESCE de
                     // ordenação do Inbox (lastActionAt, updatedAt, createdAt)
                     // trava no primeiro valor não nulo, então um lead que já

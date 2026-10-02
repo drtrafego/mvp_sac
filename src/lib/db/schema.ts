@@ -491,12 +491,12 @@ export const recoveryLeads = pgTable('recovery_leads', {
   //
   // ⚠️ Qualquer INSERT com onConflictDoUpdate/onConflictDoNothing que usa
   // este índice como arbiter (webhooks whatsapp/instagram/instagram-[slug]/
-  // hermes) precisa que o `targetWhere`/`where` da query bata EXATAMENTE com
+  // hermes e importação de leads por planilha) precisa que o `targetWhere`/`where` da query bata EXATAMENTE com
   // esta condição parcial (Postgres exige o predicado casar com o índice pra
-  // inferir o arbiter em ON CONFLICT). Mudou aqui? Muda nos 4 lugares.
+  // inferir o arbiter em ON CONFLICT). Mudou aqui? Muda nos lugares correspondentes.
   uniqueIndex('recovery_leads_chat_company_phone_unique')
     .on(table.companyId, table.phone)
-    .where(sql`${table.platform} in ('instagram', 'sac', 'hermes')`),
+    .where(sql`${table.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')`),
 ])
 
 // ─── Tags livres de lead (25/09/2026, pedido do Gastão via Renato) ──────────

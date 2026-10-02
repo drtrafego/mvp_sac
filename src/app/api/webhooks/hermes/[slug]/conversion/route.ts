@@ -315,7 +315,7 @@ export async function POST(
       })
       .onConflictDoNothing({
         target: [recoveryLeads.companyId, recoveryLeads.phone],
-        where: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes')`,
+        where: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')`,
       })
       .returning({ id: recoveryLeads.id })
 

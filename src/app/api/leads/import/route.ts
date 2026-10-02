@@ -5,16 +5,7 @@ import { eq, and, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { isLeadChannel, MAX_TAG_LENGTH, normalizeTag, PESSOA_TAG, type LeadChannel } from '@/lib/lead-tags'
 import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
-
-function cleanPhone(raw: string): string {
-  let digits = raw.replace(/\D/g, '')
-  if (digits.startsWith('0')) digits = digits.slice(1)
-  // Se não tiver DDI (55), adiciona se tiver 10 ou 11 dígitos
-  if (digits.length === 10 || digits.length === 11) {
-    digits = '55' + digits
-  }
-  return digits
-}
+import { formatBrazilianPhone } from '@/lib/phone'
 
 function parseValueToCents(raw: string | number | null | undefined): number {
   if (raw == null) return 0
@@ -101,7 +92,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         continue
       }
 
-      const phone = cleanPhone(item.phone)
+      const phone = formatBrazilianPhone(item.phone)
       if (phone.length < 10) {
         skipped++
         errors.push(`Telefone inválido: "${item.phone}"`)
@@ -164,6 +155,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             trackingSource,
             status: 'pending',
           })
+          .onConflictDoUpdate({
+            target: [recoveryLeads.companyId, recoveryLeads.phone],
+            targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')`,
+            set: {
+              name: name ? sql`coalesce(nullif(${recoveryLeads.name}, ''), ${name})` : undefined,
+              email: email ? sql`coalesce(nullif(${recoveryLeads.email}, ''), ${email})` : undefined,
+              productName: productName ? sql`coalesce(nullif(${recoveryLeads.productName}, ''), ${productName})` : undefined,
+              productValue: productValue > 0 ? sql`coalesce(${recoveryLeads.productValue}, ${productValue})` : undefined,
+              trackingSource: trackingSource ? sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), ${trackingSource})` : undefined,
+              updatedAt: new Date(),
+            },
+          })
           .returning({
             id: recoveryLeads.id,
             phone: recoveryLeads.phone,
@@ -174,7 +177,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         leadPhone = created.phone
         leadChannel = created.channel
         inserted++
-
       }
 
       if (tag) {

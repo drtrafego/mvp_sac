@@ -850,15 +850,15 @@ export function ensureSchema(client: any): Promise<void> {
           await client`
             CREATE UNIQUE INDEX IF NOT EXISTS recovery_leads_chat_company_phone_unique
             ON recovery_leads (company_id, phone)
-            WHERE platform IN ('instagram', 'sac', 'hermes')
+            WHERE platform IN ('instagram', 'sac', 'hermes', 'import_planilha')
           `
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           console.error(
             '[DB Schema Sync Error] Falha ao criar recovery_leads_chat_company_phone_unique ' +
               '(provável causa: já existe phone duplicado em recovery_leads para o mesmo company_id entre ' +
-              "leads de atendimento; rode " +
-              "\"SELECT company_id, phone, count(*) FROM recovery_leads WHERE platform IN ('instagram','sac','hermes') GROUP BY company_id, phone HAVING count(*) > 1\" " +
+              "leads de atendimento ou planilha; rode " +
+              "\"SELECT company_id, phone, count(*) FROM recovery_leads WHERE platform IN ('instagram','sac','hermes','import_planilha') GROUP BY company_id, phone HAVING count(*) > 1\" " +
               'e resolva as duplicatas (mesclar os leads e as mensagens do lead perdedor no vencedor) antes de tentar de novo):',
             message,
           )
