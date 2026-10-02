@@ -48,7 +48,7 @@ export async function sendInstagramMessage({
   }
 
   try {
-    const pageId = config?.instagramPageId || 'me'
+    const pageId = config?.instagramAccountId || config?.instagramPageId || 'me'
     const res = await fetch(`https://graph.instagram.com/v21.0/${pageId}/messages`, {
       method: 'POST',
       headers: {
@@ -94,7 +94,7 @@ export async function sendInstagramPrivateReply({
     return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
   }
 
-  const pageId = config?.instagramPageId || config?.instagramAccountId || 'me'
+  const pageId = config?.instagramAccountId || config?.instagramPageId || 'me'
 
   try {
     const res = await fetch(`https://graph.instagram.com/v21.0/${pageId}/messages`, {
