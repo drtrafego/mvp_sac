@@ -12,6 +12,7 @@ const PUBLIC_PATHS = [
   '/api/auth',
   '/api/admin',
   '/api/cron',
+  '/api/diagtrilha4001', // temporário, rota já protegida por chave própria — remover junto com a rota
   '/robots.txt',
   '/sitemap.xml',
   '/_next',
