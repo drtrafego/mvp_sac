@@ -744,7 +744,11 @@ export const instagramCommentAutomations = pgTable('instagram_comment_automation
   totalTriggered: integer('total_triggered').default(0),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
-})
+}, (table) => [
+  uniqueIndex('instagram_comment_automations_company_media_unique')
+    .on(table.companyId, table.mediaId)
+    .where(sql`${table.mediaId} is not null and ${table.mediaId} != ''`),
+])
 
 export const instagramCommentLogs = pgTable('instagram_comment_logs', {
   id: serial('id').primaryKey(),
