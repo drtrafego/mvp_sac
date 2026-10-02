@@ -4,8 +4,8 @@ import { companies, settings, agentActivityLogs } from '@/lib/db/schema'
 import { eq, or } from 'drizzle-orm'
 import { getCurrentCompany, getCurrentUser } from '@/lib/auth'
 
-export type AgentIdentifier = 'bia' | 'luana' | 'renato' | 'master' | 'admin' | 'humano'
-export type AgentDisplayName = 'Bia' | 'Luana' | 'Renato' | 'Master' | 'Administrador' | 'Humano'
+export type AgentIdentifier = 'bia' | 'luana' | 'renato' | 'publicador' | 'master' | 'admin' | 'humano'
+export type AgentDisplayName = 'Bia' | 'Luana' | 'Renato' | 'Publicador' | 'Master' | 'Administrador' | 'Humano'
 
 export interface AgentAuthContext {
   company: typeof companies.$inferSelect
@@ -119,7 +119,7 @@ export async function authenticateAgentRequest(
     }
     // 1.3 Chaves de API por Empresa no Banco de Dados (multi-tenant)
     else {
-      let matchedRow: { id: number; name: string; slug: string; agent_bia_api_key?: string; agent_luana_api_key?: string; agent_renato_api_key?: string; invite_token?: string } | null = null
+      let matchedRow: { id: number; name: string; slug: string; agent_bia_api_key?: string; agent_luana_api_key?: string; agent_renato_api_key?: string; agent_publicador_api_key?: string; invite_token?: string } | null = null
 
       try {
         const [compSettings] = await db
@@ -134,6 +134,7 @@ export async function authenticateAgentRequest(
               eq(settings.agentBiaApiKey, providedKey),
               eq(settings.agentLuanaApiKey, providedKey),
               eq(settings.agentRenatoApiKey, providedKey),
+              eq(settings.agentPublicadorApiKey, providedKey),
               eq(companies.inviteToken, providedKey)
             )
           )
@@ -148,6 +149,7 @@ export async function authenticateAgentRequest(
             agent_bia_api_key: compSettings.settings?.agentBiaApiKey || undefined,
             agent_luana_api_key: compSettings.settings?.agentLuanaApiKey || undefined,
             agent_renato_api_key: compSettings.settings?.agentRenatoApiKey || undefined,
+            agent_publicador_api_key: compSettings.settings?.agentPublicadorApiKey || undefined,
             invite_token: compSettings.company.inviteToken || undefined,
           }
         }
@@ -167,6 +169,9 @@ export async function authenticateAgentRequest(
           } else if (matchedRow.agent_renato_api_key === providedKey) {
             agentId = 'renato'
             agentName = 'Renato'
+          } else if (matchedRow.agent_publicador_api_key === providedKey) {
+            agentId = 'publicador'
+            agentName = 'Publicador'
           } else {
             agentId = 'admin'
             agentName = 'Administrador'

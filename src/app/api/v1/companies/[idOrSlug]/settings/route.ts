@@ -31,7 +31,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   // pra agente autenticado. Achado de auditoria (26/09/2026): esta rota
   // espalhava `...row` inteiro e só sobrescrevia uma lista manual de campos,
   // que deixava passar em claro supabaseDatabaseUrl, agentBiaApiKey,
-  // agentLuanaApiKey, agentRenatoApiKey e instagramAppSecret.
+  // agentLuanaApiKey, agentRenatoApiKey, agentPublicadorApiKey e instagramAppSecret.
   const maskedSettings = row ? maskSettingsRow(row) : null
 
   return NextResponse.json({
@@ -91,6 +91,7 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       'agentBiaApiKey',
       'agentLuanaApiKey',
       'agentRenatoApiKey',
+      'agentPublicadorApiKey',
       'allowedIps',
       'hotmartWebhookToken',
       'kiwifyWebhookToken',
@@ -112,8 +113,8 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     // com valor vazio ou começando em "****" é ignorado aqui, senão um
     // caller que faz round-trip GET -> PATCH sem filtrar os campos
     // mascarados grava o placeholder por cima da credencial real. Cobre
-    // agentBiaApiKey/agentLuanaApiKey/agentRenatoApiKey (bearer tokens que
-    // autenticam os próprios agentes nesta API) e os demais tokens da
+    // agentBiaApiKey/agentLuanaApiKey/agentRenatoApiKey/agentPublicadorApiKey
+    // (bearer tokens que autenticam agentes e workers nesta API) e os demais tokens da
     // allowlist abaixo. Ver shouldWriteSettingsField() em settings-mask.ts.
     const updateData: Record<string, unknown> = { updatedAt: new Date() }
     for (const k of allowedKeys) {
