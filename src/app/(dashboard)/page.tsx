@@ -106,11 +106,25 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return `/inbox?${q.toString()}`
   }
 
-  const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats], originPills] = await Promise.all([
+  const [[leadStats], [firstContactStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats], originPills] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
       .from(recoveryLeads)
       .where(baseWhere),
+
+    // Conversas que de fato COMEÇARAM no período (baseada em firstContactAt),
+    // desacoplada de baseWhere (que filtra atividade/toques e inflava o card "Conversas Iniciadas").
+    db
+      .select({ total: count() })
+      .from(recoveryLeads)
+      .where(
+        and(
+          eq(recoveryLeads.companyId, cid),
+          gte(recoveryLeads.firstContactAt, fromDate),
+          lte(recoveryLeads.firstContactAt, toDate),
+          sourceFilter,
+        ),
+      ),
 
     db
       .select({
@@ -166,7 +180,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     loadDashboardOriginPills(db, cid),
   ])
 
-  const total = leadStats?.total ?? 0
+  const total = Number(firstContactStats?.total ?? 0)
   const awaitingContactCount = awaitingStats?.total ?? 0
   const fechadosCount = leadStats?.fechadosTotal ?? 0
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
