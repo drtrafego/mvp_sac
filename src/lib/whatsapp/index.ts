@@ -21,27 +21,8 @@ interface MessagePayload {
   templateVariableValues?: string[]  // valores interpolados em ordem posicional
 }
 
-// Garante formato E.164 para números brasileiros (adiciona nono dígito se necessário)
-export function formatBrazilianPhone(raw: string): string {
-  const digits = raw.replace(/\D/g, '')
-  if (!digits) return ''
-
-  // Já tem DDI
-  if (digits.startsWith('55')) {
-    const local = digits.slice(2)
-    if (local.length === 11) return digits                              // completo
-    if (local.length === 10) return '55' + local.slice(0, 2) + '9' + local.slice(2) // falta nono dígito
-    return digits
-  }
-
-  // DDI de outro país (não começa com 55): retorna como veio
-  if (digits.length > 11) return digits
-
-  // Número local brasileiro
-  if (digits.length === 11) return '55' + digits                         // DDD+9+8
-  if (digits.length === 10) return '55' + digits.slice(0, 2) + '9' + digits.slice(2) // DDD+8, adiciona 9
-  return '55' + digits
-}
+import { formatBrazilianPhone } from '@/lib/phone'
+export { formatBrazilianPhone }
 
 // Retorna o WAMID (apenas Meta retorna; UazAPI retorna null)
 export async function sendWhatsAppMessage(

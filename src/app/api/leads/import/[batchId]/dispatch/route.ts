@@ -54,6 +54,12 @@ async function loadPreview(batchId: number, companyId: number) {
       WHERE b.id = ${batchId}
         AND b.company_id = ${companyId}
         AND l.bot_paused IS NOT TRUE
+        AND NOT EXISTS (
+          SELECT 1 FROM message_jobs existing_job
+          WHERE existing_job.lead_id = l.id
+            AND existing_job.mass_dispatch_batch_id IS NOT NULL
+            AND existing_job.status IN ('pending', 'processing')
+        )
     ), recipient_summary AS (
       SELECT count(DISTINCT lead_id)::int AS recipient_count FROM eligible_pairs
     )

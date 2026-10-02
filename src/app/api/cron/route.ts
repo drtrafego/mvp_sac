@@ -8,7 +8,7 @@ import { agendaBlockedDates, companies, massDispatchPhoneCooldowns, messageJobs,
 import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
-import { MAX_JOBS_PER_RUN, checkMetaWindowForJob } from '@/lib/message-jobs-policy'
+import { MAX_JOBS_PER_RUN, checkMetaWindowForJob, calculateDispatchSpacingMs } from '@/lib/message-jobs-policy'
 import { executeAndRecordDispatch, type DispatchOutcome, type MessageSnapshot } from '@/lib/mass-dispatch'
 import { releaseCronDispatchLock, tryAcquireCronDispatchLock } from '@/lib/cron-advisory-lock'
 import { evaluateDispatchWindow, firstDueJobPerLead, retryAtAfterPreviousFollowupStep, selectFollowupDispatchSchedule, shouldApplyFollowupDispatchWindow } from '@/lib/followup-dispatch-policy'
@@ -356,6 +356,7 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
 
   let sent = 0
   let failed = 0
+  let hasDispatchedAny = false
   const cooldownsByPhone = new Map<string, Date>()
 
   for (const { job, companyId, companySlug, metaPhoneNumberId, availabilitySchedule, availabilityScheduleManual, nativeAvailabilitySchedule, leadPhone, leadCreatedAt, checkBeforeSend } of runnableJobs) {
@@ -483,6 +484,14 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
           console.warn('[cron] job fora da janela de 24h (bloqueio desativado, enviando mesmo assim)', { jobId: job.id, leadId: job.leadId })
         }
 
+        if (hasDispatchedAny) {
+          const spacingMs = calculateDispatchSpacingMs()
+          if (spacingMs > 0) {
+            await new Promise(resolve => setTimeout(resolve, spacingMs))
+          }
+        }
+        hasDispatchedAny = true
+
         const outcome = await executeAndRecordDispatch(
           () => sendWhatsAppMessage(lead.phone, {
             type: 'text',
@@ -560,6 +569,14 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
           return interpolate(sysVar, lead)
         })
       }
+
+      if (hasDispatchedAny) {
+        const spacingMs = calculateDispatchSpacingMs()
+        if (spacingMs > 0) {
+          await new Promise(resolve => setTimeout(resolve, spacingMs))
+        }
+      }
+      hasDispatchedAny = true
 
       const outcome = await executeAndRecordDispatch(
         () => sendWhatsAppMessage(lead.phone, {

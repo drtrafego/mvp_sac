@@ -219,6 +219,12 @@ export async function queueMassDispatchBatch(
         ) rs ON true
         JOIN sequence_messages sm ON sm.sequence_id = rs.id AND sm.is_active = true
         WHERE l.bot_paused IS NOT TRUE
+          AND NOT EXISTS (
+            SELECT 1 FROM message_jobs existing_job
+            WHERE existing_job.lead_id = l.id
+              AND existing_job.mass_dispatch_batch_id IS NOT NULL
+              AND existing_job.status IN ('pending', 'processing')
+          )
       ), current_preview AS (
         SELECT coalesce(jsonb_agg(jsonb_build_object(
           'id', p.message_id,
@@ -241,17 +247,12 @@ export async function queueMassDispatchBatch(
           )::int AS non_template_count,
           (SELECT messages FROM current_preview) = ${stableJsonStringify(approvedPreview)}::jsonb AS preview_matches
         FROM eligible_pairs
-      ), usage AS (
-        SELECT count(*)::int AS reserved_count
+      ), queued_or_sent_jobs AS (
+        SELECT count(*)::int AS cnt
         FROM message_jobs j
         JOIN recovery_leads l ON l.id = j.lead_id
         JOIN settings cfg ON cfg.company_id = l.company_id
         WHERE cfg.meta_phone_number_id = ${metaPhoneNumberId}
-          -- Limitação conhecida: este orçamento protege só disparos em massa.
-          -- Envios normais ficam em whatsapp_messages e não têm vínculo confiável
-          -- com message_jobs/meta_phone_number_id suficiente para compor o mesmo
-          -- contador sem redesenhar a mensageria.
-          AND j.mass_dispatch_batch_id IS NOT NULL
           AND (
             j.status IN ('pending', 'processing')
             OR (
@@ -259,6 +260,20 @@ export async function queueMassDispatchBatch(
               AND coalesce(j.sent_at, j.created_at) >= now() - interval '24 hours'
             )
           )
+      ), direct_sent_messages AS (
+        SELECT count(*)::int AS cnt
+        FROM whatsapp_messages wm
+        JOIN settings cfg ON cfg.company_id = wm.company_id
+        WHERE cfg.meta_phone_number_id = ${metaPhoneNumberId}
+          AND wm.direction = 'outbound'
+          AND wm.created_at >= now() - interval '24 hours'
+          AND (wm.external_id IS NULL OR NOT EXISTS (
+            SELECT 1 FROM message_jobs mj
+            WHERE mj.external_wamid = wm.external_id
+          ))
+      ), usage AS (
+        SELECT (j.cnt + m.cnt)::int AS reserved_count
+        FROM queued_or_sent_jobs j, direct_sent_messages m
       ), claimed AS (
         UPDATE mass_dispatch_batches b
         SET status = 'queued', confirmed_at = now()

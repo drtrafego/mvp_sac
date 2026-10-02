@@ -291,7 +291,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         // inferir o arbiter do ON CONFLICT. Ampliado pra incluir 'hermes' em
         // 22/09/2026 junto com a migration 0010 (fix de concorrência no
         // webhook de conversão do Hermes) — mudou lá, muda aqui também.
-        targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes')`,
+        targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')`,
         set: {
           updatedAt: new Date(),
           lastActionAt: new Date(),
