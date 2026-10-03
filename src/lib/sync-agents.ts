@@ -174,7 +174,7 @@ export interface AppointmentDbRow {
 
 export interface GramadoReservationDbRow {
   reserva_id: string
-  data: string
+  data: string | Date
   horario_reservado: string | null
   horario_chegada: string | null
   telefone_norm: string | null
@@ -523,6 +523,16 @@ function parseCursorDate(value: string | Date | null | undefined): Date | null {
   if (!value) return null
   const date = value instanceof Date ? value : new Date(value)
   return Number.isNaN(date.getTime()) ? null : date
+}
+
+function formatDateOnly(value: string | Date | null | undefined): string | null {
+  if (!value) return null
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10)
+  }
+
+  const datePart = value.trim().slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? datePart : null
 }
 
 function buildCursorPosition(
@@ -1628,6 +1638,8 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const leadId = phoneNorm
               ? resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, company.id, phoneNorm) || null
               : null
+            const reservationDate = formatDateOnly(reservation.data)
+            if (!reservationDate) continue
             const atualizadoEm = parseCursorDate(
               reservation.atualizado_em || reservation.sincronizado_em || reservation.criado_em
             )
@@ -1636,7 +1648,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               leadId,
               reservaId: String(reservation.reserva_id),
               phoneNorm: phoneNorm || null,
-              data: String(reservation.data).slice(0, 10),
+              data: reservationDate,
               horarioReservado: reservation.horario_reservado,
               horarioChegada: reservation.horario_chegada,
               pessoas: reservation.pessoas,
