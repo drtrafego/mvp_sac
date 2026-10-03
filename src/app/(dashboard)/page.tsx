@@ -2,8 +2,8 @@ export const dynamic = 'force-dynamic'
 
 import Link from 'next/link'
 import { db } from '@/lib/db'
-import { recoveryLeads, messageJobs } from '@/lib/db/schema'
-import { eq, count, and, desc, sql, gte, lte, isNull, isNotNull } from 'drizzle-orm'
+import { recoveryLeads, messageJobs, gramadoReservations } from '@/lib/db/schema'
+import { eq, count, and, desc, sql, gte, lte, isNull, isNotNull, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import {
   Users,
@@ -41,6 +41,7 @@ import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
 import { dashboardLeadStatsSelect, gramadoDashboardCardCounts, resolveDashboardBusinessModel, dashboardBusinessWonSql } from '@/lib/dashboard/lead-stats'
+import { GRAMADO_VALID_RESERVATION_STATUSES } from '@/lib/dashboard/gramado-reservations'
 import { hasDashboardOrigin, loadDashboardOriginPills } from '@/lib/dashboard/origin-pills'
 import { inferPipelineStage } from '@/lib/pipeline-stage'
 
@@ -106,7 +107,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return `/inbox?${q.toString()}`
   }
 
-  const [[leadStats], [firstContactStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats], originPills] = await Promise.all([
+  const [[leadStats], [firstContactStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats]] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
       .from(recoveryLeads)
@@ -178,11 +179,31 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       .where(notContactedWhere),
 
     loadDashboardOriginPills(db, cid),
+
+    isGramado
+      ? db
+          .select({
+            totalReservas: sql<number>`cast(count(*) as int)`,
+            totalPessoas: sql<number>`cast(coalesce(sum(${gramadoReservations.pessoas}), 0) as int)`,
+          })
+          .from(gramadoReservations)
+          .where(
+            and(
+              eq(gramadoReservations.companyId, cid),
+              gte(gramadoReservations.data, from),
+              lte(gramadoReservations.data, to),
+              inArray(gramadoReservations.status, GRAMADO_VALID_RESERVATION_STATUSES),
+            ),
+          )
+      : Promise.resolve([{ totalReservas: null, totalPessoas: null }]),
   ])
 
   const total = Number(firstContactStats?.total ?? 0)
   const awaitingContactCount = awaitingStats?.total ?? 0
   const fechadosCount = leadStats?.fechadosTotal ?? 0
+  const gramadoReservasCount = Number(gramadoReservationStats?.totalReservas ?? 0)
+  const gramadoPessoasCount = Number(gramadoReservationStats?.totalPessoas ?? 0)
+  const agendamentosCount = isGramado ? gramadoReservasCount : fechadosCount
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
   const qualificadosCount = leadStats?.qualificadosTotal ?? 0
   const gramadoCardCounts = gramadoDashboardCardCounts(leadStats)
@@ -193,7 +214,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   // do Hermes (quem agendou/reservou dividido por quem iniciou conversa no
   // periodo). Uma unica formula, reutilizada no card de agendamento abaixo e
   // nos KPIs adaptativos, para nunca divergir do numero mostrado ao Gastao.
-  const agendamentoConversionRate = total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'
+  const agendamentoConversionRate = total > 0 ? ((agendamentosCount / total) * 100).toFixed(1) : '0.0'
 
   const recoveredCount = leadStats?.recoveredCount ?? 0
   const recoveryTotal = (leadStats?.boleto ?? 0) + (leadStats?.pix ?? 0) + (leadStats?.carrinho ?? 0) + (leadStats?.cartao ?? 0)
@@ -242,10 +263,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   if (isGramado) {
     heroTag = 'Resto-Bar & Gastronomia'
     heroTitle = 'Reservas Confirmadas & Mesas'
-    const estVal = fechadosValueCents > 0 ? fechadosValueCents : fechadosCount * 18000 // R$ 180 por mesa média
+    const estVal = fechadosValueCents > 0 ? fechadosValueCents : gramadoReservasCount * 18000 // R$ 180 por mesa média
     const money = splitMoney(estVal)
-    heroValueDisplay = fechadosCount > 0 ? `${fechadosCount} Reservas` : '0 Reservas'
-    heroSub = `${formatBRL(estVal)} em consumo estimado · ${fechadosCount * 3} pessoas atendidas`
+    heroValueDisplay = gramadoReservasCount > 0 ? `${gramadoReservasCount} Reservas` : '0 Reservas'
+    heroSub = `${formatBRL(estVal)} em consumo estimado · ${gramadoPessoasCount} pessoas atendidas`
     heroIcon = Utensils
   } else if (isLucas) {
     heroTag = 'Saúde & Clínica Médica'
@@ -274,10 +295,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   // 3. Definir os 4 KPIS de Apoio adaptativos
   let kpis = []
   if (isGramado) {
-    const convRate = total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'
+    const convRate = total > 0 ? ((gramadoReservasCount / total) * 100).toFixed(1) : '0.0'
     kpis = [
-      { label: 'Reservas Fechadas', value: String(fechadosCount), icon: CheckCircle2, hint: 'mesas confirmadas' },
-      { label: 'Pessoas / Lugares', value: String(fechadosCount * 3), icon: Users, hint: 'capacidade média 3p/mesa' },
+      { label: 'Reservas Fechadas', value: String(gramadoReservasCount), icon: CheckCircle2, hint: 'mesas confirmadas' },
+      { label: 'Pessoas / Lugares', value: String(gramadoPessoasCount), icon: Users, hint: 'pessoas nas reservas' },
       { label: 'Taxa de Fechamento', value: `${convRate}%`, icon: TrendingUp, hint: 'de conversas em reservas' },
       { label: 'Atendimentos', value: String(total), icon: MessageSquare, hint: 'contatos no WhatsApp' },
     ]
@@ -313,7 +334,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       { label: 'Interesse em Reserva', count: leadStats?.novoContato ?? total, icon: Utensils, color: '--ev-carrinho', desc: 'Novos clientes' },
       { label: 'Data Consultada', count: leadStats?.qualificado ?? 0, icon: Calendar, color: '--ev-pix', desc: 'Horário & disponibilidade' },
       { label: 'Cardápio / Pacote', count: leadStats?.proposta ?? 0, icon: Receipt, color: '--ev-boleto', desc: 'Valores informados' },
-      { label: 'Reserva Confirmada', count: gramadoCardCounts.reservaConfirmada, icon: CheckCircle2, color: '--st-positivo', desc: 'Mesa garantida' },
+      { label: 'Reserva Confirmada', count: gramadoReservasCount, icon: CheckCircle2, color: '--st-positivo', desc: 'Mesa garantida' },
       { label: 'Compareceu', count: gramadoCardCounts.compareceu, icon: PartyPopper, color: '--brand', desc: 'Cliente no restaurante' },
     ]
   } else if (isLucas) {
@@ -369,7 +390,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     { label: 'Conversas Iniciadas', count: total, icon: MessageSquare, desc: 'iniciaram atendimento no período' },
     { label: 'Responderam', count: respondeuCount, icon: ThumbsUp, desc: 'leads que enviaram ao menos 1 mensagem' },
     { label: 'Avançaram', count: avancouCount, icon: ArrowUpRight, desc: 'conversa com 4+ mensagens' },
-    { label: agendamentoLabel, count: fechadosCount, icon: Calendar, desc: 'chegaram a agendar/reservar' },
+    { label: agendamentoLabel, count: agendamentosCount, icon: Calendar, desc: 'chegaram a agendar/reservar' },
     { label: compareceuLabel, count: compareceuCount, icon: PartyPopper, desc: 'etapa final do funil' },
   ]
 
@@ -686,7 +707,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               <div className="mt-3">
                 <p className="num text-metric text-brand-ink">{agendamentoConversionRate}%</p>
                 <p className="text-micro text-fg-faint mt-1">
-                  {fechadosCount} {agendamentoLabel.toLowerCase()} de {total} conversas iniciadas
+                  {agendamentosCount} {agendamentoLabel.toLowerCase()} de {total} conversas iniciadas
                 </p>
               </div>
             </div>
@@ -806,9 +827,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </div>
             <div className="mt-2">
               <span className="num text-metric-sm font-bold text-fg block">
-                {total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'}%
+                {total > 0 ? ((agendamentosCount / total) * 100).toFixed(1) : '0.0'}%
               </span>
-              <span className="text-[11px] text-fg-faint mt-0.5 block">{fechadosCount} fechados de {total} contatos</span>
+              <span className="text-[11px] text-fg-faint mt-0.5 block">{agendamentosCount} fechados de {total} contatos</span>
             </div>
           </div>
 
