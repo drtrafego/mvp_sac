@@ -89,7 +89,7 @@ async function main() {
           if (query.includes('from "gramadoplazza".reservas')) {
             const row = {
               reserva_id: '00000000-0000-0000-0000-000000000001',
-              data: '2026-09-30', horario_reservado: '20:15:00', horario_chegada: null,
+              data: new Date('2026-09-30T00:00:00Z'), horario_reservado: '20:15:00', horario_chegada: null,
               telefone_norm: '5551999999000', pessoas: 4, valor_total: '239.60',
               status: reservationStatus, observacoes: 'teste sintético', mesas_unificadas: false,
               atualizado_em: reservationUpdatedAt, criado_em: '2026-09-23T10:00:00Z',
