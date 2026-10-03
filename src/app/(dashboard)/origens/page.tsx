@@ -89,8 +89,9 @@ export default async function OrigensPage({ searchParams }: PageProps) {
 
   const activityDateSql = sql`coalesce(${recoveryLeads.lastActionAt}, ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`
   const dateFilter = and(gte(activityDateSql, fromDate), lte(activityDateSql, toDate))
+  const firstContactDateFilter = and(gte(recoveryLeads.firstContactAt, fromDate), lte(recoveryLeads.firstContactAt, toDate))
   const businessModel = resolveDashboardBusinessModel(company.slug)
-  const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter)
+  const firstContactWhere = and(eq(recoveryLeads.companyId, cid), firstContactDateFilter)
 
   const notContactedCondition = and(isNull(recoveryLeads.firstContactAt), sql`not ${dashboardBusinessWonSql(businessModel)}`)
 
@@ -111,7 +112,7 @@ export default async function OrigensPage({ searchParams }: PageProps) {
         recoveredValueCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${recoveryLeads.status} = 'converted'), 0) as bigint)`,
       })
       .from(recoveryLeads)
-      .where(baseWhere)
+      .where(firstContactWhere)
       .groupBy(
         recoveryLeads.trackingSource,
         recoveryLeads.utmMedium,

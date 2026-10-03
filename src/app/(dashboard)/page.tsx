@@ -77,6 +77,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
   const activityDateSql = sql`coalesce(${recoveryLeads.lastActionAt}, ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`
   const dateFilter = and(gte(activityDateSql, fromDate), lte(activityDateSql, toDate))
+  const firstContactDateFilter = and(gte(recoveryLeads.firstContactAt, fromDate), lte(recoveryLeads.firstContactAt, toDate))
   const baseWhere = and(eq(recoveryLeads.companyId, cid), dateFilter, sourceFilter)
 
   // 1. Identificar modelo de negócio da empresa
@@ -166,7 +167,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         count: sql<number>`cast(count(*) as int)`,
       })
       .from(recoveryLeads)
-      .where(baseWhere)
+      .where(and(eq(recoveryLeads.companyId, cid), firstContactDateFilter, sourceFilter))
       .groupBy(sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`)
       .orderBy(desc(sql<number>`count(*)`))
       .limit(5),
