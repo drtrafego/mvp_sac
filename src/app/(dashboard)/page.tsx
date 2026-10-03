@@ -2,8 +2,8 @@ export const dynamic = 'force-dynamic'
 
 import Link from 'next/link'
 import { db } from '@/lib/db'
-import { recoveryLeads, messageJobs } from '@/lib/db/schema'
-import { eq, count, and, desc, sql, gte, lte, isNull, isNotNull } from 'drizzle-orm'
+import { recoveryLeads, messageJobs, gramadoReservations } from '@/lib/db/schema'
+import { eq, count, and, desc, sql, gte, lte, isNull, isNotNull, ne } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import {
   Users,
@@ -106,7 +106,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return `/inbox?${q.toString()}`
   }
 
-  const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats], originPills] = await Promise.all([
+  const [[leadStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats]] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
       .from(recoveryLeads)
@@ -164,6 +164,26 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       .where(notContactedWhere),
 
     loadDashboardOriginPills(db, cid),
+
+    // 3.1. Gramado Plazza: Contagem e pessoas reais a partir de gramado_reservations.data (ITEM 6 & 7)
+    // ao invés de estimar fechadosCount via atividade (leadStats/baseWhere) e pessoas via chute fechadosCount * 3.
+    isGramado
+      ? db
+          .select({
+            totalReservas: sql<number>`cast(count(*) filter (where ${gramadoReservations.status} != 'cancelou') as int)`,
+            compareceuReservas: sql<number>`cast(count(*) filter (where ${gramadoReservations.status} = 'compareceu') as int)`,
+            totalPessoas: sql<number>`cast(coalesce(sum(${gramadoReservations.pessoas}) filter (where ${gramadoReservations.status} != 'cancelou'), 0) as int)`,
+            totalValorCents: sql<number>`cast(coalesce(sum(cast(${gramadoReservations.valorTotal} as numeric) * 100) filter (where ${gramadoReservations.status} != 'cancelou'), 0) as bigint)`,
+          })
+          .from(gramadoReservations)
+          .where(
+            and(
+              eq(gramadoReservations.companyId, cid),
+              gte(gramadoReservations.data, from),
+              lte(gramadoReservations.data, to),
+            ),
+          )
+      : Promise.resolve([{ totalReservas: 0, compareceuReservas: 0, totalPessoas: 0, totalValorCents: 0 }]),
   ])
 
   const total = leadStats?.total ?? 0
@@ -175,11 +195,18 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const respondeuCount = leadStats?.respondeuTotal ?? 0
   const avancouCount = leadStats?.avancouTotal ?? 0
 
+  const gramadoReservasCount = Number(gramadoReservationStats?.totalReservas ?? 0)
+  const gramadoPessoasCount = Number(gramadoReservationStats?.totalPessoas ?? 0)
+  const gramadoCompareceuCount = Number(gramadoReservationStats?.compareceuReservas ?? 0)
+  const gramadoValorTotalCents = Number(gramadoReservationStats?.totalValorCents ?? 0)
+
+  const effectiveFechadosCount = isGramado ? gramadoReservasCount : fechadosCount
+
   // Taxa de conversao "oficial" do negocio: mesma definicao do painel nativo
   // do Hermes (quem agendou/reservou dividido por quem iniciou conversa no
   // periodo). Uma unica formula, reutilizada no card de agendamento abaixo e
   // nos KPIs adaptativos, para nunca divergir do numero mostrado ao Gastao.
-  const agendamentoConversionRate = total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'
+  const agendamentoConversionRate = total > 0 ? ((effectiveFechadosCount / total) * 100).toFixed(1) : '0.0'
 
   const recoveredCount = leadStats?.recoveredCount ?? 0
   const recoveryTotal = (leadStats?.boleto ?? 0) + (leadStats?.pix ?? 0) + (leadStats?.carrinho ?? 0) + (leadStats?.cartao ?? 0)
@@ -228,10 +255,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   if (isGramado) {
     heroTag = 'Resto-Bar & Gastronomia'
     heroTitle = 'Reservas Confirmadas & Mesas'
-    const estVal = fechadosValueCents > 0 ? fechadosValueCents : fechadosCount * 18000 // R$ 180 por mesa média
+    const estVal = gramadoValorTotalCents > 0
+      ? gramadoValorTotalCents
+      : (fechadosValueCents > 0 ? fechadosValueCents : gramadoReservasCount * 18000)
     const money = splitMoney(estVal)
-    heroValueDisplay = fechadosCount > 0 ? `${fechadosCount} Reservas` : '0 Reservas'
-    heroSub = `${formatBRL(estVal)} em consumo estimado · ${fechadosCount * 3} pessoas atendidas`
+    heroValueDisplay = gramadoReservasCount > 0 ? `${gramadoReservasCount} Reservas` : '0 Reservas'
+    heroSub = `${formatBRL(estVal)} em consumo estimado · ${gramadoPessoasCount} pessoas atendidas`
     heroIcon = Utensils
   } else if (isLucas) {
     heroTag = 'Saúde & Clínica Médica'
@@ -260,10 +289,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   // 3. Definir os 4 KPIS de Apoio adaptativos
   let kpis = []
   if (isGramado) {
-    const convRate = total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'
+    const convRate = total > 0 ? ((gramadoReservasCount / total) * 100).toFixed(1) : '0.0'
     kpis = [
-      { label: 'Reservas Fechadas', value: String(fechadosCount), icon: CheckCircle2, hint: 'mesas confirmadas' },
-      { label: 'Pessoas / Lugares', value: String(fechadosCount * 3), icon: Users, hint: 'capacidade média 3p/mesa' },
+      { label: 'Reservas Fechadas', value: String(gramadoReservasCount), icon: CheckCircle2, hint: 'mesas confirmadas' },
+      { label: 'Pessoas / Lugares', value: String(gramadoPessoasCount), icon: Users, hint: 'pessoas confirmadas nas reservas' },
       { label: 'Taxa de Fechamento', value: `${convRate}%`, icon: TrendingUp, hint: 'de conversas em reservas' },
       { label: 'Atendimentos', value: String(total), icon: MessageSquare, hint: 'contatos no WhatsApp' },
     ]
@@ -299,8 +328,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       { label: 'Interesse em Reserva', count: leadStats?.novoContato ?? total, icon: Utensils, color: '--ev-carrinho', desc: 'Novos clientes' },
       { label: 'Data Consultada', count: leadStats?.qualificado ?? 0, icon: Calendar, color: '--ev-pix', desc: 'Horário & disponibilidade' },
       { label: 'Cardápio / Pacote', count: leadStats?.proposta ?? 0, icon: Receipt, color: '--ev-boleto', desc: 'Valores informados' },
-      { label: 'Reserva Confirmada', count: gramadoCardCounts.reservaConfirmada, icon: CheckCircle2, color: '--st-positivo', desc: 'Mesa garantida' },
-      { label: 'Compareceu', count: gramadoCardCounts.compareceu, icon: PartyPopper, color: '--brand', desc: 'Cliente no restaurante' },
+      { label: 'Reserva Confirmada', count: gramadoReservasCount, icon: CheckCircle2, color: '--st-positivo', desc: 'Mesa garantida' },
+      { label: 'Compareceu', count: gramadoCompareceuCount, icon: PartyPopper, color: '--brand', desc: 'Cliente no restaurante' },
     ]
   } else if (isLucas) {
     funnelCards = [
@@ -336,11 +365,11 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const showAgendamentoFunnel = isGramado || isLucas || isAgencia
   let agendamentoLabel = 'Agendado'
   let compareceuLabel = 'Compareceu'
-  let compareceuCount = fechadosCount
+  let compareceuCount = effectiveFechadosCount
   if (isGramado) {
     agendamentoLabel = 'Reservaram'
     compareceuLabel = 'Compareceram'
-    compareceuCount = gramadoCardCounts.compareceu
+    compareceuCount = gramadoCompareceuCount
   } else if (isLucas) {
     agendamentoLabel = 'Agendaram Consulta'
     compareceuLabel = 'Compareceram (Procedimento)'
@@ -355,7 +384,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     { label: 'Conversas Iniciadas', count: total, icon: MessageSquare, desc: 'iniciaram atendimento no período' },
     { label: 'Responderam', count: respondeuCount, icon: ThumbsUp, desc: 'leads que enviaram ao menos 1 mensagem' },
     { label: 'Avançaram', count: avancouCount, icon: ArrowUpRight, desc: 'conversa com 4+ mensagens' },
-    { label: agendamentoLabel, count: fechadosCount, icon: Calendar, desc: 'chegaram a agendar/reservar' },
+    { label: agendamentoLabel, count: effectiveFechadosCount, icon: Calendar, desc: 'chegaram a agendar/reservar' },
     { label: compareceuLabel, count: compareceuCount, icon: PartyPopper, desc: 'etapa final do funil' },
   ]
 
@@ -672,7 +701,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               <div className="mt-3">
                 <p className="num text-metric text-brand-ink">{agendamentoConversionRate}%</p>
                 <p className="text-micro text-fg-faint mt-1">
-                  {fechadosCount} {agendamentoLabel.toLowerCase()} de {total} conversas iniciadas
+                  {effectiveFechadosCount} {agendamentoLabel.toLowerCase()} de {total} conversas iniciadas
                 </p>
               </div>
             </div>
