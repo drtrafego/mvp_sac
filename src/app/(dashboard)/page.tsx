@@ -121,7 +121,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return `/inbox?${q.toString()}`
   }
 
-  const [[leadStats], [checkoutStats], [firstContactStats], [gramadoConversationStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, checkoutTrafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats]] = await Promise.all([
+  const [[leadStats], [checkoutStats], [firstContactStats], [gramadoConversationStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, gramadoTrafficBreakdown, checkoutTrafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats]] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
       .from(recoveryLeads)
@@ -220,6 +220,27 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       .orderBy(desc(sql<number>`count(*)`))
       .limit(5),
 
+    // Gramado: origem também segue a mesma régua de conversa real. Se usar
+    // firstContactAt aqui, o total por origem volta a somar leads tocados por
+    // sync/importação e diverge do card de conversas iniciadas.
+    isGramado
+      ? db
+          .select({
+            source: sql<string>`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`,
+            count: sql<number>`cast(count(*) as int)`,
+          })
+          .from(recoveryLeads)
+          .where(and(
+            eq(recoveryLeads.companyId, cid),
+            sql`${gramadoFirstInboundAtSql} >= ${fromDate}`,
+            sql`${gramadoFirstInboundAtSql} <= ${toDate}`,
+            sourceFilter,
+          ))
+          .groupBy(sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`)
+          .orderBy(desc(sql<number>`count(*)`))
+          .limit(5)
+      : Promise.resolve([]),
+
     db
       .select({
         source: sql<string>`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`,
@@ -269,7 +290,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const checkoutApprovedCount = checkoutStats?.aprovada ?? 0
   const panelTotal = isInfoproduto ? checkoutApprovedCount : total
   const panelAwaitingCount = isInfoproduto ? 0 : awaitingContactCount
-  const panelTrafficBreakdown = isInfoproduto ? checkoutTrafficBreakdown : trafficBreakdown
+  const panelTrafficBreakdown = isInfoproduto ? checkoutTrafficBreakdown : isGramado ? gramadoTrafficBreakdown : trafficBreakdown
   const fechadosCount = leadStats?.fechadosTotal ?? 0
   const gramadoReservasCount = Number(gramadoReservationStats?.totalReservas ?? 0)
   const gramadoPessoasCount = Number(gramadoReservationStats?.totalPessoas ?? 0)
@@ -401,7 +422,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   let funnelCards: { label: string; count: number; icon: any; color: string; desc: string }[] = []
   if (isGramado) {
     funnelCards = [
-      { label: 'Interesse em Reserva', count: leadStats?.novoContato ?? total, icon: Utensils, color: '--ev-carrinho', desc: 'Novos clientes' },
+      { label: 'Interesse em Reserva', count: total, icon: Utensils, color: '--ev-carrinho', desc: 'conversas reais iniciadas' },
       { label: 'Data Consultada', count: leadStats?.qualificado ?? 0, icon: Calendar, color: '--ev-pix', desc: 'Horário & disponibilidade' },
       { label: 'Cardápio / Pacote', count: leadStats?.proposta ?? 0, icon: Receipt, color: '--ev-boleto', desc: 'Valores informados' },
       { label: 'Reserva Confirmada', count: gramadoReservasCount, icon: CheckCircle2, color: '--st-positivo', desc: 'Mesa garantida' },
