@@ -205,3 +205,159 @@ test('total de conversas iniciadas conta apenas leads cujo firstContactAt está 
     assert.equal(newFiltered[0].id, 1)
   }
 })
+
+test('Gramado conta conversa iniciada pelo primeiro inbound real, nao por firstContactAt do CRM', async () => {
+  const fromDate = new Date('2026-10-01T00:00:00-03:00')
+  const toDate = new Date('2026-10-01T23:59:59.999-03:00')
+
+  if (dockerAvailable()) {
+    const disposable = await startDisposablePostgres()
+    try {
+      applyRealSchema(disposable.url)
+      const sqlClient = postgres(disposable.url)
+      const testDb = drizzle(sqlClient, { schema })
+
+      const [company] = await testDb
+        .insert(schema.companies)
+        .values({ name: 'Gramado Plaza Teste 2', slug: 'gramado-teste-inbound' })
+        .returning()
+
+      const [semInbound, inboundNoPeriodo, inboundAntigoComAtividade] = await testDb
+        .insert(schema.recoveryLeads)
+        .values([
+          {
+            companyId: company.id,
+            phone: '5554999991001',
+            name: 'CRM inflado sem mensagem',
+            eventType: 'atendimento_ia',
+            firstContactAt: new Date('2026-10-01T09:00:00-03:00'),
+            createdAt: new Date('2026-10-01T09:00:00-03:00'),
+            lastActionAt: new Date('2026-10-01T09:05:00-03:00'),
+            platform: 'whatsapp',
+            status: 'open',
+          },
+          {
+            companyId: company.id,
+            phone: '5554999991002',
+            name: 'Conversa real',
+            eventType: 'atendimento_ia',
+            firstContactAt: new Date('2026-10-01T10:00:00-03:00'),
+            createdAt: new Date('2026-10-01T10:00:00-03:00'),
+            lastActionAt: new Date('2026-10-01T10:10:00-03:00'),
+            platform: 'whatsapp',
+            status: 'open',
+          },
+          {
+            companyId: company.id,
+            phone: '5554999991003',
+            name: 'Conversa antiga',
+            eventType: 'atendimento_ia',
+            firstContactAt: new Date('2026-09-20T10:00:00-03:00'),
+            createdAt: new Date('2026-09-20T10:00:00-03:00'),
+            lastActionAt: new Date('2026-10-01T11:00:00-03:00'),
+            platform: 'whatsapp',
+            status: 'open',
+          },
+        ])
+        .returning()
+
+      await testDb.insert(schema.whatsappMessages).values([
+        {
+          companyId: company.id,
+          leadId: inboundNoPeriodo.id,
+          phone: inboundNoPeriodo.phone,
+          direction: 'inbound',
+          content: 'oi',
+          createdAt: new Date('2026-10-01T10:00:00-03:00'),
+        },
+        {
+          companyId: company.id,
+          leadId: inboundNoPeriodo.id,
+          phone: inboundNoPeriodo.phone,
+          direction: 'outbound',
+          content: 'olá',
+          createdAt: new Date('2026-10-01T10:01:00-03:00'),
+        },
+        {
+          companyId: company.id,
+          leadId: inboundNoPeriodo.id,
+          phone: inboundNoPeriodo.phone,
+          direction: 'inbound',
+          content: 'quero reservar',
+          createdAt: new Date('2026-10-01T10:02:00-03:00'),
+        },
+        {
+          companyId: company.id,
+          leadId: inboundNoPeriodo.id,
+          phone: inboundNoPeriodo.phone,
+          direction: 'outbound',
+          content: 'claro',
+          createdAt: new Date('2026-10-01T10:03:00-03:00'),
+        },
+        {
+          companyId: company.id,
+          leadId: inboundAntigoComAtividade.id,
+          phone: inboundAntigoComAtividade.phone,
+          direction: 'inbound',
+          content: 'oi antigo',
+          createdAt: new Date('2026-09-20T10:00:00-03:00'),
+        },
+        {
+          companyId: company.id,
+          leadId: inboundAntigoComAtividade.id,
+          phone: inboundAntigoComAtividade.phone,
+          direction: 'inbound',
+          content: 'voltei hoje',
+          createdAt: new Date('2026-10-01T11:00:00-03:00'),
+        },
+      ])
+
+      const fromDateSql = fromDate.toISOString()
+      const toDateSql = toDate.toISOString()
+
+      const [firstContactResult] = await sqlClient<{ total: number }[]>`
+        select cast(count(*) as int) as total
+        from recovery_leads
+        where company_id = ${company.id}
+          and first_contact_at >= ${fromDateSql}::timestamp
+          and first_contact_at <= ${toDateSql}::timestamp
+      `
+
+      const [realInboundResult] = await sqlClient<{ total: number, avancou: number }[]>`
+        with first_inbound as (
+          select lead_id, min(created_at) as first_inbound_at, count(*) as message_count
+          from whatsapp_messages
+          where company_id = ${company.id}
+          group by lead_id
+        )
+        select
+          cast(count(*) as int) as total,
+          cast(count(*) filter (where first_inbound.message_count >= 4) as int) as avancou
+        from recovery_leads rl
+        join first_inbound on first_inbound.lead_id = rl.id
+        where rl.company_id = ${company.id}
+          and first_inbound.first_inbound_at >= ${fromDateSql}::timestamp
+          and first_inbound.first_inbound_at <= ${toDateSql}::timestamp
+      `
+
+      assert.equal(Number(firstContactResult.total), 2, 'firstContactAt ainda conta o lead sem inbound real')
+      assert.equal(Number(realInboundResult.total), 1, 'Gramado deve contar so conversa cujo primeiro inbound real nasceu no periodo')
+      assert.equal(Number(realInboundResult.avancou), 1, 'Avancou usa mensagens da conversa real iniciada no periodo')
+
+      await sqlClient.end()
+    } finally {
+      disposable.stop()
+    }
+  } else {
+    const leads = [
+      { id: 1, firstContactAt: new Date('2026-10-01T09:00:00-03:00'), firstInboundAt: null, messageCount: 0 },
+      { id: 2, firstContactAt: new Date('2026-10-01T10:00:00-03:00'), firstInboundAt: new Date('2026-10-01T10:00:00-03:00'), messageCount: 4 },
+      { id: 3, firstContactAt: new Date('2026-09-20T10:00:00-03:00'), firstInboundAt: new Date('2026-09-20T10:00:00-03:00'), messageCount: 2 },
+    ]
+
+    assert.equal(leads.filter(l => l.firstContactAt >= fromDate && l.firstContactAt <= toDate).length, 2)
+    const realInbound = leads.filter(l => l.firstInboundAt && l.firstInboundAt >= fromDate && l.firstInboundAt <= toDate)
+    assert.equal(realInbound.length, 1)
+    assert.equal(realInbound[0].messageCount >= 4, true)
+  }
+})
