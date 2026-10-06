@@ -497,6 +497,9 @@ export const recoveryLeads = pgTable('recovery_leads', {
   uniqueIndex('recovery_leads_chat_company_phone_unique')
     .on(table.companyId, table.phone)
     .where(sql`${table.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')`),
+  index('recovery_leads_company_activity_idx')
+    .on(table.companyId, sql`COALESCE(${table.lastActionAt}, ${table.updatedAt}, ${table.createdAt}) DESC`, table.id),
+  index('recovery_leads_company_paused_idx').on(table.companyId, table.botPaused),
 ])
 
 // ─── Tags livres de lead (25/09/2026, pedido do Gastão via Renato) ──────────
@@ -617,6 +620,8 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
     .on(table.companyId, table.leadId, table.createdAt, table.id),
   index('whatsapp_messages_company_phone_created_id_idx')
     .on(table.companyId, table.phone, table.createdAt, table.id),
+  index('whatsapp_messages_company_direction_lead_idx')
+    .on(table.companyId, table.direction, table.leadId),
   // Idempotência contra reentrega de webhook da Meta (comportamento real e
   // documentado dela, não hipotético): sem isso, o mesmo evento reentregue
   // grava duas linhas inbound iguais e o generateAndSendAiReply() dispara

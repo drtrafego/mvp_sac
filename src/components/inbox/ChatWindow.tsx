@@ -27,6 +27,8 @@ import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { cn } from '@/lib/utils'
 import type { EmailEngagement } from '@/lib/email-engagement'
 
+const ACTIVE_CHAT_POLL_MS = 3_000
+
 export interface ChatLead {
   id: number
   phone: string
@@ -133,7 +135,7 @@ export function ChatWindow({
     async (silent = false) => {
       if (!silent) setRefreshing(true)
       try {
-        const res = await fetch(`/api/inbox/${lead.id}`)
+        const res = await fetch(`/api/inbox/${lead.id}`, { cache: 'no-store' })
         if (res.ok) {
           const data = await res.json()
           if (data.messages) {
@@ -173,10 +175,13 @@ export function ChatWindow({
   }, [messages])
 
   useEffect(() => {
-    setLeadName(lead.name)
-    setEditingName(lead.name ?? '')
-    setIsEditingName(false)
-    setNameError(null)
+    const t = setTimeout(() => {
+      setLeadName(lead.name)
+      setEditingName(lead.name ?? '')
+      setIsEditingName(false)
+      setNameError(null)
+    }, 0)
+    return () => clearTimeout(t)
   }, [lead.id, lead.name])
 
   useEffect(() => {
@@ -198,8 +203,12 @@ export function ChatWindow({
   }, [messages])
 
   useEffect(() => {
-    const t = setInterval(() => refresh(true), 12_000)
-    return () => clearInterval(t)
+    const firstRefresh = setTimeout(() => refresh(true), 0)
+    const t = setInterval(() => refresh(true), ACTIVE_CHAT_POLL_MS)
+    return () => {
+      clearTimeout(firstRefresh)
+      clearInterval(t)
+    }
   }, [refresh])
 
   const loadOlderMessages = useCallback(async () => {
@@ -209,7 +218,7 @@ export function ChatWindow({
     loadingHistoryRef.current = true
     setLoadingHistory(true)
     try {
-      const res = await fetch(`/api/inbox/${lead.id}?before=${encodeURIComponent(historyCursor)}`)
+      const res = await fetch(`/api/inbox/${lead.id}?before=${encodeURIComponent(historyCursor)}`, { cache: 'no-store' })
       if (!res.ok) return
       const data = await res.json()
       const older = (data.messages || []) as InboxMessage[]

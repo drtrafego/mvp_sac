@@ -200,6 +200,9 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS sent_email text`,
           client`CREATE INDEX IF NOT EXISTS whatsapp_messages_company_lead_created_id_idx ON whatsapp_messages (company_id, lead_id, created_at, id)`,
           client`CREATE INDEX IF NOT EXISTS whatsapp_messages_company_phone_created_id_idx ON whatsapp_messages (company_id, phone, created_at, id)`,
+          client`CREATE INDEX IF NOT EXISTS whatsapp_messages_company_direction_lead_idx ON whatsapp_messages (company_id, direction, lead_id)`,
+          client`CREATE INDEX IF NOT EXISTS recovery_leads_company_activity_idx ON recovery_leads (company_id, COALESCE(last_action_at, updated_at, created_at) DESC, id DESC)`,
+          client`CREATE INDEX IF NOT EXISTS recovery_leads_company_paused_idx ON recovery_leads (company_id, bot_paused)`,
 
           // Auditoria da conversa nativa do Hermes no painel do Inbox.
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS agent_conversation_id text`,

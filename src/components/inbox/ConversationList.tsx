@@ -37,6 +37,9 @@ import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
 import type { ConversationSummary, InboxPage } from '@/lib/inbox-conversations'
 export type { ConversationSummary } from '@/lib/inbox-conversations'
 
+const CONVERSATION_LIST_POLL_MS = 3_000
+const CONVERSATION_COUNTS_POLL_MS = 10_000
+
 function formatMessageTimestamp(dateStr: string | null | undefined): { time: string; full: string; relative: string } {
   if (!dateStr) return { time: '', full: '', relative: '' }
   const d = new Date(dateStr)
@@ -213,7 +216,7 @@ export function ConversationList({
         if (debouncedSearch) params.set('q', debouncedSearch)
         if (cursor) params.set('cursor', cursor)
         const qs = params.toString()
-        const res = await fetch(`/api/inbox${qs ? `?${qs}` : ''}`)
+        const res = await fetch(`/api/inbox${qs ? `?${qs}` : ''}`, { cache: 'no-store' })
         if (requestId !== requestSequence.current) return
         if (res.ok) {
           const data: InboxPage = await res.json()
@@ -272,7 +275,7 @@ export function ConversationList({
         if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') {
           fetchPage({ merge: true })
         }
-      }, 15_000)
+      }, CONVERSATION_LIST_POLL_MS)
     }
 
     const handleVisibility = () => {
@@ -281,11 +284,13 @@ export function ConversationList({
       }
     }
 
+    const firstRefresh = setTimeout(() => fetchPage({ merge: true }), 0)
     startPolling()
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', handleVisibility)
     }
     return () => {
+      clearTimeout(firstRefresh)
       if (timer) clearInterval(timer)
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleVisibility)
@@ -336,7 +341,7 @@ export function ConversationList({
   const fetchCounts = useCallback(async () => {
     try {
       const qs = sourceFilter ? `?source=${encodeURIComponent(sourceFilter)}` : ''
-      const res = await fetch(`/api/inbox/counts${qs}`)
+      const res = await fetch(`/api/inbox/counts${qs}`, { cache: 'no-store' })
       if (res.ok) {
         const data = await res.json()
         setCounts(data)
@@ -356,7 +361,7 @@ export function ConversationList({
         if (typeof document !== 'undefined' && document.visibilityState !== 'hidden') {
           fetchCounts()
         }
-      }, 15_000)
+      }, CONVERSATION_COUNTS_POLL_MS)
     }
 
     const handleVisibility = () => {

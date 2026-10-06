@@ -1,12 +1,22 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
+
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
 import { isDirectOrganicSourceFilter, normalizeInboxSourceFilter } from '@/lib/inbox-source-filter'
+function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
+  const response = NextResponse.json(body, init)
+  response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  response.headers.set('Pragma', 'no-cache')
+  response.headers.set('Expires', '0')
+  response.headers.set('Surrogate-Control', 'no-store')
+  return response
+}
+
 
 // Contagem real por canal (COUNT com FILTER, não em memória sobre um LIMIT).
 // A lista principal (/api/inbox) corta em 200 registros por aba de canal;
@@ -56,7 +66,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     .from(recoveryLeads)
     .where(and(...whereConditions))
 
-  return NextResponse.json({
+  return noStoreJson({
     all: Number(row?.all ?? 0),
     whatsapp: Number(row?.whatsapp ?? 0),
     instagram: Number(row?.instagram ?? 0),

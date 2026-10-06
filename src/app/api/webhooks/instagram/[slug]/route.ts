@@ -7,7 +7,7 @@ export const maxDuration = 180
 import { NextRequest, NextResponse } from "next/server"
 import { after } from "next/server"
 import { db } from "@/lib/db"
-import { companies, settings, whatsappMessages, recoveryLeads, webhookReceived } from "@/lib/db/schema"
+import { companies, settings, whatsappMessages, recoveryLeads, webhookReceived, leadTags } from "@/lib/db/schema"
 import { and, eq, sql } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
@@ -130,10 +130,25 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         // ‼️ Checagem de anexo/partilha (24/09/2026): quando alguém compartilha post/reel
         // ou manda mídia, a Meta manda `attachments`. Se tiver anexos, ignoramos o processamento
         // de IA (não é pergunta/conversa de texto, mesmo que venha legenda do post).
+        const earlyReferral = (item.referral || message?.referral) as {
+          ref?: string
+          ad_id?: string
+          source?: string
+          type?: string
+          ads_context_data?: { ad_id?: string }
+        } | undefined
+        const earlyIsAd = Boolean(
+          earlyReferral && (
+            earlyReferral.source === 'ADS' ||
+            earlyReferral.ad_id ||
+            earlyReferral.ads_context_data?.ad_id
+          )
+        )
+
         const hasAttachments = Boolean(
           message?.attachments && Array.isArray(message.attachments) && message.attachments.length > 0
         )
-        if (hasAttachments) {
+        if (hasAttachments && !earlyIsAd) {
           const types = (message?.attachments || []).map((a) => a.type || 'unknown').join(', ')
           console.log(`[Instagram Webhook] anexo/partilha ignorado para IA (types=${types}), slug=${slug}, mid=${message?.mid}`)
           continue
@@ -172,14 +187,16 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
         const trackingSource = isAd ? 'instagram_ad' : 'instagram_direct'
 
-        if (sender?.id && message?.text) {
+        const inboundText = (message?.text || '').trim() || (isAd ? 'Vim do anúncio do Instagram e quero saber mais.' : '')
+
+        if (sender?.id && inboundText) {
           try {
             // Idempotência contra reentrega de webhook da Meta: reentrega é
             // comportamento real dela, não hipotético. Sem isso, o mesmo
             // evento reentregue grava duas linhas inbound iguais e dispara
             // DUAS respostas reais de IA pro mesmo cliente pra mesma mensagem.
-            if (await isInboundMessageAlreadyProcessed(company.id, message.mid)) {
-              console.log(`[Instagram Webhook] mensagem já processada (reentrega da Meta), slug=${slug} mid=${message.mid}, pulando`)
+            if (message?.mid && await isInboundMessageAlreadyProcessed(company.id, message.mid)) {
+              console.log(`[Instagram Webhook] mensagem já processada (reentrega da Meta), slug=${slug} mid=${message?.mid}, pulando`)
               continue
             }
 
@@ -273,6 +290,15 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               })
               .returning()
 
+            if (isAd && lead?.id) {
+              await db.insert(leadTags).values({
+                leadId: lead.id,
+                tag: 'anuncio',
+                scopeChannel: 'instagram',
+                createdBy: 'system:instagram_ad',
+              }).onConflictDoNothing()
+            }
+
             try {
               await db.insert(whatsappMessages).values({
                 companyId: company.id,
@@ -280,17 +306,17 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 phone: igPhone,
                 channel: 'instagram',
                 direction: 'inbound',
-                content: message.text,
+                content: inboundText,
                 messageType: 'text',
                 sentBy: 'user',
-                externalId: message.mid ?? null,
+                externalId: message?.mid ?? null,
               })
             } catch (err) {
               // Segunda camada (índice único parcial): corrida entre duas
               // requisições concorrentes que passaram pelo SELECT acima ao
               // mesmo tempo. Já processado, não é erro fatal.
               if (isUniqueViolation(err)) {
-                console.log(`[Instagram Webhook] corrida no insert (unique violation), slug=${slug} mid=${message.mid}, tratando como já processado`)
+                console.log(`[Instagram Webhook] corrida no insert (unique violation), slug=${slug} mid=${message?.mid}, tratando como já processado`)
                 continue
               }
               throw err

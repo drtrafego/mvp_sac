@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
+
 import { db } from '@/lib/db'
 import { whatsappMessages, recoveryLeads } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
@@ -18,13 +19,22 @@ import {
 } from '@/lib/inbox-messages'
 import { parseIntegerQuery } from '@/lib/request-validation'
 import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
+function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
+  const response = NextResponse.json(body, init)
+  response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  response.headers.set('Pragma', 'no-cache')
+  response.headers.set('Expires', '0')
+  response.headers.set('Surrogate-Control', 'no-store')
+  return response
+}
+
 
 type Params = { params: Promise<{ leadId: string }> }
 
 export async function GET(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { leadId } = await params
   const id = parseInt(leadId)
-  if (isNaN(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
+  if (isNaN(id)) return noStoreJson({ error: 'ID inválido' }, { status: 400 })
 
   const { searchParams } = new URL(req.url)
   const parsedLimit = parseIntegerQuery(searchParams.get('limit'), {
@@ -33,11 +43,11 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     max: INBOX_MESSAGE_PAGE_SIZE_MAX,
     label: 'limit',
   })
-  if (!parsedLimit.ok) return NextResponse.json({ error: parsedLimit.error }, { status: 400 })
+  if (!parsedLimit.ok) return noStoreJson({ error: parsedLimit.error }, { status: 400 })
 
   const before = searchParams.get('before')
   if (before && !decodeMessageCursor(before)) {
-    return NextResponse.json({ error: 'Cursor inválido.' }, { status: 400 })
+    return noStoreJson({ error: 'Cursor inválido.' }, { status: 400 })
   }
 
   const company = await requireCompany()
@@ -47,7 +57,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     .from(recoveryLeads)
     .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
 
-  if (!lead) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
+  if (!lead) return noStoreJson({ error: 'Lead não encontrado' }, { status: 404 })
 
   const messagePage = await loadInboxMessagePage({
     companyId: company.id,
@@ -62,7 +72,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   const lastOutbound = [...messages].reverse().find(m => m.direction === 'outbound')
   const lastMsg = messages[messages.length - 1]
 
-  return NextResponse.json({
+  return noStoreJson({
     lead: {
       id: lead.id,
       phone: lead.phone,
@@ -116,7 +126,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
 export async function POST(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { leadId } = await params
   const id = parseInt(leadId)
-  if (isNaN(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
+  if (isNaN(id)) return noStoreJson({ error: 'ID inválido' }, { status: 400 })
 
   const company = await requireCompany()
 
@@ -125,22 +135,22 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     .from(recoveryLeads)
     .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
 
-  if (!lead) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
+  if (!lead) return noStoreJson({ error: 'Lead não encontrado' }, { status: 404 })
 
   const parsedBody: unknown = await req.json().catch(() => null)
   if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
-    return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
+    return noStoreJson({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
   }
   const body = parsedBody as Record<string, unknown>
 
   if (body.content != null && typeof body.content !== 'string') {
-    return NextResponse.json({ error: 'O campo content deve ser um texto.' }, { status: 400 })
+    return noStoreJson({ error: 'O campo content deve ser um texto.' }, { status: 400 })
   }
   if (body.mediaUrl != null && typeof body.mediaUrl !== 'string') {
-    return NextResponse.json({ error: 'O campo mediaUrl deve ser um texto.' }, { status: 400 })
+    return noStoreJson({ error: 'O campo mediaUrl deve ser um texto.' }, { status: 400 })
   }
   if (body.messageType != null && typeof body.messageType !== 'string') {
-    return NextResponse.json({ error: 'O campo messageType deve ser um texto.' }, { status: 400 })
+    return noStoreJson({ error: 'O campo messageType deve ser um texto.' }, { status: 400 })
   }
 
   const content = typeof body.content === 'string' ? body.content : ''
@@ -148,7 +158,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   const messageType = typeof body.messageType === 'string' ? body.messageType : undefined
 
   if (!content.trim() && !mediaUrl) {
-    return NextResponse.json({ error: 'Mensagem vazia' }, { status: 400 })
+    return noStoreJson({ error: 'Mensagem vazia' }, { status: 400 })
   }
 
   const deliveryChannel = resolveLeadDeliveryChannel(lead)
@@ -224,7 +234,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     .set({ updatedAt: new Date(), lastActionAt: new Date() })
     .where(eq(recoveryLeads.id, lead.id))
 
-  return NextResponse.json({
+  return noStoreJson({
     id: msg.id,
     phone: msg.phone,
     channel: msg.channel,
