@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import Link from 'next/link'
 import { db } from '@/lib/db'
-import { recoveryLeads, messageJobs, gramadoReservations } from '@/lib/db/schema'
+import { recoveryLeads, messageJobs, gramadoReservations, whatsappMessages } from '@/lib/db/schema'
 import { eq, count, and, desc, sql, gte, lte, isNull, isNotNull, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import {
@@ -88,6 +88,19 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const isInfoproduto = businessModel === 'infoproduto'
 
   const notContactedWhere = and(baseWhere, isNull(recoveryLeads.firstContactAt), sql`not ${dashboardBusinessWonSql(businessModel)}`)
+  const gramadoFirstInboundAtSql = sql`(
+    select min(${whatsappMessages.createdAt})
+    from ${whatsappMessages}
+    where ${whatsappMessages.companyId} = ${recoveryLeads.companyId}
+      and ${whatsappMessages.leadId} = ${recoveryLeads.id}
+      and ${whatsappMessages.direction} = 'inbound'
+  )`
+  const gramadoMessageCountSql = sql`(
+    select count(*)
+    from ${whatsappMessages}
+    where ${whatsappMessages.companyId} = ${recoveryLeads.companyId}
+      and ${whatsappMessages.leadId} = ${recoveryLeads.id}
+  )`
 
   const rangeDurationMs = toDate.getTime() - fromDate.getTime()
   const prevFrom = new Date(fromDate.getTime() - rangeDurationMs)
@@ -108,7 +121,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return `/inbox?${q.toString()}`
   }
 
-  const [[leadStats], [checkoutStats], [firstContactStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, checkoutTrafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats]] = await Promise.all([
+  const [[leadStats], [checkoutStats], [firstContactStats], [gramadoConversationStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, checkoutTrafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats]] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
       .from(recoveryLeads)
@@ -140,6 +153,28 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           sourceFilter,
         ),
       ),
+
+    // Gramado: "conversa iniciada" precisa vir do historico real de
+    // mensagens. firstContactAt e atualizado por sync/backfill do CRM e ainda
+    // contava leads tocados pelo sistema que nao abriram conversa real no
+    // periodo, inflando exatamente o card reclamado pelo Gastao.
+    isGramado
+      ? db
+          .select({
+            total: sql<number>`cast(count(*) as int)`,
+            respondeu: sql<number>`cast(count(*) as int)`,
+            avancou: sql<number>`cast(count(*) filter (where ${gramadoMessageCountSql} >= 4) as int)`,
+          })
+          .from(recoveryLeads)
+          .where(
+            and(
+              eq(recoveryLeads.companyId, cid),
+              sql`${gramadoFirstInboundAtSql} >= ${fromDate}`,
+              sql`${gramadoFirstInboundAtSql} <= ${toDate}`,
+              sourceFilter,
+            ),
+          )
+      : Promise.resolve([{ total: 0, respondeu: 0, avancou: 0 }]),
 
     db
       .select({
@@ -229,7 +264,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       : Promise.resolve([{ totalReservas: null, totalPessoas: null }]),
   ])
 
-  const total = Number(firstContactStats?.total ?? 0)
+  const total = Number(isGramado ? gramadoConversationStats?.total ?? 0 : firstContactStats?.total ?? 0)
   const awaitingContactCount = awaitingStats?.total ?? 0
   const checkoutApprovedCount = checkoutStats?.aprovada ?? 0
   const panelTotal = isInfoproduto ? checkoutApprovedCount : total
@@ -242,8 +277,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
   const qualificadosCount = leadStats?.qualificadosTotal ?? 0
   const gramadoCardCounts = gramadoDashboardCardCounts(leadStats)
-  const respondeuCount = leadStats?.respondeuTotal ?? 0
-  const avancouCount = leadStats?.avancouTotal ?? 0
+  const respondeuCount = isGramado ? Number(gramadoConversationStats?.respondeu ?? 0) : leadStats?.respondeuTotal ?? 0
+  const avancouCount = isGramado ? Number(gramadoConversationStats?.avancou ?? 0) : leadStats?.avancouTotal ?? 0
 
   // Taxa de conversao "oficial" do negocio: mesma definicao do painel nativo
   // do Hermes (quem agendou/reservou dividido por quem iniciou conversa no
