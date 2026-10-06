@@ -20,7 +20,6 @@ import { spawnSync, execFileSync } from 'node:child_process'
 import path from 'node:path'
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
-import { eq, and, gte, lte, count, sql } from 'drizzle-orm'
 import * as schema from '../src/lib/db/schema'
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
@@ -139,30 +138,28 @@ test('total de conversas iniciadas conta apenas leads cujo firstContactAt está 
         status: 'open',
       })
 
+      const fromDateSql = fromDate.toISOString()
+      const toDateSql = toDate.toISOString()
+
       // 1. Query antiga (baseWhere com activityDateSql) - inflava a contagem pegando ambos os leads
-      const activityDateSql = sql`coalesce(${schema.recoveryLeads.lastActionAt}, ${schema.recoveryLeads.updatedAt}, ${schema.recoveryLeads.createdAt})`
-      const oldQueryWhere = and(
-        eq(schema.recoveryLeads.companyId, company.id),
-        gte(activityDateSql, fromDate),
-        lte(activityDateSql, toDate),
-      )
-      const [oldResult] = await testDb
-        .select({ total: count() })
-        .from(schema.recoveryLeads)
-        .where(oldQueryWhere)
+      const [oldResult] = await sqlClient<{ total: number }[]>`
+        select cast(count(*) as int) as total
+        from recovery_leads
+        where company_id = ${company.id}
+          and coalesce(last_action_at, updated_at, created_at) >= ${fromDateSql}::timestamp
+          and coalesce(last_action_at, updated_at, created_at) <= ${toDateSql}::timestamp
+      `
 
       assert.equal(Number(oldResult.total), 2, 'A query antiga contava 2 leads por causa da atividade recente')
 
       // 2. Query nova (filtrando apenas firstContactAt) - conta unicamente a conversa iniciada no período
-      const newQueryWhere = and(
-        eq(schema.recoveryLeads.companyId, company.id),
-        gte(schema.recoveryLeads.firstContactAt, fromDate),
-        lte(schema.recoveryLeads.firstContactAt, toDate),
-      )
-      const [newResult] = await testDb
-        .select({ total: count() })
-        .from(schema.recoveryLeads)
-        .where(newQueryWhere)
+      const [newResult] = await sqlClient<{ total: number }[]>`
+        select cast(count(*) as int) as total
+        from recovery_leads
+        where company_id = ${company.id}
+          and first_contact_at >= ${fromDateSql}::timestamp
+          and first_contact_at <= ${toDateSql}::timestamp
+      `
 
       assert.equal(Number(newResult.total), 1, 'A query nova conta APENAS o lead que iniciou conversa no período')
       console.log('✔ Validação contra Postgres descartável concluída com sucesso: total novo = 1 (lead 1), total antigo = 2')

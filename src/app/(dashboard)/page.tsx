@@ -108,11 +108,24 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return `/inbox?${q.toString()}`
   }
 
-  const [[leadStats], [firstContactStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats]] = await Promise.all([
+  const [[leadStats], [checkoutStats], [firstContactStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, checkoutTrafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats]] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
       .from(recoveryLeads)
       .where(baseWhere),
+
+    // Métricas de checkout/vendas devem seguir a data do evento de venda,
+    // não a última atividade do lead. Usar lastActionAt aqui fazia compras
+    // antigas entrarem no período quando eram tocadas por sync/importação.
+    db
+      .select(dashboardLeadStatsSelect(businessModel))
+      .from(recoveryLeads)
+      .where(and(
+        eq(recoveryLeads.companyId, cid),
+        gte(recoveryLeads.createdAt, fromDate),
+        lte(recoveryLeads.createdAt, toDate),
+        sourceFilter,
+      )),
 
     // Conversas que de fato COMEÇARAM no período (baseada em firstContactAt),
     // desacoplada de baseWhere (que filtra atividade/toques e inflava o card "Conversas Iniciadas").
@@ -172,6 +185,23 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       .orderBy(desc(sql<number>`count(*)`))
       .limit(5),
 
+    db
+      .select({
+        source: sql<string>`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`,
+        count: sql<number>`cast(count(*) as int)`,
+      })
+      .from(recoveryLeads)
+      .where(and(
+        eq(recoveryLeads.companyId, cid),
+        eq(recoveryLeads.eventType, 'compra_aprovada'),
+        gte(recoveryLeads.createdAt, fromDate),
+        lte(recoveryLeads.createdAt, toDate),
+        sourceFilter,
+      ))
+      .groupBy(sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`)
+      .orderBy(desc(sql<number>`count(*)`))
+      .limit(5),
+
     // Leads que existem no banco mas nunca foram abordados de verdade (nenhuma
     // mensagem trocada ainda): aparecem aqui separado para saber a fila.
     db
@@ -201,6 +231,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
   const total = Number(firstContactStats?.total ?? 0)
   const awaitingContactCount = awaitingStats?.total ?? 0
+  const checkoutApprovedCount = checkoutStats?.aprovada ?? 0
+  const panelTotal = isInfoproduto ? checkoutApprovedCount : total
+  const panelAwaitingCount = isInfoproduto ? 0 : awaitingContactCount
+  const panelTrafficBreakdown = isInfoproduto ? checkoutTrafficBreakdown : trafficBreakdown
   const fechadosCount = leadStats?.fechadosTotal ?? 0
   const gramadoReservasCount = Number(gramadoReservationStats?.totalReservas ?? 0)
   const gramadoPessoasCount = Number(gramadoReservationStats?.totalPessoas ?? 0)
@@ -217,17 +251,17 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   // nos KPIs adaptativos, para nunca divergir do numero mostrado ao Gastao.
   const agendamentoConversionRate = total > 0 ? ((agendamentosCount / total) * 100).toFixed(1) : '0.0'
 
-  const recoveredCount = leadStats?.recoveredCount ?? 0
-  const recoveryTotal = (leadStats?.boleto ?? 0) + (leadStats?.pix ?? 0) + (leadStats?.carrinho ?? 0) + (leadStats?.cartao ?? 0)
+  const recoveredCount = checkoutStats?.recoveredCount ?? 0
+  const recoveryTotal = (checkoutStats?.boleto ?? 0) + (checkoutStats?.pix ?? 0) + (checkoutStats?.carrinho ?? 0) + (checkoutStats?.cartao ?? 0)
   const conversionRate = recoveryTotal > 0 ? ((recoveredCount / recoveryTotal) * 100).toFixed(1) : '0.0'
 
   // Venda direta: compra aprovada que nunca passou por um evento de
   // recuperacao (boleto pendente, pix, carrinho abandonado, cartao recusado)
   // para o mesmo telefone. Complementa "Receita Recuperada", que hoje e o
   // UNICO numero de venda mostrado no painel do modelo infoproduto/checkout.
-  const recoveredValueCents = Number(leadStats?.recoveredValueCents ?? 0)
-  const directCount = leadStats?.directCount ?? 0
-  const directValueCents = Number(leadStats?.directValueCents ?? 0)
+  const recoveredValueCents = Number(checkoutStats?.recoveredValueCents ?? 0)
+  const directCount = checkoutStats?.directCount ?? 0
+  const directValueCents = Number(checkoutStats?.directValueCents ?? 0)
   const totalApprovedValueCents = recoveredValueCents + directValueCents
 
   const kanbanLeads: KanbanLead[] = recentLeads.map((l) => {
@@ -286,7 +320,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     // Infoproduto / Checkout tradicional
     heroTag = 'Recuperação de Checkout'
     heroTitle = 'Receita Recuperada'
-    const recoveredCents = Number(leadStats?.recoveredValueCents ?? 0)
+    const recoveredCents = Number(checkoutStats?.recoveredValueCents ?? 0)
     const money = splitMoney(recoveredCents)
     heroValueDisplay = `R$ ${money.inteiro},${money.centavos}`
     heroSub = `${recoveredCount} vendas recuperadas de carrinhos e boletos pelo sistema`
@@ -322,7 +356,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   } else {
     kpis = [
       { label: 'Receita Total', value: formatBRL(totalApprovedValueCents), icon: DollarSign, hint: 'direta + recuperada' },
-      { label: 'Leads Totais', value: String(total), icon: Users, hint: 'no período' },
+      { label: 'Vendas', value: String(checkoutApprovedCount), icon: Users, hint: 'compras aprovadas no período' },
       { label: 'Conversão', value: `${conversionRate}%`, icon: TrendingUp, hint: 'de leads recuperados' },
       { label: 'Mensagens', value: String(jobStats?.sent ?? 0), icon: MessageSquare, hint: 'WhatsApp enviadas' },
     ]
@@ -356,11 +390,11 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     ]
   } else {
     funnelCards = [
-      { label: 'Boleto Gerado', count: leadStats?.boleto ?? 0, icon: Receipt, color: '--ev-boleto', desc: 'Aguardando compensação' },
-      { label: 'Pix Gerado', count: leadStats?.pix ?? 0, icon: QrCode, color: '--ev-pix', desc: 'Pagamento instantâneo' },
-      { label: 'Carrinho Abandonado', count: leadStats?.carrinho ?? 0, icon: ShoppingCart, color: '--ev-carrinho', desc: 'Não preencheu checkout' },
-      { label: 'Cartão Recusado', count: leadStats?.cartao ?? 0, icon: CreditCard, color: '--ev-cartao', desc: 'Tentativa sem saldo' },
-      { label: 'Compra Aprovada', count: leadStats?.aprovada ?? 0, icon: PartyPopper, color: '--ev-aprovada', desc: 'Venda confirmada' },
+      { label: 'Boleto Gerado', count: checkoutStats?.boleto ?? 0, icon: Receipt, color: '--ev-boleto', desc: 'Aguardando compensação' },
+      { label: 'Pix Gerado', count: checkoutStats?.pix ?? 0, icon: QrCode, color: '--ev-pix', desc: 'Pagamento instantâneo' },
+      { label: 'Carrinho Abandonado', count: checkoutStats?.carrinho ?? 0, icon: ShoppingCart, color: '--ev-carrinho', desc: 'Não preencheu checkout' },
+      { label: 'Cartão Recusado', count: checkoutStats?.cartao ?? 0, icon: CreditCard, color: '--ev-cartao', desc: 'Tentativa sem saldo' },
+      { label: 'Compra Aprovada', count: checkoutStats?.aprovada ?? 0, icon: PartyPopper, color: '--ev-aprovada', desc: 'Venda confirmada' },
     ]
   }
 
@@ -828,9 +862,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </div>
             <div className="mt-2">
               <span className="num text-metric-sm font-bold text-fg block">
-                {total > 0 ? ((agendamentosCount / total) * 100).toFixed(1) : '0.0'}%
+                {isInfoproduto ? conversionRate : (total > 0 ? ((agendamentosCount / total) * 100).toFixed(1) : '0.0')}%
               </span>
-              <span className="text-[11px] text-fg-faint mt-0.5 block">{agendamentosCount} fechados de {total} contatos</span>
+              <span className="text-[11px] text-fg-faint mt-0.5 block">{isInfoproduto ? `${recoveredCount} recuperadas de ${recoveryTotal} oportunidades` : `${agendamentosCount} fechados de ${total} contatos`}</span>
             </div>
           </div>
 
@@ -845,8 +879,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               </span>
             </div>
             <div className="mt-2">
-              <span className="num text-metric-sm font-bold text-fg block">{total}</span>
-              <span className="text-[11px] text-fg-faint mt-0.5 block">Interessados e leads no período</span>
+              <span className="num text-metric-sm font-bold text-fg block">{panelTotal}</span>
+              <span className="text-[11px] text-fg-faint mt-0.5 block">{isInfoproduto ? 'Compras aprovadas no período' : 'Interessados e leads no período'}</span>
             </div>
           </div>
 
@@ -861,8 +895,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               </span>
             </div>
             <div className="mt-2">
-              <span className="num text-metric-sm font-bold text-fg block">{awaitingContactCount}</span>
-              <span className="text-[11px] text-fg-faint mt-0.5 block">No banco, mas nenhuma mensagem enviada ainda</span>
+              <span className="num text-metric-sm font-bold text-fg block">{panelAwaitingCount}</span>
+              <span className="text-[11px] text-fg-faint mt-0.5 block">{isInfoproduto ? 'Não se aplica ao checkout' : 'No banco, mas nenhuma mensagem enviada ainda'}</span>
             </div>
           </div>
         </div>
@@ -889,11 +923,11 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                     WhatsApp
                   </span>
                   <span className="num font-bold text-fg">
-                    {total > 0 ? 100 : 0}% <span className="text-fg-faint font-normal">({total} contatos)</span>
+                    {panelTotal > 0 ? 100 : 0}% <span className="text-fg-faint font-normal">({panelTotal} {isInfoproduto ? 'vendas' : 'contatos'})</span>
                   </span>
                 </div>
                 <div className="h-2 w-full bg-surface-inset rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: total > 0 ? '100%' : '0%' }} />
+                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: panelTotal > 0 ? '100%' : '0%' }} />
                 </div>
               </div>
 
@@ -930,14 +964,14 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               <span className="text-micro text-fg-subtle">Campanhas & Prospecção</span>
             </div>
 
-            {trafficBreakdown.length === 0 ? (
+            {panelTrafficBreakdown.length === 0 ? (
               <div className="py-8 text-center text-micro text-fg-subtle">
                 Nenhum lead registrado no período selecionado.
               </div>
             ) : (
               <div className="space-y-3">
-                {trafficBreakdown.map((item, idx) => {
-                  const pct = total > 0 ? Math.round((item.count / total) * 100) : 0
+                {panelTrafficBreakdown.map((item, idx) => {
+                  const pct = panelTotal > 0 ? Math.round((item.count / panelTotal) * 100) : 0
                   const colors = ['bg-blue-500', 'bg-cyan-400', 'bg-emerald-400', 'bg-purple-400', 'bg-amber-400']
                   const color = colors[idx % colors.length]
                   return (
