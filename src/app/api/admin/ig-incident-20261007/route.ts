@@ -4,7 +4,7 @@ export const maxDuration = 180
 import { NextRequest, NextResponse } from 'next/server'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { companies, recoveryLeads, whatsappMessages, leadTags } from '@/lib/db/schema'
+import { companies, recoveryLeads, whatsappMessages, leadTags, webhookReceived } from '@/lib/db/schema'
 import { generateAndSendAiReply } from '@/lib/ai-reply'
 
 const KEY = 'ig_20261007_v8H2mQx7rP'
@@ -51,8 +51,30 @@ export async function GET(req: NextRequest) {
     .orderBy(desc(sql`coalesce(max(${whatsappMessages.createdAt}), ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`))
     .limit(30)
 
+  const recentWebhooks = await db
+    .select({
+      id: webhookReceived.id,
+      companyId: webhookReceived.companyId,
+      slug: webhookReceived.slug,
+      source: webhookReceived.source,
+      event: webhookReceived.event,
+      processed: webhookReceived.processed,
+      skipReason: webhookReceived.skipReason,
+      errorMessage: webhookReceived.errorMessage,
+      leadId: webhookReceived.leadId,
+      receivedAt: webhookReceived.receivedAt,
+      rawBody: webhookReceived.rawBody,
+    })
+    .from(webhookReceived)
+    .where(and(
+      eq(webhookReceived.source, 'instagram'),
+      sql`${webhookReceived.receivedAt} >= now() - interval '36 hours'`,
+    ))
+    .orderBy(desc(webhookReceived.receivedAt))
+    .limit(20)
+
   const unattended = rows.filter((row) => Number(row.inboundCount || 0) > 0 && Number(row.outboundCount || 0) === 0)
-  return NextResponse.json({ marker: 'ig-incident-20261007', count: rows.length, unattendedCount: unattended.length, unattended, rows })
+  return NextResponse.json({ marker: 'ig-incident-20261007-v2', count: rows.length, unattendedCount: unattended.length, unattended, rows, recentWebhooks })
 }
 
 export async function POST(req: NextRequest) {
