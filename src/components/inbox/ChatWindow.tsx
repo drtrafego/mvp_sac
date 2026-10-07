@@ -27,7 +27,7 @@ import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { cn } from '@/lib/utils'
 import type { EmailEngagement } from '@/lib/email-engagement'
 
-const ACTIVE_CHAT_POLL_MS = 3_000
+const ACTIVE_CHAT_POLL_MS = 5_000
 
 export interface ChatLead {
   id: number

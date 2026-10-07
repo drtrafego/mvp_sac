@@ -37,8 +37,8 @@ import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
 import type { ConversationSummary, InboxPage } from '@/lib/inbox-conversations'
 export type { ConversationSummary } from '@/lib/inbox-conversations'
 
-const CONVERSATION_LIST_POLL_MS = 3_000
-const CONVERSATION_COUNTS_POLL_MS = 10_000
+const CONVERSATION_LIST_POLL_MS = 15_000
+const CONVERSATION_COUNTS_POLL_MS = 30_000
 
 function formatMessageTimestamp(dateStr: string | null | undefined): { time: string; full: string; relative: string } {
   if (!dateStr) return { time: '', full: '', relative: '' }
