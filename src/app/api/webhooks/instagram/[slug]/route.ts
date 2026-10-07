@@ -17,6 +17,52 @@ import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 
+
+function instagramDebugPayload(opts: {
+  entry?: Record<string, unknown>
+  item?: Record<string, unknown>
+  pageId?: string
+  companyId?: number | null
+  slug?: string | null
+  senderId?: string | null
+  recipientId?: string | null
+  mid?: string | null
+  text?: string | null
+  isEcho?: boolean
+  attachmentTypes?: string[]
+  referral?: unknown
+  isAd?: boolean
+  trackingSource?: string
+  leadId?: number | null
+  decision?: string
+  reason?: string | null
+}) {
+  return {
+    entry: opts.entry,
+    item: opts.item,
+    debug: {
+      source: 'instagram',
+      pageId: opts.pageId ?? null,
+      companyId: opts.companyId ?? null,
+      slug: opts.slug ?? null,
+      senderId: opts.senderId ?? null,
+      recipientId: opts.recipientId ?? null,
+      mid: opts.mid ?? null,
+      hasText: Boolean(opts.text && opts.text.trim()),
+      textPreview: opts.text ? opts.text.slice(0, 500) : null,
+      isEcho: Boolean(opts.isEcho),
+      attachmentTypes: opts.attachmentTypes ?? [],
+      referral: opts.referral ?? null,
+      isAd: Boolean(opts.isAd),
+      trackingSource: opts.trackingSource ?? null,
+      leadId: opts.leadId ?? null,
+      decision: opts.decision ?? null,
+      reason: opts.reason ?? null,
+      loggedAt: new Date().toISOString(),
+    },
+  }
+}
+
 interface RouteContext {
   params: Promise<{ slug: string }>
 }
@@ -118,14 +164,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           attachments?: Array<{ type?: string; payload?: Record<string, unknown> }>
           referral?: Record<string, unknown>
         } | undefined
-        // ‼️ 23/09/2026: ECO da própria conta (mesma causa raiz da rota
-        // global, um nível acima) — a Meta reenvia toda mensagem que A
-        // PRÓPRIA conta manda pelo mesmo webhook de "messaging".
+        const recipient = item.recipient as { id?: string } | undefined
         const ownAccountIds = [companySettingsForSecret?.instagramAccountId, companySettingsForSecret?.instagramPageId].filter(Boolean)
-        if (message?.is_echo || (sender?.id && ownAccountIds.includes(sender.id))) {
-          console.log(`[Instagram Webhook] eco da própria conta ignorado, sender=${sender?.id}`)
-          continue
-        }
 
         // ‼️ Checagem de anexo/partilha (24/09/2026): quando alguém compartilha post/reel
         // ou manda mídia, a Meta manda `attachments`. Se tiver anexos, ignoramos o processamento
@@ -149,12 +189,6 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         const hasAttachments = attachmentTypes.length > 0
         const hasAudioAttachment = attachmentTypes.includes('audio')
         const hasOnlyIgnoredShare = hasAttachments && !hasAudioAttachment && !earlyIsAd
-        if (hasOnlyIgnoredShare) {
-          const types = attachmentTypes.join(', ')
-          console.log(`[Instagram Webhook] anexo/partilha ignorado para IA (types=${types}), slug=${slug}, mid=${message?.mid}`)
-          continue
-        }
-
         // ‼️ Checagem de origem por anúncio (Instagram Ad / Click to Direct)
         const referral = (item.referral || message?.referral) as {
           ref?: string
@@ -190,6 +224,86 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
         const inboundText = (message?.text || '').trim() || (hasAudioAttachment ? 'Recebi um áudio no Instagram.' : '') || (isAd ? 'Vim do anúncio do Instagram e quero saber mais.' : '')
 
+        let instagramItemLogId: number | null = null
+        try {
+          const [itemLog] = await db.insert(webhookReceived).values({
+            companyId: company.id,
+            slug,
+            source: 'instagram',
+            event: 'instagram_direct_item',
+            processed: false,
+            skipReason: null,
+            rawBody: instagramDebugPayload({
+              entry,
+              item,
+              pageId: (entry.id as string) || undefined,
+              companyId: company.id,
+              slug,
+              senderId: sender?.id ?? null,
+              recipientId: recipient?.id ?? null,
+              mid: message?.mid ?? null,
+              text: message?.text ?? null,
+              isEcho: message?.is_echo,
+              attachmentTypes,
+              referral: referral ?? null,
+              isAd,
+              trackingSource,
+              decision: 'received',
+            }),
+            headers: headersObj,
+          }).returning({ id: webhookReceived.id })
+          instagramItemLogId = itemLog?.id ?? null
+        } catch (logErr) {
+          console.error('[Instagram Webhook] Erro ao registrar item detalhado:', logErr)
+        }
+
+        async function markInstagramItemLog(update: { processed?: boolean; skipReason?: string | null; errorMessage?: string | null; leadId?: number | null; decision: string; reason?: string | null }) {
+          if (!instagramItemLogId) return
+          try {
+            await db.update(webhookReceived).set({
+              processed: update.processed ?? false,
+              skipReason: update.skipReason ?? null,
+              errorMessage: update.errorMessage ?? null,
+              leadId: update.leadId ?? null,
+              rawBody: instagramDebugPayload({
+                entry,
+                item,
+                pageId: (entry.id as string) || undefined,
+                companyId: company.id,
+                slug,
+                senderId: sender?.id ?? null,
+                recipientId: recipient?.id ?? null,
+                mid: message?.mid ?? null,
+                text: message?.text ?? null,
+                isEcho: message?.is_echo,
+                attachmentTypes,
+                referral: referral ?? null,
+                isAd,
+                trackingSource,
+                leadId: update.leadId ?? null,
+                decision: update.decision,
+                reason: update.reason ?? update.skipReason ?? update.errorMessage ?? null,
+              }),
+            }).where(eq(webhookReceived.id, instagramItemLogId))
+          } catch (logErr) {
+            console.error('[Instagram Webhook] Erro ao atualizar item detalhado:', logErr)
+          }
+        }
+
+        // ‼️ 23/09/2026: ECO da própria conta (mesma causa raiz da rota global).
+        if (message?.is_echo || (sender?.id && ownAccountIds.includes(sender.id))) {
+          await markInstagramItemLog({ processed: false, skipReason: 'eco da própria conta', decision: 'skip_echo', reason: 'message.is_echo ou sender igual à conta' })
+          console.log(`[Instagram Webhook] eco da própria conta ignorado, sender=${sender?.id}`)
+          continue
+        }
+
+        if (hasOnlyIgnoredShare) {
+          const types = attachmentTypes.join(', ')
+          await markInstagramItemLog({ processed: false, skipReason: `anexo/partilha ignorado para IA (types=${types})`, decision: 'skip_attachment_share' })
+          console.log(`[Instagram Webhook] anexo/partilha ignorado para IA (types=${types}), slug=${slug}, mid=${message?.mid}`)
+          continue
+        }
+
         if (sender?.id && inboundText) {
           try {
             // Idempotência contra reentrega de webhook da Meta: reentrega é
@@ -197,6 +311,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             // evento reentregue grava duas linhas inbound iguais e dispara
             // DUAS respostas reais de IA pro mesmo cliente pra mesma mensagem.
             if (message?.mid && await isInboundMessageAlreadyProcessed(company.id, message.mid)) {
+              await markInstagramItemLog({ processed: false, skipReason: 'mensagem já processada (reentrega da Meta)', decision: 'skip_duplicate' })
               console.log(`[Instagram Webhook] mensagem já processada (reentrega da Meta), slug=${slug} mid=${message?.mid}, pulando`)
               continue
             }
@@ -317,11 +432,14 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               // requisições concorrentes que passaram pelo SELECT acima ao
               // mesmo tempo. Já processado, não é erro fatal.
               if (isUniqueViolation(err)) {
+                await markInstagramItemLog({ processed: false, leadId: lead?.id ?? null, skipReason: 'corrida no insert, mensagem já processada', decision: 'skip_duplicate_race' })
                 console.log(`[Instagram Webhook] corrida no insert (unique violation), slug=${slug} mid=${message?.mid}, tratando como já processado`)
                 continue
               }
               throw err
             }
+
+            await markInstagramItemLog({ processed: true, leadId: lead?.id ?? null, decision: isAd ? 'processed_as_instagram_ad' : 'processed_as_instagram_direct' })
 
             // Mensagem real trocada: se for a primeira, marca a abordagem do lead
             await markLeadContacted(lead?.id)
@@ -357,8 +475,11 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               )
             }
           } catch (err) {
+            await markInstagramItemLog({ processed: false, errorMessage: err instanceof Error ? err.message : String(err), decision: 'error_processing_item' })
             console.error("[Instagram Webhook] Erro ao gravar mensagem:", err)
           }
+        } else {
+          await markInstagramItemLog({ processed: false, skipReason: 'sem sender ou sem texto processável', decision: 'skip_no_sender_or_text' })
         }
       }
 
