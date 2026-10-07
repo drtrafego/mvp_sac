@@ -6,6 +6,7 @@ import { eq, sql } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { verifyAgentSessionCookie } from '@/lib/agent-session'
+import { resolveCompanyRole, roleSatisfies, type CompanyRole } from '@/lib/company-role'
 
 export class AuthError extends Error {
   readonly status = 401
@@ -260,3 +261,55 @@ export async function requireAdmin() {
   if (!user.isAdmin && !checkIsAdmin(user.primaryEmail)) throw new AuthError('Acesso negado')
   return user
 }
+
+// ─── Cargo dentro da empresa (SAC Lote 1, item 5.5) ─────────────────────────
+// requireCompany() resolve QUAL empresa; requireCompanyRole() decide O QUE o
+// usuário pode fazer nela. Convite/promoção/exclusão de membros e alteração de
+// credenciais exigem 'admin'; atendimento exige só 'membro'.
+
+export class ForbiddenError extends Error {
+  readonly status = 403
+  constructor(message = 'Acesso negado: requer administrador da empresa') {
+    super(message)
+    this.name = 'ForbiddenError'
+  }
+}
+
+export function forbiddenResponse(message?: string) {
+  return NextResponse.json({ error: message ?? 'Acesso negado: requer administrador da empresa' }, { status: 403 })
+}
+
+export async function getCompanyAccess() {
+  const company = await requireCompany()
+  const user = await getCurrentUser()
+  if (!user) throw new AuthError('Não autenticado')
+
+  const memberships = await db
+    .select({
+      id: companyMembers.id,
+      companyId: companyMembers.companyId,
+      stackAuthUserId: companyMembers.stackAuthUserId,
+      email: companyMembers.email,
+      role: companyMembers.role,
+    })
+    .from(companyMembers)
+    .where(eq(companyMembers.companyId, company.id))
+
+  const { role, memberId } = resolveCompanyRole({
+    companyId: company.id,
+    userId: user.id,
+    email: user.primaryEmail,
+    isPlatformAdmin: Boolean(user.isAdmin) || checkIsAdmin(user.primaryEmail),
+    companyOwnerUserId: company.stackAuthUserId ?? null,
+    memberships,
+  })
+
+  return { company, user, role, memberId }
+}
+
+export async function requireCompanyRole(minimum: CompanyRole) {
+  const access = await getCompanyAccess()
+  if (!roleSatisfies(access.role, minimum)) throw new ForbiddenError()
+  return access
+}
+

@@ -86,3 +86,63 @@ export function resolvePhoneLeadLookup(
     readUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactSuffixKey(companyId, digits))
   )
 }
+
+import { db } from '@/lib/db'
+import { recoveryLeads } from '@/lib/db/schema'
+import { eq, and, or, sql } from 'drizzle-orm'
+
+export type ResolvedLeadForContact = {
+  lead: typeof recoveryLeads.$inferSelect | undefined
+  identifier: ContactIdentifier
+  ambiguous: boolean
+}
+
+export async function resolveLeadForContact(companyId: number, contact: string): Promise<ResolvedLeadForContact> {
+  const identifier = parseContactIdentifier(contact)
+  if (identifier.kind === 'leadId') {
+    const [lead] = await db
+      .select()
+      .from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.id, identifier.leadId)))
+      .limit(1)
+    return { lead, identifier, ambiguous: false }
+  }
+
+  const exactMatches = await db
+    .select()
+    .from(recoveryLeads)
+    .where(
+      and(
+        eq(recoveryLeads.companyId, companyId),
+        or(
+          eq(recoveryLeads.phone, identifier.raw),
+          identifier.digits
+            ? sql`regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g') = ${identifier.digits}`
+            : undefined
+        )
+      )
+    )
+    .limit(2)
+
+  if (exactMatches.length === 1) return { lead: exactMatches[0], identifier, ambiguous: false }
+  if (exactMatches.length > 1) return { lead: undefined, identifier, ambiguous: true }
+
+  if (identifier.digits.length >= 9) {
+    const suffixMatches = await db
+      .select()
+      .from(recoveryLeads)
+      .where(
+        and(
+          eq(recoveryLeads.companyId, companyId),
+          sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${identifier.digits}, 9)`
+        )
+      )
+      .limit(2)
+
+    if (suffixMatches.length === 1) return { lead: suffixMatches[0], identifier, ambiguous: false }
+    if (suffixMatches.length > 1) return { lead: undefined, identifier, ambiguous: true }
+  }
+
+  return { lead: undefined, identifier, ambiguous: false }
+}
+

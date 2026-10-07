@@ -7,66 +7,14 @@ import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
+import { sendOutboundForLead } from '@/lib/outbound-send'
 import { eq, and, asc, or, sql } from 'drizzle-orm'
 import { markLeadContacted } from '@/lib/leads'
-import { type ContactIdentifier, parseContactIdentifier } from '@/lib/contact-resolution'
+import { type ContactIdentifier, parseContactIdentifier, resolveLeadForContact, type ResolvedLeadForContact } from '@/lib/contact-resolution'
 import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
 
 type Params = { params: Promise<{ idOrSlug: string; contact: string }> }
-type ResolvedLeadForContact = {
-  lead: typeof recoveryLeads.$inferSelect | undefined
-  identifier: ContactIdentifier
-  ambiguous: boolean
-}
 
-async function resolveLeadForContact(companyId: number, contact: string): Promise<ResolvedLeadForContact> {
-  const identifier = parseContactIdentifier(contact)
-  if (identifier.kind === 'leadId') {
-    const [lead] = await db
-      .select()
-      .from(recoveryLeads)
-      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.id, identifier.leadId)))
-      .limit(1)
-    return { lead, identifier, ambiguous: false }
-  }
-
-  const exactMatches = await db
-    .select()
-    .from(recoveryLeads)
-    .where(
-      and(
-        eq(recoveryLeads.companyId, companyId),
-        or(
-          eq(recoveryLeads.phone, identifier.raw),
-          identifier.digits
-            ? sql`regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g') = ${identifier.digits}`
-            : undefined
-        )
-      )
-    )
-    .limit(2)
-
-  if (exactMatches.length === 1) return { lead: exactMatches[0], identifier, ambiguous: false }
-  if (exactMatches.length > 1) return { lead: undefined, identifier, ambiguous: true }
-
-  if (identifier.digits.length >= 9) {
-    const suffixMatches = await db
-      .select()
-      .from(recoveryLeads)
-      .where(
-        and(
-          eq(recoveryLeads.companyId, companyId),
-          sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${identifier.digits}, 9)`
-        )
-      )
-      .limit(2)
-
-    if (suffixMatches.length === 1) return { lead: suffixMatches[0], identifier, ambiguous: false }
-    if (suffixMatches.length > 1) return { lead: undefined, identifier, ambiguous: true }
-  }
-
-  return { lead: undefined, identifier, ambiguous: false }
-}
 
 function contactIdentifierErrorResponse(err: unknown): NextResponse | null {
   if (!(err instanceof Error)) return null
@@ -183,80 +131,59 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     // O canal informado pela API só inicializa um lead novo. Para leads
     // existentes (e após a criação), o próprio lead é a fonte única do
     // transporte; um override conflitante no body é deliberadamente ignorado.
-    const deliveryChannel = resolveLeadDeliveryChannel(lead)
-    let externalId: string | null = null
+    const senderDisplayName = body.senderName || context.agentName
+    const clientRequestId =
+      (typeof body.clientRequestId === 'string' && body.clientRequestId.trim()) ||
+      req.headers.get('x-client-request-id')?.trim() ||
+      null
 
-    // Disparo real conforme canal
-    if (deliveryChannel === 'instagram') {
-      try {
-        const igRes = await sendInstagramMessage({
-          recipientId: lead.phone,
-          text: content,
-          companyId: context.company.id,
-        })
-        externalId = igRes.messageId || null
-      } catch (igErr) {
-        console.warn('[API Outbound Instagram Warning]:', igErr)
-      }
-    } else if (deliveryChannel === 'email' && lead.email) {
-      try {
-        await sendBrevoEmail({
-          to: [{ email: lead.email, name: lead.name || 'Cliente' }],
-          subject: body.subject || 'Mensagem de Atendimento',
-          htmlContent: `<p>${content.replace(/\n/g, '<br>')}</p>`,
-          textContent: content,
-          companyId: context.company.id,
-        })
-      } catch (emErr) {
-        console.warn('[API Outbound Email Warning]:', emErr)
-      }
-    } else {
-      // WhatsApp Meta / UazAPI
-      try {
-        externalId = await sendWhatsAppMessage(
-          lead.phone,
-          {
-            type: messageType,
-            content,
-            mediaUrl,
-          },
-          context.company.id
-        )
-      } catch (waErr) {
-        console.warn('[API Outbound WhatsApp Warning]:', waErr)
-      }
+    const sendResult = await sendOutboundForLead({
+      companyId: context.company.id,
+      lead,
+      content,
+      mediaUrl,
+      messageType,
+      clientRequestId,
+      sentBy: 'bot',
+      senderName: senderDisplayName,
+      agentId: context.agentId,
+      subject: body.subject || 'Mensagem de Atendimento',
+    })
+
+    if (!sendResult.ok) {
+      return NextResponse.json(
+        {
+          error: sendResult.error || 'Falha no transporte de envio',
+          isTimeout: sendResult.isTimeout,
+          message: sendResult.message
+            ? {
+                id: sendResult.message.id,
+                phone: sendResult.message.phone,
+                channel: sendResult.message.channel,
+                direction: sendResult.message.direction,
+                content: sendResult.message.content,
+                messageType: sendResult.message.messageType,
+                mediaUrl: sendResult.message.mediaUrl,
+                sentBy: sendResult.message.sentBy,
+                senderName: sendResult.message.senderName,
+                sendState: sendResult.message.sendState,
+                sendError: sendResult.message.sendError,
+                clientRequestId: sendResult.message.clientRequestId,
+                createdAt: sendResult.message.createdAt?.toISOString() ?? null,
+              }
+            : null,
+        },
+        { status: sendResult.status },
+      )
     }
 
-    // Registra no banco com autoria do agente (Luana / Renato)
-    const senderDisplayName = body.senderName || context.agentName
-    const [msg] = await db
-      .insert(whatsappMessages)
-      .values({
-        companyId: context.company.id,
-        leadId: lead.id,
-        phone: lead.phone,
-        channel: deliveryChannel,
-        direction: 'outbound',
-        content: content || null,
-        messageType,
-        mediaUrl: mediaUrl || null,
-        sentBy: 'bot',
-        senderName: senderDisplayName,
-        agentId: context.agentId,
-        externalId,
-      })
-      .returning()
+    const msg = sendResult.message!
 
-    // Mensagem real trocada: se for a primeira, marca a abordagem do lead
-    await markLeadContacted(lead.id)
-
-    // Atualiza timestamp e última ação do lead
+    // Atualiza lastActionBy do agente no lead
     await db
       .update(recoveryLeads)
       .set({
         lastActionBy: `${senderDisplayName} (Agente IA)`,
-        lastActionAt: new Date(),
-        updatedAt: new Date(),
       })
       .where(eq(recoveryLeads.id, lead.id))
 
@@ -271,7 +198,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       entityId: String(msg.id),
       details: {
         leadId: lead.id,
-        channel: deliveryChannel,
+        channel: msg.channel,
         phone: lead.phone,
         preview: (content || '').slice(0, 80),
       },

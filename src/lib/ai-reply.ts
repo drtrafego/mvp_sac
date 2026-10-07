@@ -115,14 +115,16 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
     const [lead] = await db.select().from(recoveryLeads).where(eq(recoveryLeads.id, leadId)).limit(1)
     if (!lead) return
     if (lead.botPaused) return
+    const initialBotControlVersion = lead.botControlVersion ?? 0
 
     const [config] = await db.select().from(settings).where(eq(settings.companyId, lead.companyId)).limit(1)
     if (!config?.aiSystemPrompt) return // gate manual: empresa sem IA ligada não recebe reply automático
 
     const [company] = await db.select().from(companies).where(eq(companies.id, lead.companyId)).limit(1)
-    const bot = company ? BOT_POR_SLUG[company.slug] : undefined
+    const botKey = (config.aiAgentKey || company?.slug || '') as string
+    const bot = BOT_POR_SLUG[botKey]
     if (!bot) {
-      console.error(`[AI Reply] empresa=${lead.companyId} (slug=${company?.slug ?? '?'}) sem bot mapeado na ponte, pulando lead=${leadId}`)
+      console.error(`[AI Reply] empresa=${lead.companyId} (slug=${company?.slug ?? '?'}, agentKey=${config.aiAgentKey ?? 'none'}) sem bot mapeado na ponte, pulando lead=${leadId}`)
       return
     }
 
@@ -164,6 +166,7 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
           botPaused: true,
           botPausedAt: new Date(),
           botPausedBy: `Anti-loop (bot do outro lado detectado: ${deteccao.sinais.join(', ')}, pontos=${deteccao.pontos})`,
+          botControlVersion: sql`coalesce(${recoveryLeads.botControlVersion}, 0) + 1`,
         })
         .where(eq(recoveryLeads.id, leadId))
       return
@@ -187,6 +190,17 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
           (resultado.detalhe ? ` detalhe=${resultado.detalhe}` : '') +
           '. Nada enviado, fica pro atendimento humano.',
       )
+      return
+    }
+
+    // Revalidação imediata: se um humano pausou o bot durante a chamada externa à ponte, descarta
+    const [leadAposGeracao] = await db
+      .select({ botPaused: recoveryLeads.botPaused, botControlVersion: recoveryLeads.botControlVersion })
+      .from(recoveryLeads)
+      .where(eq(recoveryLeads.id, leadId))
+      .limit(1)
+    if (!leadAposGeracao || leadAposGeracao.botPaused || (leadAposGeracao.botControlVersion ?? 0) !== initialBotControlVersion) {
+      console.log(`[AI Reply] lead=${leadId} foi pausado ou teve versão de controle alterada durante a geração da ponte. Descartando resposta.`)
       return
     }
 
@@ -225,6 +239,7 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
       updateData.botPaused = true
       updateData.botPausedAt = new Date()
       updateData.botPausedBy = `IA (encerrou: ${envelope.encerrar.motivo || 'sem motivo informado'})`
+      updateData.botControlVersion = (lead.botControlVersion ?? 0) + 1
     }
     if (Object.keys(updateData).length > 0) {
       await db.update(recoveryLeads).set(updateData).where(eq(recoveryLeads.id, leadId))
@@ -232,6 +247,17 @@ export async function generateAndSendAiReply(leadId: number): Promise<void> {
 
     if (!textoFinal.trim()) {
       console.error(`[AI Reply] texto final vazio (status=${envelope.status}), lead=${leadId}, nada enviado.`)
+      return
+    }
+
+    // Revalidação imediata antes de enviar: garante que pausa humana não foi acionada
+    const [leadAntesDoEnvio] = await db
+      .select({ botPaused: recoveryLeads.botPaused, botControlVersion: recoveryLeads.botControlVersion })
+      .from(recoveryLeads)
+      .where(eq(recoveryLeads.id, leadId))
+      .limit(1)
+    if (!leadAntesDoEnvio || leadAntesDoEnvio.botPaused || (leadAntesDoEnvio.botControlVersion ?? 0) !== initialBotControlVersion) {
+      console.log(`[AI Reply] lead=${leadId} foi pausado antes do envio externo. Descartando envio.`)
       return
     }
 

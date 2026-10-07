@@ -64,6 +64,15 @@ export interface ChatLead {
   agentInputTokens?: number | null
   agentOutputTokens?: number | null
   agentSyncedAt?: string | null
+  requestSummary?: string | null
+  requestMessageId?: number | null
+  commitment?: string | null
+  nextAction?: string | null
+  humanOwnerMemberId?: number | null
+  nextActionDueAt?: string | null
+  sacCaseState?: string | null
+  pipelineStage?: string | null
+  responsibleAgent?: string | null
   reservation?: {
     id: string
     date: string
@@ -130,6 +139,7 @@ export function ChatWindow({
   const didInitialScrollRef = useRef(false)
   const shouldScrollToBottomRef = useRef(true)
   const prependScrollHeightRef = useRef<number | null>(null)
+  const pendingRequestIdRef = useRef<string | null>(null)
 
   const refresh = useCallback(
     async (silent = false) => {
@@ -343,20 +353,33 @@ export function ChatWindow({
     setSending(true)
     setSendError(null)
     const content = text.trim()
+    const clientRequestId =
+      pendingRequestIdRef.current ||
+      (typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2))
+    pendingRequestIdRef.current = clientRequestId
+
     try {
       const res = await fetch(`/api/inbox/${lead.id}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Request-Id': clientRequestId,
+        },
+        body: JSON.stringify({ content, clientRequestId }),
       })
       if (res.ok) {
         const msg: InboxMessage = await res.json()
         setText('')
+        pendingRequestIdRef.current = null
         shouldScrollToBottomRef.current = true
         setMessages(prev => [...prev, msg])
+      } else if (res.status === 202) {
+        setSendError('Envio aceito para processamento em segundo plano (202). Aguardando confirmação da operadora.')
       } else {
         const errData = await res.json().catch(() => ({}))
-        setSendError(errData.error || 'Falha ao enviar mensagem. Seu rascunho foi mantido.')
+        setSendError(errData.error || 'Falha no transporte da operadora. Seu rascunho foi mantido.')
       }
     } catch {
       setSendError('Erro de conexão ao enviar mensagem. Seu rascunho foi mantido.')
@@ -551,9 +574,25 @@ export function ChatWindow({
         {/* 3. Área de Envio da Mensagem */}
         <div className="border-t border-line-subtle bg-surface-panel p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:pb-3 shrink-0 space-y-2">
           {sendError && (
-            <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-micro flex items-center justify-between">
-              <span>⚠️ {sendError}</span>
-              <button onClick={() => setSendError(null)} className="text-fg-subtle hover:text-fg font-bold">×</button>
+            <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-micro flex items-center justify-between gap-2">
+              <span className="flex-1">⚠️ {sendError}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={sending}
+                  className="font-semibold underline hover:text-rose-300 text-micro cursor-pointer disabled:opacity-50"
+                >
+                  Tentar de novo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSendError(null)}
+                  className="text-fg-subtle hover:text-fg font-bold px-1"
+                >
+                  ×
+                </button>
+              </div>
             </div>
           )}
           <div className="flex items-end gap-2">

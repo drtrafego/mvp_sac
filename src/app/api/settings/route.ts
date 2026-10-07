@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { companies, settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
-import { requireCompany, getCurrentUser } from '@/lib/auth'
+import { requireCompany, getCurrentUser, getCompanyAccess, forbiddenResponse } from '@/lib/auth'
+import { roleSatisfies } from '@/lib/company-role'
 import { maskSettingsRow, shouldWriteSettingsField } from '@/lib/settings-mask'
 import { parseAgentDisplayName } from '@/lib/agent-display-name'
 
@@ -143,8 +144,20 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function PUT(req: NextRequest): Promise<NextResponse> {
-  const company = await requireCompany()
+  const access = await getCompanyAccess()
+  const company = access.company
   const body = await req.json() as Record<string, unknown>
+
+  // SAC Lote 1, 5.5: credenciais, integrações e nome do bot são
+  // configurações administrativas. Um membro comum só pode alterar o preset
+  // visual do menu (sidebarConfig), que já era usado pelos perfis
+  // Simplificado/Completo. Qualquer outro campo gravável exige admin.
+  const touchesAdminField = body.agentDisplayName !== undefined
+    || WRITABLE_SETTING_FIELDS.some(([key]) => key !== 'sidebarConfig' && body[key] !== undefined)
+  if (touchesAdminField && !roleSatisfies(access.role, 'admin')) {
+    return forbiddenResponse('Apenas administradores da empresa podem alterar credenciais e integrações.')
+  }
+
   let agentDisplayName: string | undefined
   try {
     agentDisplayName = parseAgentDisplayName(body.agentDisplayName)

@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
-import { settings, recoveryLeads, messageJobs } from '@/lib/db/schema'
+import { settings, recoveryLeads, messageJobs, whatsappMessages } from '@/lib/db/schema'
 import { eq, sql, count } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { Radio, MessageSquare, Settings, CheckCircle2, AlertCircle, Zap, ShieldCheck, Mail } from 'lucide-react'
@@ -20,7 +20,7 @@ function InstagramIcon({ size = 18, className = '' }: { size?: number; className
 export default async function CanaisPage() {
   const company = await requireCompany()
 
-  const [[companySettings], [leadStats], [jobStats]] = await Promise.all([
+  const [[companySettings], [leadStats], [jobStats], channelMsgStats, channelLeadStats] = await Promise.all([
     db.select().from(settings).where(eq(settings.companyId, company.id)),
     db
       .select({
@@ -38,7 +38,28 @@ export default async function CanaisPage() {
       .from(messageJobs)
       .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
       .where(eq(recoveryLeads.companyId, company.id)),
+    db
+      .select({
+        channel: whatsappMessages.channel,
+        totalSent: sql<number>`cast(count(*) filter (where ${whatsappMessages.direction} = 'outbound') as int)`,
+        totalFailed: sql<number>`cast(count(*) filter (where ${whatsappMessages.sendState} = 'failed') as int)`,
+      })
+      .from(whatsappMessages)
+      .where(eq(whatsappMessages.companyId, company.id))
+      .groupBy(whatsappMessages.channel),
+    db
+      .select({
+        channel: recoveryLeads.channel,
+        total: count(),
+        recovered: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} = 'converted') as int)`,
+      })
+      .from(recoveryLeads)
+      .where(eq(recoveryLeads.companyId, company.id))
+      .groupBy(recoveryLeads.channel),
   ])
+
+  const channelMsgsMap = new Map((channelMsgStats || []).map(c => [c.channel || '', c]))
+  const channelLeadsMap = new Map((channelLeadStats || []).map(c => [c.channel || '', c]))
 
   const hasMeta = !!(companySettings?.metaPhoneNumberId && companySettings?.metaAccessToken)
   const hasUazapi = !!(companySettings?.uazapiInstanceToken && companySettings?.uazapiBaseUrl)
@@ -55,6 +76,21 @@ export default async function CanaisPage() {
   const recoveredLeads = leadStats?.recovered ?? 0
   const convRate = totalLeads > 0 ? ((recoveredLeads / totalLeads) * 100).toFixed(1) : '0.0'
   const deliveryRate = sentJobs + failedJobs > 0 ? (((sentJobs) / (sentJobs + failedJobs)) * 100).toFixed(1) : (sentJobs > 0 ? '100.0' : '—')
+
+  // Métricas reais por canal
+  const instaLeads = channelLeadsMap.get('instagram')
+  const instaMsgs = channelMsgsMap.get('instagram')
+  const instaSent = instaMsgs?.totalSent ?? 0
+  const instaFailed = instaMsgs?.totalFailed ?? 0
+  const instaDelivery = instaSent > 0 ? (((instaSent - instaFailed) / instaSent) * 100).toFixed(1) + '%' : '—'
+  const instaConv = (instaLeads?.total ?? 0) > 0 ? (((instaLeads?.recovered ?? 0) / (instaLeads?.total ?? 1)) * 100).toFixed(1) + '%' : '—'
+
+  const emailLeads = channelLeadsMap.get('email')
+  const emailMsgs = channelMsgsMap.get('email')
+  const emailSent = emailMsgs?.totalSent ?? 0
+  const emailFailed = emailMsgs?.totalFailed ?? 0
+  const emailDelivery = emailSent > 0 ? (((emailSent - emailFailed) / emailSent) * 100).toFixed(1) + '%' : '—'
+  const emailConv = (emailLeads?.total ?? 0) > 0 ? (((emailLeads?.recovered ?? 0) / (emailLeads?.total ?? 1)) * 100).toFixed(1) + '%' : '—'
 
   const canais = [
     {
@@ -99,11 +135,11 @@ export default async function CanaisPage() {
       status: hasInstagram ? (companySettings?.instagramUsername ? `${companySettings.instagramUsername} Conectado` : 'Configurado') : 'Não Configurado',
       isConfigured: hasInstagram,
       provider: 'Meta Graph API (Instagram)',
-      conversas: hasInstagram ? totalLeads : 0,
-      mensagens: hasInstagram ? sentJobs : 0,
+      conversas: hasInstagram ? (instaLeads?.total ?? 0) : 0,
+      mensagens: hasInstagram ? instaSent : 0,
       pendentes: 0,
-      entrega: hasInstagram ? '100.0%' : '—',
-      conversao: hasInstagram ? `${convRate}%` : '—',
+      entrega: hasInstagram ? instaDelivery : '—',
+      conversao: hasInstagram ? instaConv : '—',
     },
     {
       id: 'brevo',
@@ -115,11 +151,11 @@ export default async function CanaisPage() {
       status: hasBrevo ? (companySettings?.brevoSenderEmail ? `${companySettings.brevoSenderEmail}` : 'Ativo') : 'Não Configurado',
       isConfigured: hasBrevo,
       provider: 'Brevo Transactional API',
-      conversas: hasBrevo ? totalLeads : 0,
-      mensagens: hasBrevo ? sentJobs : 0,
+      conversas: hasBrevo ? (emailLeads?.total ?? 0) : 0,
+      mensagens: hasBrevo ? emailSent : 0,
       pendentes: 0,
-      entrega: hasBrevo ? '99.8%' : '—',
-      conversao: hasBrevo ? `${convRate}%` : '—',
+      entrega: hasBrevo ? emailDelivery : '—',
+      conversao: hasBrevo ? emailConv : '—',
     },
   ]
 

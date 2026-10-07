@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireCompany, getCurrentUser, unauthorizedResponse } from '@/lib/auth'
+import { requireCompany, requireCompanyRole, getCurrentUser, unauthorizedResponse, forbiddenResponse, ForbiddenError } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { companyMembers, companies } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -42,7 +42,8 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const company = await requireCompany()
+    // Convidar membro é operação administrativa (SAC Lote 1, 5.5).
+    const { company } = await requireCompanyRole('admin')
     const { email, role = 'admin' } = await req.json()
 
     if (!email || typeof email !== 'string') {
@@ -87,7 +88,8 @@ export async function POST(req: Request) {
     const inviteUrl = `${origin}/invite/membro/${inviteToken}`
 
     return NextResponse.json({ member, inviteUrl })
-  } catch {
+  } catch (err) {
+    if (err instanceof ForbiddenError) return forbiddenResponse()
     return unauthorizedResponse()
   }
 }

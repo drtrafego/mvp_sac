@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
-import { requireCompany, unauthorizedResponse } from '@/lib/auth'
+import { requireCompanyRole, unauthorizedResponse, forbiddenResponse, ForbiddenError } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { companyMembers } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const company = await requireCompany()
+    // Excluir/promover/rebaixar membro exige administrador da empresa (SAC Lote 1, 5.5).
+    const { company } = await requireCompanyRole('admin')
     const { id } = await params
     const memberId = parseInt(id)
 
@@ -24,14 +25,16 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     }
 
     return NextResponse.json({ ok: true })
-  } catch {
+  } catch (err) {
+    if (err instanceof ForbiddenError) return forbiddenResponse()
     return unauthorizedResponse()
   }
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const company = await requireCompany()
+    // Excluir/promover/rebaixar membro exige administrador da empresa (SAC Lote 1, 5.5).
+    const { company } = await requireCompanyRole('admin')
     const { id } = await params
     const memberId = parseInt(id)
     const { role } = await req.json()
@@ -56,7 +59,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     return NextResponse.json({ member: updated })
-  } catch {
+  } catch (err) {
+    if (err instanceof ForbiddenError) return forbiddenResponse()
     return unauthorizedResponse()
   }
 }

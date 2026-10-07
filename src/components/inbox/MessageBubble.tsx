@@ -17,6 +17,9 @@ export interface InboxMessage {
   sentBy?: string | null
   reasoning?: string | null
   sentEmail?: string | null
+  sendState?: string | null
+  sendError?: string | null
+  clientRequestId?: string | null
   createdAt: string | null
 }
 
@@ -197,6 +200,23 @@ export function MessageBubble({
               : '💬 [Mensagem sem texto]'}
           </p>
         ) : null}
+
+        {message.sendState === 'failed' && (
+          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-rose-400 font-medium bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+            <span>⚠️ Falha no transporte</span>
+            {message.sendError && <span className="truncate max-w-[200px]" title={message.sendError}>({message.sendError})</span>}
+          </div>
+        )}
+        {message.sendState === 'uncertain' && (
+          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-400 font-medium bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+            <span>⚠️ Envio incerto (timeout)</span>
+          </div>
+        )}
+        {message.sendState === 'pending' && (
+          <div className="mt-1 flex items-center gap-1 text-[10px] text-amber-400 font-medium">
+            <span>⏳ Envio em processamento...</span>
+          </div>
+        )}
 
         {(message.reasoning || message.sentEmail) && (
           <details className="mt-2 border-t border-line-subtle/70 pt-1.5 text-[11px]">

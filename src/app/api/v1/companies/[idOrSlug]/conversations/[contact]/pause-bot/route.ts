@@ -6,6 +6,8 @@ import { recoveryLeads } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq, and, or, sql } from 'drizzle-orm'
 
+import { resolveLeadForContact } from '@/lib/contact-resolution'
+
 type Params = { params: Promise<{ idOrSlug: string; contact: string }> }
 
 export async function POST(req: NextRequest, { params }: Params): Promise<NextResponse> {
@@ -13,12 +15,34 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   const { error, context } = await authenticateAgentRequest(req, idOrSlug)
   if (error || !context) return error!
 
-  const body = await req.json().catch(() => ({}))
-  const pause = body.pause !== undefined ? Boolean(body.pause) : true
-  const pausedBy = body.pausedBy || 'agent_api'
+  let resolved
+  try {
+    resolved = await resolveLeadForContact(context.company.id, contact)
+  } catch (err: unknown) {
+    if (err instanceof Error && ['Contato é obrigatório.', 'leadId inválido: use lead:<id> com um inteiro positivo.'].includes(err.message)) {
+      return NextResponse.json({ error: err.message }, { status: 400 })
+    }
+    throw err
+  }
 
-  const cleanPhone = contact.replace(/\D/g, '')
-  const isLeadId = !isNaN(parseInt(contact)) && parseInt(contact) > 0
+  if (resolved.ambiguous) {
+    return NextResponse.json(
+      { error: 'Contato ambíguo: informe o telefone completo em formato E.164 ou use lead:<id>.' },
+      { status: 409 },
+    )
+  }
+
+  if (!resolved.lead) {
+    return NextResponse.json({ error: 'Contato não encontrado' }, { status: 404 })
+  }
+
+  const body = await req.json().catch(() => ({}))
+  const pause =
+    body.pause !== undefined
+      ? Boolean(body.pause)
+      : body.paused !== undefined
+        ? Boolean(body.paused)
+        : true
 
   const [updated] = await db
     .update(recoveryLeads)
@@ -26,6 +50,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       botPaused: pause,
       botPausedAt: pause ? new Date() : null,
       botPausedBy: pause ? (body.pausedBy || `${context.agentName} (Agente IA)`) : null,
+      botControlVersion: sql`coalesce(${recoveryLeads.botControlVersion}, 0) + 1`,
       // Pausa/despausa individual sempre "reivindica" o lead: zera o flag da
       // ação em massa pra "Despausar Tudo" não reverter uma decisão humana
       // tomada depois do pause-all (ver pause-all/route.ts).
@@ -35,18 +60,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       lastActionAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(
-      and(
-        eq(recoveryLeads.companyId, context.company.id),
-        or(
-          isLeadId ? eq(recoveryLeads.id, parseInt(contact)) : undefined,
-          eq(recoveryLeads.phone, contact),
-          cleanPhone.length >= 9
-            ? sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${cleanPhone}, 9)`
-            : undefined
-        )
-      )
-    )
+    .where(eq(recoveryLeads.id, resolved.lead.id))
     .returning()
 
   if (!updated) {
