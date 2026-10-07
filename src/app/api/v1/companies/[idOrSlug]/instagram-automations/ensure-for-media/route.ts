@@ -76,17 +76,6 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     const suppliedMediaUrl = body.media_url as string | undefined
     const suppliedMatchType = body.match_type as typeof MATCH_TYPES[number] | undefined
 
-    const [existing] = await db
-      .select({ id: instagramCommentAutomations.id })
-      .from(instagramCommentAutomations)
-      .where(
-        and(
-          eq(instagramCommentAutomations.companyId, companyId),
-          eq(instagramCommentAutomations.mediaId, mediaId),
-        ),
-      )
-      .limit(1)
-
     const updateData: Partial<typeof instagramCommentAutomations.$inferInsert> = {
       keywords: keyword,
       dmMessage,
@@ -97,7 +86,8 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     if (suppliedMediaUrl !== undefined) updateData.mediaUrl = suppliedMediaUrl.trim()
     if (suppliedMatchType !== undefined) updateData.matchType = suppliedMatchType
 
-    const [upsertedAutomation] = await db
+    const conflictWhere = sql`media_id is not null and media_id != ''`
+    const [insertedAutomation] = await db
       .insert(instagramCommentAutomations)
       .values({
         companyId,
@@ -109,14 +99,30 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         dmMessage,
         isActive: true,
       })
-      .onConflictDoUpdate({
+      .onConflictDoNothing({
         target: [instagramCommentAutomations.companyId, instagramCommentAutomations.mediaId],
-        targetWhere: sql`${instagramCommentAutomations.mediaId} is not null and ${instagramCommentAutomations.mediaId} != ''`,
-        set: updateData,
+        where: conflictWhere,
       })
       .returning()
 
-    const result = { automation: upsertedAutomation, created: !existing }
+    let result = { automation: insertedAutomation, created: true }
+    if (!insertedAutomation) {
+      const [updatedAutomation] = await db
+        .update(instagramCommentAutomations)
+        .set(updateData)
+        .where(
+          and(
+            eq(instagramCommentAutomations.companyId, companyId),
+            eq(instagramCommentAutomations.mediaId, mediaId),
+          ),
+        )
+        .returning()
+
+      if (!updatedAutomation) {
+        throw new Error('Não foi possível garantir a automação para a mídia informada.')
+      }
+      result = { automation: updatedAutomation, created: false }
+    }
 
     await logAgentActivity({
       companyId,

@@ -285,6 +285,15 @@ async function main() {
 
       assert.equal(firstResponse.status, 200)
       assert.equal(secondResponse.status, 200)
+      const [firstBody, secondBody] = await Promise.all([
+        firstResponse.json(),
+        secondResponse.json(),
+      ])
+      assert.deepEqual(
+        [firstBody.created, secondBody.created].sort(),
+        [false, true],
+        'em corrida, somente a chamada que inseriu deve responder created=true',
+      )
 
       const [rowCount] = await testDb
         .select({ value: count() })
