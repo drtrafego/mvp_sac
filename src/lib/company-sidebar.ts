@@ -75,7 +75,11 @@ export async function getCompanySidebarData(companyId: number): Promise<{
     const hasKiwify = kiwifyEnabled && !!(settingsRow?.kiwifyWebhookToken || platformSet.has('kiwify'))
     const hasGreenn = greennEnabled && !!(settingsRow?.greennWebhookToken || settingsRow?.greennApiKey || platformSet.has('greenn'))
     const hasZouti = zoutiEnabled && !!(settingsRow?.zoutiWebhookToken || settingsRow?.zoutiApiKey || platformSet.has('zouti'))
-    const hasInstagram = hasInstagramCredentials(settingsRow) || platformSet.has('instagram') || sourceSet.has('instagram')
+    // Histórico de leads não prova que a conexão está ativa. Sem o par
+    // identificador+token, a área do Instagram deve permanecer bloqueada;
+    // caso contrário uma empresa com conversas antigas reabre o Direct sem
+    // credencial válida.
+    const hasInstagram = hasInstagramCredentials(settingsRow)
     const hasMineracao = !!(platformSet.has('mineracao') || sourceSet.has('mineracao') || sourceSet.has('prospeccao') || settingsRow?.brevoApiKey)
 
     // Se nenhuma plataforma estiver configurada ainda, mantém Hotmart/Geral como padrão
