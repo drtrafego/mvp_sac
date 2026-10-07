@@ -120,16 +120,23 @@ export function dashboardBusinessWonSql(model: DashboardBusinessModel): SQL {
 export function dashboardLeadStatsSelect(model: DashboardBusinessModel) {
   const stage = dashboardFunnelStageSql(model)
   const won = dashboardBusinessWonSql(model)
+  // Para os modelos conversacionais, "Leads Totais" e o funil de
+  // engajamento só podem contar quem foi realmente abordado. Eventos de
+  // checkout do infoproduto não passam por first_contact_at e continuam
+  // entrando no total mesmo sem conversa.
+  const conversationTotalGate = model === 'infoproduto'
+    ? sql`true`
+    : sql`${recoveryLeads.firstContactAt} is not null`
 
   return {
-    total: sql<number>`cast(count(*) as int)`,
+    total: sql<number>`cast(count(*) filter (where ${conversationTotalGate}) as int)`,
     aguardandoAbordagem: sql<number>`cast(count(*) filter (where ${recoveryLeads.firstContactAt} is null and not ${won}) as int)`,
 
     // Funil de engajamento equivalente ao painel nativo do Hermes: conta pelo
     // historico REAL de mensagens (whatsapp_messages), independente do
     // pipeline_stage do CRM. "Avancou" = 4+ mensagens trocadas na conversa.
-    respondeuTotal: sql<number>`cast(count(*) filter (where ${leadRespondedExistsSql}) as int)`,
-    avancouTotal: sql<number>`cast(count(*) filter (where ${leadMessageCountSql} >= 4) as int)`,
+    respondeuTotal: sql<number>`cast(count(*) filter (where ${conversationTotalGate} and ${leadRespondedExistsSql}) as int)`,
+    avancouTotal: sql<number>`cast(count(*) filter (where ${conversationTotalGate} and ${leadMessageCountSql} >= 4) as int)`,
     fechadosTotal: sql<number>`cast(count(*) filter (where ${won}) as int)`,
     valorFechadoCents: sql<number>`cast(coalesce(sum(${recoveryLeads.productValue}) filter (where ${won}), 0) as bigint)`,
     qualificadosTotal: sql<number>`cast(count(*) filter (where ${stage} in ('qualificado', 'agendado', 'proposta', 'fechado', 'compareceu')) as int)`,
