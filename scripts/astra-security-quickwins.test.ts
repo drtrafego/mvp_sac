@@ -92,11 +92,14 @@ test('PATCH /api/comment-automations rejeita tipo inválido em todos os textos o
   }
 })
 
-test('login de agente não aceita mais token em GET/query string', async () => {
+test('login de agente mantém o fluxo GET usado pelo navegador', async () => {
   const { GET } = await import('../src/app/api/auth/agent-login/route')
-  const response = await GET()
-  assert.equal(response.status, 405)
-  assert.equal(response.headers.get('allow'), 'POST')
+  const response = await GET(new NextRequest(
+    'https://app.example/api/auth/agent-login?token=segredo-de-teste&redirect=%2Finbox',
+  ))
+  assert.equal(response.status, 307)
+  assert.equal(response.headers.get('location'), 'https://app.example/inbox')
+  assert.match(response.headers.get('set-cookie') ?? '', /agent_auth_session=/)
 })
 
 test('login de agente rejeita redirect protocol-relative para outro domínio', async () => {

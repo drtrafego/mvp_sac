@@ -22,22 +22,7 @@ const DEFAULT_COMPANY_ID = 14 // AutonomIA
 // do app (convite real passa por /invite/[token] e /invite/membro/[token],
 // com Stack Auth de verdade) e permitia que um invite token comum, feito
 // pra convidar UM cliente, virasse admin do sistema inteiro.
-export async function GET() {
-  return NextResponse.json(
-    { error: 'Use POST e envie o token no corpo da requisição.' },
-    { status: 405, headers: { Allow: 'POST' } },
-  )
-}
-
-export async function POST(request: NextRequest) {
-  const parsedBody: unknown = await request.json().catch(() => null)
-  if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
-    return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
-  }
-
-  const body = parsedBody as Record<string, unknown>
-  const token = typeof body.token === 'string' ? body.token : null
-  const redirectValue = body.redirect ?? body.next ?? '/'
+async function loginWithToken(request: NextRequest, token: string | null, redirectValue: unknown) {
   if (typeof redirectValue !== 'string') {
     return NextResponse.json({ error: 'Destino de redirecionamento inválido.' }, { status: 400 })
   }
@@ -108,4 +93,26 @@ export async function POST(request: NextRequest) {
   })
 
   return response
+}
+
+// Mantém o fluxo usado pelo agente no navegador: abrir a URL GET cria a sessão
+// e redireciona diretamente para o inbox. O token continua vindo somente da
+// variável de ambiente; ele não volta a ficar gravado no código.
+export async function GET(request: NextRequest) {
+  const { searchParams } = request.nextUrl
+  return loginWithToken(
+    request,
+    searchParams.get('token'),
+    searchParams.get('redirect') || searchParams.get('next') || '/',
+  )
+}
+
+export async function POST(request: NextRequest) {
+  const parsedBody: unknown = await request.json().catch(() => null)
+  if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
+  }
+
+  const body = parsedBody as Record<string, unknown>
+  return loginWithToken(request, typeof body.token === 'string' ? body.token : null, body.redirect ?? body.next ?? '/')
 }
