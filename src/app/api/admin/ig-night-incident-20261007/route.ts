@@ -74,9 +74,64 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const body = await req.json().catch(() => ({})) as { leadId?: number }
-  const leadId = Number(body.leadId)
-  if (!Number.isInteger(leadId) || leadId <= 0) return NextResponse.json({ error: 'leadId inválido' }, { status: 400 })
-  await generateAndSendAiReply(leadId)
-  return NextResponse.json({ ok: true, leadId })
+  const body = await req.json().catch(() => ({})) as { leadId?: number, webhookId?: number }
+  const directLeadId = Number(body.leadId)
+  if (Number.isInteger(directLeadId) && directLeadId > 0) {
+    await generateAndSendAiReply(directLeadId)
+    return NextResponse.json({ ok: true, leadId: directLeadId })
+  }
+
+  const webhookId = Number(body.webhookId)
+  if (!Number.isInteger(webhookId) || webhookId <= 0) return NextResponse.json({ error: 'leadId ou webhookId inválido' }, { status: 400 })
+
+  const [webhook] = await db.select().from(webhookReceived).where(eq(webhookReceived.id, webhookId)).limit(1)
+  if (!webhook || !webhook.companyId) return NextResponse.json({ error: 'webhook não encontrado ou sem empresa' }, { status: 404 })
+
+  const raw = webhook.rawBody as { messaging?: Array<{ sender?: { id?: string }, message?: { mid?: string, text?: string, is_echo?: boolean, attachments?: Array<{ type?: string }>, referral?: Record<string, unknown> }, referral?: Record<string, unknown> }> } | null
+  const item = raw?.messaging?.[0]
+  const senderId = item?.sender?.id
+  const message = item?.message
+  if (!senderId || !message || message.is_echo) return NextResponse.json({ error: 'webhook sem mensagem inbound válida' }, { status: 400 })
+
+  const attachmentTypes = (message.attachments || []).map((a) => a.type || 'unknown')
+  const hasAudioAttachment = attachmentTypes.includes('audio')
+  const referral = (item.referral || message.referral) as { ad_id?: string, source?: string, ads_context_data?: { ad_id?: string, ad_title?: string } } | undefined
+  const isAd = Boolean(referral && (referral.source === 'ADS' || referral.ad_id || referral.ads_context_data?.ad_id))
+  const inboundText = (message.text || '').trim() || (hasAudioAttachment ? 'Recebi um áudio no Instagram.' : '') || (isAd ? 'Vim do anúncio do Instagram e quero saber mais.' : '')
+  if (!inboundText) return NextResponse.json({ error: 'webhook sem texto processável' }, { status: 400 })
+
+  const igPhone = `ig_${senderId}`
+  const [lead] = await db.insert(recoveryLeads).values({
+    companyId: webhook.companyId,
+    platform: 'instagram',
+    channel: 'instagram',
+    eventType: 'instagram_direct',
+    phone: igPhone,
+    name: `Instagram Direct (${senderId.slice(-4)})`,
+    status: 'in_conversation',
+    trackingSource: isAd ? 'instagram_ad' : 'instagram_direct',
+  }).onConflictDoUpdate({
+    target: [recoveryLeads.companyId, recoveryLeads.phone],
+    targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')`,
+    set: { updatedAt: new Date(), lastActionAt: new Date(), channel: 'instagram', ...(isAd ? { trackingSource: 'instagram_ad' } : {}) },
+  }).returning()
+
+  if (isAd && lead?.id) {
+    await db.insert(leadTags).values({ leadId: lead.id, tag: 'anuncio', scopeChannel: 'instagram', createdBy: 'system:instagram_ad' }).onConflictDoNothing()
+  }
+
+  await db.insert(whatsappMessages).values({
+    companyId: webhook.companyId,
+    leadId: lead?.id ?? null,
+    phone: igPhone,
+    channel: 'instagram',
+    direction: 'inbound',
+    content: inboundText,
+    messageType: hasAudioAttachment ? 'audio' : 'text',
+    sentBy: 'user',
+    externalId: message.mid ?? null,
+  }).onConflictDoNothing()
+
+  if (lead?.id && !lead.botPaused) await generateAndSendAiReply(lead.id)
+  return NextResponse.json({ ok: true, webhookId, leadId: lead?.id, phone: igPhone, inboundText })
 }

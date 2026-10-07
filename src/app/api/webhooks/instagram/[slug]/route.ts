@@ -145,11 +145,12 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           )
         )
 
-        const hasAttachments = Boolean(
-          message?.attachments && Array.isArray(message.attachments) && message.attachments.length > 0
-        )
-        if (hasAttachments && !earlyIsAd) {
-          const types = (message?.attachments || []).map((a) => a.type || 'unknown').join(', ')
+        const attachmentTypes = (message?.attachments || []).map((a) => a.type || 'unknown')
+        const hasAttachments = attachmentTypes.length > 0
+        const hasAudioAttachment = attachmentTypes.includes('audio')
+        const hasOnlyIgnoredShare = hasAttachments && !hasAudioAttachment && !earlyIsAd
+        if (hasOnlyIgnoredShare) {
+          const types = attachmentTypes.join(', ')
           console.log(`[Instagram Webhook] anexo/partilha ignorado para IA (types=${types}), slug=${slug}, mid=${message?.mid}`)
           continue
         }
@@ -187,7 +188,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
         const trackingSource = isAd ? 'instagram_ad' : 'instagram_direct'
 
-        const inboundText = (message?.text || '').trim() || (isAd ? 'Vim do anúncio do Instagram e quero saber mais.' : '')
+        const inboundText = (message?.text || '').trim() || (hasAudioAttachment ? 'Recebi um áudio no Instagram.' : '') || (isAd ? 'Vim do anúncio do Instagram e quero saber mais.' : '')
 
         if (sender?.id && inboundText) {
           try {
