@@ -26,7 +26,15 @@ interface ImportItem {
   productName?: string
   productValue?: string | number
   eventType?: string
+  recordType?: 'lead' | 'closed_sale'
+  platform?: string
   trackingSource?: string
+  tags?: string[]
+  sourceMetadata?: {
+    externalId?: string
+    createdOn?: string
+    originalSource?: string
+  }
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -41,6 +49,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     createMassDispatch,
     massDispatch,
     triggerMassDispatch,
+    recordType: rawRecordType,
+    platform: rawPlatform,
     tag: rawTag,
     scopeChannel: rawScopeChannel,
   } = body
@@ -71,6 +81,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const errors: string[] = []
 
   const shouldCreateMassDispatch = Boolean(createMassDispatch || massDispatch || triggerMassDispatch)
+  const recordType = rawRecordType === 'closed_sale' ? 'closed_sale' : 'lead'
+  const platform = typeof rawPlatform === 'string' && rawPlatform.trim() ? rawPlatform.trim() : 'import_planilha'
   const defaultEventType = typeof rawDefaultEventType === 'string' ? rawDefaultEventType.trim() : ''
   const defaultSource = typeof rawDefaultSource === 'string' && rawDefaultSource.trim()
     ? rawDefaultSource.trim()
@@ -79,6 +91,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   if (shouldCreateMassDispatch && !defaultEventType) {
     return NextResponse.json({ error: 'Selecione o tipo de evento para preparar o disparo em massa' }, { status: 400 })
+  }
+
+  if (recordType === 'closed_sale' && shouldCreateMassDispatch) {
+    return NextResponse.json({ error: 'Vendas fechadas não podem entrar em disparo de recuperação' }, { status: 400 })
   }
 
   const [batch] = shouldCreateMassDispatch
@@ -117,10 +133,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // banco exige um valor, então usamos a categoria neutra de atendimento;
       // o evento escolhido só entra quando há lote de disparo.
       const itemEventType = typeof item.eventType === 'string' ? item.eventType.trim() : ''
-      const eventType = shouldCreateMassDispatch
+      const eventType = recordType === 'closed_sale'
+        ? 'compra_aprovada'
+        : shouldCreateMassDispatch
         ? itemEventType || importEventType
         : importEventType
       const trackingSource = item.trackingSource || defaultSource
+      const itemPlatform = typeof item.platform === 'string' && item.platform.trim() ? item.platform.trim() : platform
+      const itemTags = Array.isArray(item.tags)
+        ? [...new Set(item.tags
+            .filter((value): value is string => typeof value === 'string')
+            .map(value => normalizeTag(value))
+            .filter(Boolean))]
+        : []
+      const importedMetadata = item.sourceMetadata && Object.values(item.sourceMetadata).some(Boolean)
+        ? { import: { ...item.sourceMetadata, recordType, platform: itemPlatform } }
+        : undefined
 
       // Verificar existência por telefone e empresa para idempotência
       const [existing] = await db
@@ -147,6 +175,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             email: email ?? undefined,
             productName: productName ?? undefined,
             productValue: productValue > 0 ? productValue : undefined,
+            platform: recordType === 'closed_sale' ? itemPlatform : undefined,
+            eventType: recordType === 'closed_sale' ? eventType : undefined,
+            status: recordType === 'closed_sale' ? 'completed' : undefined,
+            pipelineStage: recordType === 'closed_sale' ? 'fechado' : undefined,
             trackingSource,
             updatedAt: new Date(),
           })
@@ -161,7 +193,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           .insert(recoveryLeads)
           .values({
             companyId: company.id,
-            platform: 'import_planilha',
+            platform: itemPlatform,
             eventType,
             phone,
             name,
@@ -169,7 +201,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             productName,
             productValue,
             trackingSource,
-            status: 'pending',
+            rawPayload: importedMetadata,
+            status: recordType === 'closed_sale' ? 'completed' : 'pending',
+            pipelineStage: recordType === 'closed_sale' ? 'fechado' : undefined,
           })
           .onConflictDoUpdate({
             target: [recoveryLeads.companyId, recoveryLeads.phone],
@@ -195,14 +229,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         inserted++
       }
 
-      if (tag) {
+      const tagsToApply = [...new Set([...itemTags, ...(tag ? [tag] : [])])]
+      for (const tagToApply of tagsToApply) {
         try {
           await db
             .insert(leadTags)
-            .values({ leadId, tag, scopeChannel, createdBy: 'import:csv' })
+            .values({ leadId, tag: tagToApply, scopeChannel: tagToApply === tag ? scopeChannel : null, createdBy: 'import:csv' })
             .onConflictDoNothing()
 
-          if (tag === PESSOA_TAG) {
+          if (tagToApply === PESSOA_TAG) {
             await pauseBotForPessoaTag({ id: leadId, phone: leadPhone, channel: leadChannel })
           }
         } catch (err) {
@@ -211,7 +246,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           // contadores. A falha da tag tem categoria própria e inserted /
           // updated continuam descrevendo corretamente o estado do banco.
           tagFailed++
-          errors.push(`Lead ${leadId} persistido, mas falhou ao aplicar a tag "${tag}": ${err instanceof Error ? err.message : String(err)}`)
+          errors.push(`Lead ${leadId} persistido, mas falhou ao aplicar a tag "${tagToApply}": ${err instanceof Error ? err.message : String(err)}`)
         }
       }
 
