@@ -220,6 +220,45 @@ export function ChatWindow({
   const [replyFilter, setReplyFilter] = useState('')
   const [replyError, setReplyError] = useState<string | null>(null)
 
+  // SAC Lote 2: Copiloto no Editor
+  const [copilotLoading, setCopilotLoading] = useState(false)
+  const [copilotError, setCopilotError] = useState<string | null>(null)
+  const [copilotResult, setCopilotResult] = useState<{
+    draft: string
+    sources: Array<{ id?: number; title: string }>
+    missingInfo: string[]
+  } | null>(null)
+
+  async function handleGenerateCopilotDraft() {
+    setCopilotLoading(true)
+    setCopilotError(null)
+    try {
+      const res = await fetch(`/api/inbox/${lead.id}/copilot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operatorDraft: text }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Falha ao gerar sugestão.')
+      setCopilotResult({
+        draft: data.draft,
+        sources: data.sources || [],
+        missingInfo: data.missingInfo || [],
+      })
+    } catch (err: any) {
+      setCopilotError(err.message || 'Erro ao gerar sugestão do Copiloto.')
+    } finally {
+      setCopilotLoading(false)
+    }
+  }
+
+  function handleApplyCopilotDraft() {
+    if (!copilotResult) return
+    setText(current => current.trim() ? `${current.trim()}\n\n${copilotResult.draft}` : copilotResult.draft)
+    setCopilotResult(null)
+    textareaRef.current?.focus()
+  }
+
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
@@ -948,18 +987,97 @@ export function ChatWindow({
               </div>
             </div>
           )}
-          {/* SAC Lote 1: Atalho para Respostas Aprovadas */}
+          {/* SAC Lote 1 e Lote 2: Atalhos para Respostas Aprovadas e Copiloto */}
           <div className="flex items-center justify-between gap-2 px-1">
-            <button
-              type="button"
-              onClick={() => { if (!showApprovedReplies) void loadReplies(); setShowApprovedReplies(prev => !prev) }}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-line-subtle bg-surface-inset hover:bg-surface-raised text-fg-muted hover:text-fg text-[11px] font-semibold transition-colors cursor-pointer"
-            >
-              <Zap size={12} className="text-amber-400" />
-              <span>Respostas Aprovadas</span>
-              <ChevronDown size={11} className={cn("transition-transform", showApprovedReplies && "rotate-180")} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { if (!showApprovedReplies) void loadReplies(); setShowApprovedReplies(prev => !prev) }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-line-subtle bg-surface-inset hover:bg-surface-raised text-fg-muted hover:text-fg text-[11px] font-semibold transition-colors cursor-pointer"
+              >
+                <Zap size={12} className="text-amber-400" />
+                <span>Respostas Aprovadas</span>
+                <ChevronDown size={11} className={cn("transition-transform", showApprovedReplies && "rotate-180")} />
+              </button>
+
+              <button
+                type="button"
+                onClick={handleGenerateCopilotDraft}
+                disabled={copilotLoading}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-brand-solid/30 bg-brand-glow hover:bg-brand-solid/20 text-brand-ink text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                title="Sugerir resposta contextual baseada nas fontes e respostas aprovadas"
+              >
+                {copilotLoading ? <Loader2 size={12} className="animate-spin text-brand-ink" /> : <Sparkles size={12} className="text-brand-ink" />}
+                <span>{copilotLoading ? 'Gerando rascunho...' : 'Copiloto'}</span>
+              </button>
+            </div>
           </div>
+
+          {/* Painel do Copiloto com Fontes e Inserção no Rascunho */}
+          {copilotResult && (
+            <div className="rounded-xl border border-brand-solid/40 bg-surface-panel p-3 shadow-xl space-y-2.5 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between pb-1.5 border-b border-line-subtle">
+                <span className="text-[11px] font-bold text-fg flex items-center gap-1.5 uppercase tracking-wider">
+                  <Sparkles size={13} className="text-brand-ink" />
+                  Sugestão do Copiloto
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCopilotResult(null)}
+                  aria-label="Descartar sugestão"
+                  className="text-fg-subtle hover:text-fg p-0.5 rounded cursor-pointer"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {copilotResult.sources.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {copilotResult.sources.map((s, i) => (
+                    <span key={i} className="text-[10px] bg-surface-inset border border-line-subtle px-1.5 py-0.5 rounded text-fg-muted font-medium">
+                      Fonte: {s.title}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {copilotResult.missingInfo.length > 0 && (
+                <div className="text-[11px] bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2.5 py-1 rounded-lg font-medium">
+                  Atenção: confirme ou preencha as variáveis antes de enviar: {copilotResult.missingInfo.join(', ')}
+                </div>
+              )}
+
+              <div className="bg-surface-inset border border-line-subtle rounded-lg p-2.5 text-[12px] text-fg whitespace-pre-wrap leading-relaxed select-text">
+                {copilotResult.draft}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setCopilotResult(null)}
+                  className="px-2.5 py-1 text-micro text-fg-muted hover:text-fg rounded-lg transition-colors cursor-pointer"
+                >
+                  Descartar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplyCopilotDraft}
+                  className="px-3 py-1 bg-brand-solid text-on-accent text-micro font-semibold rounded-lg hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  Inserir no editor
+                </button>
+              </div>
+            </div>
+          )}
+
+          {copilotError && (
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-2 text-micro text-rose-400 flex items-center justify-between">
+              <span>{copilotError}</span>
+              <button type="button" onClick={() => setCopilotError(null)} className="text-rose-400 hover:text-rose-300">
+                <X size={12} />
+              </button>
+            </div>
+          )}
 
           {showApprovedReplies && (
             <div className="rounded-xl border border-line-subtle bg-surface-panel p-3 shadow-xl space-y-2 animate-in fade-in duration-150">

@@ -241,6 +241,7 @@ export default function LeadsPage() {
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [selectedLeadForEdit, setSelectedLeadForEdit] = useState<LeadForEdit | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   const { from, to } = resolvePeriod({
     from: searchParams.get('from') ?? undefined,
@@ -345,33 +346,48 @@ export default function LeadsPage() {
     setPage(next)
   }
 
-  function exportCSV() {
-    if (leads.length === 0) {
-      alert('Nenhum lead para exportar.')
-      return
+  async function exportCSV() {
+    setExporting(true)
+    try {
+      const params = new URLSearchParams({
+        export: 'csv',
+        from,
+        to,
+      })
+
+      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim())
+      if (eventType !== 'all') params.set('event_type', eventType)
+      if (status !== 'all') params.set('status', status)
+      if (sourceParam) params.set('source', sourceParam)
+      if (productFilter !== 'all') params.set('product', productFilter)
+      if (platformFilter !== 'all') params.set('platform', platformFilter)
+      if (paymentFilter !== 'all') params.set('payment_type', paymentFilter)
+      if (debouncedTag.trim()) params.set('tag', debouncedTag.trim())
+      if (isSaleFilter !== 'all') params.set('is_sale', isSaleFilter)
+      if (hasFilter === 'has_phone') params.set('has_phone', 'true')
+      if (hasFilter === 'has_email') params.set('has_email', 'true')
+      if (hasFilter === 'has_tags') params.set('has_tags', 'true')
+      if (minValue.trim()) params.set('min_value', minValue.trim())
+      if (maxValue.trim()) params.set('max_value', maxValue.trim())
+      if (transactionIdFilter.trim()) params.set('transaction_id', transactionIdFilter.trim())
+
+      const res = await fetch(`/api/leads?${params}`)
+      if (!res.ok) throw new Error('Falha ao exportar CSV de leads.')
+
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `leads_export_${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch {
+      alert('Erro ao exportar leads. Tente novamente.')
+    } finally {
+      setExporting(false)
     }
-    const headers = ['ID', 'Nome', 'Telefone', 'Email', 'Produto', 'Valor (R$)', 'Evento', 'Status', 'Plataforma', 'Origem', 'Data']
-    const rows = leads.map(l => [
-      `"${l.id}"`,
-      `"${(l.name || '').replace(/"/g, '""')}"`,
-      `"${l.phone}"`,
-      `"${(l.email || '').replace(/"/g, '""')}"`,
-      `"${(l.productName || '').replace(/"/g, '""')}"`,
-      `"${l.productValue ? (l.productValue / 100).toFixed(2) : '0.00'}"`,
-      `"${l.eventType}"`,
-      `"${l.status || ''}"`,
-      `"${l.platform || ''}"`,
-      `"${(l as any).trackingSource || 'organico'}"`,
-      `"${l.createdAt || ''}"`
-    ])
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
-    const encodedUri = encodeURI(csvContent)
-    const link = document.createElement('a')
-    link.setAttribute('href', encodedUri)
-    link.setAttribute('download', `leads_export_${new Date().toISOString().split('T')[0]}.csv`)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
   }
 
   function clearFilters() {
@@ -460,10 +476,11 @@ export default function LeadsPage() {
           <Button
             variant="outline"
             onClick={exportCSV}
+            disabled={exporting}
             className="shrink-0 gap-1.5 text-micro border-line-subtle text-fg hover:bg-surface-raised cursor-pointer"
           >
-            <Download size={14} />
-            Exportar CSV
+            {exporting ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
+            {exporting ? 'Exportando todos...' : 'Exportar CSV'}
           </Button>
           <PeriodBar from={from} to={to} />
           <Button

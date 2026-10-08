@@ -179,6 +179,53 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     conditions.push(lte(recoveryLeads.createdAt, toDate))
   }
 
+  // Exportação CSV completa no servidor para todos os leads filtrados da empresa
+  if (searchParams.get('export') === 'csv') {
+    const exportRows = await db
+      .select()
+      .from(recoveryLeads)
+      .where(and(...conditions))
+      .orderBy(desc(recoveryLeads.createdAt))
+      .limit(10_000)
+
+    const headers = ['ID', 'Nome', 'Telefone', 'Email', 'Produto', 'Valor (R$)', 'Evento', 'Status', 'Plataforma', 'Origem', 'ID Transacao', 'Data de Criacao']
+    const escapeCsv = (val: unknown) => {
+      if (val == null) return '""'
+      const str = String(val).replace(/"/g, '""')
+      return `"${str}"`
+    }
+
+    const csvLines = [
+      headers.join(';'),
+      ...exportRows.map(l => [
+        escapeCsv(l.id),
+        escapeCsv(l.name),
+        escapeCsv(l.phone),
+        escapeCsv(l.email),
+        escapeCsv(l.productName),
+        escapeCsv(l.productValue ? (l.productValue / 100).toFixed(2).replace('.', ',') : '0,00'),
+        escapeCsv(l.eventType),
+        escapeCsv(l.status),
+        escapeCsv(l.platform),
+        escapeCsv(l.channel || l.trackingSource),
+        escapeCsv(l.transactionId),
+        escapeCsv(l.createdAt ? new Date(l.createdAt).toISOString() : ''),
+      ].join(';'))
+    ]
+
+    // UTF-8 BOM (\uFEFF) para compatibilidade nativa com Excel
+    const csvContent = '\uFEFF' + csvLines.join('\r\n')
+    const filename = `leads_export_${new Date().toISOString().split('T')[0]}.csv`
+
+    return new NextResponse(csvContent, {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Cache-Control': 'no-store',
+      },
+    })
+  }
+
   let query = db
     .select()
     .from(recoveryLeads)

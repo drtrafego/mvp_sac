@@ -1,0 +1,125 @@
+================================================================================
+RELATÓRIO TÉCNICO DE ALTERAÇÕES & REVISÃO DO CONSELHO — SAC LOTE 1 (MVP_SAC)
+================================================================================
+Data: 08/10/2026
+Repositório: mvp_sac (d:\Meu Drive\Bilder Ai\mvp_sac)
+Branch de Trabalho Atual: fix/sac-lote1-revisao (baseada no SHA 1039952 de feat/sac-lote1)
+Commits do Lote:
+  - 55ac576: feat(sac): lote 1 fundacao - schema, outbound send confiavel, pausa do bot e cargos
+  - 1039952: feat(sac): lote 1 completo - card de contexto, notas internas, respostas aprovadas, busca e regras internas
+  - e93aff3: fix(sac): revisao do conselho lote 1 - correcoes de envio, contexto, concorrencia, regras e reconciliacao
+
+Base Inicial: 83b078f (origin/main)
+Status da Bateria do Conselho: 88 testes executados, 88 aprovados, 0 falhas (PGlite PostgreSQL WASM)
+Status TypeScript: 0 erros (`pnpm exec tsc --noEmit -p tsconfig.json` exit code 0)
+Status Build Produção: 100% aprovado (`pnpm exec next build --webpack` exit code 0)
+Status Git Diff Whitespace: 0 advertências (`git diff --check` passou)
+Diretriz de Merge: NÃO mesclar em main, NÃO abrir PR (aguardar homologação controlada)
+================================================================================
+
+1. PARECER DO CONSELHO (Gastão Matos / Casal do Tráfego — 08/10/2026)
+--------------------------------------------------------------------------------
+A entrega original do Lote 1 estruturou as fundações, mas a auditoria técnica de 5
+agentes especialistas (Envio, Dados, Permissões, Experiência do Atendente e Validação)
+identificou pontos críticos que testes superficiais não cobriam. O patch integral de
+60 arquivos foi aplicado e testado com sucesso.
+
+Principais Correções Realizadas na Revisão:
+1. Card de Contexto & Hidratação:
+   - Evita perda de contexto ao recarregar a tela ou ao salvar apenas um campo.
+   - Envia somente campos alterados (dirty fields) e valida versão esperada (prevenindo
+     concorrência entre operadores com HTTP 409).
+   - Preserva a inferência comercial de etapas do Pipeline existente.
+
+2. Envio Seguro & Idempotência Real:
+   - Respostas HTTP 202 (Accepted) não limpam mais o rascunho como sucesso prematuro.
+   - Tratamento de estados 'pending' e 'uncertain' antes da confirmação real.
+   - Retry de envio 'failed' reclama atomicamente a mesma linha no banco (CAS real)
+     em vez de bater no índice único e mascarar o reenvio.
+   - Hash imutável do payload (destinatário, canal, assunto, corpo): se a mesma chave
+     tentar enviar outro texto/destinatário, a API recusa com 409 Conflict.
+
+3. Controle de Dono (Claim) & Sessão Autenticada:
+   - Derivação estrita do operador a partir da sessão logada (não aceita dono forjado via JSON).
+   - Verificação atômica de posse e versão: se dois operadores tentarem assumir o mesmo
+     caso, apenas um ganha e o outro recebe HTTP 409.
+   - Pausa existente do bot é estritamente respeitada.
+
+4. Respostas Aprovadas:
+   - Picker exibe apenas respostas com status 'approved' da própria empresa.
+   - Apenas administradores podem aprovar templates.
+   - Qualquer edição em texto previamente aprovado invalida a aprovação (volta para 'draft').
+   - Variáveis ausentes exigem preenchimento explícito pelo atendente (sem inventar dados).
+
+5. Busca Histórica Segura & Deep Linking:
+   - Mensagens encontradas fora do limite das 75 mais recentes abrem em modo próprio
+     de contexto com destaque visual do alvo e retorno explícito para a conversa atual.
+
+6. Motor de Regras Internas & Reconciliação:
+   - Reconciliação em lotes de SQL por empresa.
+   - Convenção de data de retorno consolidada para meio-dia (America/Sao_Paulo),
+     impedindo que datas de calendário vençam no mesmo dia da promessa.
+   - Regra de etapa sem retorno é opt-in por empresa e segue a configuração do Pipeline.
+
+7. Migração de Colunas no Pipeline:
+   - Transação atômica em SQL para atualização de configuração e migração de cards,
+     com rollback conjunto em caso de falha. Preserva vendas ganhas e histórico.
+
+8. Webhook do Instagram:
+   - Extração da classe de erro para módulo isolado (`src/lib/instagram-webhook-errors.ts`),
+     resolvendo pendência de build do Next.js.
+
+--------------------------------------------------------------------------------
+2. BATERIA DE TESTES DO CONSELHO (`pnpm test:sac-lote1`)
+--------------------------------------------------------------------------------
+Total: 88 testes executados contra PostgreSQL WASM em memória (@electric-sql/pglite):
+- scripts/sac-access-regressions.test.ts (28 testes):
+  Auth real, convites de membros seguros, RBAC admin/operador, concorrência no claim,
+  conflitos 409 em edições desatualizadas, validação de tenant/empresa e auditoria.
+- scripts/sac-outbound-regressions.test.ts (13 testes):
+  Fluxo de envio com CAS, reenvio confiável, idempotência, bloqueio de bot pausado,
+  sanitização de credenciais em mensagens de erro.
+- scripts/sac-ai-reply-flow.test.ts (12 testes):
+  Fluxo da IA com dependências controladas, encerramento próprio vs pausa humana,
+  agenda externa (Hermes) com revalidação de slots antes de marcar.
+- scripts/sac-inbox-regressions.test.ts (12 testes):
+  Helpers de contexto, dirty fields no polling, persistência de rascunhos, variáveis.
+- scripts/sac-pending-regressions.test.ts (7 testes):
+  Regras A, B e C, reconciliação por lotes, estabilidade de chaves por episódio.
+- scripts/sac-outbound-database.test.ts (4 testes):
+  Persistência real no banco via Drizzle e PGlite, índices parciais de unicidade.
+- scripts/sac-channel-send-metrics.test.ts (4 testes):
+  Agregação e métricas de envio por canal em /canais.
+- scripts/sac-pipeline-save.test.ts (3 testes):
+  Salvamento de colunas, tratamento de conflitos e falhas de rede.
+- scripts/sac-schema-regressions.test.ts (4 testes):
+  Aplicação e reaplicação idempotente das migrações 0029 e 0030.
+
+Resultado: 88 PASSARAM, 0 FALHARAM.
+
+--------------------------------------------------------------------------------
+3. VERIFICAÇÃO DE COMPILAÇÃO E BUILD
+--------------------------------------------------------------------------------
+1. Verificação de Tipos:
+   `pnpm exec tsc --noEmit -p tsconfig.json` -> 0 erros (Exit Code 0).
+
+2. Build Completo do Next.js:
+   `pnpm exec next build --webpack` -> Compilado com sucesso em 2.1min (Exit Code 0).
+   Todas as 68 rotas da aplicação compiladas e otimizadas sem falhas.
+
+3. Verificação de Espaços e Quebras de Linha:
+   `git diff --check` -> Limpo.
+
+--------------------------------------------------------------------------------
+4. PRÓXIMOS PASSOS PARA HOMOLOGAÇÃO
+--------------------------------------------------------------------------------
+1. Homologação da interface (Desktop e Celular) com dados reais.
+2. Simulação de dois operadores simultâneos assumindo o mesmo atendimento.
+3. Teste de envio aceito, rejeitado e incerto nos canais reais (WhatsApp, Instagram, E-mail).
+4. Preservação estrita dos 3 commits recentes da branch main:
+   - 16c63f7: concorrência na criação de automações Instagram.
+   - 23eb52e: URL de autenticação do agente no navegador.
+   - 16bff8b: política de janela/templates WhatsApp.
+================================================================================
+FIM DO RELATÓRIO
+================================================================================
