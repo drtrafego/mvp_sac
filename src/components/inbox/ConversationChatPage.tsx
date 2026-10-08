@@ -12,6 +12,7 @@ interface ConversationChatPageProps {
   leadId: string
   backHref: '/inbox' | '/instagram'
   requiredChannel?: 'instagram'
+  searchParams?: Promise<Record<string, string | string[] | undefined>> | Record<string, string | string[] | undefined>
 }
 
 /**
@@ -23,9 +24,15 @@ export async function ConversationChatPage({
   leadId,
   backHref,
   requiredChannel,
+  searchParams,
 }: ConversationChatPageProps) {
   const id = Number.parseInt(leadId, 10)
   if (Number.isNaN(id)) notFound()
+
+  const sParams = searchParams ? await searchParams : {}
+  const rawAround = Array.isArray(sParams.aroundMessageId) ? sParams.aroundMessageId[0] : sParams.aroundMessageId
+  const parsedAround = rawAround ? parseInt(rawAround) : null
+  const validAround = parsedAround && !isNaN(parsedAround) ? parsedAround : null
 
   const company = await requireCompany()
   const [lead] = await db
@@ -44,6 +51,7 @@ export async function ConversationChatPage({
       companyId: company.id,
       leadId: id,
       phone: lead.phone,
+      aroundMessageId: validAround,
     }),
     cleanPhone
       ? db

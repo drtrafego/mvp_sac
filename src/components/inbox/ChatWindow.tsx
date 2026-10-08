@@ -18,6 +18,16 @@ import {
   ChevronUp,
   Database,
   Pencil,
+  Zap,
+  FileText,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Trash2,
+  Plus,
+  MessageSquare,
+  ChevronDown,
+  UserCheck,
 } from 'lucide-react'
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
@@ -73,6 +83,8 @@ export interface ChatLead {
   sacCaseState?: string | null
   pipelineStage?: string | null
   responsibleAgent?: string | null
+  followUpDate?: string | null
+  followUpNote?: string | null
   reservation?: {
     id: string
     date: string
@@ -106,12 +118,14 @@ export function ChatWindow({
   appointments = [],
   initialHistory,
   backHref = '/inbox',
+  highlightMessageId,
 }: {
   lead: ChatLead
   initialMessages: InboxMessage[]
   appointments?: MirroredAppointment[]
   initialHistory: { hasMore: boolean; nextCursor: string | null }
   backHref?: '/inbox' | '/instagram'
+  highlightMessageId?: number | null
 }) {
   const [messages, setMessages] = useState<InboxMessage[]>(initialMessages)
   const [text, setText] = useState('')
@@ -131,6 +145,34 @@ export function ChatWindow({
   const [botPaused, setBotPaused] = useState(lead.botPaused)
   const [pauseLoading, setPauseLoading] = useState(false)
   const [pauseToast, setPauseToast] = useState<string | null>(null)
+
+  // SAC Lote 1: Abas do Painel Lateral
+  const [sidePanelTab, setSidePanelTab] = useState<'context' | 'notes' | 'info'>('context')
+
+  // SAC Lote 1: Card de Contexto e Próxima Ação
+  const [requestSummary, setRequestSummary] = useState(lead.requestSummary ?? '')
+  const [commitment, setCommitment] = useState(lead.commitment ?? '')
+  const [nextAction, setNextAction] = useState(lead.nextAction ?? '')
+  const [nextActionDueAt, setNextActionDueAt] = useState(lead.nextActionDueAt ? lead.nextActionDueAt.slice(0, 10) : '')
+  const [pipelineStage, setPipelineStage] = useState(lead.pipelineStage ?? 'novo_contato')
+  const [followUpDate, setFollowUpDate] = useState(lead.followUpDate ? lead.followUpDate.slice(0, 10) : '')
+  const [followUpNote, setFollowUpNote] = useState(lead.followUpNote ?? '')
+  const [humanOwner, setHumanOwner] = useState<string | number | null>(lead.humanOwnerMemberId ?? null)
+  const [isEditingContext, setIsEditingContext] = useState(false)
+  const [savingContext, setSavingContext] = useState(false)
+  const [claiming, setClaiming] = useState(false)
+
+  // SAC Lote 1: Notas Internas
+  const [internalNotes, setInternalNotes] = useState<Array<{ id: number; body: string; authorName: string | null; createdAt: string | null }>>([])
+  const [newNoteText, setNewNoteText] = useState('')
+  const [loadingNotes, setLoadingNotes] = useState(false)
+  const [savingNote, setSavingNote] = useState(false)
+
+  // SAC Lote 1: Respostas Aprovadas
+  const [showApprovedReplies, setShowApprovedReplies] = useState(false)
+  const [approvedReplies, setApprovedReplies] = useState<Array<{ id: number; title: string; shortcut: string | null; body: string; variables: string[] | null }>>([])
+  const [loadingReplies, setLoadingReplies] = useState(false)
+  const [replyFilter, setReplyFilter] = useState('')
 
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -347,6 +389,155 @@ export function ChatWindow({
       setSavingName(false)
     }
   }
+
+  // ── SAC Lote 1: Handlers de Notas Internas ─────────────────────────────────
+  const loadNotes = useCallback(async () => {
+    setLoadingNotes(true)
+    try {
+      const res = await fetch(`/api/inbox/${lead.id}/notes`)
+      if (res.ok) {
+        const data = await res.json()
+        setInternalNotes(data.notes || [])
+      }
+    } catch {
+      // silencioso
+    } finally {
+      setLoadingNotes(false)
+    }
+  }, [lead.id])
+
+  useEffect(() => {
+    if (showDetails && sidePanelTab === 'notes') {
+      loadNotes()
+    }
+  }, [showDetails, sidePanelTab, loadNotes])
+
+  async function handleCreateNote(e: React.FormEvent) {
+    e.preventDefault()
+    if (!newNoteText.trim() || savingNote) return
+    setSavingNote(true)
+    try {
+      const res = await fetch(`/api/inbox/${lead.id}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: newNoteText.trim() }),
+      })
+      if (res.ok) {
+        setNewNoteText('')
+        await loadNotes()
+      }
+    } catch {
+      // erro
+    } finally {
+      setSavingNote(false)
+    }
+  }
+
+  async function handleDeleteNote(noteId: number) {
+    try {
+      const res = await fetch(`/api/inbox/${lead.id}/notes/${noteId}`, { method: 'DELETE' })
+      if (res.ok) {
+        setInternalNotes(prev => prev.filter(n => n.id !== noteId))
+      }
+    } catch {
+      // erro
+    }
+  }
+
+  // ── SAC Lote 1: Handlers de Respostas Aprovadas ────────────────────────────
+  const loadReplies = useCallback(async () => {
+    setLoadingReplies(true)
+    try {
+      const res = await fetch('/api/approved-replies')
+      if (res.ok) {
+        const data = await res.json()
+        setApprovedReplies(data.replies || [])
+      }
+    } catch {
+      // silencioso
+    } finally {
+      setLoadingReplies(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (showApprovedReplies) {
+      loadReplies()
+    }
+  }, [showApprovedReplies, loadReplies])
+
+  function handleInsertReply(reply: { id: number; title: string; shortcut: string | null; body: string }) {
+    let replacedBody = reply.body
+    const nameToUse = leadName || 'cliente'
+    replacedBody = replacedBody.replace(/\{nome\}/gi, nameToUse)
+    replacedBody = replacedBody.replace(/\{produto\}/gi, lead.productName || 'produto')
+
+    setText(prev => (prev.trim() ? `${prev}\n\n${replacedBody}` : replacedBody))
+    setShowApprovedReplies(false)
+    textareaRef.current?.focus()
+  }
+
+  const filteredReplies = approvedReplies.filter(r => {
+    if (!replyFilter.trim()) return true
+    const q = replyFilter.toLowerCase()
+    return (
+      r.title.toLowerCase().includes(q) ||
+      (r.shortcut && r.shortcut.toLowerCase().includes(q)) ||
+      r.body.toLowerCase().includes(q)
+    )
+  })
+
+  // ── SAC Lote 1: Handlers de Atendimento Humano & Contexto ──────────────────
+  async function handleClaim() {
+    setClaiming(true)
+    try {
+      const res = await fetch(`/api/inbox/${lead.id}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberName: 'Atendente Humano' }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setBotPaused(true)
+        setHumanOwner(data.lead?.humanOwnerMemberId || 'Atendente Humano')
+        setPauseToast('Você assumiu este atendimento! O bot foi pausado.')
+        setTimeout(() => setPauseToast(null), 3500)
+      }
+    } catch {
+      // erro
+    } finally {
+      setClaiming(false)
+    }
+  }
+
+  async function handleSaveContext() {
+    setSavingContext(true)
+    try {
+      const res = await fetch(`/api/inbox/${lead.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestSummary,
+          commitment,
+          nextAction,
+          nextActionDueAt: nextActionDueAt ? new Date(nextActionDueAt).toISOString() : null,
+          pipelineStage,
+          followUpDate: followUpDate ? new Date(followUpDate).toISOString() : null,
+          followUpNote,
+        }),
+      })
+      if (res.ok) {
+        setIsEditingContext(false)
+        setPauseToast('Contexto atualizado com sucesso!')
+        setTimeout(() => setPauseToast(null), 3000)
+      }
+    } catch {
+      // erro
+    } finally {
+      setSavingContext(false)
+    }
+  }
+
 
   async function handleSend() {
     if (!text.trim() || sending) return
@@ -595,6 +786,72 @@ export function ChatWindow({
               </div>
             </div>
           )}
+          {/* SAC Lote 1: Atalho para Respostas Aprovadas */}
+          <div className="flex items-center justify-between gap-2 px-1">
+            <button
+              type="button"
+              onClick={() => setShowApprovedReplies(prev => !prev)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-line-subtle bg-surface-inset hover:bg-surface-raised text-fg-muted hover:text-fg text-[11px] font-semibold transition-colors cursor-pointer"
+            >
+              <Zap size={12} className="text-amber-400" />
+              <span>Respostas Aprovadas</span>
+              <ChevronDown size={11} className={cn("transition-transform", showApprovedReplies && "rotate-180")} />
+            </button>
+          </div>
+
+          {showApprovedReplies && (
+            <div className="rounded-xl border border-line-subtle bg-surface-panel p-3 shadow-xl space-y-2 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between pb-1.5 border-b border-line-subtle">
+                <span className="text-[11px] font-bold text-fg flex items-center gap-1.5 uppercase tracking-wider">
+                  <Zap size={12} className="text-amber-400" />
+                  Respostas Aprovadas (SAC)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowApprovedReplies(false)}
+                  className="text-fg-subtle hover:text-fg p-0.5 rounded cursor-pointer"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              <input
+                type="text"
+                value={replyFilter}
+                onChange={e => setReplyFilter(e.target.value)}
+                placeholder="Filtrar por título, atalho (/pix) ou texto..."
+                className="w-full bg-surface-inset border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg placeholder:text-fg-faint focus:outline-none focus:border-brand-solid"
+              />
+
+              <div className="max-h-48 overflow-y-auto scroll-thin space-y-1 divide-y divide-line-subtle/50">
+                {loadingReplies ? (
+                  <p className="text-[11px] text-fg-muted p-2 text-center">Carregando respostas...</p>
+                ) : filteredReplies.length === 0 ? (
+                  <p className="text-[11px] text-fg-muted p-2 text-center">Nenhuma resposta encontrada.</p>
+                ) : (
+                  filteredReplies.map(reply => (
+                    <button
+                      key={reply.id}
+                      type="button"
+                      onClick={() => handleInsertReply(reply)}
+                      className="w-full text-left p-2 rounded-lg hover:bg-surface-inset transition-colors flex flex-col gap-0.5 cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-body font-semibold text-fg text-[12px]">{reply.title}</span>
+                        {reply.shortcut && (
+                          <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-surface-raised border border-line-subtle text-amber-400">
+                            {reply.shortcut}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-fg-muted truncate">{reply.body}</p>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-end gap-2">
             <textarea
               ref={textareaRef}
@@ -638,308 +895,445 @@ export function ChatWindow({
         </div>
       </div>
 
-      {/* Painel Lateral com Detalhes do Lead (Gaveta / Aside) */}
+      {/* Painel Lateral com Contexto SAC, Notas Internas e Detalhes */}
       {showDetails && (
-        <aside className="w-80 shrink-0 border-l border-line-subtle bg-surface-panel p-4 overflow-y-auto scroll-thin flex flex-col gap-4 animate-in slide-in-from-right duration-200">
+        <aside className="w-84 shrink-0 border-l border-line-subtle bg-surface-panel p-4 overflow-y-auto scroll-thin flex flex-col gap-4 animate-in slide-in-from-right duration-200">
           <div className="flex items-center justify-between pb-2 border-b border-line-subtle">
-            <h3 className="text-body font-bold text-fg">Detalhes do Contato</h3>
+            <h3 className="text-body font-bold text-fg">Atendimento SAC</h3>
             <button
               onClick={() => setShowDetails(false)}
-              className="text-fg-subtle hover:text-fg p-1 rounded-lg hover:bg-surface-inset"
+              className="text-fg-subtle hover:text-fg p-1 rounded-lg hover:bg-surface-inset cursor-pointer"
             >
               <X size={16} />
             </button>
           </div>
 
-          {/* Status do Atendimento & Bot */}
-          <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-micro font-bold uppercase text-fg-subtle">Status Bot:</span>
-              <BotStatusPill paused={botPaused} agentName={agentLabel} />
-            </div>
-            {lead.botPausedAt && (
-              <p className="text-[10px] text-fg-faint font-mono">
-                Pausado em: {new Date(lead.botPausedAt).toLocaleString('pt-BR')} por {lead.botPausedBy || 'humano'}
-              </p>
-            )}
+          {/* Navegação entre Abas do Painel */}
+          <div className="flex items-center border-b border-line-subtle gap-1 pb-1">
+            <button
+              type="button"
+              onClick={() => setSidePanelTab('context')}
+              className={cn(
+                "flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-colors text-center cursor-pointer",
+                sidePanelTab === 'context'
+                  ? "bg-surface-raised text-brand-ink border border-brand-solid/30"
+                  : "text-fg-subtle hover:text-fg hover:bg-surface-inset"
+              )}
+            >
+              Contexto
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSidePanelTab('notes')
+                loadNotes()
+              }}
+              className={cn(
+                "flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-colors text-center cursor-pointer flex items-center justify-center gap-1",
+                sidePanelTab === 'notes'
+                  ? "bg-surface-raised text-brand-ink border border-brand-solid/30"
+                  : "text-fg-subtle hover:text-fg hover:bg-surface-inset"
+              )}
+            >
+              Notas {internalNotes.length > 0 && <span className="text-[10px] px-1.5 bg-surface-inset rounded-full">{internalNotes.length}</span>}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSidePanelTab('info')}
+              className={cn(
+                "flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-colors text-center cursor-pointer",
+                sidePanelTab === 'info'
+                  ? "bg-surface-raised text-brand-ink border border-brand-solid/30"
+                  : "text-fg-subtle hover:text-fg hover:bg-surface-inset"
+              )}
+            >
+              Detalhes
+            </button>
           </div>
 
-          {/* Tags do lead (25/09/2026) — a tag "pessoa" pausa o bot, ver LeadTags.tsx */}
-          <LeadTags leadId={lead.id} botPaused={botPaused} onBotPausedChange={setBotPaused} />
+          {/* ── ABA 1: CONTEXTO SAC (CARD APROVADO) ─────────────────────────── */}
+          {sidePanelTab === 'context' && (
+            <div className="space-y-3.5">
+              {/* Bloco de Atendimento Humano & Bot */}
+              <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-micro font-bold uppercase text-fg-subtle">Controle Bot:</span>
+                  <BotStatusPill paused={botPaused} agentName={agentLabel} />
+                </div>
+                {humanOwner ? (
+                  <p className="text-[11px] text-amber-500 font-medium flex items-center gap-1">
+                    <UserCheck size={12} /> Responsável Humano: {humanOwner}
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleClaim}
+                    disabled={claiming}
+                    className="w-full mt-1 py-1.5 px-3 rounded-lg bg-brand-solid hover:opacity-90 text-on-accent text-micro font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    {claiming ? <Loader2 size={12} className="animate-spin" /> : <UserCheck size={12} />}
+                    Assumir Atendimento
+                  </button>
+                )}
+              </div>
 
-          {/* Consultas reais espelhadas da agenda nativa do Dr. Lucas */}
-          {appointments.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-fg-subtle">
-                <CalendarDays size={13} /> Consultas
-              </h4>
-              <div className="rounded-xl border border-line-subtle bg-surface-inset divide-y divide-line-subtle">
-                {appointments.map(appointment => {
-                  const cancelled = Boolean(appointment.cancelledAt) || appointment.status.toLowerCase().includes('cancel')
-                  return (
-                    <div key={appointment.nativeId} className="p-3 space-y-1.5 text-micro">
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="text-fg font-semibold">
-                          {new Date(appointment.consultationAt).toLocaleString('pt-BR', {
-                            timeZone: 'America/Sao_Paulo',
-                            dateStyle: 'short',
-                            timeStyle: 'short',
-                          })}
-                        </span>
-                        <span className={cn(
-                          'rounded-full border px-2 py-0.5 text-[10px] font-bold capitalize',
-                          cancelled
-                            ? 'border-red-500/30 bg-red-500/10 text-red-500'
-                            : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'
-                        )}>
-                          {appointment.status}
-                        </span>
+              {/* Card de Contexto e Próxima Ação */}
+              <div className="p-3.5 bg-surface-inset border border-line-subtle rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-micro font-bold uppercase text-fg-subtle flex items-center gap-1.5">
+                    <FileText size={12} /> Card de Contexto
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isEditingContext) handleSaveContext()
+                      else setIsEditingContext(true)
+                    }}
+                    disabled={savingContext}
+                    className="text-[11px] text-brand-ink font-bold hover:underline cursor-pointer flex items-center gap-1"
+                  >
+                    {savingContext ? <Loader2 size={11} className="animate-spin" /> : isEditingContext ? <CheckCircle2 size={11} /> : <Pencil size={11} />}
+                    {isEditingContext ? 'Salvar' : 'Editar'}
+                  </button>
+                </div>
+
+                {/* Pedido */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-fg-faint block">Pedido do Cliente</label>
+                  {isEditingContext ? (
+                    <textarea
+                      value={requestSummary}
+                      onChange={e => setRequestSummary(e.target.value)}
+                      placeholder="O que o cliente precisa..."
+                      rows={2}
+                      className="w-full bg-surface-panel border border-line-subtle rounded-lg p-2 text-micro text-fg focus:outline-none focus:border-brand-solid"
+                    />
+                  ) : (
+                    <p className="text-micro text-fg font-medium bg-surface-panel/60 p-2 rounded-lg border border-line-subtle/50 min-h-[2.5rem]">
+                      {requestSummary || <span className="text-fg-faint italic">Nenhum pedido registrado</span>}
+                    </p>
+                  )}
+                  {lead.requestMessageId && (
+                    <span className="text-[9px] text-fg-subtle font-mono block">Msg ref: #{lead.requestMessageId}</span>
+                  )}
+                </div>
+
+                {/* Compromisso */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-fg-faint block">Compromisso Acordado</label>
+                  {isEditingContext ? (
+                    <input
+                      type="text"
+                      value={commitment}
+                      onChange={e => setCommitment(e.target.value)}
+                      placeholder="Ex: Enviar orçamento até 16h..."
+                      className="w-full bg-surface-panel border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg focus:outline-none focus:border-brand-solid"
+                    />
+                  ) : (
+                    <p className="text-micro text-fg bg-surface-panel/60 p-2 rounded-lg border border-line-subtle/50">
+                      {commitment || <span className="text-fg-faint italic">Sem compromisso registrado</span>}
+                    </p>
+                  )}
+                </div>
+
+                {/* Próxima Ação */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-fg-faint block">Próxima Ação</label>
+                  {isEditingContext ? (
+                    <div className="space-y-1.5">
+                      <input
+                        type="text"
+                        value={nextAction}
+                        onChange={e => setNextAction(e.target.value)}
+                        placeholder="Ex: Ligar para confirmar..."
+                        className="w-full bg-surface-panel border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg focus:outline-none focus:border-brand-solid"
+                      />
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-fg-faint">Prazo:</span>
+                        <input
+                          type="date"
+                          value={nextActionDueAt}
+                          onChange={e => setNextActionDueAt(e.target.value)}
+                          className="bg-surface-panel border border-line-subtle rounded-lg px-2 py-1 text-micro text-fg focus:outline-none focus:border-brand-solid"
+                        />
                       </div>
-                      {appointment.origin && <p className="text-fg-faint">Origem: {appointment.origin.replace(/_/g, ' ')}</p>}
-                      {appointment.cancelledAt && (
-                        <p className="text-red-500">
-                          Cancelada em {new Date(appointment.cancelledAt).toLocaleString('pt-BR', {
-                            timeZone: 'America/Sao_Paulo',
-                            dateStyle: 'short',
-                            timeStyle: 'short',
-                          })}
+                    </div>
+                  ) : (
+                    <div className="bg-surface-panel/60 p-2 rounded-lg border border-line-subtle/50 space-y-1">
+                      <p className="text-micro text-fg font-medium">
+                        {nextAction || <span className="text-fg-faint italic">Nenhuma ação pendente</span>}
+                      </p>
+                      {nextActionDueAt && (
+                        <p className="text-[10px] text-fg-subtle flex items-center gap-1 font-mono">
+                          <Clock size={10} /> Prazo: {new Date(nextActionDueAt + 'T12:00:00').toLocaleDateString('pt-BR')}
                         </p>
                       )}
                     </div>
-                  )
-                })}
+                  )}
+                </div>
               </div>
-            </div>
-          )}
 
-          {/* Janela de Atendimento Meta Cloud API */}
-          {(() => {
-            const win = getMetaWindowInfo(lead)
-            return (
-              <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2">
+              {/* Etapa Comercial */}
+              <div className="p-3 bg-surface-inset border border-line-subtle rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-micro font-bold uppercase text-fg-subtle">Janela Meta API:</span>
-                  <span
-                    className={cn(
-                      'text-[10px] font-bold px-2 py-0.5 rounded-full border',
-                      win.badgeClass
-                    )}
-                  >
-                    {win.typeLabel}
-                  </span>
-                </div>
-                <div className="text-micro space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-fg-faint">Status:</span>
-                    <span className="text-fg font-semibold">
-                      {win.status === 'active'
-                        ? `Aberta (${win.remainingHours}h ${win.remainingMinutes}m restantes)`
-                        : win.status === 'expiring_soon'
-                        ? `Expirando (${win.remainingHours}h ${win.remainingMinutes}m)`
-                        : win.status === 'expired'
-                        ? 'Expirada (Requer Template)'
-                        : 'Aguardando resposta'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-fg-faint">Regra da Janela:</span>
-                    <span className="text-fg-muted font-mono text-[10px]">
-                      {win.isAd ? '72h para Anúncios (CTWA)' : '24h Atendimento Padrão'}
-                    </span>
-                  </div>
-                  {lead.lastInboundAt && (
-                    <div className="flex justify-between">
-                      <span className="text-fg-faint">Última msg do lead:</span>
-                      <span className="text-fg-muted font-mono text-[10px]">
-                        {new Date(lead.lastInboundAt).toLocaleString('pt-BR')}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })()}
-
-          {/* Informações de Compra & Produto */}
-          {(lead.agentConversationId || lead.agentCostUsd || lead.agentInputTokens != null || lead.agentOutputTokens != null || lead.agentSyncedAt) && (
-            <div className="space-y-2">
-              <h4 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-fg-subtle">
-                <Database size={12} /> Auditoria IA
-              </h4>
-              <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2 text-micro">
-                <div className="flex justify-between gap-3">
-                  <span className="text-fg-faint">Custo estimado:</span>
-                  <span className="font-mono text-fg">{lead.agentCostUsd ? `US$ ${Number(lead.agentCostUsd).toFixed(6)}` : '—'}</span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-fg-faint">Tokens entrada:</span>
-                  <span className="font-mono text-fg">{lead.agentInputTokens?.toLocaleString('pt-BR') ?? '—'}</span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-fg-faint">Tokens saída:</span>
-                  <span className="font-mono text-fg">{lead.agentOutputTokens?.toLocaleString('pt-BR') ?? '—'}</span>
-                </div>
-                {lead.agentSyncedAt && (
-                  <div className="border-t border-line-subtle pt-2">
-                    <span className="text-fg-faint block uppercase text-[9px]">Sincronizado:</span>
-                    <span className="font-mono text-[10px] text-fg-muted">{new Date(lead.agentSyncedAt).toLocaleString('pt-BR')}</span>
-                  </div>
-                )}
-                {lead.agentConversationId && (
-                  <div>
-                    <span className="text-fg-faint block uppercase text-[9px]">Sessão Hermes:</span>
-                    <span className="block truncate font-mono text-[10px] text-fg-muted" title={lead.agentConversationId}>{lead.agentConversationId}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {lead.reservation && (() => {
-            const isCancelled = lead.reservation.status.toLocaleLowerCase('pt-BR').includes('cancel')
-            const statusLabel = isCancelled ? 'Cancelada' : lead.reservation.status.replace(/_/g, ' ')
-            const value = lead.reservation.totalValue == null
-              ? 'Não informado'
-              : Number(lead.reservation.totalValue).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-            const date = new Date(`${lead.reservation.date}T12:00:00`).toLocaleDateString('pt-BR')
-            const time = lead.reservation.reservedTime?.slice(0, 5) || 'Não informado'
-            return (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">Reserva real</h4>
-                  <span className={cn(
-                    'text-[10px] font-bold px-2 py-0.5 rounded-full border capitalize',
-                    isCancelled
-                      ? 'bg-red-500/10 text-red-500 border-red-500/30'
-                      : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
-                  )}>
-                    {statusLabel}
-                  </span>
-                </div>
-                <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 grid grid-cols-2 gap-3 text-micro">
-                  <div>
-                    <span className="text-fg-faint block uppercase text-[9px]">Data</span>
-                    <span className="text-fg font-semibold">{date}</span>
-                  </div>
-                  <div>
-                    <span className="text-fg-faint block uppercase text-[9px]">Horário</span>
-                    <span className="text-fg font-semibold">{time}</span>
-                  </div>
-                  <div>
-                    <span className="text-fg-faint block uppercase text-[9px]">Pessoas</span>
-                    <span className="text-fg font-semibold">{lead.reservation.people ?? 'Não informado'}</span>
-                  </div>
-                  <div>
-                    <span className="text-fg-faint block uppercase text-[9px]">Valor</span>
-                    <span className="text-brand-ink font-bold font-mono">{value}</span>
-                  </div>
-                  {lead.reservation.notes && (
-                    <div className="col-span-2">
-                      <span className="text-fg-faint block uppercase text-[9px]">Observações</span>
-                      <span className="text-fg whitespace-pre-wrap">{lead.reservation.notes}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })()}
-
-          <div className="space-y-2">
-            <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">CRM & Venda</h4>
-            <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2 text-micro">
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">Empresa:</span>
-                <span className="text-fg font-semibold">{lead.company || '—'}</span>
-              </div>
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">Produto:</span>
-                <span className="text-fg font-semibold">{lead.productName || 'Não especificado'}</span>
-              </div>
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">Valor:</span>
-                <span className="text-brand-ink font-bold font-mono">{formatBRL(lead.productValue)}</span>
-              </div>
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">Evento de Origem:</span>
-                <span className="text-fg capitalize">{lead.eventType?.replace(/_/g, ' ') || 'SAC'}</span>
-              </div>
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">Plataforma:</span>
-                <span className="text-fg capitalize">{lead.platform || 'Checkout'}</span>
-              </div>
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">Primeiro contato:</span>
-                <span className="text-fg">
-                  {lead.firstContactAt ? new Date(lead.firstContactAt).toLocaleString('pt-BR') : '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">Observações:</span>
-                <p className="text-fg whitespace-pre-wrap break-words">{lead.notes || '—'}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Dados de Contato */}
-          <div className="space-y-2">
-            <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">Contato & Canal</h4>
-            <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2 text-micro">
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">Telefone / Handle:</span>
-                <span className="text-fg font-mono">{lead.phone}</span>
-              </div>
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">E-mail:</span>
-                <span className="text-fg font-mono truncate block">{lead.email || '—'}</span>
-              </div>
-              <div>
-                <span className="text-fg-faint block uppercase text-[9px]">Canal Preferencial:</span>
-                <span className="text-fg capitalize">{channelLabel}</span>
-              </div>
-              {lead.phone && !lead.phone.startsWith('ig_') && (
-                <div className="pt-1">
+                  <span className="text-micro font-bold uppercase text-fg-subtle">Etapa do Pipeline</span>
                   <a
-                    href={`https://wa.me/${lead.phone.replace(/\D/g, '')}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-500 hover:underline"
+                    href="/pipeline"
+                    className="text-[10px] text-brand-ink hover:underline font-semibold flex items-center gap-1"
                   >
-                    Abrir no WhatsApp Web <ExternalLink size={12} />
+                    Ver Funil <ExternalLink size={10} />
                   </a>
+                </div>
+                <select
+                  value={pipelineStage}
+                  onChange={async e => {
+                    const newStage = e.target.value
+                    setPipelineStage(newStage)
+                    await fetch(`/api/inbox/${lead.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ pipelineStage: newStage }),
+                    }).catch(() => null)
+                  }}
+                  className="w-full bg-surface-panel border border-line-subtle rounded-xl px-3 py-1.5 text-micro text-fg focus:outline-none focus:border-brand-solid cursor-pointer font-medium"
+                >
+                  <option value="novo_contato">Novo Contato</option>
+                  <option value="em_atendimento">Em Atendimento</option>
+                  <option value="qualificado">Qualificado</option>
+                  <option value="agendado">Agendado / Reserva</option>
+                  <option value="compareceu">Compareceu</option>
+                  <option value="fechado">Fechado / Ganho</option>
+                  <option value="perdido">Perdido</option>
+                </select>
+              </div>
+
+              {/* Lembrete de Retorno (Follow-up) */}
+              <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-micro font-bold text-blue-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Clock size={12} /> Retorno / Follow-up
+                  </span>
+                  {followUpDate && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setFollowUpDate('')
+                        setFollowUpNote('')
+                        await fetch(`/api/inbox/${lead.id}`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ followUpDate: null, followUpNote: null }),
+                        }).catch(() => null)
+                      }}
+                      className="text-[10px] text-red-400 hover:underline cursor-pointer"
+                    >
+                      Limpar
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={followUpDate}
+                    onChange={async e => {
+                      const v = e.target.value
+                      setFollowUpDate(v)
+                      await fetch(`/api/inbox/${lead.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ followUpDate: v ? new Date(v).toISOString() : null }),
+                      }).catch(() => null)
+                    }}
+                    className="bg-surface-panel border border-line-subtle rounded-lg px-2 py-1 text-micro text-fg focus:outline-none focus:border-brand-solid"
+                  />
+                  <input
+                    type="text"
+                    value={followUpNote}
+                    onChange={e => setFollowUpNote(e.target.value)}
+                    onBlur={async () => {
+                      await fetch(`/api/inbox/${lead.id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ followUpNote }),
+                      }).catch(() => null)
+                    }}
+                    placeholder="Motivo..."
+                    className="bg-surface-panel border border-line-subtle rounded-lg px-2 py-1 text-micro text-fg focus:outline-none focus:border-brand-solid placeholder:text-fg-faint"
+                  />
+                </div>
+              </div>
+
+              {/* Executor IA */}
+              {lead.responsibleAgent && (
+                <div className="p-2.5 bg-surface-inset border border-line-subtle rounded-xl flex items-center justify-between text-micro">
+                  <span className="text-fg-faint">Executor IA associado:</span>
+                  <span className="font-semibold text-fg flex items-center gap-1">
+                    <Sparkles size={11} className="text-brand-ink" /> {lead.responsibleAgent}
+                  </span>
                 </div>
               )}
             </div>
-          </div>
+          )}
 
-          {/* Rastreamento & UTMs */}
-          {(lead.trackingSource || lead.utmCampaign || lead.adsetName || lead.adName) && (
-            <div className="space-y-2">
-              <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">Rastreamento UTM</h4>
-              <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-1.5 text-micro font-mono">
-                {lead.trackingSource && (
-                  <div>
-                    <span className="text-fg-faint text-[9px] block">Source / UTM:</span>
-                    <span className="text-fg">{lead.trackingSource}</span>
-                  </div>
+          {/* ── ABA 2: NOTAS INTERNAS ───────────────────────────────────────── */}
+          {sidePanelTab === 'notes' && (
+            <div className="space-y-3">
+              <div className="p-2 rounded-lg bg-surface-inset border border-line-subtle text-[11px] text-fg-subtle flex items-center gap-1.5">
+                <AlertCircle size={13} className="shrink-0 text-amber-400" />
+                <span>Notas internas nunca são enviadas ao cliente.</span>
+              </div>
+
+              {/* Formulário para adicionar nova nota */}
+              <form onSubmit={handleCreateNote} className="space-y-2">
+                <textarea
+                  value={newNoteText}
+                  onChange={e => setNewNoteText(e.target.value)}
+                  placeholder="Escreva uma orientação interna para a equipe..."
+                  rows={2}
+                  className="w-full bg-surface-inset border border-line-subtle rounded-xl p-2.5 text-micro text-fg placeholder:text-fg-faint focus:outline-none focus:border-brand-solid resize-none"
+                />
+                <button
+                  type="submit"
+                  disabled={!newNoteText.trim() || savingNote}
+                  className="w-full py-1.5 rounded-lg bg-brand-solid text-on-accent text-micro font-bold hover:opacity-90 transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1"
+                >
+                  {savingNote ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                  Adicionar Nota
+                </button>
+              </form>
+
+              {/* Lista de Notas */}
+              <div className="space-y-2">
+                {loadingNotes ? (
+                  <p className="text-[11px] text-fg-muted p-2 text-center">Carregando notas...</p>
+                ) : internalNotes.length === 0 ? (
+                  <p className="text-[11px] text-fg-muted p-4 text-center border border-dashed border-line-subtle rounded-xl">
+                    Nenhuma nota interna registrada.
+                  </p>
+                ) : (
+                  internalNotes.map(n => (
+                    <div
+                      key={n.id}
+                      className="p-2.5 rounded-xl border border-line-subtle bg-surface-inset space-y-1 text-micro relative group"
+                    >
+                      <div className="flex items-center justify-between text-[10px] text-fg-faint">
+                        <span className="font-semibold text-fg-subtle">{n.authorName || 'Equipe'}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span>{n.createdAt ? new Date(n.createdAt).toLocaleDateString('pt-BR') : ''}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteNote(n.id)}
+                            className="text-fg-faint hover:text-red-400 p-0.5 rounded cursor-pointer opacity-70 hover:opacity-100"
+                            title="Excluir nota"
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-fg whitespace-pre-wrap">{n.body}</p>
+                    </div>
+                  ))
                 )}
-                {lead.utmCampaign && (
-                  <div>
-                    <span className="text-fg-faint text-[9px] block">UTM Campaign:</span>
-                    <span className="text-fg">{lead.utmCampaign}</span>
+              </div>
+            </div>
+          )}
+
+          {/* ── ABA 3: INFO & AUDITORIA ─────────────────────────────────────── */}
+          {sidePanelTab === 'info' && (
+            <div className="space-y-4">
+              {/* Tags do lead */}
+              <LeadTags leadId={lead.id} botPaused={botPaused} onBotPausedChange={setBotPaused} />
+
+              {/* Consultas reais espelhadas */}
+              {appointments.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-fg-subtle">
+                    <CalendarDays size={13} /> Consultas
+                  </h4>
+                  <div className="rounded-xl border border-line-subtle bg-surface-inset divide-y divide-line-subtle">
+                    {appointments.map(appointment => {
+                      const cancelled = Boolean(appointment.cancelledAt) || appointment.status.toLowerCase().includes('cancel')
+                      return (
+                        <div key={appointment.nativeId} className="p-3 space-y-1.5 text-micro">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-fg font-semibold">
+                              {new Date(appointment.consultationAt).toLocaleString('pt-BR', {
+                                timeZone: 'America/Sao_Paulo',
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                              })}
+                            </span>
+                            <span className={cn(
+                              'rounded-full border px-2 py-0.5 text-[10px] font-bold capitalize',
+                              cancelled
+                                ? 'border-red-500/30 bg-red-500/10 text-red-500'
+                                : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'
+                            )}>
+                              {appointment.status}
+                            </span>
+                          </div>
+                          {appointment.origin && <p className="text-fg-faint">Origem: {appointment.origin.replace(/_/g, ' ')}</p>}
+                        </div>
+                      )
+                    })}
                   </div>
-                )}
-                {lead.adsetName && (
-                  <div>
-                    <span className="text-fg-faint text-[9px] block">Conjunto de anúncios:</span>
-                    <span className="text-fg">{lead.adsetName}</span>
+                </div>
+              )}
+
+              {/* Janela Meta API */}
+              {(() => {
+                const win = getMetaWindowInfo(lead)
+                return (
+                  <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-micro font-bold uppercase text-fg-subtle">Janela Meta API:</span>
+                      <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full border', win.badgeClass)}>
+                        {win.typeLabel}
+                      </span>
+                    </div>
+                    <div className="text-micro space-y-1">
+                      <div className="flex justify-between">
+                        <span className="text-fg-faint">Status:</span>
+                        <span className="text-fg font-semibold">
+                          {win.status === 'active'
+                            ? `Aberta (${win.remainingHours}h ${win.remainingMinutes}m restantes)`
+                            : win.status === 'expiring_soon'
+                            ? `Expirando (${win.remainingHours}h ${win.remainingMinutes}m)`
+                            : win.status === 'expired'
+                            ? 'Expirada (Requer Template)'
+                            : 'Aguardando resposta'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                )}
-                {lead.adName && (
+                )
+              })()}
+
+              {/* CRM & Venda */}
+              <div className="space-y-2">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-fg-subtle">CRM & Venda</h4>
+                <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2 text-micro">
                   <div>
-                    <span className="text-fg-faint text-[9px] block">Anúncio:</span>
-                    <span className="text-fg">{lead.adName}</span>
+                    <span className="text-fg-faint block uppercase text-[9px]">Empresa:</span>
+                    <span className="text-fg font-semibold">{lead.company || '—'}</span>
                   </div>
-                )}
+                  <div>
+                    <span className="text-fg-faint block uppercase text-[9px]">Produto:</span>
+                    <span className="text-fg font-semibold">{lead.productName || 'Não especificado'}</span>
+                  </div>
+                  <div>
+                    <span className="text-fg-faint block uppercase text-[9px]">Valor:</span>
+                    <span className="text-brand-ink font-bold font-mono">{formatBRL(lead.productValue)}</span>
+                  </div>
+                  <div>
+                    <span className="text-fg-faint block uppercase text-[9px]">Telefone:</span>
+                    <span className="text-fg font-mono">{lead.phone}</span>
+                  </div>
+                  <div>
+                    <span className="text-fg-faint block uppercase text-[9px]">E-mail:</span>
+                    <span className="text-fg font-mono truncate block">{lead.email || '—'}</span>
+                  </div>
+                </div>
               </div>
             </div>
           )}

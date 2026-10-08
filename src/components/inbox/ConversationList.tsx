@@ -765,10 +765,16 @@ export function ConversationList({
             const initials = displayName.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
             const timeInfo = formatMessageTimestamp(conv.lastMessageAt || conv.createdAt)
 
+            const href = conv.matchedMessageId
+              ? `${basePath}/${conv.id}?aroundMessageId=${conv.matchedMessageId}${sourceFilter ? `&source=${encodeURIComponent(sourceFilter)}` : ''}`
+              : sourceFilter
+              ? `${basePath}/${conv.id}?source=${encodeURIComponent(sourceFilter)}`
+              : `${basePath}/${conv.id}`
+
             return (
               <Link
                 key={conv.id}
-                href={sourceFilter ? `${basePath}/${conv.id}?source=${encodeURIComponent(sourceFilter)}` : `${basePath}/${conv.id}`}
+                href={href}
                 scroll={false}
                 className="focus-ring block rounded-xl"
               >
@@ -835,6 +841,14 @@ export function ConversationList({
                       </span>
                     )}
                   </div>
+
+                  {/* SAC Lote 1: Trecho seguro encontrado na busca textual */}
+                  {conv.matchedSnippet && (
+                    <div className="text-[11px] text-brand-ink bg-brand-glow px-2 py-0.5 rounded border border-brand-solid/20 flex items-center gap-1.5 truncate mt-0.5" title={conv.matchedSnippet}>
+                      <Search size={10} className="shrink-0" />
+                      <span className="truncate font-medium">Busca: “{conv.matchedSnippet}”</span>
+                    </div>
+                  )}
                 </div>
               </Link>
             )

@@ -35,6 +35,14 @@ export async function PATCH(
       followUpDate,
       followUpNote,
       responsibleAgent,
+      humanOwnerMemberId,
+      nextActionDueAt,
+      requestSummary,
+      requestMessageId,
+      commitment,
+      nextAction,
+      lastActionBy,
+      lastActionAt,
     } = body
 
     const updateData: Record<string, any> = {
@@ -52,6 +60,14 @@ export async function PATCH(
     if (followUpDate !== undefined) updateData.followUpDate = followUpDate ? new Date(followUpDate) : null
     if (followUpNote !== undefined) updateData.followUpNote = followUpNote ? String(followUpNote).trim() : null
     if (responsibleAgent !== undefined) updateData.responsibleAgent = responsibleAgent ? String(responsibleAgent).trim() : null
+    if (humanOwnerMemberId !== undefined) updateData.humanOwnerMemberId = humanOwnerMemberId ? String(humanOwnerMemberId).trim() : null
+    if (nextActionDueAt !== undefined) updateData.nextActionDueAt = nextActionDueAt ? new Date(nextActionDueAt) : null
+    if (requestSummary !== undefined) updateData.requestSummary = requestSummary ? String(requestSummary).trim() : null
+    if (requestMessageId !== undefined) updateData.requestMessageId = requestMessageId ? String(requestMessageId).trim() : null
+    if (commitment !== undefined) updateData.commitment = commitment ? String(commitment).trim() : null
+    if (nextAction !== undefined) updateData.nextAction = nextAction ? String(nextAction).trim() : null
+    if (lastActionBy !== undefined) updateData.lastActionBy = lastActionBy ? String(lastActionBy).trim() : null
+    if (lastActionAt !== undefined) updateData.lastActionAt = lastActionAt ? new Date(lastActionAt) : null
 
     const [updated] = await db
       .update(recoveryLeads)

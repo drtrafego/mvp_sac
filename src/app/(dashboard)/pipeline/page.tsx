@@ -76,6 +76,14 @@ export default async function PipelinePage({ searchParams }: PageProps) {
       utmContent: l.utmContent,
       followUpDate: l.followUpDate ? l.followUpDate.toISOString() : null,
       followUpNote: l.followUpNote,
+      responsibleAgent: l.responsibleAgent ?? null,
+      lastActionBy: l.lastActionBy ?? null,
+      lastActionAt: l.lastActionAt ? l.lastActionAt.toISOString() : null,
+      humanOwnerMemberId: l.humanOwnerMemberId ?? null,
+      nextActionDueAt: l.nextActionDueAt ? l.nextActionDueAt.toISOString() : null,
+      requestSummary: l.requestSummary ?? null,
+      commitment: l.commitment ?? null,
+      nextAction: l.nextAction ?? null,
       updatedAt: l.updatedAt,
     }
   })

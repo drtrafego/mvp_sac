@@ -13,6 +13,7 @@ export interface InboxMessagePageOptions {
   phone: string
   before?: string | null
   limit?: number
+  aroundMessageId?: number | null
 }
 
 export interface InboxMessageRow {
@@ -63,6 +64,104 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
     options.phone ? eq(whatsappMessages.phone, options.phone) : undefined,
     cleanPhone && cleanPhone !== options.phone ? eq(whatsappMessages.phone, cleanPhone) : undefined,
   )!
+
+  // SAC Lote 1: Se solicitado salto direto para uma mensagem de busca, carregar uma janela centrada nela
+  if (options.aroundMessageId && !cursor) {
+    const [target] = await db
+      .select({ id: whatsappMessages.id, createdAt: whatsappMessages.createdAt })
+      .from(whatsappMessages)
+      .where(and(eq(whatsappMessages.id, options.aroundMessageId), eq(whatsappMessages.companyId, options.companyId), participants))
+
+    if (target) {
+      const half = Math.floor(limit / 2)
+      const targetDate = target.createdAt ?? new Date('1970-01-01')
+
+      const olderRows = await db
+        .select({
+          id: whatsappMessages.id,
+          phone: whatsappMessages.phone,
+          channel: whatsappMessages.channel,
+          direction: whatsappMessages.direction,
+          content: whatsappMessages.content,
+          messageType: whatsappMessages.messageType,
+          mediaUrl: whatsappMessages.mediaUrl,
+          sentBy: whatsappMessages.sentBy,
+          reasoning: whatsappMessages.reasoning,
+          sentEmail: whatsappMessages.sentEmail,
+          createdAt: whatsappMessages.createdAt,
+          messageAt,
+        })
+        .from(whatsappMessages)
+        .where(
+          and(
+            eq(whatsappMessages.companyId, options.companyId),
+            participants,
+            or(
+              sql`${messageAt} < ${targetDate.toISOString()}::timestamp`,
+              and(sql`${messageAt} = ${targetDate.toISOString()}::timestamp`, sql`${whatsappMessages.id} <= ${target.id}`)
+            )!
+          )
+        )
+        .orderBy(desc(messageAt), desc(whatsappMessages.id))
+        .limit(half + 1)
+
+      const hasOlder = olderRows.length > half
+      const olderPage = hasOlder ? olderRows.slice(0, half) : olderRows
+
+      const newerRows = await db
+        .select({
+          id: whatsappMessages.id,
+          phone: whatsappMessages.phone,
+          channel: whatsappMessages.channel,
+          direction: whatsappMessages.direction,
+          content: whatsappMessages.content,
+          messageType: whatsappMessages.messageType,
+          mediaUrl: whatsappMessages.mediaUrl,
+          sentBy: whatsappMessages.sentBy,
+          reasoning: whatsappMessages.reasoning,
+          sentEmail: whatsappMessages.sentEmail,
+          createdAt: whatsappMessages.createdAt,
+          messageAt,
+        })
+        .from(whatsappMessages)
+        .where(
+          and(
+            eq(whatsappMessages.companyId, options.companyId),
+            participants,
+            or(
+              sql`${messageAt} > ${targetDate.toISOString()}::timestamp`,
+              and(sql`${messageAt} = ${targetDate.toISOString()}::timestamp`, sql`${whatsappMessages.id} > ${target.id}`)
+            )!
+          )
+        )
+        .orderBy(sql`${messageAt} asc`, sql`${whatsappMessages.id} asc`)
+        .limit(half)
+
+      const combined = [...olderPage.reverse(), ...newerRows]
+      const oldest = combined[0]
+      const oldestAt = oldest ? new Date(String(oldest.messageAt)) : null
+
+      return {
+        messages: combined.map((m) => ({
+          id: m.id,
+          phone: m.phone,
+          channel: m.channel,
+          direction: m.direction,
+          content: m.content,
+          messageType: m.messageType,
+          mediaUrl: m.mediaUrl,
+          sentBy: m.sentBy,
+          reasoning: m.reasoning,
+          sentEmail: m.sentEmail,
+          createdAt: m.createdAt,
+        })),
+        hasMore: hasOlder,
+        nextCursor: hasOlder && oldest && oldestAt && !Number.isNaN(oldestAt.getTime())
+          ? encodeMessageCursor({ at: oldestAt.toISOString(), id: oldest.id })
+          : null,
+      }
+    }
+  }
 
   const conditions = [eq(whatsappMessages.companyId, options.companyId), participants]
   if (cursor) {

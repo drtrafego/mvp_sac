@@ -72,3 +72,8 @@ export function resolveCompanyRole(input: ResolveCompanyRoleInput): ResolvedComp
 export function roleSatisfies(role: CompanyRole, minimum: CompanyRole): boolean {
   return RANK[role] >= RANK[minimum]
 }
+
+export function isCompanyAdminRole(role: string | null | undefined): boolean {
+  return role === 'admin' || role === 'platform_admin' || role === 'owner'
+}
+
