@@ -35,8 +35,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const {
     items,
-    defaultEventType = 'carrinho_abandonado',
-    defaultSource = 'mineracao',
+    defaultEventType: rawDefaultEventType,
+    defaultSource: rawDefaultSource = 'mineracao',
     fileName,
     createMassDispatch,
     massDispatch,
@@ -71,6 +71,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const errors: string[] = []
 
   const shouldCreateMassDispatch = Boolean(createMassDispatch || massDispatch || triggerMassDispatch)
+  const defaultEventType = typeof rawDefaultEventType === 'string' ? rawDefaultEventType.trim() : ''
+  const defaultSource = typeof rawDefaultSource === 'string' && rawDefaultSource.trim()
+    ? rawDefaultSource.trim()
+    : 'mineracao'
+  const importEventType = defaultEventType || 'atendimento'
+
+  if (shouldCreateMassDispatch && !defaultEventType) {
+    return NextResponse.json({ error: 'Selecione o tipo de evento para preparar o disparo em massa' }, { status: 400 })
+  }
+
   const [batch] = shouldCreateMassDispatch
     ? await db.insert(massDispatchBatches).values({
         companyId: company.id,
@@ -103,7 +113,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const email = item.email?.trim() || null
       const productName = item.productName?.trim() || 'Produto Principal'
       const productValue = parseValueToCents(item.productValue)
-      const eventType = item.eventType || defaultEventType
+      // Importações simples ficam sem evento de recuperação específico. O
+      // banco exige um valor, então usamos a categoria neutra de atendimento;
+      // o evento escolhido só entra quando há lote de disparo.
+      const itemEventType = typeof item.eventType === 'string' ? item.eventType.trim() : ''
+      const eventType = shouldCreateMassDispatch
+        ? itemEventType || importEventType
+        : importEventType
       const trackingSource = item.trackingSource || defaultSource
 
       // Verificar existência por telefone e empresa para idempotência

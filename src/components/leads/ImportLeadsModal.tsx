@@ -91,7 +91,9 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
   
   // Configurações gerais
   const [defaultSource, setDefaultSource] = useState('mineracao')
-  const [defaultEventType, setDefaultEventType] = useState('carrinho_abandonado')
+  // Evento só existe quando o usuário prepara um disparo em massa. Uma
+  // importação simples não deve cair, por padrão, em uma régua específica.
+  const [defaultEventType, setDefaultEventType] = useState('')
   const [createMassDispatch, setCreateMassDispatch] = useState(false)
   const [defaultProduct] = useState('Produto Principal')
   const [batchTag, setBatchTag] = useState('')
@@ -149,6 +151,10 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       alert('Por favor, selecione a coluna correspondente ao Telefone / WhatsApp.')
       return
     }
+    if (createMassDispatch && !defaultEventType) {
+      alert('Selecione o tipo de evento da sequência para preparar o disparo em massa.')
+      return
+    }
 
     setIsProcessing(true)
     setStep('importing')
@@ -165,7 +171,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       email: emailIdx >= 0 ? row[emailIdx] : undefined,
       productName: productIdx >= 0 && row[productIdx] ? row[productIdx] : defaultProduct,
       productValue: valueIdx >= 0 ? row[valueIdx] : undefined,
-      eventType: defaultEventType,
+      eventType: createMassDispatch && defaultEventType ? defaultEventType : undefined,
       trackingSource: defaultSource,
     })).filter(i => i.phone.trim().length > 0)
 
@@ -175,7 +181,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items,
-          defaultEventType,
+          defaultEventType: createMassDispatch ? defaultEventType : undefined,
           defaultSource,
           fileName,
           createMassDispatch,
@@ -243,6 +249,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     setStep('upload')
     setFileName('')
     setParsedData({ headers: [], rows: [] })
+    setDefaultEventType('')
     setCreateMassDispatch(false)
     setBatchTag('')
     setTagScopeChannel('')
@@ -412,12 +419,11 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               </div>
             </div>
 
-            {/* 2. Origem & Sequência */}
+            {/* 2. Origem & Automação opcional */}
             <div className="space-y-3 pt-2 border-t border-line-subtle">
-              <span className="text-label uppercase text-fg-subtle font-bold block">2. Origem de Aquisição & Automação</span>
+              <span className="text-label uppercase text-fg-subtle font-bold block">2. Origem da importação</span>
               
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
+              <div className="space-y-1">
                   <label className="text-micro font-bold text-fg">Canal de Origem:</label>
                   <Select
                     value={defaultSource}
@@ -441,33 +447,6 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                       <SelectItem value="planilha_externa">📄 Planilha Externa / Parceiros</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-micro font-bold text-fg">Tipo de Evento:</label>
-                  <Select
-                    value={defaultEventType}
-                    onValueChange={v => v && setDefaultEventType(v)}
-                    items={{
-                      carrinho_abandonado: 'Carrinho Abandonado (Recuperação)',
-                      boleto: 'Boleto Bancário',
-                      pix: 'Pix Gerado Pendente',
-                      cartao_recusado: 'Cartão de Crédito Recusado',
-                      compra_aprovada: 'Compra Aprovada (Onboarding/Upsell)',
-                    }}
-                  >
-                    <SelectTrigger className={cn(FIELD, CONTROL_H, 'text-body')}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-surface-overlay text-fg border border-line-subtle">
-                      <SelectItem value="carrinho_abandonado">Carrinho Abandonado (Recuperação)</SelectItem>
-                      <SelectItem value="boleto">Boleto Bancário</SelectItem>
-                      <SelectItem value="pix">Pix Gerado Pendente</SelectItem>
-                      <SelectItem value="cartao_recusado">Cartão de Crédito Recusado</SelectItem>
-                      <SelectItem value="compra_aprovada">Compra Aprovada (Onboarding/Upsell)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
               </div>
 
               <div className="flex items-start gap-2.5 p-3 rounded-[var(--r-md)] bg-surface-inset border border-line-subtle mt-2">
@@ -494,11 +473,45 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                   </span>
                 </div>
               </label>
+
+              {createMassDispatch && (
+                <div className="rounded-[var(--r-md)] border border-cyan-500/30 bg-cyan-500/5 p-3 space-y-2">
+                  <span className="text-micro font-bold text-cyan-300 block">Configuração do disparo em massa</span>
+                  <label className="text-micro font-bold text-fg block">Tipo de evento da sequência *</label>
+                  <Select
+                    value={defaultEventType || '__none__'}
+                    onValueChange={v => setDefaultEventType(!v || v === '__none__' ? '' : v)}
+                    items={{
+                      __none__: 'Selecione o evento da sequência...',
+                      carrinho_abandonado: 'Carrinho Abandonado (Recuperação)',
+                      boleto: 'Boleto Bancário',
+                      pix: 'Pix Gerado Pendente',
+                      cartao_recusado: 'Cartão de Crédito Recusado',
+                      compra_aprovada: 'Compra Aprovada (Onboarding/Upsell)',
+                    }}
+                  >
+                    <SelectTrigger className={cn(FIELD, CONTROL_H, 'text-body', !defaultEventType && 'border-rose-500/50')}>
+                      <SelectValue placeholder="Selecione o evento da sequência..." />
+                    </SelectTrigger>
+                    <SelectContent className="bg-surface-overlay text-fg border border-line-subtle">
+                      <SelectItem value="__none__">Selecione o evento da sequência...</SelectItem>
+                      <SelectItem value="carrinho_abandonado">Carrinho Abandonado (Recuperação)</SelectItem>
+                      <SelectItem value="boleto">Boleto Bancário</SelectItem>
+                      <SelectItem value="pix">Pix Gerado Pendente</SelectItem>
+                      <SelectItem value="cartao_recusado">Cartão de Crédito Recusado</SelectItem>
+                      <SelectItem value="compra_aprovada">Compra Aprovada (Onboarding/Upsell)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-micro text-fg-subtle">
+                    Este evento só será usado para montar o lote e localizar a sequência. Sem disparo em massa, a importação não recebe evento específico.
+                  </p>
+                </div>
+              )}
             </div>
 
-            {/* 3. Tag opcional aplicada ao lote inteiro */}
+            {/* 3. Tag opcional, independente do evento */}
             <div className="space-y-3 pt-2 border-t border-line-subtle">
-              <span className="text-label uppercase text-fg-subtle font-bold block">3. Tag do lote (opcional)</span>
+              <span className="text-label uppercase text-fg-subtle font-bold block">3. Tag do lote (opcional e independente)</span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="text-micro font-bold text-fg">Tag para todos os contatos</label>
