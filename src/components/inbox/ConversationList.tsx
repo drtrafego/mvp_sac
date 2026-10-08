@@ -160,6 +160,7 @@ export function ConversationList({
   const [error, setError] = useState<string | null>(initialError)
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [loadedSearch, setLoadedSearch] = useState('')
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>(initialChannelFilter)
   const [mineracaoSubFilter, setMineracaoSubFilter] = useState<MineracaoSubFilter>(
     initialMineracaoSub === 'email' || initialMineracaoSub === 'whatsapp' || initialMineracaoSub === 'instagram'
@@ -220,6 +221,7 @@ export function ConversationList({
         if (requestId !== requestSequence.current) return
         if (res.ok) {
           const data: InboxPage = await res.json()
+          setLoadedSearch(debouncedSearch)
           setConvs(current => {
             if (!append && !merge) return data.conversations
             const incomingIds = new Set(data.conversations.map(conversation => conversation.id))
@@ -437,10 +439,11 @@ export function ConversationList({
         matchesPhoneSearch(c.phone, q) ||
         c.email?.toLowerCase().includes(q) ||
         c.productName?.toLowerCase().includes(q) ||
-        c.lastMessage?.toLowerCase().includes(q)
+        c.lastMessage?.toLowerCase().includes(q) ||
+        (loadedSearch === search.trim() && Boolean(c.matchedMessageId || c.matchedSnippet))
       )
     })
-  }, [convs, sourceFilter, fixedChannel, channelFilter, mineracaoSubFilter, anuncioSubFilter, statusFilter, search])
+  }, [convs, sourceFilter, fixedChannel, channelFilter, mineracaoSubFilter, anuncioSubFilter, statusFilter, search, loadedSearch])
 
   return (
     <aside

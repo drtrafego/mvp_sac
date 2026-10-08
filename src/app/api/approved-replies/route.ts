@@ -4,7 +4,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { sacApprovedReplies } from '@/lib/db/schema'
 import { eq, and, desc } from 'drizzle-orm'
-import { requireCompany } from '@/lib/auth'
+import { getCompanyAccess, requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
+import { roleSatisfies } from '@/lib/company-role'
+import { parseSacObject, SacInputError, isUniqueConstraintError } from '@/lib/sac-access'
 
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init)
@@ -16,10 +18,12 @@ function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    const company = await requireCompany()
+    const { company, role } = await getCompanyAccess()
 
     const { searchParams } = new URL(req.url)
-    const state = searchParams.get('state') // 'approved' | 'draft' | 'all'
+    const state = searchParams.get('state') || 'approved'
+    if (!['approved', 'draft', 'deprecated', 'all'].includes(state)) return noStoreJson({ error: 'Estado inválido.' }, { status: 400 })
+    if (state !== 'approved' && !roleSatisfies(role, 'admin')) return noStoreJson({ error: 'Somente administradores podem consultar respostas em revisão.' }, { status: 403 })
 
     const conditions = [eq(sacApprovedReplies.companyId, company.id)]
     if (state && state !== 'all') {
@@ -33,16 +37,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       .orderBy(desc(sacApprovedReplies.updatedAt))
 
     return noStoreJson({ replies })
-  } catch (err: any) {
-    return noStoreJson({ error: err.message || 'Erro ao listar respostas aprovadas' }, { status: 500 })
+  } catch (err: unknown) {
+    if (err instanceof SacInputError || err instanceof ForbiddenError || err instanceof AuthError) return noStoreJson({ error: err.message }, { status: err.status })
+    return noStoreJson({ error: 'Erro ao listar respostas aprovadas' }, { status: 500 })
   }
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const company = await requireCompany()
+    const { company, role, actorName } = await requireSacActor()
 
-    const body = await req.json().catch(() => null)
+    const body = parseSacObject(await req.json().catch(() => null))
     if (!body || typeof body !== 'object') {
       return noStoreJson({ error: 'Corpo da requisição inválido' }, { status: 400 })
     }
@@ -62,7 +67,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     // Extrair automaticamente variáveis como {nome}, {prazo}, etc., se não fornecidas explicitamente
-    let parsedVariables = Array.isArray(variables) ? variables.map(String) : []
+    if (variables !== undefined && (!Array.isArray(variables) || variables.some((v) => typeof v !== 'string'))) throw new SacInputError('Variáveis inválidas.')
+    let parsedVariables: string[] = Array.isArray(variables) ? variables : []
     if (parsedVariables.length === 0) {
       const matches = contentBody.match(/\{([a-zA-Z0-9_]+)\}/g)
       if (matches) {
@@ -70,7 +76,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
     }
 
-    const state = approvalState === 'draft' || approvalState === 'deprecated' ? approvalState : 'approved'
+    if (approvalState !== undefined && !['draft', 'approved', 'deprecated'].includes(String(approvalState))) throw new SacInputError('Estado de aprovação inválido.')
+    const state = approvalState === undefined ? (roleSatisfies(role, 'admin') ? 'approved' : 'draft') : String(approvalState)
+    if (state !== 'draft' && !roleSatisfies(role, 'admin')) throw new ForbiddenError('Somente administradores podem aprovar ou retirar respostas.')
 
     const [reply] = await db
       .insert(sacApprovedReplies)
@@ -81,17 +89,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         body: contentBody.trim(),
         variables: parsedVariables,
         approvalState: state,
-        approvedBy: state === 'approved' ? company.agentDisplayName || 'Administrador' : null,
+        approvedBy: state === 'approved' ? actorName : null,
         approvedAt: state === 'approved' ? new Date() : null,
       })
       .returning()
 
     return noStoreJson({ success: true, reply }, { status: 201 })
-  } catch (err: any) {
+  } catch (err: unknown) {
+    if (err instanceof SacInputError || err instanceof ForbiddenError || err instanceof AuthError) return noStoreJson({ error: err.message }, { status: err.status })
     // Tratar colisão de atalho único por empresa
-    if (err?.code === '23505' || err?.message?.includes('unique')) {
+    if (isUniqueConstraintError(err)) {
       return noStoreJson({ error: 'Já existe uma resposta com este atalho para esta empresa.' }, { status: 409 })
     }
-    return noStoreJson({ error: err.message || 'Erro ao criar resposta aprovada' }, { status: 500 })
+    return noStoreJson({ error: 'Erro ao criar resposta aprovada' }, { status: 500 })
   }
 }

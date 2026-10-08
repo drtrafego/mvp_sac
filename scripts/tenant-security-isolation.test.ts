@@ -1,4 +1,4 @@
-import { AmbiguousCredentialError } from '../src/app/api/webhooks/instagram/route'
+import { AmbiguousCredentialError } from '../src/lib/instagram-webhook-errors'
 
 function runTests() {
   console.log('🧪 Executando testes unitários e de isolamento de tenant (Item 1)...')

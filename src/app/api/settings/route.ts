@@ -6,6 +6,7 @@ import { requireCompany, getCurrentUser, getCompanyAccess, forbiddenResponse } f
 import { roleSatisfies } from '@/lib/company-role'
 import { maskSettingsRow, shouldWriteSettingsField } from '@/lib/settings-mask'
 import { parseAgentDisplayName } from '@/lib/agent-display-name'
+import { parseSacObject, getCompanyPipelineStageIds, SacInputError } from '@/lib/sac-access'
 
 /**
  * Token da barreira de webhooks, devolvido SÓ para admin.
@@ -58,6 +59,7 @@ const WRITABLE_SETTING_FIELDS = [
   ['instagramPageId', 'string'],
   ['instagramAppSecret', 'string'],
   ['sidebarConfig', 'present'],
+  ['sacFollowupStageIds', 'present'],
 ] as const
 
 function buildWritableSettingsFields(body: Record<string, unknown>): Record<string, unknown> {
@@ -88,6 +90,7 @@ export async function GET(): Promise<NextResponse> {
       companySlug: company.slug,
       agentDisplayName: company.agentDisplayName ?? '',
       webhookUrlToken,
+      sacFollowupStageIds: [],
       hotmartEnabled: true,
       hotmartWebhookToken: '',
       hotmartClientId: '',
@@ -146,7 +149,19 @@ export async function GET(): Promise<NextResponse> {
 export async function PUT(req: NextRequest): Promise<NextResponse> {
   const access = await getCompanyAccess()
   const company = access.company
-  const body = await req.json() as Record<string, unknown>
+  let body: Record<string, unknown>
+  try {
+    body = parseSacObject(await req.json().catch(() => null))
+    if (body.sacFollowupStageIds !== undefined) {
+      const ids = body.sacFollowupStageIds
+      if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new SacInputError('Etapas de acompanhamento inválidas.')
+      const validStages = await getCompanyPipelineStageIds(company.id)
+      if (ids.some((id) => !validStages.includes(id))) throw new SacInputError('Uma etapa não existe no pipeline desta empresa.')
+      body.sacFollowupStageIds = [...new Set(ids)]
+    }
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Configuração inválida.' }, { status: 400 })
+  }
 
   // SAC Lote 1, 5.5: credenciais, integrações e nome do bot são
   // configurações administrativas. Um membro comum só pode alterar o preset

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
@@ -7,6 +8,7 @@ import { markLeadContacted } from '@/lib/leads'
 import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
 import { eq, and } from 'drizzle-orm'
 
+type MessageRow = typeof whatsappMessages.$inferSelect
 export interface OutboundSendInput {
   companyId: number
   lead: typeof recoveryLeads.$inferSelect
@@ -18,291 +20,226 @@ export interface OutboundSendInput {
   senderName?: string | null
   agentId?: string | null
   subject?: string | null
+  beforeTransport?: () => Promise<boolean>
 }
 
 export interface OutboundSendResult {
   ok: boolean
-  status: 200 | 202 | 502
-  message: typeof whatsappMessages.$inferSelect | null
+  status: 200 | 202 | 400 | 409 | 502
+  message: MessageRow | null
   error?: string
   isTimeout?: boolean
   idempotentReplay?: boolean
 }
 
-/**
- * Envio outbound unificado com rastreamento real de transporte, idempotência e recuperação.
- * (SAC Lote 1, item 5.1 e aceite A01).
- *
- * Contrato:
- * - 200: Aceito pelo transporte externo (Instagram/Brevo/WhatsApp).
- * - 502: Falha confirmada pelo transporte. Mensagem gravada no banco com sendState='failed'
- *        e sendError, garantindo histórico e recuperação do texto para retry.
- * - 202: Incerteza/timeout do transporte. Gravada como sendState='uncertain' para não
- *        repetir cegamente e evitar reenvio duplicado.
- */
-export async function sendOutboundForLead(input: OutboundSendInput): Promise<OutboundSendResult> {
-  const {
-    companyId,
-    lead,
-    content = '',
-    mediaUrl,
-    messageType = 'text',
-    clientRequestId,
-    sentBy = 'human',
-    senderName,
-    agentId,
-    subject,
-  } = input
+// Dependencies expose the real orchestration for regression tests without a live provider.
+export interface OutboundSendStore {
+  find(companyId: number, requestId: string): Promise<MessageRow | undefined>
+  create(values: typeof whatsappMessages.$inferInsert): Promise<MessageRow | undefined>
+  claimFailed(companyId: number, id: number): Promise<MessageRow | undefined>
+  finish(companyId: number, id: number, values: Partial<typeof whatsappMessages.$inferInsert>): Promise<MessageRow>
+  touchLead(leadId: number): Promise<void>
+}
+interface TransportResult {
+  ok: boolean
+  externalId?: string | null
+  error?: unknown
+  uncertain?: boolean
+  isTimeout?: boolean
+}
+export interface OutboundSendDependencies {
+  store: OutboundSendStore
+  transport(input: OutboundSendInput, channel: 'whatsapp' | 'instagram' | 'email'): Promise<TransportResult>
+}
 
-  const textContent = content ?? ''
-  if (!textContent.trim() && !mediaUrl) {
-    return {
-      ok: false,
-      status: 502,
-      message: null,
-      error: 'Mensagem vazia: informe texto ou mídia para envio.',
-    }
-  }
+/** Safe, bounded error text; never persist an arbitrary provider object or credential. */
+export function safeOutboundError(error: unknown): string {
+  let text = 'Falha no transporte de envio.'
+  if (typeof error === 'string') text = error
+  else if (error instanceof Error) text = error.message
+  else if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') text = error.message
+  return text
+    .replace(/Bearer\s+[^\s"',;]+/gi, 'Bearer [redigido]')
+    .replace(/((?:access_token|api[_-]?key|token|authorization)\s*[=:]\s*)[^&\s"',;]+/gi, '$1[redigido]')
+    .replace(/("(?:access_token|api[_-]?key|token|authorization)"\s*:\s*")[^"]*/gi, '$1[redigido]')
+    .slice(0, 500)
+}
 
-  // 1. Idempotência por clientRequestId (duplo clique, retry do navegador ou requisições concorrentes)
-  if (clientRequestId) {
-    const [existing] = await db
-      .select()
-      .from(whatsappMessages)
-      .where(
-        and(
-          eq(whatsappMessages.companyId, companyId),
-          eq(whatsappMessages.clientRequestId, clientRequestId),
-        ),
-      )
-      .limit(1)
+export function isOutboundTimeout(error: unknown): boolean {
+  const value = error as { name?: string; code?: string; cause?: { code?: string } } | null
+  return value?.name === 'AbortError' || value?.name === 'TimeoutError'
+    || ['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(value?.code || value?.cause?.code || '')
+    || /timeout|aborterror/i.test(error instanceof Error ? error.message : String(error))
+}
 
-    if (existing) {
-      if (existing.sendState === 'accepted') {
-        return {
-          ok: true,
-          status: 200,
-          message: existing,
-          idempotentReplay: true,
-        }
-      }
-      if (existing.sendState === 'uncertain') {
-        return {
-          ok: false,
-          status: 202,
-          message: existing,
-          error: existing.sendError || 'Envio anterior sob reconciliação (timeout). Evite repetição imediata.',
-          isTimeout: true,
-          idempotentReplay: true,
-        }
-      }
-      // Se era 'failed' ou 'pending', podemos tentar atualizar ou registrar novo intento
-    }
-  }
+function payloadHash(input: OutboundSendInput, channel: string): string {
+  return createHash('sha256').update(JSON.stringify({
+    companyId: input.companyId, leadId: input.lead.id, channel,
+    recipient: channel === 'email' ? input.lead.email : input.lead.phone,
+    content: input.content || '', mediaUrl: input.mediaUrl || null,
+    messageType: input.messageType || 'text', sentBy: input.sentBy || 'human',
+    subject: channel === 'email' ? input.subject || `Re: Atendimento - ${input.lead.productName || 'SAC'}` : null,
+  })).digest('hex')
+}
 
-  const deliveryChannel = resolveLeadDeliveryChannel(lead)
+function matchesRequest(row: MessageRow, input: OutboundSendInput, channel: string, hash: string): boolean {
+  if (row.leadId !== input.lead.id || row.channel !== channel || row.direction !== 'outbound') return false
+  if (row.outboundPayloadHash) return row.outboundPayloadHash === hash
+  // Legacy email rows have no immutable recipient/subject snapshot: fail closed.
+  if (channel === 'email') return false
+  return row.phone === input.lead.phone && (row.content || '') === (input.content || '')
+    && (row.mediaUrl || null) === (input.mediaUrl || null)
+    && (row.messageType || 'text') === (input.messageType || 'text')
+    && (row.sentBy || 'human') === (input.sentBy || 'human')
+}
 
-  // 2. Gravar intento inicial (sendState = 'pending')
-  let msgRow: typeof whatsappMessages.$inferSelect
-  try {
-    const [created] = await db
-      .insert(whatsappMessages)
-      .values({
-        companyId,
-        leadId: lead.id,
-        phone: lead.phone,
-        channel: deliveryChannel,
-        direction: 'outbound',
-        content: textContent || null,
-        messageType: messageType || 'text',
-        mediaUrl: mediaUrl || null,
-        sentBy,
-        senderName: senderName || null,
-        agentId: agentId || null,
-        clientRequestId: clientRequestId || null,
-        sendState: 'pending',
-      })
-      .returning()
-    msgRow = created
-  } catch (err: any) {
-    // Se colidiu no uniqueIndex de clientRequestId por concorrência simultânea
-    if (clientRequestId && (err?.code === '23505' || String(err).includes('unique'))) {
-      const [collided] = await db
-        .select()
-        .from(whatsappMessages)
-        .where(
-          and(
-            eq(whatsappMessages.companyId, companyId),
-            eq(whatsappMessages.clientRequestId, clientRequestId),
-          ),
-        )
-        .limit(1)
-      if (collided) {
-        return {
-          ok: collided.sendState === 'accepted',
-          status: collided.sendState === 'accepted' ? 200 : (collided.sendState === 'uncertain' ? 202 : 502),
-          message: collided,
-          error: collided.sendError || undefined,
-          idempotentReplay: true,
-        }
-      }
-    }
-    throw err
-  }
-
-  // 3. Execução do transporte com captura de erro real
-  let externalId: string | null = null
-
-  if (deliveryChannel === 'instagram') {
-    try {
-      const igRes = await sendInstagramMessage({
-        recipientId: lead.phone,
-        text: textContent,
-        mediaUrl: mediaUrl || undefined,
-        companyId,
-      })
-      if (!igRes.ok) {
-        const errMsg = igRes.error || 'Falha ao enviar mensagem via Instagram Direct'
-        const [failedRow] = await db
-          .update(whatsappMessages)
-          .set({
-            sendState: 'failed',
-            sendError: errMsg,
-          })
-          .where(eq(whatsappMessages.id, msgRow.id))
-          .returning()
-
-        return {
-          ok: false,
-          status: 502,
-          message: failedRow,
-          error: errMsg,
-        }
-      }
-      externalId = igRes.messageId ?? null
-    } catch (igErr: any) {
-      const errMsg = igErr instanceof Error ? igErr.message : String(igErr)
-      const [failedRow] = await db
-        .update(whatsappMessages)
-        .set({
-          sendState: 'failed',
-          sendError: errMsg,
-        })
-        .where(eq(whatsappMessages.id, msgRow.id))
-        .returning()
-
-      return {
-        ok: false,
-        status: 502,
-        message: failedRow,
-        error: errMsg,
-      }
-    }
-  } else if (deliveryChannel === 'email' && lead.email) {
-    try {
-      const emailRes = await sendBrevoEmail({
-        to: [{ email: lead.email, name: lead.name || undefined }],
-        subject: subject || `Re: Atendimento - ${lead.productName || 'SAC'}`,
-        htmlContent: `<p>${textContent.replace(/\n/g, '<br/>')}</p>`,
-        textContent: textContent,
-        companyId,
-      })
-      if (!emailRes.ok) {
-        const errMsg = emailRes.error || 'Falha ao enviar e-mail via Brevo'
-        const [failedRow] = await db
-          .update(whatsappMessages)
-          .set({
-            sendState: 'failed',
-            sendError: errMsg,
-          })
-          .where(eq(whatsappMessages.id, msgRow.id))
-          .returning()
-
-        return {
-          ok: false,
-          status: 502,
-          message: failedRow,
-          error: errMsg,
-        }
-      }
-    } catch (emErr: any) {
-      const errMsg = emErr instanceof Error ? emErr.message : String(emErr)
-      const [failedRow] = await db
-        .update(whatsappMessages)
-        .set({
-          sendState: 'failed',
-          sendError: errMsg,
-        })
-        .where(eq(whatsappMessages.id, msgRow.id))
-        .returning()
-
-      return {
-        ok: false,
-        status: 502,
-        message: failedRow,
-        error: errMsg,
-      }
-    }
-  } else {
-    // WhatsApp (Meta Cloud API ou UazAPI)
-    try {
-      externalId = await sendWhatsAppMessage(
-        lead.phone,
-        {
-          type: (messageType ?? 'text') as any,
-          content: textContent,
-          mediaUrl: mediaUrl || undefined,
-        },
-        companyId,
-      )
-    } catch (waErr: any) {
-      const errorMsg = waErr instanceof Error ? waErr.message : String(waErr)
-      const isTimeout =
-        waErr?.name === 'AbortError' ||
-        waErr?.code === 'ETIMEDOUT' ||
-        errorMsg.toLowerCase().includes('timeout') ||
-        errorMsg.toLowerCase().includes('aborterror')
-
-      const finalState = isTimeout ? 'uncertain' : 'failed'
-      const [updatedRow] = await db
-        .update(whatsappMessages)
-        .set({
-          sendState: finalState,
-          sendError: errorMsg,
-        })
-        .where(eq(whatsappMessages.id, msgRow.id))
-        .returning()
-
-      return {
-        ok: false,
-        status: isTimeout ? 202 : 502,
-        message: updatedRow,
-        error: errorMsg,
-        isTimeout,
-      }
-    }
-  }
-
-  // 4. Sucesso: marcar como aceito e atualizar histórico do lead
-  const [acceptedRow] = await db
-    .update(whatsappMessages)
-    .set({
-      sendState: 'accepted',
-      externalId,
-    })
-    .where(eq(whatsappMessages.id, msgRow.id))
-    .returning()
-
-  await markLeadContacted(lead.id)
-
-  await db
-    .update(recoveryLeads)
-    .set({ updatedAt: new Date(), lastActionAt: new Date() })
-    .where(eq(recoveryLeads.id, lead.id))
-
+function replay(row: MessageRow): OutboundSendResult {
+  if (row.sendState === 'accepted') return { ok: true, status: 200, message: row, idempotentReplay: true }
   return {
-    ok: true,
-    status: 200,
-    message: acceptedRow,
+    ok: false, status: 202, message: row, idempotentReplay: true,
+    isTimeout: row.sendState === 'uncertain',
+    error: row.sendState === 'uncertain'
+      ? 'Envio incerto. Confirme o resultado antes de tentar novamente.'
+      : 'Envio em processamento. Aguarde a confirmação; nada foi reenviado.',
   }
 }
+
+/** Reuse a failed intent with an atomic claim; never replay pending/uncertain transports. */
+export function createOutboundSender({ store, transport }: OutboundSendDependencies) {
+  return async function send(input: OutboundSendInput): Promise<OutboundSendResult> {
+    const channel = resolveLeadDeliveryChannel(input.lead)
+    if (input.lead.companyId !== input.companyId) return { ok: false, status: 400, message: null, error: 'Empresa do contato incompatível.' }
+    if (typeof input.content !== 'string' && input.content != null) return { ok: false, status: 400, message: null, error: 'Conteúdo inválido.' }
+    if (!(input.content || '').trim() && !input.mediaUrl) return { ok: false, status: 400, message: null, error: 'Informe texto ou mídia para envio.' }
+    const type = input.messageType || 'text'
+    if (!['text', 'image', 'video', 'audio', 'document'].includes(type)) return { ok: false, status: 400, message: null, error: 'Tipo de mensagem não suportado neste endpoint.' }
+    if (input.mediaUrl && type === 'text') return { ok: false, status: 400, message: null, error: 'Informe o tipo da mídia (imagem, vídeo, áudio ou documento).' }
+    if (type !== 'text' && !input.mediaUrl) return { ok: false, status: 400, message: null, error: 'Informe a mídia para este tipo de mensagem.' }
+    if (channel === 'email' && input.mediaUrl) return { ok: false, status: 400, message: null, error: 'Anexos por e-mail ainda não são suportados neste endpoint.' }
+    if (channel === 'instagram' && type === 'document') return { ok: false, status: 400, message: null, error: 'Este canal não aceita documento neste endpoint.' }
+    if (channel === 'email' && !input.lead.email) return { ok: false, status: 400, message: null, error: 'Contato sem endereço de e-mail.' }
+    const requestId = input.clientRequestId?.trim() || null
+    if (requestId && requestId.length > 200) return { ok: false, status: 400, message: null, error: 'Chave de envio muito longa.' }
+    const hash = payloadHash(input, channel)
+    let row = requestId ? await store.find(input.companyId, requestId) : undefined
+    if (!row) {
+      row = await store.create({
+        companyId: input.companyId, leadId: input.lead.id, phone: input.lead.phone,
+        channel, direction: 'outbound', content: input.content || null,
+        messageType: input.messageType || 'text', mediaUrl: input.mediaUrl || null,
+        sentBy: input.sentBy || 'human', senderName: input.senderName || null,
+        agentId: input.agentId || null, clientRequestId: requestId,
+        outboundPayloadHash: hash, sendState: 'pending',
+      })
+      // A concurrent request won the unique key; read and replay its state.
+      if (!row) row = requestId ? await store.find(input.companyId, requestId) : undefined
+      else return dispatch(row)
+    }
+    if (!row) throw new Error('Não foi possível recuperar a intenção de envio.')
+    if (!matchesRequest(row, input, channel, hash)) return {
+      ok: false, status: 409, message: null,
+      error: 'Esta chave pertence a outra mensagem. Não reutilize a chave para conteúdo ou contato diferentes.',
+    }
+    if (row.sendState !== 'failed') return replay(row)
+    const claimed = await store.claimFailed(input.companyId, row.id)
+    if (!claimed) {
+      const current = requestId ? await store.find(input.companyId, requestId) : row
+      return replay(current || row)
+    }
+    return dispatch(claimed)
+
+    async function dispatch(intent: MessageRow): Promise<OutboundSendResult> {
+      if (input.beforeTransport) {
+        let allowed = false
+        let guardError: unknown = null
+        try { allowed = await input.beforeTransport() } catch (error) { guardError = error }
+        if (!allowed) {
+          const error = guardError ? safeOutboundError(guardError) : 'Envio cancelado pelo controle do atendimento.'
+          const message = await store.finish(input.companyId, intent.id, { sendState: 'failed', sendError: error })
+          return { ok: false, status: guardError ? 502 : 409, message, error }
+        }
+      }
+      let result: TransportResult
+      try { result = await transport(input, channel) }
+      catch (error) {
+        // A network exception gives no definitive provider rejection. Do not resend blindly.
+        result = { ok: false, error, uncertain: true, isTimeout: isOutboundTimeout(error) }
+      }
+      const state = result.ok ? 'accepted' : result.uncertain ? 'uncertain' : 'failed'
+      const error = result.ok ? undefined : safeOutboundError(result.error)
+      let message: MessageRow
+      try {
+        message = await store.finish(input.companyId, intent.id, {
+          sendState: state, sendError: error || null, externalId: result.externalId || null,
+        })
+      } catch {
+        // Provider may already have accepted; leave intent non-retryable and report uncertainty.
+        return { ok: false, status: 202, message: { ...intent, sendState: 'uncertain' }, error: 'Resultado do envio ainda não registrado. Confirme antes de repetir.' }
+      }
+      if (!result.ok) return { ok: false, status: result.uncertain ? 202 : 502, message, error, isTimeout: result.isTimeout }
+      // Follow-up bookkeeping cannot turn an accepted transport into a false send failure.
+      await store.touchLead(input.lead.id).catch(() => console.warn('[SAC send] envio aceito; atualização do contato pendente', { leadId: input.lead.id }))
+      return { ok: true, status: 200, message }
+    }
+  }
+}
+
+const store: OutboundSendStore = {
+  async find(companyId, requestId) {
+    const [row] = await db.select().from(whatsappMessages)
+      .where(and(eq(whatsappMessages.companyId, companyId), eq(whatsappMessages.clientRequestId, requestId))).limit(1)
+    return row
+  },
+  async create(values) {
+    const [row] = await db.insert(whatsappMessages).values(values).onConflictDoNothing().returning()
+    return row
+  },
+  async claimFailed(companyId, id) {
+    const [row] = await db.update(whatsappMessages).set({ sendState: 'pending', sendError: null })
+      .where(and(eq(whatsappMessages.companyId, companyId), eq(whatsappMessages.id, id), eq(whatsappMessages.sendState, 'failed'))).returning()
+    return row
+  },
+  async finish(companyId, id, values) {
+    const [row] = await db.update(whatsappMessages).set(values)
+      .where(and(eq(whatsappMessages.companyId, companyId), eq(whatsappMessages.id, id))).returning()
+    if (!row) throw new Error('Intenção de envio não encontrada.')
+    return row
+  },
+  async touchLead(id) {
+    await markLeadContacted(id)
+    await db.update(recoveryLeads).set({ updatedAt: new Date(), lastActionAt: new Date() }).where(eq(recoveryLeads.id, id))
+  },
+}
+
+async function transport(input: OutboundSendInput, channel: 'whatsapp' | 'instagram' | 'email'): Promise<TransportResult> {
+  if (channel === 'instagram') {
+    const result = await sendInstagramMessage({
+      recipientId: input.lead.phone, text: input.content || '', mediaUrl: input.mediaUrl || undefined,
+      mediaType: input.messageType === 'audio' || input.messageType === 'video' ? input.messageType : 'image',
+      companyId: input.companyId,
+    })
+    return { ...result, externalId: result.messageId || null }
+  }
+  if (channel === 'email') {
+    const content = input.content || ''
+    const escaped = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    const result = await sendBrevoEmail({
+      to: [{ email: input.lead.email!, name: input.lead.name || undefined }],
+      subject: input.subject || `Re: Atendimento - ${input.lead.productName || 'SAC'}`,
+      htmlContent: `<p>${escaped.replace(/\n/g, '<br/>')}</p>`, textContent: content, companyId: input.companyId,
+    })
+    return { ...result, externalId: result.data?.messageId || null }
+  }
+  try {
+    const externalId = await sendWhatsAppMessage(input.lead.phone, {
+      type: input.messageType || 'text', content: input.content || '', mediaUrl: input.mediaUrl || undefined, caption: input.content || undefined,
+    }, input.companyId)
+    return { ok: true, externalId }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const definitive = /^(?:Meta API (?:erro|rate limit) \d+|UazAPI \w+ erro \d+|WhatsApp não configurado|Meta Cloud API não configurada|UazAPI não configurada|Provedor desconhecido)/.test(message)
+    return { ok: false, error, uncertain: !definitive, isTimeout: isOutboundTimeout(error) }
+  }
+}
+
+export const sendOutboundForLead = createOutboundSender({ store, transport })

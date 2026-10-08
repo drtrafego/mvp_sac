@@ -27,6 +27,9 @@ export interface InboxMessageRow {
   sentBy: string | null
   reasoning: string | null
   sentEmail: string | null
+  sendState: string | null
+  sendError: string | null
+  clientRequestId: string | null
   createdAt: Date | null
 }
 
@@ -88,6 +91,9 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
           sentBy: whatsappMessages.sentBy,
           reasoning: whatsappMessages.reasoning,
           sentEmail: whatsappMessages.sentEmail,
+          sendState: whatsappMessages.sendState,
+          sendError: whatsappMessages.sendError,
+          clientRequestId: whatsappMessages.clientRequestId,
           createdAt: whatsappMessages.createdAt,
           messageAt,
         })
@@ -120,6 +126,9 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
           sentBy: whatsappMessages.sentBy,
           reasoning: whatsappMessages.reasoning,
           sentEmail: whatsappMessages.sentEmail,
+          sendState: whatsappMessages.sendState,
+          sendError: whatsappMessages.sendError,
+          clientRequestId: whatsappMessages.clientRequestId,
           createdAt: whatsappMessages.createdAt,
           messageAt,
         })
@@ -153,6 +162,9 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
           sentBy: m.sentBy,
           reasoning: m.reasoning,
           sentEmail: m.sentEmail,
+          sendState: m.sendState,
+          sendError: m.sendError,
+          clientRequestId: m.clientRequestId,
           createdAt: m.createdAt,
         })),
         hasMore: hasOlder,
@@ -183,6 +195,9 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
       sentBy: whatsappMessages.sentBy,
       reasoning: whatsappMessages.reasoning,
       sentEmail: whatsappMessages.sentEmail,
+      sendState: whatsappMessages.sendState,
+      sendError: whatsappMessages.sendError,
+      clientRequestId: whatsappMessages.clientRequestId,
       createdAt: whatsappMessages.createdAt,
       messageAt,
     })
@@ -208,6 +223,9 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
       sentBy: message.sentBy,
       reasoning: message.reasoning,
       sentEmail: message.sentEmail,
+      sendState: message.sendState,
+      sendError: message.sendError,
+      clientRequestId: message.clientRequestId,
       createdAt: message.createdAt,
     })),
     hasMore,

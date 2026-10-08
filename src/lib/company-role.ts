@@ -17,6 +17,7 @@ export interface CompanyRoleMembership {
   stackAuthUserId: string | null
   email: string
   role: string
+  status: string
 }
 
 export interface ResolveCompanyRoleInput {
@@ -29,7 +30,7 @@ export interface ResolveCompanyRoleInput {
 }
 
 export interface ResolvedCompanyRole {
-  role: CompanyRole
+  role: CompanyRole | null
   memberId: number | null
 }
 
@@ -42,35 +43,34 @@ function normalizeEmail(email: string | null | undefined): string {
 /**
  * Ordem de decisão:
  * 1. Administrador da plataforma (lista de ADMIN_EMAILS) tem escopo próprio.
- * 2. Vínculo explícito em company_members DESTA empresa (por stackAuthUserId,
- *    depois por e-mail) usa o cargo gravado ('admin' | 'membro').
- * 3. Proprietário da empresa (companies.stack_auth_user_id) é admin.
- * 4. Qualquer outro caminho que chegou até a empresa vira 'membro': atende,
- *    mas não administra acessos nem credenciais.
+ * 2. Proprietário da empresa (companies.stack_auth_user_id) é admin.
+ * 3. Vínculo ativo DESTA empresa aceito por esta conta usa o cargo gravado.
+ * 4. Sem vínculo válido, o acesso falha fechado.
  */
 export function resolveCompanyRole(input: ResolveCompanyRoleInput): ResolvedCompanyRole {
   if (input.isPlatformAdmin) return { role: 'platform_admin', memberId: null }
 
-  const sameCompany = input.memberships.filter((m) => m.companyId === input.companyId)
+  if (input.companyOwnerUserId && input.companyOwnerUserId === input.userId) {
+    const ownerMembership = input.memberships.find((m) => m.companyId === input.companyId && m.status === 'ativo' && m.stackAuthUserId === input.userId)
+    return { role: 'admin', memberId: ownerMembership?.id ?? null }
+  }
+
+  const sameCompany = input.memberships.filter((m) => m.companyId === input.companyId && m.status === 'ativo')
   const byId = sameCompany.find((m) => m.stackAuthUserId && m.stackAuthUserId === input.userId)
   const email = normalizeEmail(input.email)
   const byEmail = email ? sameCompany.find((m) => normalizeEmail(m.email) === email) : undefined
-  const membership = byId ?? byEmail
+  // E-mail is not an alternative to an accepted, account-bound membership.
+  const membership = byId ?? (byEmail?.stackAuthUserId === input.userId ? byEmail : undefined)
 
   if (membership) {
     const role: CompanyRole = membership.role === 'admin' ? 'admin' : 'membro'
     return { role, memberId: membership.id ?? null }
   }
-
-  if (input.companyOwnerUserId && input.companyOwnerUserId === input.userId) {
-    return { role: 'admin', memberId: null }
-  }
-
-  return { role: 'membro', memberId: null }
+  return { role: null, memberId: null }
 }
 
-export function roleSatisfies(role: CompanyRole, minimum: CompanyRole): boolean {
-  return RANK[role] >= RANK[minimum]
+export function roleSatisfies(role: CompanyRole | null, minimum: CompanyRole): boolean {
+  return role !== null && RANK[role] >= RANK[minimum]
 }
 
 export function isCompanyAdminRole(role: string | null | undefined): boolean {

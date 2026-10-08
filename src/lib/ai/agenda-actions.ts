@@ -41,6 +41,7 @@ export type AgendaActionsDeps = {
   cancelarReuniaoFn?: typeof cancelarReuniao
   buscarSlotsFn?: typeof buscarSlots
   now?: () => Date
+  beforeExternalEffect?: () => Promise<boolean>
 }
 
 export type ResultadoValidacaoSlot = {
@@ -192,6 +193,7 @@ export async function executarAcaoDetectada(
   const marcar = deps.marcarReuniaoFn || marcarReuniao
   const remarcar = deps.remarcarReuniaoFn || remarcarReuniao
   const cancelar = deps.cancelarReuniaoFn || cancelarReuniao
+  const canAct = async () => !deps.beforeExternalEffect || await deps.beforeExternalEffect()
 
   if (acao.tipo === 'book') {
     const nome = acao.nome || ''
@@ -223,6 +225,7 @@ export async function executarAcaoDetectada(
       }
 
       try {
+        if (!await canAct()) return { textoVisivel: MOVER_RECUSADO, novoState: state }
         const r = await remarcar({ eventId: state.eventId, telefone, start, end })
         if (!r.ok) {
           console.error(`[Agenda Actions] remarcar (via BOOK) recusado: ${r.erro || r.detalhe}`)
@@ -258,6 +261,7 @@ export async function executarAcaoDetectada(
     }
 
     try {
+      if (!await canAct()) return { textoVisivel: textoDeRecusa(undefined), novoState: state }
       const r = await marcar({
         nome: nome || nomeContato || 'lead do WhatsApp',
         telefone,
@@ -300,6 +304,7 @@ export async function executarAcaoDetectada(
     }
 
     try {
+      if (!await canAct()) return { textoVisivel: MOVER_RECUSADO, novoState: state }
       const r = await remarcar({ eventId: state.eventId, telefone, start, end })
       if (!r.ok) {
         console.error(`[Agenda Actions] RESCHEDULE recusado: ${r.erro || r.detalhe}`)
@@ -318,6 +323,7 @@ export async function executarAcaoDetectada(
       return { textoVisivel: textoVisivel + NAO_ACHOU_REUNIAO, novoState: state }
     }
     try {
+      if (!await canAct()) return { textoVisivel: CANCELAR_RECUSADO, novoState: state }
       const r = await cancelar({ eventId: state.eventId, telefone })
       if (r.ok) {
         return { textoVisivel, novoState: {} }

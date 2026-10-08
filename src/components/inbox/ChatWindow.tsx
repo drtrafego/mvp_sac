@@ -35,9 +35,18 @@ import { LeadTags } from './LeadTags'
 import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill, EmailEngagementBadge } from './ChannelBadge'
 import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { cn } from '@/lib/utils'
+import { buildContextPatch, canStartComposerIntent, contextFromLead, draftAfterAccepted, fillReplyTemplate, mergeContextDraft, unresolvedReplyVariables, upsertInboxMessages, type ComposerIntent, type SacContextDraft } from './sac-inbox-state'
 import type { EmailEngagement } from '@/lib/email-engagement'
 
 const ACTIVE_CHAT_POLL_MS = 5_000
+const DEFAULT_PIPELINE_COLUMNS = [
+  { id: 'novo_contato', label: 'Novo Contato' }, { id: 'em_atendimento', label: 'Em Atendimento' },
+  { id: 'qualificado', label: 'Qualificado' }, { id: 'agendado', label: 'Agendado / Reserva' },
+  { id: 'compareceu', label: 'Compareceu' }, { id: 'fechado', label: 'Fechado / Ganho' },
+  { id: 'perdido', label: 'Perdido' },
+]
+type ApprovedReply = { id: number; title: string; shortcut: string | null; body: string; variables: string[] | null; approvalState?: string }
+type PendingItem = { id: number; leadId: number; reason: string; dueAt: string | null; leadName?: string | null; leadPhone?: string | null }
 
 export interface ChatLead {
   id: number
@@ -48,6 +57,7 @@ export interface ChatLead {
   notes: string | null
   eventType: string
   status: string | null
+  priority?: number | null
   productName: string | null
   productValue: number | null
   platform: string | null
@@ -79,6 +89,9 @@ export interface ChatLead {
   commitment?: string | null
   nextAction?: string | null
   humanOwnerMemberId?: number | null
+  humanOwnerName?: string | null
+  humanOwnerUserId?: string | null
+  contextVersion?: number
   nextActionDueAt?: string | null
   sacCaseState?: string | null
   pipelineStage?: string | null
@@ -130,6 +143,7 @@ export function ChatWindow({
   const [messages, setMessages] = useState<InboxMessage[]>(initialMessages)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
   const [hasMoreHistory, setHasMoreHistory] = useState(initialHistory.hasMore)
@@ -147,20 +161,51 @@ export function ChatWindow({
   const [pauseToast, setPauseToast] = useState<string | null>(null)
 
   // SAC Lote 1: Abas do Painel Lateral
-  const [sidePanelTab, setSidePanelTab] = useState<'context' | 'notes' | 'info'>('context')
+  const [sidePanelTab, setSidePanelTab] = useState<'context' | 'notes' | 'pending' | 'info'>('context')
 
   // SAC Lote 1: Card de Contexto e Próxima Ação
-  const [requestSummary, setRequestSummary] = useState(lead.requestSummary ?? '')
-  const [commitment, setCommitment] = useState(lead.commitment ?? '')
-  const [nextAction, setNextAction] = useState(lead.nextAction ?? '')
-  const [nextActionDueAt, setNextActionDueAt] = useState(lead.nextActionDueAt ? lead.nextActionDueAt.slice(0, 10) : '')
-  const [pipelineStage, setPipelineStage] = useState(lead.pipelineStage ?? 'novo_contato')
-  const [followUpDate, setFollowUpDate] = useState(lead.followUpDate ? lead.followUpDate.slice(0, 10) : '')
-  const [followUpNote, setFollowUpNote] = useState(lead.followUpNote ?? '')
-  const [humanOwner, setHumanOwner] = useState<string | number | null>(lead.humanOwnerMemberId ?? null)
+  const [contextDraft, setContextDraft] = useState(() => contextFromLead(lead))
+  const { requestSummary, commitment, nextAction, nextActionDueAt, pipelineStage, followUpDate, followUpNote, sacCaseState } = contextDraft
+  const contextDraftRef = useRef(contextDraft)
+  const dirtyContextRef = useRef(new Set<keyof SacContextDraft>())
+  const contextVersionRef = useRef(lead.contextVersion ?? 1)
+  const savingContextRef = useRef(false)
+  const [contextError, setContextError] = useState<string | null>(null)
+  const [requestMessageId, setRequestMessageId] = useState(lead.requestMessageId ?? null)
+  const [responsibleAgent, setResponsibleAgent] = useState(lead.responsibleAgent ?? null)
+  const [humanOwner, setHumanOwner] = useState<string | number | null>(lead.humanOwnerName ?? lead.humanOwnerMemberId ?? lead.humanOwnerUserId ?? null)
   const [isEditingContext, setIsEditingContext] = useState(false)
   const [savingContext, setSavingContext] = useState(false)
   const [claiming, setClaiming] = useState(false)
+  const [pipelineColumns, setPipelineColumns] = useState<Array<{ id: string; label: string }> | null>(null)
+  const [historyMode, setHistoryMode] = useState(Boolean(highlightMessageId))
+  const highlightedOnceRef = useRef(false)
+  const [pendingItems, setPendingItems] = useState<PendingItem[]>([])
+  const [loadingPending, setLoadingPending] = useState(false)
+  const [pendingError, setPendingError] = useState<string | null>(null)
+  const [variableReply, setVariableReply] = useState<ApprovedReply | null>(null)
+  const [replyVariables, setReplyVariables] = useState<Record<string, string>>({})
+
+  function editContextField(field: keyof SacContextDraft, value: string) {
+    dirtyContextRef.current.add(field)
+    contextDraftRef.current = { ...contextDraftRef.current, [field]: value }
+    setContextDraft(contextDraftRef.current)
+  }
+  const setRequestSummary = (value: string) => editContextField('requestSummary', value)
+  const setCommitment = (value: string) => editContextField('commitment', value)
+  const setNextAction = (value: string) => editContextField('nextAction', value)
+  const setNextActionDueAt = (value: string) => editContextField('nextActionDueAt', value)
+  const setFollowUpNote = (value: string) => editContextField('followUpNote', value)
+
+  const hydrateContext = useCallback((incoming: Partial<ChatLead>) => {
+    const serverContext = contextFromLead(incoming)
+    if (dirtyContextRef.current.size === 0) contextVersionRef.current = incoming.contextVersion ?? contextVersionRef.current
+    contextDraftRef.current = mergeContextDraft(contextDraftRef.current, serverContext, dirtyContextRef.current)
+    setContextDraft(contextDraftRef.current)
+    setRequestMessageId(incoming.requestMessageId ?? null)
+    setResponsibleAgent(incoming.responsibleAgent ?? null)
+    setHumanOwner(incoming.humanOwnerName ?? incoming.humanOwnerMemberId ?? incoming.humanOwnerUserId ?? null)
+  }, [])
 
   // SAC Lote 1: Notas Internas
   const [internalNotes, setInternalNotes] = useState<Array<{ id: number; body: string; authorName: string | null; createdAt: string | null }>>([])
@@ -170,9 +215,10 @@ export function ChatWindow({
 
   // SAC Lote 1: Respostas Aprovadas
   const [showApprovedReplies, setShowApprovedReplies] = useState(false)
-  const [approvedReplies, setApprovedReplies] = useState<Array<{ id: number; title: string; shortcut: string | null; body: string; variables: string[] | null }>>([])
+  const [approvedReplies, setApprovedReplies] = useState<ApprovedReply[]>([])
   const [loadingReplies, setLoadingReplies] = useState(false)
   const [replyFilter, setReplyFilter] = useState('')
+  const [replyError, setReplyError] = useState<string | null>(null)
 
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -181,28 +227,36 @@ export function ChatWindow({
   const didInitialScrollRef = useRef(false)
   const shouldScrollToBottomRef = useRef(true)
   const prependScrollHeightRef = useRef<number | null>(null)
-  const pendingRequestIdRef = useRef<string | null>(null)
+  const pendingIntentRef = useRef<ComposerIntent | null>(null)
+
+  const reconcileSendOutcome = useCallback((incoming: InboxMessage[]) => {
+    const intent = pendingIntentRef.current
+    if (!intent) return
+    const outcome = incoming.find(message => message.clientRequestId === intent.clientRequestId)
+    if (outcome?.sendState === 'accepted') {
+      pendingIntentRef.current = null
+      setText(current => draftAfterAccepted(current, intent.content))
+      setSendError(null)
+    } else if (outcome?.sendState === 'failed') {
+      pendingIntentRef.current = { ...intent, state: 'failed' }
+    }
+  }, [])
 
   const refresh = useCallback(
     async (silent = false) => {
       if (!silent) setRefreshing(true)
       try {
-        const res = await fetch(`/api/inbox/${lead.id}`, { cache: 'no-store' })
+        const res = await fetch(`/api/inbox/${lead.id}${historyMode ? `?aroundMessageId=${highlightMessageId}` : ''}`, { cache: 'no-store' })
         if (res.ok) {
           const data = await res.json()
           if (data.messages) {
             const container = messagesContainerRef.current
             shouldScrollToBottomRef.current = !!container
               && container.scrollHeight - container.scrollTop - container.clientHeight < 120
-            setMessages(prev => {
-              const merged = new Map(prev.map(message => [message.id, message]))
-              for (const message of data.messages as InboxMessage[]) merged.set(message.id, message)
-              return [...merged.values()].sort((a, b) => {
-                const timeDiff = new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
-                return timeDiff || a.id - b.id
-              })
-            })
+            setMessages(prev => upsertInboxMessages(prev, data.messages as InboxMessage[]))
+            reconcileSendOutcome(data.messages as InboxMessage[])
           }
+          if (data.lead) hydrateContext(data.lead)
           if (data.lead && typeof data.lead.botPaused === 'boolean') {
             setBotPaused(data.lead.botPaused)
           }
@@ -216,15 +270,43 @@ export function ChatWindow({
         if (!silent) setRefreshing(false)
       }
     },
-    [lead.id]
+    [lead.id, historyMode, highlightMessageId, hydrateContext, reconcileSendOutcome]
   )
 
   useEffect(() => {
-    if (!shouldScrollToBottomRef.current || !messagesContainerRef.current) return
+    if (historyMode || !shouldScrollToBottomRef.current || !messagesContainerRef.current) return
     messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
     shouldScrollToBottomRef.current = false
     didInitialScrollRef.current = true
-  }, [messages])
+  }, [messages, historyMode])
+
+  useEffect(() => {
+    if (!historyMode || !highlightMessageId || highlightedOnceRef.current) return
+    const target = messagesContainerRef.current?.querySelector<HTMLElement>(`[data-message-id="${highlightMessageId}"]`)
+    if (!target) return
+    target.scrollIntoView({ block: 'center' })
+    highlightedOnceRef.current = true
+    didInitialScrollRef.current = true
+  }, [messages, historyMode, highlightMessageId])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/pipeline/columns', { cache: 'no-store' }).then(async response => {
+      if (!response.ok) throw new Error('Não foi possível carregar as etapas do pipeline.')
+      const data = await response.json()
+      if (cancelled) return
+      const columns = Array.isArray(data.columns) ? data.columns : DEFAULT_PIPELINE_COLUMNS
+      setPipelineColumns(columns.filter((column: { id?: unknown; label?: unknown }) => typeof column.id === 'string' && typeof column.label === 'string'))
+    }).catch(error => { if (!cancelled) setContextError(error.message) })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!showDetails) return
+    const handler = (event: KeyboardEvent) => { if (event.key === 'Escape') setShowDetails(false) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [showDetails])
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -255,13 +337,14 @@ export function ChatWindow({
   }, [messages])
 
   useEffect(() => {
+    if (historyMode) return
     const firstRefresh = setTimeout(() => refresh(true), 0)
     const t = setInterval(() => refresh(true), ACTIVE_CHAT_POLL_MS)
     return () => {
       clearTimeout(firstRefresh)
       clearInterval(t)
     }
-  }, [refresh])
+  }, [refresh, historyMode])
 
   const loadOlderMessages = useCallback(async () => {
     if (!historyCursor || !hasMoreHistory || loadingHistoryRef.current) return
@@ -301,7 +384,6 @@ export function ChatWindow({
     ) loadOlderMessages()
   }, [loadOlderMessages])
 
-  const [sendError, setSendError] = useState<string | null>(null)
 
   async function handleToggleBotPause() {
     if (pauseLoading) return
@@ -395,39 +477,33 @@ export function ChatWindow({
     setLoadingNotes(true)
     try {
       const res = await fetch(`/api/inbox/${lead.id}/notes`)
-      if (res.ok) {
-        const data = await res.json()
-        setInternalNotes(data.notes || [])
-      }
-    } catch {
-      // silencioso
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Não foi possível carregar as notas internas.')
+      setInternalNotes(data.notes || [])
+    } catch (error) {
+      setContextError(error instanceof Error ? error.message : 'Erro de conexão ao carregar notas.')
     } finally {
       setLoadingNotes(false)
     }
   }, [lead.id])
 
-  useEffect(() => {
-    if (showDetails && sidePanelTab === 'notes') {
-      loadNotes()
-    }
-  }, [showDetails, sidePanelTab, loadNotes])
-
   async function handleCreateNote(e: React.FormEvent) {
     e.preventDefault()
     if (!newNoteText.trim() || savingNote) return
+    const submittedNote = newNoteText.trim()
     setSavingNote(true)
     try {
       const res = await fetch(`/api/inbox/${lead.id}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: newNoteText.trim() }),
+        body: JSON.stringify({ body: submittedNote }),
       })
-      if (res.ok) {
-        setNewNoteText('')
-        await loadNotes()
-      }
-    } catch {
-      // erro
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Não foi possível salvar a nota interna.')
+      setNewNoteText(current => draftAfterAccepted(current, submittedNote))
+      await loadNotes()
+    } catch (error) {
+      setContextError(error instanceof Error ? error.message : 'Erro de conexão ao salvar nota.')
     } finally {
       setSavingNote(false)
     }
@@ -436,45 +512,89 @@ export function ChatWindow({
   async function handleDeleteNote(noteId: number) {
     try {
       const res = await fetch(`/api/inbox/${lead.id}/notes/${noteId}`, { method: 'DELETE' })
-      if (res.ok) {
-        setInternalNotes(prev => prev.filter(n => n.id !== noteId))
-      }
-    } catch {
-      // erro
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Não foi possível excluir a nota interna.')
+      setInternalNotes(prev => prev.filter(n => n.id !== noteId))
+    } catch (error) {
+      setContextError(error instanceof Error ? error.message : 'Erro de conexão ao excluir nota.')
     }
   }
 
   // ── SAC Lote 1: Handlers de Respostas Aprovadas ────────────────────────────
   const loadReplies = useCallback(async () => {
     setLoadingReplies(true)
+    setReplyError(null)
     try {
-      const res = await fetch('/api/approved-replies')
-      if (res.ok) {
-        const data = await res.json()
-        setApprovedReplies(data.replies || [])
-      }
-    } catch {
-      // silencioso
+      const res = await fetch('/api/approved-replies?state=approved', { cache: 'no-store' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Não foi possível carregar as respostas aprovadas.')
+      setApprovedReplies((data.replies || []).filter((reply: ApprovedReply) => reply.approvalState === 'approved'))
+    } catch (error) {
+      setReplyError(error instanceof Error ? error.message : 'Erro de conexão ao carregar respostas.')
     } finally {
       setLoadingReplies(false)
     }
   }, [])
 
-  useEffect(() => {
-    if (showApprovedReplies) {
-      loadReplies()
-    }
-  }, [showApprovedReplies, loadReplies])
-
-  function handleInsertReply(reply: { id: number; title: string; shortcut: string | null; body: string }) {
-    let replacedBody = reply.body
-    const nameToUse = leadName || 'cliente'
-    replacedBody = replacedBody.replace(/\{nome\}/gi, nameToUse)
-    replacedBody = replacedBody.replace(/\{produto\}/gi, lead.productName || 'produto')
-
-    setText(prev => (prev.trim() ? `${prev}\n\n${replacedBody}` : replacedBody))
+  function insertPreparedReply(body: string) {
+    setText(previous => previous.trim() ? `${previous}\n\n${body}` : body)
+    setVariableReply(null)
+    setReplyVariables({})
     setShowApprovedReplies(false)
     textareaRef.current?.focus()
+  }
+
+  function handleInsertReply(reply: ApprovedReply) {
+    const prepared = fillReplyTemplate(reply.body, { nome: leadName, produto: lead.productName })
+    const missing = unresolvedReplyVariables(prepared)
+    if (missing.length) {
+      setVariableReply({ ...reply, body: prepared })
+      setReplyVariables(Object.fromEntries(missing.map(variable => [variable, ''])))
+      return
+    }
+    insertPreparedReply(prepared)
+  }
+
+  async function loadPending() {
+    setLoadingPending(true)
+    setPendingError(null)
+    try {
+      const response = await fetch('/api/inbox/pending', { cache: 'no-store' })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Não foi possível carregar as pendências.')
+      setPendingItems(data.items || data.pending || [])
+    } catch (error) {
+      setPendingError(error instanceof Error ? error.message : 'Erro de conexão.')
+    } finally {
+      setLoadingPending(false)
+    }
+  }
+
+  async function resolvePending(id: number, state: 'resolvido' | 'descartado') {
+    try {
+      const response = await fetch(`/api/inbox/pending/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state }) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Não foi possível atualizar a pendência.')
+      setPendingItems(previous => previous.filter(item => item.id !== id))
+    } catch (error) {
+      setPendingError(error instanceof Error ? error.message : 'Erro de conexão.')
+    }
+  }
+
+  async function returnToCurrentHistory() {
+    try {
+      const response = await fetch(`/api/inbox/${lead.id}`, { cache: 'no-store' })
+      if (!response.ok) throw new Error('Não foi possível carregar a conversa atual.')
+      const data = await response.json()
+      shouldScrollToBottomRef.current = true
+      setMessages(data.messages || [])
+      setHasMoreHistory(Boolean(data.history?.hasMore))
+      setHistoryCursor(data.history?.nextCursor ?? null)
+      setHistoryMode(false)
+      if (data.lead) hydrateContext(data.lead)
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : 'Erro de conexão.')
+    }
   }
 
   const filteredReplies = approvedReplies.filter(r => {
@@ -490,90 +610,123 @@ export function ChatWindow({
   // ── SAC Lote 1: Handlers de Atendimento Humano & Contexto ──────────────────
   async function handleClaim() {
     setClaiming(true)
+    setContextError(null)
     try {
-      const res = await fetch(`/api/inbox/${lead.id}/claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberName: 'Atendente Humano' }),
+      const response = await fetch(`/api/inbox/${lead.id}/claim`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedContextVersion: contextVersionRef.current }),
       })
-      if (res.ok) {
-        const data = await res.json()
-        setBotPaused(true)
-        setHumanOwner(data.lead?.humanOwnerMemberId || 'Atendente Humano')
-        setPauseToast('Você assumiu este atendimento! O bot foi pausado.')
-        setTimeout(() => setPauseToast(null), 3500)
-      }
-    } catch {
-      // erro
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Não foi possível assumir este atendimento.')
+      if (data.lead) hydrateContext(data.lead)
+      setBotPaused(data.lead?.botPaused ?? data.botPaused ?? botPaused)
+      setPauseToast('Atendimento assumido pelo responsável autenticado.')
+      setTimeout(() => setPauseToast(null), 3500)
+    } catch (error) {
+      setContextError(error instanceof Error ? error.message : 'Erro de conexão ao assumir o atendimento.')
     } finally {
       setClaiming(false)
     }
   }
 
-  async function handleSaveContext() {
+  async function saveContextFields(fields = new Set(dirtyContextRef.current)): Promise<boolean> {
+    if (!fields.size) return true
+    if (savingContextRef.current) return false
+    savingContextRef.current = true
     setSavingContext(true)
+    setContextError(null)
+    const sentDraft = { ...contextDraftRef.current }
     try {
-      const res = await fetch(`/api/inbox/${lead.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestSummary,
-          commitment,
-          nextAction,
-          nextActionDueAt: nextActionDueAt ? new Date(nextActionDueAt).toISOString() : null,
-          pipelineStage,
-          followUpDate: followUpDate ? new Date(followUpDate).toISOString() : null,
-          followUpNote,
-        }),
+      const response = await fetch(`/api/inbox/${lead.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildContextPatch(sentDraft, fields, contextVersionRef.current)),
       })
-      if (res.ok) {
-        setIsEditingContext(false)
-        setPauseToast('Contexto atualizado com sucesso!')
-        setTimeout(() => setPauseToast(null), 3000)
+      const data = await response.json()
+      if (!response.ok) {
+        if (response.status === 409) {
+          setContextError('Outro operador atualizou este atendimento. Sua edição foi mantida. Recarregue o contexto antes de salvar novamente.')
+        } else setContextError(data.error || 'Não foi possível salvar o contexto. Sua edição foi mantida.')
+        return false
       }
+      for (const field of fields) {
+        if (contextDraftRef.current[field] === sentDraft[field]) dirtyContextRef.current.delete(field)
+      }
+      contextVersionRef.current = data.lead?.contextVersion ?? contextVersionRef.current + 1
+      if (data.lead) hydrateContext(data.lead)
+      setPauseToast('Contexto atualizado com sucesso!')
+      setTimeout(() => setPauseToast(null), 3000)
+      return true
     } catch {
-      // erro
+      setContextError('Erro de conexão ao salvar. Sua edição foi mantida.')
+      return false
     } finally {
+      savingContextRef.current = false
       setSavingContext(false)
     }
   }
 
+  async function handleSaveContext() {
+    if (await saveContextFields()) setIsEditingContext(false)
+  }
+
+  async function changeSavedContext(field: keyof SacContextDraft, value: string) {
+    if (savingContextRef.current) return
+    const previous = contextDraftRef.current[field]
+    editContextField(field, value)
+    if (!await saveContextFields(new Set([field]))) {
+      contextDraftRef.current = { ...contextDraftRef.current, [field]: previous }
+      dirtyContextRef.current.delete(field)
+      setContextDraft(contextDraftRef.current)
+    }
+  }
 
   async function handleSend() {
     if (!text.trim() || sending) return
+    if (historyMode) {
+      setSendError('Volte para a conversa atual antes de enviar uma mensagem.')
+      return
+    }
+    const content = text.trim()
+    const missingVariables = unresolvedReplyVariables(content)
+    if (missingVariables.length) {
+      setSendError(`Preencha as variáveis antes de enviar: ${missingVariables.join(', ')}.`)
+      return
+    }
+    if (!canStartComposerIntent(pendingIntentRef.current, content)) {
+      setSendError('Há um envio anterior em processamento ou com resultado incerto. Verifique seu estado antes de enviar outro texto; seu rascunho foi mantido.')
+      return
+    }
     setSending(true)
     setSendError(null)
-    const content = text.trim()
-    const clientRequestId =
-      pendingRequestIdRef.current ||
-      (typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2))
-    pendingRequestIdRef.current = clientRequestId
-
+    const previousIntent = pendingIntentRef.current
+    const intent: ComposerIntent = previousIntent?.content === content ? previousIntent : {
+      clientRequestId: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `req_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      content, state: 'pending',
+    }
+    pendingIntentRef.current = intent
     try {
-      const res = await fetch(`/api/inbox/${lead.id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Request-Id': clientRequestId,
-        },
-        body: JSON.stringify({ content, clientRequestId }),
+      const response = await fetch(`/api/inbox/${lead.id}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-Request-Id': intent.clientRequestId },
+        body: JSON.stringify({ content: intent.content, clientRequestId: intent.clientRequestId }),
       })
-      if (res.ok) {
-        const msg: InboxMessage = await res.json()
-        setText('')
-        pendingRequestIdRef.current = null
+      const data = await response.json().catch(() => ({}))
+      const message = data.message ?? (Number.isInteger(data.id) ? data : null)
+      if (message && Number.isInteger(message.id)) setMessages(previous => upsertInboxMessages(previous, [message as InboxMessage]))
+      const state = message?.sendState ?? data.sendState
+      if (response.status === 202 || state === 'pending' || state === 'uncertain') {
+        pendingIntentRef.current = { ...intent, state: state === 'uncertain' ? 'uncertain' : 'pending' }
+        setSendError(data.error || (state === 'uncertain' ? 'O resultado do envio é incerto. Verifique o estado antes de tentar novamente.' : 'Envio em processamento. Aguardando confirmação do transporte.'))
+      } else if (response.ok && state !== 'failed') {
+        setText(current => draftAfterAccepted(current, intent.content))
+        pendingIntentRef.current = null
         shouldScrollToBottomRef.current = true
-        setMessages(prev => [...prev, msg])
-      } else if (res.status === 202) {
-        setSendError('Envio aceito para processamento em segundo plano (202). Aguardando confirmação da operadora.')
       } else {
-        const errData = await res.json().catch(() => ({}))
-        setSendError(errData.error || 'Falha no transporte da operadora. Seu rascunho foi mantido.')
+        // Um conflito conserva a intenção original: não permite trocar seu payload por acidente.
+        pendingIntentRef.current = { ...intent, state: response.status === 409 ? 'uncertain' : 'failed' }
+        setSendError(data.error || 'Falha no transporte. Seu rascunho foi mantido.')
       }
     } catch {
-      setSendError('Erro de conexão ao enviar mensagem. Seu rascunho foi mantido.')
+      pendingIntentRef.current = { ...intent, state: 'uncertain' }
+      setSendError('Erro de conexão: o resultado do envio é incerto. Seu rascunho foi mantido.')
     } finally {
       setSending(false)
     }
@@ -685,10 +838,12 @@ export function ChatWindow({
           </div>
 
           {/* Ações do Topo: Botão Pausar/Retomar Bot, Info Lead e Refresh */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button type="button" onClick={() => { setShowDetails(true); setSidePanelTab('pending'); void loadPending() }} title="Pendências de atendimento" aria-label="Abrir pendências de atendimento" className="h-8 w-8 rounded-lg border border-line-subtle flex items-center justify-center text-fg-muted hover:text-fg"><Clock size={14} /></button>
             {/* BOTÃO PAUSAR / RETOMAR BOT */}
             <button
               type="button"
+              aria-label={botPaused ? 'Retomar Bot' : 'Pausar Bot'}
               onClick={handleToggleBotPause}
               disabled={pauseLoading}
               title={botPaused ? 'Clique para retomar o robô de IA' : 'Clique para pausar o robô e assumir o atendimento manual'}
@@ -706,13 +861,13 @@ export function ChatWindow({
               ) : (
                 <Pause size={13} className="fill-current" />
               )}
-              <span>{botPaused ? 'Retomar Bot' : 'Pausar Bot'}</span>
+              <span className="hidden sm:inline">{botPaused ? 'Retomar Bot' : 'Pausar Bot'}</span>
             </button>
 
             {/* Alternador de Detalhes do Lead */}
             <button
               type="button"
-              onClick={() => setShowDetails(prev => !prev)}
+              onClick={() => { if (!showDetails && sidePanelTab === 'notes') void loadNotes(); setShowDetails(prev => !prev) }}
               title="Ver detalhes do lead"
               className={cn(
                 'h-8 w-8 flex items-center justify-center rounded-xl border text-fg-subtle transition-colors hover:text-fg cursor-pointer',
@@ -740,6 +895,12 @@ export function ChatWindow({
         {/* 1.1 Banner da Janela Oficial da Meta (24h / 72h) */}
         <MetaWindowBanner lead={lead} />
 
+        {historyMode && (
+          <div role="status" className="border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-micro text-fg flex flex-wrap items-center justify-between gap-2">
+            <span>Histórico ao redor da mensagem #{highlightMessageId}. Atualizações e envio estão suspensos nesta visualização.</span>
+            <button type="button" onClick={() => void returnToCurrentHistory()} className="font-semibold text-brand-ink underline">Voltar à conversa atual</button>
+          </div>
+        )}
         {/* 2. Área de Mensagens */}
         <div
           ref={messagesContainerRef}
@@ -759,7 +920,7 @@ export function ChatWindow({
               </button>
             </div>
           )}
-          <MessageList messages={messages} contactName={leadName} agentName={agentLabel} />
+          <MessageList messages={messages} contactName={leadName} agentName={agentLabel} highlightMessageId={historyMode ? highlightMessageId : null} />
         </div>
 
         {/* 3. Área de Envio da Mensagem */}
@@ -779,6 +940,7 @@ export function ChatWindow({
                 <button
                   type="button"
                   onClick={() => setSendError(null)}
+                  aria-label="Fechar aviso de envio"
                   className="text-fg-subtle hover:text-fg font-bold px-1"
                 >
                   ×
@@ -790,7 +952,7 @@ export function ChatWindow({
           <div className="flex items-center justify-between gap-2 px-1">
             <button
               type="button"
-              onClick={() => setShowApprovedReplies(prev => !prev)}
+              onClick={() => { if (!showApprovedReplies) void loadReplies(); setShowApprovedReplies(prev => !prev) }}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-line-subtle bg-surface-inset hover:bg-surface-raised text-fg-muted hover:text-fg text-[11px] font-semibold transition-colors cursor-pointer"
             >
               <Zap size={12} className="text-amber-400" />
@@ -809,6 +971,7 @@ export function ChatWindow({
                 <button
                   type="button"
                   onClick={() => setShowApprovedReplies(false)}
+                  aria-label="Fechar respostas aprovadas"
                   className="text-fg-subtle hover:text-fg p-0.5 rounded cursor-pointer"
                 >
                   <X size={14} />
@@ -823,6 +986,18 @@ export function ChatWindow({
                 className="w-full bg-surface-inset border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg placeholder:text-fg-faint focus:outline-none focus:border-brand-solid"
               />
 
+              {replyError && <p role="alert" className="text-micro text-rose-400">{replyError}</p>}
+              {variableReply && (
+                <form className="p-3 border-b border-line-subtle space-y-2" onSubmit={event => {
+                  event.preventDefault()
+                  const prepared = fillReplyTemplate(variableReply.body, replyVariables)
+                  if (!unresolvedReplyVariables(prepared).length) insertPreparedReply(prepared)
+                }}>
+                  <p className="text-micro font-semibold text-fg">Preencha os dados de “{variableReply.title}”</p>
+                  {Object.keys(replyVariables).map(variable => <label key={variable} className="block text-micro text-fg-muted">{variable}<input required value={replyVariables[variable]} onChange={event => setReplyVariables(previous => ({ ...previous, [variable]: event.target.value }))} className="mt-1 block w-full rounded-lg border border-line-subtle bg-surface-inset p-2 text-fg" /></label>)}
+                  <div className="flex gap-3"><button type="submit" disabled={Object.values(replyVariables).some(value => !value.trim())} className="text-brand-ink font-semibold text-micro disabled:opacity-40">Inserir no rascunho</button><button type="button" onClick={() => setVariableReply(null)} className="text-fg-muted text-micro">Cancelar</button></div>
+                </form>
+              )}
               <div className="max-h-48 overflow-y-auto scroll-thin space-y-1 divide-y divide-line-subtle/50">
                 {loadingReplies ? (
                   <p className="text-[11px] text-fg-muted p-2 text-center">Carregando respostas...</p>
@@ -865,7 +1040,7 @@ export function ChatWindow({
             />
             <button
               onClick={handleSend}
-              disabled={!text.trim() || sending}
+              disabled={!text.trim() || sending || historyMode}
               aria-label="Enviar mensagem"
               title={`Enviar mensagem via ${channelLabel}`}
               className="focus-ring flex items-center justify-center h-11 w-11 shrink-0 rounded-xl bg-brand-solid text-on-accent transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs"
@@ -896,12 +1071,14 @@ export function ChatWindow({
       </div>
 
       {/* Painel Lateral com Contexto SAC, Notas Internas e Detalhes */}
+      {showDetails && <button type="button" aria-label="Fechar painel de atendimento" onClick={() => setShowDetails(false)} className="absolute inset-0 z-40 bg-black/40 xl:hidden" />}
       {showDetails && (
-        <aside className="w-84 shrink-0 border-l border-line-subtle bg-surface-panel p-4 overflow-y-auto scroll-thin flex flex-col gap-4 animate-in slide-in-from-right duration-200">
+        <aside aria-label="Painel de atendimento SAC" className="absolute inset-y-0 right-0 z-50 w-full max-w-[360px] xl:relative xl:w-84 xl:max-w-none shrink-0 border-l border-line-subtle bg-surface-panel p-4 overflow-y-auto scroll-thin flex flex-col gap-4 animate-in slide-in-from-right duration-200">
           <div className="flex items-center justify-between pb-2 border-b border-line-subtle">
             <h3 className="text-body font-bold text-fg">Atendimento SAC</h3>
             <button
               onClick={() => setShowDetails(false)}
+              aria-label="Fechar painel de atendimento"
               className="text-fg-subtle hover:text-fg p-1 rounded-lg hover:bg-surface-inset cursor-pointer"
             >
               <X size={16} />
@@ -937,6 +1114,7 @@ export function ChatWindow({
             >
               Notas {internalNotes.length > 0 && <span className="text-[10px] px-1.5 bg-surface-inset rounded-full">{internalNotes.length}</span>}
             </button>
+            <button type="button" onClick={() => { setSidePanelTab('pending'); void loadPending() }} className={cn('flex-1 py-1.5 text-[11px] font-bold rounded-lg cursor-pointer', sidePanelTab === 'pending' ? 'bg-surface-raised text-brand-ink' : 'text-fg-subtle')}>Pendências</button>
             <button
               type="button"
               onClick={() => setSidePanelTab('info')}
@@ -950,6 +1128,20 @@ export function ChatWindow({
               Detalhes
             </button>
           </div>
+
+          {contextError && <div role="alert" className="p-2 rounded-lg border border-rose-500/30 bg-rose-500/10 text-micro text-fg space-y-2"><p>{contextError}</p><button type="button" disabled={savingContext} className="text-brand-ink underline" onClick={async () => {
+            const response = await fetch(`/api/inbox/${lead.id}`, { cache: 'no-store' })
+            if (!response.ok) return
+            const data = await response.json()
+            if (data.lead) { dirtyContextRef.current.clear(); hydrateContext(data.lead); setIsEditingContext(false); setContextError(null) }
+          }}>Recarregar contexto e descartar minha edição</button></div>}
+          {sidePanelTab === 'pending' && <div className="space-y-3">
+            <p className="text-micro text-fg-muted">Pendências da empresa. Resolver este alerta não encerra o atendimento nem altera a etapa comercial.</p>
+            <button type="button" onClick={() => void loadPending()} disabled={loadingPending} className="text-micro text-brand-ink underline">{loadingPending ? 'Carregando...' : 'Atualizar pendências'}</button>
+            {pendingError && <p role="alert" className="text-micro text-rose-400">{pendingError}</p>}
+            {!loadingPending && !pendingError && pendingItems.length === 0 && <p className="text-micro text-fg-muted">Nenhuma pendência encontrada.</p>}
+            {pendingItems.map(item => <div key={item.id} className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2"><Link href={`/inbox/${item.leadId}`} className="text-micro font-semibold text-brand-ink">{item.leadName || item.leadPhone || `Atendimento #${item.leadId}`}</Link><p className="text-micro text-fg">{item.reason}</p>{item.dueAt && <p className="text-[11px] text-fg-muted">Prazo: {new Date(item.dueAt).toLocaleString('pt-BR')}</p>}<div className="flex gap-3"><button type="button" onClick={() => void resolvePending(item.id, 'resolvido')} className="text-micro text-brand-ink">Resolver alerta</button><button type="button" onClick={() => void resolvePending(item.id, 'descartado')} className="text-micro text-fg-muted">Dispensar</button></div></div>)}
+          </div>}
 
           {/* ── ABA 1: CONTEXTO SAC (CARD APROVADO) ─────────────────────────── */}
           {sidePanelTab === 'context' && (
@@ -1013,9 +1205,7 @@ export function ChatWindow({
                       {requestSummary || <span className="text-fg-faint italic">Nenhum pedido registrado</span>}
                     </p>
                   )}
-                  {lead.requestMessageId && (
-                    <span className="text-[9px] text-fg-subtle font-mono block">Msg ref: #{lead.requestMessageId}</span>
-                  )}
+                  {requestMessageId && <Link href={`${backHref}/${lead.id}?aroundMessageId=${requestMessageId}`} className="text-[11px] text-brand-ink underline block">Abrir mensagem de referência #{requestMessageId}</Link>}
                 </div>
 
                 {/* Compromisso */}
@@ -1086,26 +1276,16 @@ export function ChatWindow({
                 </div>
                 <select
                   value={pipelineStage}
-                  onChange={async e => {
-                    const newStage = e.target.value
-                    setPipelineStage(newStage)
-                    await fetch(`/api/inbox/${lead.id}`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ pipelineStage: newStage }),
-                    }).catch(() => null)
-                  }}
+                  disabled={!pipelineColumns || savingContext}
+                  onChange={event => void changeSavedContext('pipelineStage', event.target.value)}
                   className="w-full bg-surface-panel border border-line-subtle rounded-xl px-3 py-1.5 text-micro text-fg focus:outline-none focus:border-brand-solid cursor-pointer font-medium"
                 >
-                  <option value="novo_contato">Novo Contato</option>
-                  <option value="em_atendimento">Em Atendimento</option>
-                  <option value="qualificado">Qualificado</option>
-                  <option value="agendado">Agendado / Reserva</option>
-                  <option value="compareceu">Compareceu</option>
-                  <option value="fechado">Fechado / Ganho</option>
-                  <option value="perdido">Perdido</option>
+                  {(!pipelineColumns || !pipelineColumns.some(column => column.id === pipelineStage)) && <option value={pipelineStage}>{pipelineStage}</option>}
+                  {pipelineColumns?.map(column => <option key={column.id} value={column.id}>{column.label}</option>)}
                 </select>
               </div>
+
+              <div className="p-3 bg-surface-inset border border-line-subtle rounded-xl space-y-2"><label className="text-micro font-bold uppercase text-fg-subtle block" htmlFor={`case-state-${lead.id}`}>Estado do atendimento</label><select id={`case-state-${lead.id}`} value={sacCaseState} disabled={savingContext} onChange={event => void changeSavedContext('sacCaseState', event.target.value)} className="w-full rounded-lg border border-line-subtle bg-surface-panel p-2 text-micro text-fg">{['aberto', 'em_atendimento', 'aguardando_retorno', 'transbordo', 'resolvido', 'reaberto'].map(state => <option key={state} value={state}>{state.replaceAll('_', ' ')}</option>)}</select><p className="text-[10px] text-fg-muted">Conclusão do atendimento é independente da venda e da pausa do bot.</p></div>
 
               {/* Lembrete de Retorno (Follow-up) */}
               <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-xl space-y-2">
@@ -1116,14 +1296,16 @@ export function ChatWindow({
                   {followUpDate && (
                     <button
                       type="button"
+                      disabled={savingContext}
                       onClick={async () => {
-                        setFollowUpDate('')
-                        setFollowUpNote('')
-                        await fetch(`/api/inbox/${lead.id}`, {
-                          method: 'PATCH',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ followUpDate: null, followUpNote: null }),
-                        }).catch(() => null)
+                        const previous = { ...contextDraftRef.current }
+                        editContextField('followUpDate', '')
+                        editContextField('followUpNote', '')
+                        if (!await saveContextFields(new Set(['followUpDate', 'followUpNote']))) {
+                          contextDraftRef.current = { ...contextDraftRef.current, followUpDate: previous.followUpDate, followUpNote: previous.followUpNote }
+                          dirtyContextRef.current.delete('followUpDate'); dirtyContextRef.current.delete('followUpNote')
+                          setContextDraft(contextDraftRef.current)
+                        }
                       }}
                       className="text-[10px] text-red-400 hover:underline cursor-pointer"
                     >
@@ -1135,28 +1317,16 @@ export function ChatWindow({
                   <input
                     type="date"
                     value={followUpDate}
-                    onChange={async e => {
-                      const v = e.target.value
-                      setFollowUpDate(v)
-                      await fetch(`/api/inbox/${lead.id}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ followUpDate: v ? new Date(v).toISOString() : null }),
-                      }).catch(() => null)
-                    }}
+                    disabled={savingContext}
+                    onChange={event => void changeSavedContext('followUpDate', event.target.value)}
                     className="bg-surface-panel border border-line-subtle rounded-lg px-2 py-1 text-micro text-fg focus:outline-none focus:border-brand-solid"
                   />
                   <input
                     type="text"
                     value={followUpNote}
                     onChange={e => setFollowUpNote(e.target.value)}
-                    onBlur={async () => {
-                      await fetch(`/api/inbox/${lead.id}`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ followUpNote }),
-                      }).catch(() => null)
-                    }}
+                    disabled={savingContext}
+                    onBlur={() => { if (dirtyContextRef.current.has('followUpNote')) void saveContextFields(new Set(['followUpNote'])) }}
                     placeholder="Motivo..."
                     className="bg-surface-panel border border-line-subtle rounded-lg px-2 py-1 text-micro text-fg focus:outline-none focus:border-brand-solid placeholder:text-fg-faint"
                   />
@@ -1164,11 +1334,11 @@ export function ChatWindow({
               </div>
 
               {/* Executor IA */}
-              {lead.responsibleAgent && (
+              {responsibleAgent && (
                 <div className="p-2.5 bg-surface-inset border border-line-subtle rounded-xl flex items-center justify-between text-micro">
                   <span className="text-fg-faint">Executor IA associado:</span>
                   <span className="font-semibold text-fg flex items-center gap-1">
-                    <Sparkles size={11} className="text-brand-ink" /> {lead.responsibleAgent}
+                    <Sparkles size={11} className="text-brand-ink" /> {responsibleAgent}
                   </span>
                 </div>
               )}
@@ -1219,7 +1389,7 @@ export function ChatWindow({
                       <div className="flex items-center justify-between text-[10px] text-fg-faint">
                         <span className="font-semibold text-fg-subtle">{n.authorName || 'Equipe'}</span>
                         <div className="flex items-center gap-1.5">
-                          <span>{n.createdAt ? new Date(n.createdAt).toLocaleDateString('pt-BR') : ''}</span>
+                          <span>{n.createdAt ? new Date(n.createdAt).toLocaleString('pt-BR') : ''}</span>
                           <button
                             type="button"
                             onClick={() => handleDeleteNote(n.id)}

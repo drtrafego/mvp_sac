@@ -4,14 +4,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
-import { sendWhatsAppMessage } from '@/lib/whatsapp'
-import { sendInstagramMessage } from '@/lib/instagram'
-import { sendBrevoEmail } from '@/lib/email/brevo'
 import { sendOutboundForLead } from '@/lib/outbound-send'
 import { eq, and, asc, or, sql } from 'drizzle-orm'
-import { markLeadContacted } from '@/lib/leads'
-import { type ContactIdentifier, parseContactIdentifier, resolveLeadForContact, type ResolvedLeadForContact } from '@/lib/contact-resolution'
-import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
+import { resolveLeadForContact, type ResolvedLeadForContact } from '@/lib/contact-resolution'
 
 type Params = { params: Promise<{ idOrSlug: string; contact: string }> }
 
@@ -86,10 +81,21 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   if (error || !context) return error!
 
   try {
-    const body = await req.json()
+    const body = await req.json().catch(() => null)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'Informe um objeto JSON.' }, { status: 400 })
+    }
+    for (const key of ['content', 'mediaUrl', 'messageType', 'clientRequestId', 'subject', 'senderName', 'channel']) {
+      if (body[key] != null && typeof body[key] !== 'string') {
+        return NextResponse.json({ error: `O campo ${key} deve ser texto.` }, { status: 400 })
+      }
+    }
+    if (body.channel && !['whatsapp', 'instagram', 'email'].includes(body.channel)) {
+      return NextResponse.json({ error: 'Canal inválido.' }, { status: 400 })
+    }
     const { content, messageType = 'text', mediaUrl, channel: requestedChannel = 'whatsapp' } = body
 
-    if (!content && !mediaUrl) {
+    if (!content?.trim() && !mediaUrl) {
       return NextResponse.json({ error: 'Conteúdo da mensagem ou mediaUrl é obrigatório' }, { status: 400 })
     }
 
@@ -179,36 +185,43 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
 
     const msg = sendResult.message!
 
-    // Atualiza lastActionBy do agente no lead
-    await db
-      .update(recoveryLeads)
-      .set({
-        lastActionBy: `${senderDisplayName} (Agente IA)`,
-      })
-      .where(eq(recoveryLeads.id, lead.id))
+    if (!sendResult.idempotentReplay) {
+      try {
+        // Atualiza lastActionBy do agente no lead
+        await db
+          .update(recoveryLeads)
+          .set({
+            lastActionBy: `${senderDisplayName} (Agente IA)`,
+          })
+          .where(eq(recoveryLeads.id, lead.id))
 
-    // Log de auditoria
-    const { logAgentActivity } = await import('@/lib/agent-auth')
-    await logAgentActivity({
-      companyId: context.company.id,
-      agentName: senderDisplayName,
-      agentId: context.agentId,
-      action: 'send_message',
-      entityType: 'message',
-      entityId: String(msg.id),
-      details: {
-        leadId: lead.id,
-        channel: msg.channel,
-        phone: lead.phone,
-        preview: (content || '').slice(0, 80),
-      },
-    })
+        // Log de auditoria
+        const { logAgentActivity } = await import('@/lib/agent-auth')
+        await logAgentActivity({
+          companyId: context.company.id,
+          agentName: senderDisplayName,
+          agentId: context.agentId,
+          action: 'send_message',
+          entityType: 'message',
+          entityId: String(msg.id),
+          details: {
+            leadId: lead.id,
+            channel: msg.channel,
+            phone: lead.phone,
+            preview: (content || '').slice(0, 80),
+          },
+        })
+      } catch {
+        console.warn('[SAC v1] Envio aceito; auditoria complementar pendente', { leadId: lead.id, messageId: msg.id })
+      }
+    }
 
     return NextResponse.json({
       ok: true,
-      message: 'Mensagem enviada e registrada com sucesso',
+      message: 'Mensagem aceita pelo transporte e registrada.',
+      idempotentReplay: sendResult.idempotentReplay || false,
       sentMessage: msg,
-    }, { status: 201 })
+    }, { status: sendResult.idempotentReplay ? 200 : 201 })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erro ao enviar mensagem'
     return NextResponse.json({ error: message }, { status: 500 })

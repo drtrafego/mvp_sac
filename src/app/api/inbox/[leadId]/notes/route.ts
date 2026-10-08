@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, sacInternalNotes, sacAuditEvents } from '@/lib/db/schema'
 import { eq, and, isNull, desc } from 'drizzle-orm'
-import { requireCompany } from '@/lib/auth'
+import { requireCompanyRole, requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
+import { SacInputError } from '@/lib/sac-access'
 
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init)
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     const id = parseInt(leadId)
     if (isNaN(id)) return noStoreJson({ error: 'ID inválido' }, { status: 400 })
 
-    const company = await requireCompany()
+    const { company } = await requireCompanyRole('membro')
 
     // Validar lead pertencente à empresa
     const [lead] = await db
@@ -55,8 +56,9 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
         updatedAt: n.updatedAt?.toISOString() ?? null,
       })),
     })
-  } catch (err: any) {
-    return noStoreJson({ error: err.message || 'Erro ao carregar notas' }, { status: 500 })
+  } catch (err: unknown) {
+    if (err instanceof SacInputError || err instanceof ForbiddenError || err instanceof AuthError) return noStoreJson({ error: err.message }, { status: err.status })
+    return noStoreJson({ error: 'Erro ao carregar notas' }, { status: 500 })
   }
 }
 
@@ -66,7 +68,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     const id = parseInt(leadId)
     if (isNaN(id)) return noStoreJson({ error: 'ID inválido' }, { status: 400 })
 
-    const company = await requireCompany()
+    const { company, actorId: authorId, actorName: authorName } = await requireSacActor()
 
     const [lead] = await db
       .select()
@@ -81,13 +83,6 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     }
 
     const noteText = body.body.trim()
-    const authorName = typeof body.authorName === 'string' && body.authorName.trim()
-      ? body.authorName.trim()
-      : company.agentDisplayName || 'Atendente Humano'
-    const authorId = typeof body.authorId === 'string' && body.authorId.trim()
-      ? body.authorId.trim()
-      : null
-
     const [newNote] = await db
       .insert(sacInternalNotes)
       .values({
@@ -114,7 +109,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         noteId: newNote.id,
         preview: noteText.slice(0, 80),
       },
-    }).catch(() => null)
+    }).catch(() => { console.error('[SAC audit] internal_note_added not recorded', { companyId: company.id, leadId: id }) })
 
     return noStoreJson({
       success: true,
@@ -128,7 +123,8 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         updatedAt: newNote.updatedAt?.toISOString() ?? null,
       },
     }, { status: 201 })
-  } catch (err: any) {
-    return noStoreJson({ error: err.message || 'Erro ao criar nota interna' }, { status: 500 })
+  } catch (err: unknown) {
+    if (err instanceof SacInputError || err instanceof ForbiddenError || err instanceof AuthError) return noStoreJson({ error: err.message }, { status: err.status })
+    return noStoreJson({ error: 'Erro ao criar nota interna' }, { status: 500 })
   }
 }

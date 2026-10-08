@@ -256,10 +256,12 @@ export function MessageList({
   messages,
   contactName,
   agentName,
+  highlightMessageId,
 }: {
   messages: InboxMessage[]
   contactName?: string | null
   agentName?: string | null
+  highlightMessageId?: number | null
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -288,7 +290,10 @@ export function MessageList({
                 </span>
               </div>
             )}
-            <MessageBubble message={msg} contactName={contactName} agentName={agentName} />
+            <div data-message-id={msg.id} className={cn(msg.id === highlightMessageId && 'rounded-xl ring-2 ring-brand-solid/60 bg-brand-glow p-2')}>
+              {msg.id === highlightMessageId && <p className="mb-1 text-[11px] font-semibold text-brand-ink">Mensagem de referência</p>}
+              <MessageBubble message={msg} contactName={contactName} agentName={agentName} />
+            </div>
           </React.Fragment>
         )
       })}

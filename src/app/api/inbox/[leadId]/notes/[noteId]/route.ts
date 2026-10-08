@@ -2,9 +2,10 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { sacInternalNotes } from '@/lib/db/schema'
+import { sacInternalNotes, sacAuditEvents } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
-import { requireCompany } from '@/lib/auth'
+import { requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
+import { roleSatisfies } from '@/lib/company-role'
 
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init)
@@ -23,7 +24,7 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
     const nId = parseInt(noteId)
     if (isNaN(lId) || isNaN(nId)) return noStoreJson({ error: 'IDs inválidos' }, { status: 400 })
 
-    const company = await requireCompany()
+    const { company, actorId, actorName, role } = await requireSacActor()
 
     const [updated] = await db
       .update(sacInternalNotes)
@@ -35,7 +36,8 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
         and(
           eq(sacInternalNotes.id, nId),
           eq(sacInternalNotes.companyId, company.id),
-          eq(sacInternalNotes.leadId, lId)
+          eq(sacInternalNotes.leadId, lId),
+          roleSatisfies(role, 'admin') ? undefined : eq(sacInternalNotes.authorId, actorId)
         )
       )
       .returning()
@@ -44,8 +46,15 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
       return noStoreJson({ error: 'Nota interna não encontrada' }, { status: 404 })
     }
 
+    await db.insert(sacAuditEvents).values({
+      companyId: company.id, leadId: lId, type: 'internal_note_deleted',
+      actorType: 'human', actorId, actorName,
+      referenceType: 'sac_internal_notes', referenceId: String(nId),
+    }).catch(() => { console.error('[SAC audit] internal_note_deleted not recorded', { companyId: company.id, leadId: lId }) })
+
     return noStoreJson({ success: true, deletedNoteId: nId })
-  } catch (err: any) {
-    return noStoreJson({ error: err.message || 'Erro ao excluir nota' }, { status: 500 })
+  } catch (err: unknown) {
+    if (err instanceof ForbiddenError || err instanceof AuthError) return noStoreJson({ error: err.message }, { status: err.status })
+    return noStoreJson({ error: 'Erro ao excluir nota' }, { status: 500 })
   }
 }

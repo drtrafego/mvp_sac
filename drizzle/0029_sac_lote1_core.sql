@@ -18,7 +18,7 @@ ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS context_updated_by TEXT;
 ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_control_version INTEGER DEFAULT 1;
 
 -- 3. Rastreamento e idempotência de envio em whatsapp_messages
-ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS send_state TEXT DEFAULT 'accepted';
+ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS send_state TEXT;
 ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS client_request_id TEXT;
 ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS send_error TEXT;
 
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS sac_approved_replies (
   shortcut TEXT,
   body TEXT NOT NULL,
   variables JSONB,
-  approval_state TEXT NOT NULL DEFAULT 'approved',
+  approval_state TEXT NOT NULL DEFAULT 'draft',
   version INTEGER NOT NULL DEFAULT 1,
   approved_by TEXT,
   approved_at TIMESTAMP,

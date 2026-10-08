@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:sac-lote1": "node --experimental-test-module-mocks --import tsx --test --test-concurrency=1 scripts/sac-outbound-regressions.test.ts scripts/sac-outbound-database.test.ts scripts/sac-inbox-regressions.test.ts scripts/sac-access-regressions.test.ts scripts/sac-ai-reply-flow.test.ts scripts/sac-channel-send-metrics.test.ts scripts/sac-pending-regressions.test.ts scripts/sac-pipeline-save.test.ts scripts/sac-schema-regressions.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
@@ -76,6 +77,7 @@
     ]
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

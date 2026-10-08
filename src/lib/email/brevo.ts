@@ -21,7 +21,7 @@ export async function sendBrevoEmail({
   textContent,
   replyTo,
   companyId,
-}: SendEmailOptions) {
+}: SendEmailOptions): Promise<{ ok: boolean; data?: { messageId?: string }; error?: string; uncertain?: boolean; isTimeout?: boolean }> {
   let apiKey = process.env.BREVO_API_KEY
   let senderEmail = process.env.BREVO_FROM_EMAIL || 'contato@casaldotrafego.com.br'
   let senderName = process.env.BREVO_FROM_NAME || 'SAC Casal do Tráfego'
@@ -54,6 +54,7 @@ export async function sendBrevoEmail({
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
+      signal: AbortSignal.timeout(30_000),
       body: JSON.stringify({
         sender: { email: senderEmail, name: senderName },
         to,
@@ -67,13 +68,14 @@ export async function sendBrevoEmail({
     if (!res.ok) {
       const errorPayload = await res.json().catch(() => null)
       console.error('[Brevo Error]:', errorPayload)
-      return { ok: false, error: errorPayload }
+      const message = errorPayload && typeof errorPayload.message === 'string' ? errorPayload.message : `Brevo HTTP ${res.status}`
+      return { ok: false, error: message }
     }
 
     const data = await res.json()
     return { ok: true, data }
   } catch (error) {
-    console.error('[Brevo Exception]:', error)
-    return { ok: false, error }
+    const value = error as { name?: string }
+    return { ok: false, error: error instanceof Error ? error.message : String(error), uncertain: true, isTimeout: value?.name === 'TimeoutError' || value?.name === 'AbortError' }
   }
 }

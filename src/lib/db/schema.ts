@@ -1,5 +1,6 @@
 import { pgTable, serial, integer, bigint, numeric, text, boolean, timestamp, jsonb, uniqueIndex, index, date, time } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 
 // ─── Empresas (multi-tenant) ──────────────────────────────────────────────────
 export const companies = pgTable('companies', {
@@ -131,6 +132,8 @@ export const settings = pgTable('settings', {
   // Vínculo configurável empresa -> agente / perfil de ações (SAC Lote 1, item 5.4).
   // Fallback: mapeamento padrão por slug da empresa se nulo.
   aiAgentKey: text('ai_agent_key'),
+  // Explicit opt-in: custom Pipeline IDs whose active leads require a return.
+  sacFollowupStageIds: jsonb('sac_followup_stage_ids').$type<string[]>().notNull().default([]),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => [
   uniqueIndex('settings_meta_phone_number_id_unique').on(table.metaPhoneNumberId),
@@ -466,12 +469,13 @@ export const recoveryLeads = pgTable('recovery_leads', {
 
   // ─── SAC Lote 1: Card de contexto e coordenação de atendimento humano ───────
   requestSummary: text('request_summary'),
-  requestMessageId: integer('request_message_id'),
+  requestMessageId: integer('request_message_id').references((): AnyPgColumn => whatsappMessages.id, { onDelete: 'set null' }),
   commitment: text('commitment'),
   nextAction: text('next_action'),
   humanOwnerMemberId: integer('human_owner_member_id').references(() => companyMembers.id, { onDelete: 'set null' }),
   nextActionDueAt: timestamp('next_action_due_at'),
   sacCaseState: text('sac_case_state').default('aberto'), // 'aberto' | 'aguardando_retorno' | 'resolvido' | 'reaberto'
+  sacCaseEpisode: integer('sac_case_episode').notNull().default(1),
   contextVersion: integer('context_version').default(1),
   contextUpdatedBy: text('context_updated_by'),
   botControlVersion: integer('bot_control_version').default(1),
@@ -627,8 +631,9 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
   reasoning: text('reasoning'),
   sentEmail: text('sent_email'),
   // SAC Lote 1: Rastreamento do ciclo de envio manual e idempotência de disparo
-  sendState: text('send_state').default('accepted'), // 'pending' | 'accepted' | 'failed' | 'uncertain'
+  sendState: text('send_state'), // null = no transport evidence; never presume acceptance
   clientRequestId: text('client_request_id'),        // Chave única de idempotência do cliente/interface
+  outboundPayloadHash: text('outbound_payload_hash'), // immutable full-payload binding for idempotency
   sendError: text('send_error'),                      // Erro legível retornado pelo transporte em caso de falha
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
@@ -739,7 +744,11 @@ export const companyMembers = pgTable('company_members', {
   status: text('status').default('pending').notNull(), // 'pending' | 'ativo'
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
-})
+}, table => [
+  uniqueIndex('company_members_company_user_unique')
+    .on(table.companyId, table.stackAuthUserId)
+    .where(sql`${table.stackAuthUserId} is not null`),
+])
 
 // ─── Automações de Comentário vira DM (Instagram Comment-to-DM) ─────────────
 export const instagramCommentAutomations = pgTable('instagram_comment_automations', {
@@ -905,7 +914,7 @@ export const sacApprovedReplies = pgTable('sac_approved_replies', {
   shortcut: text('shortcut'), // ex: '/pix', '/horario'
   body: text('body').notNull(),
   variables: jsonb('variables').$type<string[]>(),
-  approvalState: text('approval_state').default('approved').notNull(), // 'draft' | 'approved' | 'deprecated'
+  approvalState: text('approval_state').default('draft').notNull(), // 'draft' | 'approved' | 'deprecated'
   version: integer('version').default(1).notNull(),
   approvedBy: text('approved_by'),
   approvedAt: timestamp('approved_at'),
@@ -935,6 +944,19 @@ export const sacPendingItems = pgTable('sac_pending_items', {
   uniqueIndex('sac_pending_items_company_lead_rule_source_unique')
     .on(table.companyId, table.leadId, table.ruleType, table.sourceKey),
   index('sac_pending_items_company_state_due_idx').on(table.companyId, table.state, table.dueAt),
+])
+
+// Durable condition observations, independent of an operator acknowledging an alert.
+export const sacRuleStates = pgTable('sac_rule_states', {
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  ruleType: text('rule_type').notNull(),
+  active: boolean('active').notNull().default(false),
+  fingerprint: text('fingerprint'),
+  occurrenceNumber: integer('occurrence_number').notNull().default(0),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, table => [
+  uniqueIndex('sac_rule_states_company_lead_rule_unique').on(table.companyId, table.leadId, table.ruleType),
 ])
 
 // ─── SAC Lote 1: Eventos de auditoria do atendimento ────────────────────────

@@ -2,9 +2,10 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoveryLeads, sacAuditEvents, companyMembers } from '@/lib/db/schema'
-import { eq, and } from 'drizzle-orm'
-import { requireCompany } from '@/lib/auth'
+import { recoveryLeads, sacAuditEvents } from '@/lib/db/schema'
+import { eq, and, sql, or, isNull } from 'drizzle-orm'
+import { requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
+import { parseSacObject, parsePositiveId, parseExpectedVersion, sacEpisodeForState, SacInputError } from '@/lib/sac-access'
 
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init)
@@ -19,55 +20,38 @@ type Params = { params: Promise<{ leadId: string }> }
 export async function POST(req: NextRequest, { params }: Params): Promise<NextResponse> {
   try {
     const { leadId } = await params
-    const id = parseInt(leadId)
-    if (isNaN(id)) return noStoreJson({ error: 'ID inválido' }, { status: 400 })
+    const id = parsePositiveId(leadId, 'Lead')
+    const { company, memberId, actorId, actorName } = await requireSacActor()
+    const body = parseSacObject(await req.json().catch(() => ({})))
 
-    const company = await requireCompany()
-
-    const [lead] = await db
-      .select()
-      .from(recoveryLeads)
+    const [lead] = await db.select().from(recoveryLeads)
       .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
-
     if (!lead) return noStoreJson({ error: 'Lead não encontrado' }, { status: 404 })
-
-    const body = (await req.json().catch(() => ({}))) as Record<string, any>
-    const memberId = body.memberId ? String(body.memberId).trim() : null
-    const memberName = body.memberName ? String(body.memberName).trim() : 'Atendente Humano'
-
-    const parsedMemberId = memberId && !isNaN(parseInt(memberId)) ? parseInt(memberId) : null
-
-    // Se memberId foi fornecido, validar se pertence à mesma empresa
-    if (parsedMemberId) {
-      const [member] = await db
-        .select()
-        .from(companyMembers)
-        .where(and(eq(companyMembers.id, parsedMemberId), eq(companyMembers.companyId, company.id)))
-
-      if (!member) {
-        return noStoreJson({ error: 'Membro informado não pertence a esta empresa' }, { status: 403 })
-      }
-    }
-
-    const nextBotVersion = (lead.botControlVersion || 1) + 1
-    const nextContextVersion = (lead.contextVersion || 1) + 1
-
-    const [updatedLead] = await db
-      .update(recoveryLeads)
-      .set({
-        humanOwnerMemberId: parsedMemberId,
-        lastActionBy: memberName,
-        lastActionAt: new Date(),
-        botPaused: true,
-        botPausedAt: new Date(),
-        botPausedBy: memberName,
-        botControlVersion: nextBotVersion,
-        contextVersion: nextContextVersion,
-        sacCaseState: lead.sacCaseState === 'resolvido' ? 'reaberto' : 'em_atendimento',
-        updatedAt: new Date(),
-      })
-      .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
-      .returning()
+    const expected = body.expectedContextVersion === undefined
+      ? (lead.contextVersion ?? 1)
+      : parseExpectedVersion(body.expectedContextVersion)
+    // Assumir é exclusivo: transferência para outro atendente é uma ação separada.
+    const [updatedLead] = await db.update(recoveryLeads).set({
+      humanOwnerMemberId: memberId,
+      lastActionBy: actorName,
+      lastActionAt: new Date(),
+      botPaused: true,
+      botPausedAt: new Date(),
+      botPausedBy: actorName,
+      botPausedAll: false,
+      botPausedChannel: null,
+      botControlVersion: sql`coalesce(${recoveryLeads.botControlVersion}, 1) + 1`,
+      contextVersion: sql`coalesce(${recoveryLeads.contextVersion}, 1) + 1`,
+      sacCaseState: lead.sacCaseState === 'resolvido' ? 'reaberto' : 'em_atendimento',
+      sacCaseEpisode: sacEpisodeForState(lead.sacCaseState === 'resolvido' ? 'reaberto' : 'em_atendimento'),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id),
+      sql`coalesce(${recoveryLeads.contextVersion}, 1) = ${expected}`,
+      or(isNull(recoveryLeads.humanOwnerMemberId), eq(recoveryLeads.humanOwnerMemberId, memberId)),
+    )).returning()
+    if (!updatedLead) return noStoreJson({ error: 'O atendimento foi alterado ou assumido por outra pessoa. Atualize a conversa.', code: 'CONTEXT_CONFLICT' }, { status: 409 })
+    const nextBotVersion = updatedLead.botControlVersion
 
     // Registrar evento de auditoria
     await db.insert(sacAuditEvents).values({
@@ -75,21 +59,22 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       leadId: id,
       type: 'assume_case',
       actorType: 'human',
-      actorId: memberId,
-      actorName: memberName,
+      actorId,
+      actorName,
       payload: {
         botControlVersion: nextBotVersion,
         previousOwner: lead.humanOwnerMemberId,
         newOwner: memberId,
       },
-    }).catch(() => null)
+    }).catch(() => { console.error('[SAC audit] assume_case not recorded', { companyId: company.id, leadId: id }) })
 
     return noStoreJson({
       success: true,
-      lead: updatedLead,
+      lead: { ...updatedLead, humanOwnerName: actorName, humanOwnerUserId: actorId },
       botControlVersion: nextBotVersion,
     })
-  } catch (err: any) {
-    return noStoreJson({ error: err.message || 'Erro ao assumir atendimento' }, { status: 500 })
+  } catch (err: unknown) {
+    if (err instanceof SacInputError || err instanceof ForbiddenError || err instanceof AuthError) return noStoreJson({ error: err.message }, { status: err.status })
+    return noStoreJson({ error: 'Erro ao assumir atendimento' }, { status: 500 })
   }
 }

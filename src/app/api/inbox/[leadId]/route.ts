@@ -3,13 +3,14 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { db } from '@/lib/db'
-import { whatsappMessages, recoveryLeads, sacAuditEvents } from '@/lib/db/schema'
-import { eq, and } from 'drizzle-orm'
+import { whatsappMessages, recoveryLeads, sacAuditEvents, companyMembers } from '@/lib/db/schema'
+import { eq, and, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
 import { sendOutboundForLead } from '@/lib/outbound-send'
-import { requireCompany } from '@/lib/auth'
+import { requireCompany, requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
+import { parseSacObject, parsePositiveId, parseExpectedVersion, validateSacContextFields, sacEpisodeForState, SacInputError } from '@/lib/sac-access'
 import { markLeadContacted } from '@/lib/leads'
 import { getEmailEngagement } from '@/lib/email-engagement'
 import {
@@ -60,6 +61,11 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
 
   if (!lead) return noStoreJson({ error: 'Lead não encontrado' }, { status: 404 })
 
+  const [humanOwner] = lead.humanOwnerMemberId ? await db.select({ name: companyMembers.name, userId: companyMembers.stackAuthUserId })
+    .from(companyMembers)
+    .where(and(eq(companyMembers.id, lead.humanOwnerMemberId), eq(companyMembers.companyId, company.id), eq(companyMembers.status, 'ativo')))
+    .limit(1) : []
+
   const rawAroundMessageId = searchParams.get('aroundMessageId')
   const aroundMessageId = rawAroundMessageId ? parseInt(rawAroundMessageId) : null
 
@@ -74,7 +80,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   const messages = messagePage.messages
 
   const lastInbound = [...messages].reverse().find(m => m.direction === 'inbound')
-  const lastOutbound = [...messages].reverse().find(m => m.direction === 'outbound')
+  const lastOutbound = [...messages].reverse().find(m => m.direction === 'outbound' && (!m.sendState || m.sendState === 'accepted'))
   const lastMsg = messages[messages.length - 1]
 
   return noStoreJson({
@@ -89,6 +95,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       platform: lead.platform,
       eventType: lead.eventType,
       status: lead.status,
+      priority: lead.priority ?? null,
       productName: lead.productName,
       productValue: lead.productValue,
       botPaused: lead.botPaused ?? false,
@@ -99,6 +106,8 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       commitment: lead.commitment ?? null,
       nextAction: lead.nextAction ?? null,
       humanOwnerMemberId: lead.humanOwnerMemberId ?? null,
+      humanOwnerName: humanOwner?.name ?? null,
+      humanOwnerUserId: humanOwner?.userId ?? null,
       nextActionDueAt: lead.nextActionDueAt?.toISOString() ?? null,
       sacCaseState: lead.sacCaseState ?? null,
       pipelineStage: lead.pipelineStage ?? null,
@@ -134,6 +143,9 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       sentBy: m.sentBy ?? 'human',
       reasoning: m.reasoning ?? null,
       sentEmail: m.sentEmail ?? null,
+      sendState: m.sendState ?? null,
+      sendError: m.sendError ?? null,
+      clientRequestId: m.clientRequestId ?? null,
       createdAt: m.createdAt?.toISOString() ?? null,
     })),
     history: { hasMore: messagePage.hasMore, nextCursor: messagePage.nextCursor },
@@ -235,60 +247,27 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
 }
 
 export async function PATCH(req: NextRequest, { params }: Params): Promise<NextResponse> {
-  const { leadId } = await params
-  const id = parseInt(leadId)
-  if (isNaN(id)) return noStoreJson({ error: 'ID inválido' }, { status: 400 })
-
-  const company = await requireCompany()
-
-  const [lead] = await db
-    .select()
-    .from(recoveryLeads)
-    .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
-
-  if (!lead) return noStoreJson({ error: 'Lead não encontrado' }, { status: 404 })
-
-  const body = (await req.json().catch(() => null)) as Record<string, any> | null
-  if (!body || typeof body !== 'object') {
-    return noStoreJson({ error: 'Corpo da requisição inválido' }, { status: 400 })
+  try {
+    const { leadId } = await params
+    const id = parsePositiveId(leadId, 'Lead')
+    const { company, actorId, actorName } = await requireSacActor()
+    const body = parseSacObject(await req.json().catch(() => null))
+    const expected = parseExpectedVersion(body.expectedContextVersion)
+    const [lead] = await db.select().from(recoveryLeads)
+      .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
+    if (!lead) return noStoreJson({ error: 'Lead não encontrado' }, { status: 404 })
+    const fields = await validateSacContextFields(body, lead)
+    const episode = typeof fields.sacCaseState === 'string' ? { sacCaseEpisode: sacEpisodeForState(fields.sacCaseState) } : {}
+    if (Object.keys(fields).length === 0) return noStoreJson({ error: 'Nenhum campo alterado foi informado.' }, { status: 400 })
+    const [updatedLead] = await db.update(recoveryLeads).set({
+      ...fields, ...episode, updatedAt: new Date(), lastActionBy: actorName, lastActionAt: new Date(),
+      contextVersion: sql`coalesce(${recoveryLeads.contextVersion}, 1) + 1`,
+    }).where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id), sql`coalesce(${recoveryLeads.contextVersion}, 1) = ${expected}`)).returning()
+    if (!updatedLead) return noStoreJson({ error: 'Outra pessoa alterou este atendimento. Atualize os dados antes de salvar.', code: 'CONTEXT_CONFLICT' }, { status: 409 })
+    await db.insert(sacAuditEvents).values({ companyId: company.id, leadId: id, type: 'context_updated', actorType: 'human', actorId, actorName, payload: { updatedFields: Object.keys(fields), contextVersion: updatedLead.contextVersion } }).catch(() => { console.error('[SAC audit] context_updated not recorded', { companyId: company.id, leadId: id }) })
+    return noStoreJson({ success: true, lead: updatedLead })
+  } catch (err: unknown) {
+    if (err instanceof SacInputError || err instanceof ForbiddenError || err instanceof AuthError) return noStoreJson({ error: err.message }, { status: err.status })
+    return noStoreJson({ error: 'Erro ao atualizar atendimento.' }, { status: 500 })
   }
-
-  const updateData: Record<string, any> = {
-    updatedAt: new Date(),
-    contextVersion: (lead.contextVersion || 1) + 1,
-  }
-
-  if (body.requestSummary !== undefined) updateData.requestSummary = body.requestSummary ? String(body.requestSummary).trim() : null
-  if (body.requestMessageId !== undefined) updateData.requestMessageId = body.requestMessageId ? String(body.requestMessageId).trim() : null
-  if (body.commitment !== undefined) updateData.commitment = body.commitment ? String(body.commitment).trim() : null
-  if (body.nextAction !== undefined) updateData.nextAction = body.nextAction ? String(body.nextAction).trim() : null
-  if (body.humanOwnerMemberId !== undefined) updateData.humanOwnerMemberId = body.humanOwnerMemberId ? String(body.humanOwnerMemberId).trim() : null
-  if (body.nextActionDueAt !== undefined) updateData.nextActionDueAt = body.nextActionDueAt ? new Date(body.nextActionDueAt) : null
-  if (body.sacCaseState !== undefined) updateData.sacCaseState = body.sacCaseState ? String(body.sacCaseState).trim() : null
-  if (body.pipelineStage !== undefined) updateData.pipelineStage = body.pipelineStage ? String(body.pipelineStage).trim() : null
-  if (body.status !== undefined) updateData.status = body.status ? String(body.status).trim() : null
-  if (body.followUpDate !== undefined) updateData.followUpDate = body.followUpDate ? new Date(body.followUpDate) : null
-  if (body.followUpNote !== undefined) updateData.followUpNote = body.followUpNote ? String(body.followUpNote).trim() : null
-  if (body.responsibleAgent !== undefined) updateData.responsibleAgent = body.responsibleAgent ? String(body.responsibleAgent).trim() : null
-  if (body.notes !== undefined) updateData.notes = body.notes ? String(body.notes).trim() : null
-
-  const [updatedLead] = await db
-    .update(recoveryLeads)
-    .set(updateData)
-    .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
-    .returning()
-
-  // Log audit event
-  await db.insert(sacAuditEvents).values({
-    companyId: company.id,
-    leadId: id,
-    type: 'context_updated',
-    actorType: 'human',
-    actorName: company.agentDisplayName || 'Atendente',
-    payload: {
-      updatedFields: Object.keys(updateData).filter(k => k !== 'updatedAt' && k !== 'contextVersion'),
-    },
-  }).catch(() => null)
-
-  return noStoreJson({ success: true, lead: updatedLead })
 }

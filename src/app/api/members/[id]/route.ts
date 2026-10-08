@@ -3,6 +3,7 @@ import { requireCompanyRole, unauthorizedResponse, forbiddenResponse, ForbiddenE
 import { db } from '@/lib/db'
 import { companyMembers } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
+import { publicCompanyMember } from '@/lib/member-invite-policy'
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -14,6 +15,9 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     if (isNaN(memberId)) {
       return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
     }
+
+    const [target] = await db.select().from(companyMembers).where(and(eq(companyMembers.id, memberId), eq(companyMembers.companyId, company.id)))
+    if (target?.stackAuthUserId && target.stackAuthUserId === company.stackAuthUserId) return NextResponse.json({ error: 'O vínculo do proprietário não pode ser removido.' }, { status: 409 })
 
     const [deleted] = await db
       .delete(companyMembers)
@@ -48,6 +52,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: 'Cargo inválido' }, { status: 400 })
     }
 
+    const [target] = await db.select().from(companyMembers).where(and(eq(companyMembers.id, memberId), eq(companyMembers.companyId, company.id)))
+    if (target?.stackAuthUserId && target.stackAuthUserId === company.stackAuthUserId && role !== 'admin') return NextResponse.json({ error: 'O proprietário permanece administrador da empresa.' }, { status: 409 })
+
     const [updated] = await db
       .update(companyMembers)
       .set({ role, updatedAt: new Date() })
@@ -58,7 +65,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: 'Membro não encontrado' }, { status: 404 })
     }
 
-    return NextResponse.json({ member: updated })
+    return NextResponse.json({ member: publicCompanyMember(updated) })
   } catch (err) {
     if (err instanceof ForbiddenError) return forbiddenResponse()
     return unauthorizedResponse()

@@ -882,7 +882,7 @@ export function ensureSchema(client: any): Promise<void> {
           await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS context_updated_by TEXT`
           await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_control_version INTEGER DEFAULT 1`
 
-          await client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS send_state TEXT DEFAULT 'accepted'`
+          await client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS send_state TEXT`
           await client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS client_request_id TEXT`
           await client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS send_error TEXT`
 
@@ -919,7 +919,7 @@ export function ensureSchema(client: any): Promise<void> {
               shortcut TEXT,
               body TEXT NOT NULL,
               variables JSONB,
-              approval_state TEXT NOT NULL DEFAULT 'approved',
+              approval_state TEXT NOT NULL DEFAULT 'draft',
               version INTEGER NOT NULL DEFAULT 1,
               approved_by TEXT,
               approved_at TIMESTAMP,
@@ -980,14 +980,56 @@ export function ensureSchema(client: any): Promise<void> {
             CREATE INDEX IF NOT EXISTS sac_audit_events_company_lead_occurred_idx
             ON sac_audit_events (company_id, lead_id, occurred_at)
           `
+          await client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sac_followup_stage_ids JSONB NOT NULL DEFAULT '[]'::jsonb`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS sac_case_episode INTEGER NOT NULL DEFAULT 1`
+          await client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS outbound_payload_hash TEXT`
+          await client`ALTER TABLE whatsapp_messages ALTER COLUMN send_state DROP DEFAULT`
+          await client`ALTER TABLE sac_approved_replies ALTER COLUMN approval_state SET DEFAULT 'draft'`
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS company_members_company_user_unique
+            ON company_members (company_id, stack_auth_user_id) WHERE stack_auth_user_id IS NOT NULL
+          `
+          await client`
+            DO $$ BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'recovery_leads_request_message_id_fkey'
+                  AND conrelid = 'recovery_leads'::regclass
+              ) THEN
+                ALTER TABLE recovery_leads ADD CONSTRAINT recovery_leads_request_message_id_fkey
+                  FOREIGN KEY (request_message_id) REFERENCES whatsapp_messages(id)
+                  ON DELETE SET NULL NOT VALID;
+              END IF;
+            END $$
+          `
+          await client`
+            CREATE TABLE IF NOT EXISTS sac_rule_states (
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
+              rule_type TEXT NOT NULL,
+              active BOOLEAN NOT NULL DEFAULT FALSE,
+              fingerprint TEXT,
+              occurrence_number INTEGER NOT NULL DEFAULT 0,
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS sac_rule_states_company_lead_rule_unique
+            ON sac_rule_states (company_id, lead_id, rule_type)
+          `
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           console.error('[DB Schema Sync Error] Falha ao criar infraestrutura SAC Lote 1:', message)
+          throw err
         }
       } catch (err: any) {
         console.error('[DB Schema Sync Error]', err?.message || err)
+        throw err
       }
-    })()
+    })().catch(error => {
+      _migrationPromise = null
+      throw error
+    })
   }
   return _migrationPromise
 }

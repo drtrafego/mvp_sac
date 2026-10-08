@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation'
 import { db } from '@/lib/db'
 import { companyMembers, companies } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, and, isNull } from 'drizzle-orm'
 import { stackServerApp } from '@/stack'
 import { cookies } from 'next/headers'
+import { canAcceptMemberInvite } from '@/lib/member-invite-policy'
 
 export default async function InviteMembroPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
@@ -13,7 +14,7 @@ export default async function InviteMembroPage({ params }: { params: Promise<{ t
     .from(companyMembers)
     .where(eq(companyMembers.inviteToken, token))
 
-  if (!membership) {
+  if (!membership || membership.status !== 'pending' || membership.stackAuthUserId) {
     return (
       <div className="min-h-screen bg-surface-base flex items-center justify-center p-4">
         <div className="text-center">
@@ -24,10 +25,6 @@ export default async function InviteMembroPage({ params }: { params: Promise<{ t
     )
   }
 
-  if (membership.status === 'ativo') {
-    redirect('/')
-  }
-
   const [company] = await db
     .select()
     .from(companies)
@@ -36,21 +33,28 @@ export default async function InviteMembroPage({ params }: { params: Promise<{ t
   // Se já está logado, vincular e redirecionar
   const user = await stackServerApp?.getUser()
   if (user) {
-    await db
-      .update(companyMembers)
-      .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
-      .where(eq(companyMembers.id, membership.id))
+    if (!canAcceptMemberInvite(membership, user)) {
+      return <div className="p-6 text-center">Este convite pertence a {membership.email}. Entre com essa conta e confirme o e-mail antes de aceitar.</div>
+    }
+    const [accepted] = await db.update(companyMembers)
+      .set({ stackAuthUserId: user.id, status: 'ativo', inviteToken: null, updatedAt: new Date() })
+      .where(and(eq(companyMembers.id, membership.id), eq(companyMembers.inviteToken, token), eq(companyMembers.status, 'pending'), isNull(companyMembers.stackAuthUserId)))
+      .returning()
+    if (!accepted) return <div className="p-6 text-center">Este convite já foi utilizado ou revogado.</div>
     redirect('/')
   }
 
-  // Salvar token em cookie para vincular após signup/signin
-  const cookieStore = await cookies()
-  cookieStore.set('pending_member_invite', token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 24, // 24 horas
-  })
+  // Cookies cannot be written during a Server Component render. Start auth
+  // through an action; getCurrentCompany validates and consumes the invite.
+  async function beginAuth(mode: 'sign-in' | 'sign-up') {
+    'use server'
+    const cookieStore = await cookies()
+    cookieStore.set('pending_member_invite', token, {
+      httpOnly: true, secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24,
+    })
+    redirect(`/handler/${mode}`)
+  }
 
   return (
     <div className="min-h-screen bg-surface-base flex items-center justify-center p-4">
@@ -76,18 +80,18 @@ export default async function InviteMembroPage({ params }: { params: Promise<{ t
           </p>
         </div>
         <div className="space-y-3">
-          <a
-            href="/handler/sign-up"
+          <form action={beginAuth.bind(null, 'sign-up')}><button
+            type="submit"
             className="focus-ring block w-full rounded-[var(--r-md)] bg-brand-solid text-on-accent font-medium py-3 px-4 text-body transition-colors"
           >
             Criar minha conta
-          </a>
-          <a
-            href="/handler/sign-in"
+          </button></form>
+          <form action={beginAuth.bind(null, 'sign-in')}><button
+            type="submit"
             className="focus-ring block w-full rounded-[var(--r-md)] bg-surface-inset border border-line-subtle text-fg font-medium py-3 px-4 text-body transition-colors hover:bg-surface-overlay"
           >
             Já tenho conta, entrar
-          </a>
+          </button></form>
         </div>
         <p className="num text-micro text-fg-faint">
           Convidado para: {membership.email}

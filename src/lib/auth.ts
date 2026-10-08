@@ -2,11 +2,12 @@ import 'server-only'
 import { stackServerApp } from '@/stack'
 import { db } from '@/lib/db'
 import { companies, companyMembers } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { eq, sql, and, isNull } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { verifyAgentSessionCookie } from '@/lib/agent-session'
 import { resolveCompanyRole, roleSatisfies, type CompanyRole } from '@/lib/company-role'
+import { canAcceptMemberInvite, normalizeMemberEmail } from '@/lib/member-invite-policy'
 
 export class AuthError extends Error {
   readonly status = 401
@@ -43,6 +44,7 @@ export async function getCurrentUser() {
           primaryEmail: verified.primaryEmail,
           displayName: verified.displayName,
           isAdmin: verified.isAdmin,
+          primaryEmailVerified: true,
         }
       }
     }
@@ -53,7 +55,7 @@ export async function getCurrentUser() {
   if (!stackServerApp) return null
   const user = await stackServerApp.getUser()
   if (!user) return null
-  return { ...user, isAdmin: checkIsAdmin(user.primaryEmail) }
+  return { ...user, isAdmin: user.primaryEmailVerified && checkIsAdmin(user.primaryEmail) }
 }
 
 // Retorna a empresa a ser usada no contexto atual
@@ -64,7 +66,7 @@ export async function getCurrentCompany() {
   const user = await getCurrentUser()
   if (!user) return null
 
-  const isAdmin = user.isAdmin || checkIsAdmin(user.primaryEmail)
+  const isAdmin = user.isAdmin || (user.primaryEmailVerified && checkIsAdmin(user.primaryEmail))
 
   if (isAdmin) {
     const cookieStore = await cookies()
@@ -143,18 +145,21 @@ export async function getCurrentCompany() {
       .from(companyMembers)
       .where(eq(companyMembers.inviteToken, pendingMemberInvite))
 
-    if (membership) {
-      await db
+    if (membership && canAcceptMemberInvite(membership, user)) {
+      const [accepted] = await db
         .update(companyMembers)
-        .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
-        .where(eq(companyMembers.id, membership.id))
-      cookieStore.delete('pending_member_invite')
+        .set({ stackAuthUserId: user.id, status: 'ativo', inviteToken: null, updatedAt: new Date() })
+        .where(and(eq(companyMembers.id, membership.id), eq(companyMembers.inviteToken, pendingMemberInvite), eq(companyMembers.status, 'pending'), isNull(companyMembers.stackAuthUserId)))
+        .returning()
+      // The DB token is consumed above. This resolver also runs in Server
+      // Components, where cookie writes are forbidden; the stale cookie
+      // therefore expires naturally and cannot authorize another acceptance.
 
       const [memberCompany] = await db
         .select()
         .from(companies)
         .where(eq(companies.id, membership.companyId))
-      if (memberCompany) return memberCompany
+      if (accepted && memberCompany) return memberCompany
     }
   }
 
@@ -162,7 +167,7 @@ export async function getCurrentCompany() {
   const [activeMembership] = await db
     .select()
     .from(companyMembers)
-    .where(eq(companyMembers.stackAuthUserId, user.id))
+    .where(and(eq(companyMembers.stackAuthUserId, user.id), eq(companyMembers.status, 'ativo')))
 
   if (activeMembership) {
     const [memberCompany] = await db
@@ -173,26 +178,25 @@ export async function getCurrentCompany() {
   }
 
   // 3. Reconhecer pelo e-mail: se o e-mail do usuário foi cadastrado como membro em Configurações > Equipe
-  if (user.primaryEmail) {
+  if (user.primaryEmail && user.primaryEmailVerified) {
     const cleanUserEmail = user.primaryEmail.toLowerCase().trim()
     const [pendingByEmail] = await db
       .select()
       .from(companyMembers)
-      .where(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`)
+      .where(and(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`, eq(companyMembers.status, 'pending'), isNull(companyMembers.stackAuthUserId)))
 
-    if (pendingByEmail) {
-      if (pendingByEmail.status !== 'ativo' || pendingByEmail.stackAuthUserId !== user.id) {
-        await db
+    if (pendingByEmail && canAcceptMemberInvite(pendingByEmail, user)) {
+      const [accepted] = await db
           .update(companyMembers)
-          .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
-          .where(eq(companyMembers.id, pendingByEmail.id))
-      }
+          .set({ stackAuthUserId: user.id, status: 'ativo', inviteToken: null, updatedAt: new Date() })
+          .where(and(eq(companyMembers.id, pendingByEmail.id), eq(companyMembers.inviteToken, pendingByEmail.inviteToken!), eq(companyMembers.status, 'pending'), isNull(companyMembers.stackAuthUserId)))
+          .returning()
 
       const [memberCompany] = await db
         .select()
         .from(companies)
         .where(eq(companies.id, pendingByEmail.companyId))
-      if (memberCompany) return memberCompany
+      if (accepted && memberCompany) return memberCompany
     }
   }
 
@@ -258,7 +262,7 @@ export async function requireCompany() {
 export async function requireAdmin() {
   const user = await getCurrentUser()
   if (!user) throw new AuthError('Não autenticado')
-  if (!user.isAdmin && !checkIsAdmin(user.primaryEmail)) throw new AuthError('Acesso negado')
+  if (!user.isAdmin && !(user.primaryEmailVerified && checkIsAdmin(user.primaryEmail))) throw new AuthError('Acesso negado')
   return user
 }
 
@@ -291,6 +295,7 @@ export async function getCompanyAccess() {
       stackAuthUserId: companyMembers.stackAuthUserId,
       email: companyMembers.email,
       role: companyMembers.role,
+      status: companyMembers.status,
     })
     .from(companyMembers)
     .where(eq(companyMembers.companyId, company.id))
@@ -299,11 +304,12 @@ export async function getCompanyAccess() {
     companyId: company.id,
     userId: user.id,
     email: user.primaryEmail,
-    isPlatformAdmin: Boolean(user.isAdmin) || checkIsAdmin(user.primaryEmail),
+    isPlatformAdmin: Boolean(user.isAdmin) || Boolean(user.primaryEmailVerified && checkIsAdmin(user.primaryEmail)),
     companyOwnerUserId: company.stackAuthUserId ?? null,
     memberships,
   })
 
+  if (!role) throw new ForbiddenError('Seu vínculo com esta empresa não está ativo.')
   return { company, user, role, memberId }
 }
 
@@ -311,5 +317,31 @@ export async function requireCompanyRole(minimum: CompanyRole) {
   const access = await getCompanyAccess()
   if (!roleSatisfies(access.role, minimum)) throw new ForbiddenError()
   return access
+}
+
+/** A stable, authenticated owner for SAC actions; never reads actor identity from JSON. */
+export async function requireSacActor() {
+  const access = await requireCompanyRole('membro')
+  const { company, user } = access
+  let memberId = access.memberId
+  if (!memberId) {
+    if (access.role !== 'admin' && access.role !== 'platform_admin') throw new ForbiddenError()
+    // Platform administrators and the company owner may not have a team row.
+    // This insert is authorized by the authenticated role above, never by body/email lookup.
+    const email = normalizeMemberEmail(user.primaryEmail)
+    if (!email) throw new ForbiddenError('A conta precisa de e-mail para assumir atendimento.')
+    const [existing] = await db.select().from(companyMembers).where(and(eq(companyMembers.companyId, company.id), eq(companyMembers.stackAuthUserId, user.id), eq(companyMembers.status, 'ativo'))).limit(1)
+    if (existing) memberId = existing.id
+    else {
+      const [created] = await db.insert(companyMembers).values({ companyId: company.id, stackAuthUserId: user.id, email, name: user.displayName || email, role: access.role === 'admin' ? 'admin' : 'membro', status: 'ativo', inviteToken: null }).onConflictDoNothing().returning()
+      if (created) memberId = created.id
+      else {
+        const [linked] = await db.select().from(companyMembers).where(and(eq(companyMembers.companyId, company.id), eq(companyMembers.stackAuthUserId, user.id), eq(companyMembers.status, 'ativo'))).limit(1)
+        if (!linked) throw new ForbiddenError('Não foi possível vincular esta conta à equipe.')
+        memberId = linked.id
+      }
+    }
+  }
+  return { ...access, memberId, actorId: user.id, actorName: user.displayName || user.primaryEmail || 'Atendente' }
 }
 

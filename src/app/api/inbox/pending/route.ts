@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { sacPendingItems, recoveryLeads } from '@/lib/db/schema'
 import { eq, and, desc } from 'drizzle-orm'
-import { requireCompany } from '@/lib/auth'
+import { requireCompanyRole, AuthError, ForbiddenError } from '@/lib/auth'
 import { evaluateSacPendingRules } from '@/lib/sac-pending-rules'
 
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
@@ -17,13 +17,16 @@ function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    const company = await requireCompany()
+    const { company } = await requireCompanyRole('membro')
 
     const { searchParams } = new URL(req.url)
     const state = searchParams.get('state') || 'pendente'
+    if (!['pendente', 'em_atendimento', 'resolvido', 'descartado', 'all'].includes(state)) {
+      return noStoreJson({ error: 'Estado de pendência inválido' }, { status: 400 })
+    }
 
     // Opcionalmente reavalia regras antes de listar
-    await evaluateSacPendingRules({ companyId: company.id }).catch(() => null)
+    await evaluateSacPendingRules({ companyId: company.id })
 
     const conditions = [eq(sacPendingItems.companyId, company.id)]
     if (state !== 'all') {
@@ -46,7 +49,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         leadStatus: recoveryLeads.status,
       })
       .from(sacPendingItems)
-      .innerJoin(recoveryLeads, eq(sacPendingItems.leadId, recoveryLeads.id))
+      .innerJoin(recoveryLeads, and(eq(sacPendingItems.leadId, recoveryLeads.id), eq(recoveryLeads.companyId, company.id)))
       .where(and(...conditions))
       .orderBy(desc(sacPendingItems.createdAt))
       .limit(50)
@@ -58,7 +61,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         createdAt: i.createdAt?.toISOString() ?? null,
       })),
     })
-  } catch (err: any) {
-    return noStoreJson({ error: err.message || 'Erro ao carregar pendências' }, { status: 500 })
+  } catch (err: unknown) {
+    return noStoreJson({ error: err instanceof Error ? err.message : 'Erro ao carregar pendências' }, { status: err instanceof AuthError || err instanceof ForbiddenError ? err.status : 500 })
   }
 }

@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { and, desc, eq, or, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { appointmentMirror, gramadoReservations, recoveryLeads } from '@/lib/db/schema'
+import { appointmentMirror, companyMembers, gramadoReservations, recoveryLeads } from '@/lib/db/schema'
 import { requireCompany } from '@/lib/auth'
 import { getEmailEngagement } from '@/lib/email-engagement'
 import { loadInboxMessagePage } from '@/lib/inbox-messages'
@@ -31,8 +31,8 @@ export async function ConversationChatPage({
 
   const sParams = searchParams ? await searchParams : {}
   const rawAround = Array.isArray(sParams.aroundMessageId) ? sParams.aroundMessageId[0] : sParams.aroundMessageId
-  const parsedAround = rawAround ? parseInt(rawAround) : null
-  const validAround = parsedAround && !isNaN(parsedAround) ? parsedAround : null
+  const parsedAround = rawAround && /^\d+$/.test(rawAround) ? Number(rawAround) : null
+  const validAround = parsedAround && Number.isSafeInteger(parsedAround) && parsedAround > 0 ? parsedAround : null
 
   const company = await requireCompany()
   const [lead] = await db
@@ -46,7 +46,7 @@ export async function ConversationChatPage({
   const cleanPhone = (lead.phone || '').replace(/\D/g, '')
   const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
 
-  const [messagePage, appointments, reservations] = await Promise.all([
+  const [messagePage, appointments, reservations, ownerRows] = await Promise.all([
     loadInboxMessagePage({
       companyId: company.id,
       leadId: id,
@@ -86,11 +86,14 @@ export async function ConversationChatPage({
       ))
       .orderBy(desc(gramadoReservations.atualizadoEm), desc(gramadoReservations.data))
       .limit(1),
+    lead.humanOwnerMemberId ? db.select({ name: companyMembers.name, email: companyMembers.email }).from(companyMembers).where(and(eq(companyMembers.id, lead.humanOwnerMemberId), eq(companyMembers.companyId, company.id))).limit(1) : Promise.resolve([]),
   ])
   const [reservation] = reservations
 
   return (
     <ChatWindow
+      key={`${id}:${validAround ?? 'current'}`}
+      highlightMessageId={validAround}
       backHref={backHref}
       lead={{
         id: lead.id,
@@ -101,6 +104,7 @@ export async function ConversationChatPage({
         notes: lead.notes ?? null,
         eventType: lead.eventType,
         status: lead.status ?? null,
+        priority: lead.priority ?? null,
         productName: lead.productName ?? null,
         productValue: lead.productValue ?? null,
         platform: lead.platform ?? null,
@@ -121,6 +125,19 @@ export async function ConversationChatPage({
         agentInputTokens: lead.agentInputTokens ?? null,
         agentOutputTokens: lead.agentOutputTokens ?? null,
         agentSyncedAt: lead.agentSyncedAt?.toISOString() ?? null,
+        requestSummary: lead.requestSummary ?? null,
+        requestMessageId: lead.requestMessageId ?? null,
+        commitment: lead.commitment ?? null,
+        nextAction: lead.nextAction ?? null,
+        nextActionDueAt: lead.nextActionDueAt?.toISOString() ?? null,
+        humanOwnerMemberId: lead.humanOwnerMemberId ?? null,
+        humanOwnerName: ownerRows[0]?.name ?? ownerRows[0]?.email ?? null,
+        sacCaseState: lead.sacCaseState ?? null,
+        pipelineStage: lead.pipelineStage ?? null,
+        responsibleAgent: lead.responsibleAgent ?? null,
+        followUpDate: lead.followUpDate?.toISOString() ?? null,
+        followUpNote: lead.followUpNote ?? null,
+        contextVersion: lead.contextVersion ?? 1,
         reservation: reservation ? {
           id: reservation.reservaId,
           date: reservation.data,
@@ -145,6 +162,9 @@ export async function ConversationChatPage({
         sentBy: message.sentBy ?? 'human',
         reasoning: message.reasoning ?? null,
         sentEmail: message.sentEmail ?? null,
+        sendState: message.sendState ?? null,
+        sendError: message.sendError ?? null,
+        clientRequestId: message.clientRequestId ?? null,
         createdAt: message.createdAt?.toISOString() ?? null,
       }))}
       appointments={appointments.map(appointment => ({

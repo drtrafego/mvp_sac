@@ -641,10 +641,12 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
   try {
     const activeCompanies = await db.select({ id: companies.id }).from(companies)
     for (const c of activeCompanies) {
-      await evaluateSacPendingRules({ companyId: c.id }).catch(() => null)
+      try { await evaluateSacPendingRules({ companyId: c.id }) }
+      catch (error) { console.error('[cron] Falha ao reconciliar pendências SAC', { companyId: c.id, error }) }
     }
-  } catch {
+  } catch (error) {
     // Falhas em regras internas não interrompem o cron
+    console.error('[cron] Falha ao listar empresas para pendências SAC', error)
   }
 
   return NextResponse.json({ processed: runnableJobs.length, sent, failed })
