@@ -11,6 +11,7 @@ import {
   checkMetaWindowForJob,
   estimateMaxMessagesPerHour,
   ERR_OUTSIDE_META_WINDOW,
+  ERR_TEMPLATE_NAME_REQUIRED,
   MAX_JOBS_PER_RUN,
   CRON_INTERVAL_MINUTES,
 } from '../src/lib/message-jobs-policy'
@@ -39,8 +40,13 @@ test('(b) lead que nunca respondeu (sem lastInboundAt): mensagem livre falha, ex
 })
 
 test('template aprovado passa mesmo fora da janela (é pra isso que ele existe)', () => {
-  const result = checkMetaWindowForJob({ messageType: 'template', lastInboundAt: null })
+  const result = checkMetaWindowForJob({ messageType: 'template', templateName: 'lembrete_pagamento', lastInboundAt: null })
   assert.deepEqual(result, { allowed: true })
+})
+
+test('template sem nome não passa como template fora da janela', () => {
+  const result = checkMetaWindowForJob({ messageType: 'template', lastInboundAt: null })
+  assert.deepEqual(result, { allowed: false, error: ERR_TEMPLATE_NAME_REQUIRED })
 })
 
 test('(c) o batch por execução respeita o limite escolhido (MAX_JOBS_PER_RUN)', () => {

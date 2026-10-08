@@ -115,7 +115,7 @@ export function MetaWindowBanner({
         <div className="flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0 text-amber-600" />
           <span>
-            <strong>Janela de 24h Expirando:</strong> Restam apenas <strong>{info.remainingHours}h {info.remainingMinutes}m</strong> desde a última mensagem do cliente para envio livre sem custo de template.
+            <strong>Janela de 24h Expirando:</strong> Restam apenas <strong>{info.remainingHours}h {info.remainingMinutes}m</strong> desde a última mensagem do cliente para envio livre. Templates aprovados continuam disponíveis fora dela.
           </span>
         </div>
       </div>
@@ -128,7 +128,7 @@ export function MetaWindowBanner({
         <div className="flex items-center gap-2">
           <CheckCircle2 size={13} className="shrink-0 text-emerald-500" />
           <span>
-            <strong>Janela de 24h Aberta:</strong> Restam <strong>{info.remainingHours}h {info.remainingMinutes}m</strong> para envio de mensagens livres (contados a partir da última mensagem do cliente).
+            <strong>Janela de 24h Aberta:</strong> Restam <strong>{info.remainingHours}h {info.remainingMinutes}m</strong> para envio de mensagens livres (contados a partir da última mensagem do cliente). Templates aprovados podem ser enviados fora dela.
           </span>
         </div>
         <span className="text-[10px] font-mono opacity-80 shrink-0">Regra Oficial WhatsApp Meta: 24h</span>

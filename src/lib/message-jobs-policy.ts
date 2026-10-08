@@ -1,23 +1,13 @@
-// Política de envio do executor da fila de messageJobs (src/app/api/cron/route.ts):
-// (1) checagem da janela de 24h da Meta antes de mandar mensagem livre, e
-// (2) limite conservador de mensagens por execução do cron, pra não estourar
-// o tier de mensageria do número (WhatsApp Business API) nem o rate limit
-// da Graph API. Extraído do executor pra ser testável sem banco/rede real.
-//
-// ⚠️ PENDÊNCIA (26/09/2026, revertido em emergência): checkMetaWindowForJob()
-// continua aqui e testada, mas o route.ts PAROU de usar o resultado pra
-// bloquear o envio (só loga aviso). Motivo: os 4 eventos de disparo frio da
-// biblioteca padrão (carrinho_abandonado, boleto, pix, cartao_recusado em
-// src/lib/biblioteca.ts) usam messageType: 'text' e são o PRIMEIRO contato
-// com o lead (lastInboundAt quase sempre null) — bloquear aqui derruba o
-// funil de recuperação inteiro, que é o motivo do produto existir. Plano
-// correto, ainda não feito: migrar esses 4 eventos pra template aprovado da
-// Meta (que passa a janela por definição) e só então voltar a bloquear texto
-// livre fora da janela. Não reative o bloqueio no route.ts sem isso.
+// Política de envio do executor de messageJobs (src/app/api/cron/route.ts).
+// A janela de atendimento continua controlando texto livre: fora dela, a Meta
+// aceita somente um template aprovado. Template aprovado pode ser entregue a
+// qualquer hora, mas continua sujeito à cobrança e às regras de qualidade da
+// Meta. O limite de jobs por execução é uma proteção técnica separada.
 
 import { getMetaWindowInfo } from '@/lib/meta-window'
 
 export const ERR_OUTSIDE_META_WINDOW = 'fora da janela de 24h, precisa de template aprovado'
+export const ERR_TEMPLATE_NAME_REQUIRED = 'mensagem marcada como template sem nome de template aprovado'
 
 // Quantos messageJobs 'pending' o executor processa por chamada do cron.
 // Mantido em 50 (valor já em produção antes desta mudança) porque, combinado
@@ -44,16 +34,18 @@ export function estimateMaxMessagesPerHour(
 
 export type MetaWindowCheck = { allowed: true } | { allowed: false; error: string }
 
-// Decide se um job pode ser enviado como mensagem livre ou se está fora da
-// janela de 24h (exige template aprovado). Job de template passa direto:
-// a Meta aceita template fora da janela, é exatamente pra isso que ele existe.
+// Um template só passa sem janela quando tem nome. Sem nome, o adaptador pode
+// acabar enviando texto livre ou considerar o job enviado sem chamar a Meta.
 export function checkMetaWindowForJob(params: {
   messageType?: string | null
+  templateName?: string | null
   lastInboundAt: string | Date | null
 }): MetaWindowCheck {
   const messageType = params.messageType ?? 'text'
   if (messageType === 'template') {
-    return { allowed: true }
+    return params.templateName?.trim()
+      ? { allowed: true }
+      : { allowed: false, error: ERR_TEMPLATE_NAME_REQUIRED }
   }
 
   const lastInboundAt =
@@ -86,4 +78,3 @@ export function calculateDispatchSpacingMs(
   const seconds = min + randomFn() * (max - min)
   return Math.round(seconds * 1000)
 }
-

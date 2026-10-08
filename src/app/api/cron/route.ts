@@ -181,6 +181,7 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
         companyId: recoveryLeads.companyId,
         companySlug: companies.slug,
         metaPhoneNumberId: settings.metaPhoneNumberId,
+        whatsappProvider: settings.whatsappProvider,
         availabilitySchedule: settings.availabilitySchedule,
         availabilityScheduleManual: settings.availabilityScheduleManual,
         nativeAvailabilitySchedule: nativeAvailabilitySchedules.schedule,
@@ -359,7 +360,7 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
   let hasDispatchedAny = false
   const cooldownsByPhone = new Map<string, Date>()
 
-  for (const { job, companyId, companySlug, metaPhoneNumberId, availabilitySchedule, availabilityScheduleManual, nativeAvailabilitySchedule, leadPhone, leadCreatedAt, checkBeforeSend } of runnableJobs) {
+  for (const { job, companyId, companySlug, metaPhoneNumberId, whatsappProvider, availabilitySchedule, availabilityScheduleManual, nativeAvailabilitySchedule, leadPhone, leadCreatedAt, checkBeforeSend } of runnableJobs) {
     let providerAccepted = false
     try {
       const activeCooldown = metaPhoneNumberId ? cooldownsByPhone.get(metaPhoneNumberId) : undefined
@@ -470,18 +471,20 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
 
       // Job de upsell: conteúdo direto, sem referência a sequenceMessages
       if (job.upsellContent) {
-        // REVERSÃO DE EMERGÊNCIA (26/09/2026): a checagem de janela de 24h
-        // aqui embaixo estava BLOQUEANDO 100% dos disparos de upsell/recuperação
-        // (disparo frio, quase sempre sem lastInboundAt) e falhando o job em vez
-        // de enviar. Voltado ao comportamento anterior (envia sem checar janela)
-        // até existir um plano de migração pra templates aprovados nesses fluxos.
-        // Ver pendência documentada em src/lib/message-jobs-policy.ts.
-        const upsellWindow = checkMetaWindowForJob({
-          messageType: 'text',
-          lastInboundAt: lastInboundFor(job.leadId, leadPhone),
-        })
-        if (!upsellWindow.allowed) {
-          console.warn('[cron] job fora da janela de 24h (bloqueio desativado, enviando mesmo assim)', { jobId: job.id, leadId: job.leadId })
+        if ((whatsappProvider ?? 'meta') === 'meta') {
+          const upsellWindow = checkMetaWindowForJob({
+            messageType: 'text',
+            lastInboundAt: lastInboundFor(job.leadId, leadPhone),
+          })
+          if (!upsellWindow.allowed) {
+            await db.update(messageJobs).set({
+              status: 'failed',
+              error: upsellWindow.error,
+              processingStartedAt: null,
+            }).where(eq(messageJobs.id, job.id))
+            failed++
+            continue
+          }
         }
 
         if (hasDispatchedAny) {
@@ -544,19 +547,21 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
       const msgType = message.messageType ?? 'text'
       const buttons = Array.isArray(message.buttonsJson) ? message.buttonsJson as { id: string; label: string }[] : undefined
 
-      // REVERSÃO DE EMERGÊNCIA (26/09/2026): esta checagem estava bloqueando
-      // TODO o funil de recuperação (carrinho_abandonado, boleto, pix,
-      // cartao_recusado em src/lib/biblioteca.ts, todos messageType: 'text',
-      // disparo frio) fazendo o job falhar sem enviar nada, a cada rodada do
-      // cron desde o deploy. Voltado a só logar, sem bloquear, até existir
-      // plano de migração pra templates aprovados. Pendência documentada em
-      // src/lib/message-jobs-policy.ts.
-      const windowCheck = checkMetaWindowForJob({
-        messageType: msgType,
-        lastInboundAt: lastInboundFor(job.leadId, leadPhone),
-      })
-      if (!windowCheck.allowed) {
-        console.warn('[cron] job fora da janela de 24h (bloqueio desativado, enviando mesmo assim)', { jobId: job.id, leadId: job.leadId, msgType })
+      if ((whatsappProvider ?? 'meta') === 'meta') {
+        const windowCheck = checkMetaWindowForJob({
+          messageType: msgType,
+          templateName: message.templateName,
+          lastInboundAt: lastInboundFor(job.leadId, leadPhone),
+        })
+        if (!windowCheck.allowed) {
+          await db.update(messageJobs).set({
+            status: 'failed',
+            error: windowCheck.error,
+            processingStartedAt: null,
+          }).where(eq(messageJobs.id, job.id))
+          failed++
+          continue
+        }
       }
 
       // Fase 1.3: monta variáveis interpoladas para templates Meta

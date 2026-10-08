@@ -176,7 +176,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   }
   if (queued.status === 'daily_limit') {
     return NextResponse.json({
-      error: 'Limite de mensagens em 24h atingido para este número',
+      error: 'Limite técnico de volume nas últimas 24h atingido para este número',
       requested: queued.requested,
       available: queued.available,
     }, { status: 429 })

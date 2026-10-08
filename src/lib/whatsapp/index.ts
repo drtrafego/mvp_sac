@@ -42,6 +42,10 @@ export async function sendWhatsAppMessage(
     }
     const metaConfig = { phoneNumberId: config.metaPhoneNumberId, accessToken: config.metaAccessToken }
 
+    if (message.type === 'template' && !message.templateName?.trim()) {
+      throw new Error('Template Meta sem nome aprovado')
+    }
+
     if (message.type === 'template' && message.templateName) {
       return sendMetaTemplate(
         metaConfig,
@@ -65,7 +69,9 @@ export async function sendWhatsAppMessage(
     }
     const uazConfig = { baseUrl: config.uazapiBaseUrl, instanceToken: config.uazapiInstanceToken }
 
-    if (message.type === 'interactive_buttons' && message.buttons?.length) {
+    if (message.type === 'template') {
+      throw new Error('Templates Meta não são suportados pelo provedor UazAPI')
+    } else if (message.type === 'interactive_buttons' && message.buttons?.length) {
       await sendUazApiButtons(uazConfig, normalized, message.content ?? '', message.buttons)
     } else if (message.type === 'text' && message.content) {
       await sendUazApiText(uazConfig, normalized, message.content)

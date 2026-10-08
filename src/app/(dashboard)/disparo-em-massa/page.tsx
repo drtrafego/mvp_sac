@@ -287,8 +287,8 @@ export default function DisparoEmMassaPage() {
           <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-micro flex items-start gap-3">
             <ShieldCheck className="shrink-0 mt-0.5 text-amber-400" size={18} />
             <div>
-              <strong className="font-bold text-amber-200">Proteção Oficial da Meta (24 Horas & Rate Limit):</strong>
-              <p className="mt-0.5">O envio só será feito usando templates aprovados pela Meta Cloud API. O limite diário de segurança (1.000 mensagens/dia) e o bloqueio de bot pausado são aplicados automaticamente.</p>
+              <strong className="font-bold text-amber-200">Proteção de envio da Meta:</strong>
+              <p className="mt-0.5">O envio usa somente templates aprovados pela Meta Cloud API. Templates não dependem da janela de 24h; o limite técnico de volume e o bloqueio de bot pausado são aplicados automaticamente.</p>
             </div>
           </div>
 
