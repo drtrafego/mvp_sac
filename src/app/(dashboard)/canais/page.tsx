@@ -1,11 +1,12 @@
 export const dynamic = 'force-dynamic'
 
 import { db } from '@/lib/db'
-import { settings, recoveryLeads, messageJobs } from '@/lib/db/schema'
+import { settings, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { eq, sql, count } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
-import { Radio, MessageSquare, Settings, CheckCircle2, AlertCircle, Zap, ShieldCheck, Mail } from 'lucide-react'
+import { Radio, MessageSquare, Settings, Mail } from 'lucide-react'
 import Link from 'next/link'
+import { aggregateChannelSendMetrics } from '@/lib/channel-send-metrics'
 
 function InstagramIcon({ size = 18, className = '' }: { size?: number; className?: string }) {
   return (
@@ -20,108 +21,40 @@ function InstagramIcon({ size = 18, className = '' }: { size?: number; className
 export default async function CanaisPage() {
   const company = await requireCompany()
 
-  const [[companySettings], [leadStats], [jobStats]] = await Promise.all([
+  const [[companySettings], channelMsgStats, channelLeadStats] = await Promise.all([
     db.select().from(settings).where(eq(settings.companyId, company.id)),
-    db
-      .select({
-        total: count(),
-        recovered: sql<number>`cast(count(*) filter (where ${recoveryLeads.status} = 'converted') as int)`,
-      })
-      .from(recoveryLeads)
-      .where(eq(recoveryLeads.companyId, company.id)),
-    db
-      .select({
-        sent: sql<number>`cast(count(*) filter (where ${messageJobs.status} = 'sent') as int)`,
-        pending: sql<number>`cast(count(*) filter (where ${messageJobs.status} = 'pending') as int)`,
-        failed: sql<number>`cast(count(*) filter (where ${messageJobs.status} = 'failed') as int)`,
-      })
-      .from(messageJobs)
-      .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
-      .where(eq(recoveryLeads.companyId, company.id)),
+    db.select({
+      channel: whatsappMessages.channel,
+      sendState: whatsappMessages.sendState,
+      hasExternalId: sql<boolean>`nullif(${whatsappMessages.externalId}, '') is not null`,
+      total: sql<number>`cast(count(*) as int)`,
+    }).from(whatsappMessages)
+      .where(sql`${whatsappMessages.companyId} = ${company.id} and ${whatsappMessages.direction} = 'outbound'`)
+      .groupBy(whatsappMessages.channel, whatsappMessages.sendState, sql`nullif(${whatsappMessages.externalId}, '') is not null`),
+    db.select({ channel: recoveryLeads.channel, total: count() })
+      .from(recoveryLeads).where(eq(recoveryLeads.companyId, company.id)).groupBy(recoveryLeads.channel),
   ])
-
+  const metrics = aggregateChannelSendMetrics(channelMsgStats)
+  const leadCounts = new Map(channelLeadStats.map(row => [row.channel, row.total]))
   const hasMeta = !!(companySettings?.metaPhoneNumberId && companySettings?.metaAccessToken)
   const hasUazapi = !!(companySettings?.uazapiInstanceToken && companySettings?.uazapiBaseUrl)
   const hasInstagram = !!(companySettings?.instagramAccountId || (companySettings?.metaAccessToken && companySettings?.instagramUsername))
   const hasBrevo = !!(companySettings?.brevoApiKey && companySettings?.brevoSenderEmail)
-
-  const isMetaActive = companySettings?.whatsappProvider === 'meta' && hasMeta
-  const isUazapiActive = companySettings?.whatsappProvider === 'uazapi' && hasUazapi
-
-  const sentJobs = jobStats?.sent ?? 0
-  const pendingJobs = jobStats?.pending ?? 0
-  const failedJobs = jobStats?.failed ?? 0
-  const totalLeads = leadStats?.total ?? 0
-  const recoveredLeads = leadStats?.recovered ?? 0
-  const convRate = totalLeads > 0 ? ((recoveredLeads / totalLeads) * 100).toFixed(1) : '0.0'
-  const deliveryRate = sentJobs + failedJobs > 0 ? (((sentJobs) / (sentJobs + failedJobs)) * 100).toFixed(1) : (sentJobs > 0 ? '100.0' : '—')
-
+  const whatsappConfigured = companySettings?.whatsappProvider === 'meta' ? hasMeta : companySettings?.whatsappProvider === 'uazapi' ? hasUazapi : false
   const canais = [
-    {
-      id: 'meta',
-      name: 'WhatsApp Meta Cloud API (Oficial)',
-      icon: MessageSquare,
-      iconColor: 'text-emerald-400',
-      bgColor: hasMeta ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-surface-inset border-line-subtle',
-      badgeColor: hasMeta ? 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10' : 'text-amber-500 border-amber-500/20 bg-amber-500/10',
-      status: hasMeta ? (companySettings?.whatsappProvider === 'meta' ? 'Ativo & Operando' : 'Credenciais Salvas') : 'Não Configurado',
-      isConfigured: hasMeta,
-      provider: 'Meta Cloud API Oficial',
-      conversas: isMetaActive ? totalLeads : 0,
-      mensagens: isMetaActive ? sentJobs : 0,
-      pendentes: isMetaActive ? pendingJobs : 0,
-      entrega: isMetaActive ? `${deliveryRate}%` : '—',
-      conversao: isMetaActive ? `${convRate}%` : '—',
-    },
-    {
-      id: 'uazapi',
-      name: 'WhatsApp Uazapi (Instância Web)',
-      icon: Zap,
-      iconColor: 'text-cyan-400',
-      bgColor: hasUazapi ? 'bg-cyan-500/10 border-cyan-500/20' : 'bg-surface-inset border-line-subtle',
-      badgeColor: hasUazapi ? 'text-cyan-400 border-cyan-500/20 bg-cyan-500/10' : 'text-fg-subtle border-line-subtle bg-surface-inset',
-      status: hasUazapi ? (companySettings?.whatsappProvider === 'uazapi' ? 'Ativo & Operando' : 'Credenciais Salvas') : 'Não Configurado',
-      isConfigured: hasUazapi,
-      provider: 'UazAPI Gateway',
-      conversas: isUazapiActive ? totalLeads : 0,
-      mensagens: isUazapiActive ? sentJobs : 0,
-      pendentes: isUazapiActive ? pendingJobs : 0,
-      entrega: isUazapiActive ? `${deliveryRate}%` : '—',
-      conversao: isUazapiActive ? `${convRate}%` : '—',
-    },
-    {
-      id: 'instagram',
-      name: 'Instagram Direct & DMs',
-      icon: InstagramIcon,
-      iconColor: 'text-pink-400',
-      bgColor: hasInstagram ? 'bg-pink-500/10 border-pink-500/20' : 'bg-surface-inset border-line-subtle',
-      badgeColor: hasInstagram ? 'text-pink-400 border-pink-500/20 bg-pink-500/10' : 'text-fg-subtle border-line-subtle bg-surface-inset',
-      status: hasInstagram ? (companySettings?.instagramUsername ? `${companySettings.instagramUsername} Conectado` : 'Configurado') : 'Não Configurado',
-      isConfigured: hasInstagram,
-      provider: 'Meta Graph API (Instagram)',
-      conversas: hasInstagram ? totalLeads : 0,
-      mensagens: hasInstagram ? sentJobs : 0,
-      pendentes: 0,
-      entrega: hasInstagram ? '100.0%' : '—',
-      conversao: hasInstagram ? `${convRate}%` : '—',
-    },
-    {
-      id: 'brevo',
-      name: 'Brevo (E-mail Transacional & Outreach)',
-      icon: Mail,
-      iconColor: 'text-indigo-400',
-      bgColor: hasBrevo ? 'bg-indigo-500/10 border-indigo-500/20' : 'bg-surface-inset border-line-subtle',
-      badgeColor: hasBrevo ? 'text-indigo-400 border-indigo-500/20 bg-indigo-500/10' : 'text-fg-subtle border-line-subtle bg-surface-inset',
-      status: hasBrevo ? (companySettings?.brevoSenderEmail ? `${companySettings.brevoSenderEmail}` : 'Ativo') : 'Não Configurado',
-      isConfigured: hasBrevo,
-      provider: 'Brevo Transactional API',
-      conversas: hasBrevo ? totalLeads : 0,
-      mensagens: hasBrevo ? sentJobs : 0,
-      pendentes: 0,
-      entrega: hasBrevo ? '99.8%' : '—',
-      conversao: hasBrevo ? `${convRate}%` : '—',
-    },
-  ]
+    { id: 'whatsapp', name: 'WhatsApp', icon: MessageSquare, iconColor: 'text-emerald-400',
+      isConfigured: whatsappConfigured, provider: companySettings?.whatsappProvider === 'meta' ? 'Meta Cloud API' : companySettings?.whatsappProvider === 'uazapi' ? 'UazAPI' : 'Provedor não configurado' },
+    { id: 'instagram', name: 'Instagram Direct', icon: InstagramIcon, iconColor: 'text-pink-400',
+      isConfigured: hasInstagram, provider: 'Meta Graph API' },
+    { id: 'email', name: 'E-mail', icon: Mail, iconColor: 'text-indigo-400',
+      isConfigured: hasBrevo, provider: 'Brevo' },
+  ].map(channel => ({ ...channel,
+    status: channel.isConfigured ? 'Configurado · conexão não verificada' : 'Não configurado',
+    bgColor: 'bg-surface-inset border-line-subtle', badgeColor: 'text-fg-muted border-line-subtle bg-surface-inset',
+    conversas: leadCounts.get(channel.id) ?? 0,
+    metric: metrics.get(channel.id) || { total: 0, accepted: 0, failed: 0, pending: 0, uncertain: 0, unknown: 0 },
+  }))
+  const unclassified = [...metrics].filter(([channel]) => !['whatsapp', 'instagram', 'email'].includes(channel)).reduce((sum, [, metric]) => sum + metric.total, 0)
 
   return (
     <div className="flex flex-col gap-[var(--space-section)]">
@@ -162,23 +95,29 @@ export default async function CanaisPage() {
                   <span className="num font-bold text-fg">{c.conversas}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-fg-subtle">Mensagens Enviadas:</span>
-                  <span className="num font-bold text-fg">{c.mensagens}</span>
+                  <span className="text-fg-subtle">Intentos de envio:</span>
+                  <span className="num font-bold text-fg">{c.metric.total}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-fg-subtle">Mensagens em Fila:</span>
-                  <span className="num font-bold text-fg">{c.pendentes}</span>
+                  <span className="text-fg-subtle">Aguardando resultado:</span>
+                  <span className="num font-bold text-fg">{c.metric.pending}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-fg-subtle">Taxa de Entrega:</span>
-                  <span className="num font-bold text-emerald-400">{c.entrega}</span>
+                  <span className="text-fg-subtle">Aceitos pelo provedor:</span>
+                  <span className="num font-bold text-emerald-400">{c.metric.accepted}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-fg-subtle">Taxa de Conversão:</span>
-                  <span className="num font-bold text-brand-ink">{c.conversao}</span>
+                  <span className="text-fg-subtle">Falhas confirmadas:</span>
+                  <span className="num font-bold text-brand-ink">{c.metric.failed}</span>
                 </div>
               </div>
 
+              <div className="space-y-2 text-micro text-fg-subtle">
+                <div className="flex justify-between"><span>Resultado incerto:</span><span className="num">{c.metric.uncertain}</span></div>
+                <div className="flex justify-between"><span>Sem confirmação de aceitação:</span><span className="num">{c.metric.unknown}</span></div>
+                <p>Entrega e leitura não são medidas neste histórico. Aceitação confirma o recebimento pelo provedor.</p>
+                {c.id === 'whatsapp' && <p>Dados do canal, reunindo os provedores usados; a configuração atual não identifica o provedor de mensagens antigas.</p>}
+              </div>
               <div className="flex flex-col gap-1.5 pt-2">
                 {c.id === 'instagram' && (
                   <Link
@@ -201,6 +140,7 @@ export default async function CanaisPage() {
           )
         })}
       </div>
+      {unclassified > 0 && <p className="text-micro text-fg-muted">{unclassified} intentos sem canal identificado não entram nos indicadores acima.</p>}
     </div>
   )
 }

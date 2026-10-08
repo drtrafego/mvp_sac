@@ -1,7 +1,7 @@
 'use client'
 
-import React from 'react'
-import { User, Bot, UserCog, FileText, Volume2, Brain, Mail } from 'lucide-react'
+import React, { useState } from 'react'
+import { User, Bot, UserCog, FileText, Volume2, Brain, Mail, Mic, Copy, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { cleanMessage } from '@/lib/clean-content'
 import { ChannelIcon } from './ChannelBadge'
@@ -17,6 +17,9 @@ export interface InboxMessage {
   sentBy?: string | null
   reasoning?: string | null
   sentEmail?: string | null
+  sendState?: string | null
+  sendError?: string | null
+  clientRequestId?: string | null
   createdAt: string | null
 }
 
@@ -79,6 +82,16 @@ export function MessageBubble({
       ? agentName?.trim() || 'Bot IA'
       : 'Atendente Humano'
 
+  const [copiedTranscription, setCopiedTranscription] = useState(false)
+  const isAudio = message.messageType === 'audio' || media.some(m => m.kind === 'audio')
+
+  function handleCopyTranscription() {
+    if (!text) return
+    navigator.clipboard?.writeText(text)
+    setCopiedTranscription(true)
+    setTimeout(() => setCopiedTranscription(false), 2000)
+  }
+
   return (
     <div
       className={cn(
@@ -138,16 +151,51 @@ export function MessageBubble({
           </span>
         </div>
 
-        {/* Áudio / Mídia Nativa */}
-        {(message.messageType === 'audio' || media.some(m => m.kind === 'audio')) && (
-          <div className="my-2 bg-surface-base border border-line-subtle rounded-xl p-2 flex items-center gap-2">
-            <Volume2 className="size-4 text-brand-ink shrink-0" />
-            <audio
-              controls
-              preload="none"
-              src={message.mediaUrl || media.find(m => m.kind === 'audio')?.file}
-              className="h-7 w-52 max-w-full"
-            />
+        {/* Áudio Original + Transcrição Revisável */}
+        {isAudio && (
+          <div className="my-2 space-y-2">
+            <div className="bg-surface-base border border-line-subtle rounded-xl p-2 flex items-center gap-2">
+              <Volume2 className="size-4 text-brand-ink shrink-0" />
+              <audio
+                controls
+                preload="none"
+                src={message.mediaUrl || media.find(m => m.kind === 'audio')?.file}
+                className="h-7 w-52 max-w-full"
+              />
+            </div>
+
+            {text ? (
+              <div className="bg-surface-base/80 border border-brand-solid/30 rounded-xl p-2.5 text-[0.875rem] leading-relaxed">
+                <div className="flex items-center justify-between gap-2 mb-1.5 border-b border-line-subtle/50 pb-1">
+                  <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-brand-ink">
+                    <Mic className="size-3" />
+                    Transcrição
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] bg-brand-glow text-brand-ink px-1.5 py-0.5 rounded font-semibold border border-brand-solid/20">
+                      Revisável
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyTranscription}
+                      className="inline-flex items-center gap-1 text-[10px] text-fg-muted hover:text-fg bg-surface-raised px-1.5 py-0.5 rounded border border-line-subtle transition-colors cursor-pointer"
+                      title="Copiar transcrição"
+                    >
+                      {copiedTranscription ? <Check className="size-2.5 text-emerald-400" /> : <Copy className="size-2.5" />}
+                      <span>{copiedTranscription ? 'Copiado!' : 'Copiar'}</span>
+                    </button>
+                  </div>
+                </div>
+                <p className="whitespace-pre-wrap break-words select-text text-fg text-[13px] leading-relaxed">
+                  {text}
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-[11px] text-fg-faint italic px-1">
+                <Mic className="size-3 shrink-0" />
+                <span>Áudio recebido sem transcrição textual</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -175,12 +223,12 @@ export function MessageBubble({
           </a>
         )}
 
-        {/* Texto da Mensagem */}
-        {text ? (
+        {/* Texto da Mensagem (para mensagens não-áudio) */}
+        {!isAudio && text ? (
           <p className="whitespace-pre-wrap break-words text-[0.875rem] leading-relaxed select-text">
             {text}
           </p>
-        ) : !message.mediaUrl && media.length === 0 ? (
+        ) : !isAudio && !message.mediaUrl && media.length === 0 ? (
           <p className="text-fg-faint italic text-micro flex items-center gap-1">
             {message.messageType === 'sticker'
               ? '🏷️ [Figurinha]'
@@ -197,6 +245,23 @@ export function MessageBubble({
               : '💬 [Mensagem sem texto]'}
           </p>
         ) : null}
+
+        {message.sendState === 'failed' && (
+          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-rose-400 font-medium bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+            <span>⚠️ Falha no transporte</span>
+            {message.sendError && <span className="truncate max-w-[200px]" title={message.sendError}>({message.sendError})</span>}
+          </div>
+        )}
+        {message.sendState === 'uncertain' && (
+          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-400 font-medium bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+            <span>⚠️ Envio incerto (timeout)</span>
+          </div>
+        )}
+        {message.sendState === 'pending' && (
+          <div className="mt-1 flex items-center gap-1 text-[10px] text-amber-400 font-medium">
+            <span>⏳ Envio em processamento...</span>
+          </div>
+        )}
 
         {(message.reasoning || message.sentEmail) && (
           <details className="mt-2 border-t border-line-subtle/70 pt-1.5 text-[11px]">
@@ -236,10 +301,12 @@ export function MessageList({
   messages,
   contactName,
   agentName,
+  highlightMessageId,
 }: {
   messages: InboxMessage[]
   contactName?: string | null
   agentName?: string | null
+  highlightMessageId?: number | null
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -268,7 +335,10 @@ export function MessageList({
                 </span>
               </div>
             )}
-            <MessageBubble message={msg} contactName={contactName} agentName={agentName} />
+            <div data-message-id={msg.id} className={cn(msg.id === highlightMessageId && 'rounded-xl ring-2 ring-brand-solid/60 bg-brand-glow p-2')}>
+              {msg.id === highlightMessageId && <p className="mb-1 text-[11px] font-semibold text-brand-ink">Mensagem de referência</p>}
+              <MessageBubble message={msg} contactName={contactName} agentName={agentName} />
+            </div>
           </React.Fragment>
         )
       })}

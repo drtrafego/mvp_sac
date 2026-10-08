@@ -14,6 +14,7 @@ import { releaseCronDispatchLock, tryAcquireCronDispatchLock } from '@/lib/cron-
 import { evaluateDispatchWindow, firstDueJobPerLead, retryAtAfterPreviousFollowupStep, selectFollowupDispatchSchedule, shouldApplyFollowupDispatchWindow } from '@/lib/followup-dispatch-policy'
 import { isNativeAvailabilityCompany, normalizeAvailabilitySchedule } from '@/lib/agenda-schedule'
 import { shouldSyncHermesAgenda } from '@/lib/hermes-control-panel'
+import { evaluateSacPendingRules } from '@/lib/sac-pending-rules'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
 
@@ -639,6 +640,18 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
         completedLeadIds.add(job.leadId)
       }
     }
+  }
+
+  // SAC Lote 1: Avaliar regras internas de pendência (retorno vencido, transbordo sem dono, etapa sem retorno)
+  try {
+    const activeCompanies = await db.select({ id: companies.id }).from(companies)
+    for (const c of activeCompanies) {
+      try { await evaluateSacPendingRules({ companyId: c.id }) }
+      catch (error) { console.error('[cron] Falha ao reconciliar pendências SAC', { companyId: c.id, error }) }
+    }
+  } catch (error) {
+    // Falhas em regras internas não interrompem o cron
+    console.error('[cron] Falha ao listar empresas para pendências SAC', error)
   }
 
   return NextResponse.json({ processed: runnableJobs.length, sent, failed })

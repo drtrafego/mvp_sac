@@ -36,6 +36,9 @@ export interface ConversationSummary {
   createdAt?: string | null
   unread: number
   emailEngagement?: EmailEngagement | null
+  matchedSnippet?: string | null
+  matchedMessageId?: number | null
+  matchedMessageAt?: string | null
 }
 
 export interface InboxPage {
@@ -73,6 +76,24 @@ export function decodeInboxCursor(value: string | null | undefined): Cursor | nu
   } catch {
     return null
   }
+}
+
+export function createSafeSnippet(content: string | null | undefined, query: string): string | null {
+  if (!content) return null
+  const sanitized = content
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+  const idx = sanitized.toLowerCase().indexOf(query.toLowerCase())
+  if (idx === -1) {
+    return sanitized.length > 60 ? sanitized.slice(0, 60) + '…' : sanitized
+  }
+  const start = Math.max(0, idx - 25)
+  const end = Math.min(sanitized.length, idx + query.length + 25)
+  return (start > 0 ? '…' : '') + sanitized.slice(start, end) + (end < sanitized.length ? '…' : '')
 }
 
 export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPage> {
@@ -207,6 +228,39 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
   const msgByPhone = new Map(lastMessageByPhone.flatMap(message => message.phone ? [[message.phone, message] as const] : []))
   const unreadCountByLead = new Map(unreadRows.flatMap(row => row.leadId == null ? [] : [[row.leadId, row.count] as const]))
 
+  // SAC Lote 1: Se a busca inclui termo textual, localizar a mensagem correspondente para cada conversa
+  const matchedByLead = new Map<number, { id: number; snippet: string; createdAt: string | null }>()
+  if (query) {
+    const pattern = `%${query}%`
+    const matchedMessages = await db
+      .select({
+        id: whatsappMessages.id,
+        leadId: whatsappMessages.leadId,
+        content: whatsappMessages.content,
+        createdAt: whatsappMessages.createdAt,
+      })
+      .from(whatsappMessages)
+      .where(
+        and(
+          eq(whatsappMessages.companyId, options.companyId),
+          inArray(whatsappMessages.leadId, leadIds),
+          sql`${whatsappMessages.content} ILIKE ${pattern}`
+        )
+      )
+      .orderBy(desc(whatsappMessages.createdAt))
+
+    for (const m of matchedMessages) {
+      if (m.leadId && !matchedByLead.has(m.leadId) && m.content) {
+        const snippet = createSafeSnippet(m.content, query) || ''
+        matchedByLead.set(m.leadId, {
+          id: m.id,
+          snippet,
+          createdAt: m.createdAt?.toISOString() ?? null,
+        })
+      }
+    }
+  }
+
   const conversations = leads.map((lead): ConversationSummary => {
     const lastMessage = msgByLead.get(lead.id) || msgByPhone.get(lead.phone)
     return {
@@ -235,6 +289,9 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
       lastOutboundAt: lastMessage?.direction === 'outbound' ? lastMessage.createdAt?.toISOString() ?? null : null,
       unread: unreadCountByLead.get(lead.id) ?? 0,
       emailEngagement: getEmailEngagement(lead.miningTags),
+      matchedSnippet: lead.id ? matchedByLead.get(lead.id)?.snippet ?? null : null,
+      matchedMessageId: lead.id ? matchedByLead.get(lead.id)?.id ?? null : null,
+      matchedMessageAt: lead.id ? matchedByLead.get(lead.id)?.createdAt ?? null : null,
     }
   })
 

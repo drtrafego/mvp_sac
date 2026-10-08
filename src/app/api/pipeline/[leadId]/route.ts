@@ -1,70 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCurrentCompany } from '@/lib/auth'
+import { requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, sql, type SQL } from 'drizzle-orm'
+import { parseSacObject, parsePositiveId, parseExpectedVersion, validateSacContextFields, sacEpisodeForState, SacInputError } from '@/lib/sac-access'
 
 export const dynamic = 'force-dynamic'
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ leadId: string }> }
-) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ leadId: string }> }) {
   try {
-    const { leadId } = await params
-    const id = parseInt(leadId)
-    if (isNaN(id)) {
-      return NextResponse.json({ error: 'ID de lead inválido' }, { status: 400 })
+    const id = parsePositiveId((await params).leadId, 'Lead')
+    const { company, actorName } = await requireSacActor()
+    const body = parseSacObject(await req.json().catch(() => null))
+    const [lead] = await db.select().from(recoveryLeads).where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
+    if (!lead) return NextResponse.json({ error: 'Lead não encontrado.' }, { status: 404 })
+    const newContextFields = ['humanOwnerMemberId', 'nextActionDueAt', 'requestSummary', 'requestMessageId', 'commitment', 'nextAction', 'sacCaseState']
+    const needsVersion = newContextFields.some((key) => body[key] !== undefined)
+    const expected = body.expectedContextVersion !== undefined || needsVersion ? parseExpectedVersion(body.expectedContextVersion) : null
+    const contextBody = { ...body, ...(body.stage !== undefined ? { pipelineStage: body.stage || 'novo_contato' } : {}) }
+    const updateData: Partial<{ [K in keyof typeof recoveryLeads.$inferInsert]: typeof recoveryLeads.$inferInsert[K] | SQL }> = await validateSacContextFields(contextBody, lead)
+    if (typeof updateData.sacCaseState === 'string') updateData.sacCaseEpisode = sacEpisodeForState(updateData.sacCaseState)
+    for (const key of ['name', 'phone', 'email', 'productName', 'trackingSource'] as const) {
+      if (body[key] !== undefined) {
+        if (body[key] !== null && typeof body[key] !== 'string') throw new SacInputError(`${key} deve ser texto.`)
+        if (key === 'phone') {
+          if (typeof body[key] !== 'string' || !body[key].trim()) throw new SacInputError('Telefone obrigatório.')
+          updateData.phone = body[key].trim()
+        } else updateData[key] = typeof body[key] === 'string' ? body[key].trim() || null : null
+      }
     }
-
-    const company = await getCurrentCompany()
-    if (!company) {
-      return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
+    if (body.productValue !== undefined) {
+      if (body.productValue !== null && (typeof body.productValue !== 'number' || !Number.isFinite(body.productValue))) throw new SacInputError('Valor do produto inválido.')
+      updateData.productValue = body.productValue === null ? null : Math.round(body.productValue as number)
     }
-
-    const body = await req.json()
-    const {
-      name,
-      phone,
-      email,
-      productName,
-      productValue,
-      trackingSource,
-      stage,
-      status,
-      followUpDate,
-      followUpNote,
-      responsibleAgent,
-    } = body
-
-    const updateData: Record<string, any> = {
-      updatedAt: new Date(),
-    }
-
-    if (name !== undefined) updateData.name = name ? String(name).trim() : null
-    if (phone !== undefined) updateData.phone = String(phone).trim()
-    if (email !== undefined) updateData.email = email ? String(email).trim() : null
-    if (productName !== undefined) updateData.productName = productName ? String(productName).trim() : null
-    if (productValue !== undefined) updateData.productValue = typeof productValue === 'number' ? Math.round(productValue) : null
-    if (trackingSource !== undefined) updateData.trackingSource = trackingSource ? String(trackingSource).trim() : null
-    if (stage !== undefined) updateData.pipelineStage = stage ? String(stage).trim() : 'novo_contato'
-    if (status !== undefined) updateData.status = status ? String(status).trim() : null
-    if (followUpDate !== undefined) updateData.followUpDate = followUpDate ? new Date(followUpDate) : null
-    if (followUpNote !== undefined) updateData.followUpNote = followUpNote ? String(followUpNote).trim() : null
-    if (responsibleAgent !== undefined) updateData.responsibleAgent = responsibleAgent ? String(responsibleAgent).trim() : null
-
-    const [updated] = await db
-      .update(recoveryLeads)
-      .set(updateData)
-      .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
-      .returning()
-
-    if (!updated) {
-      return NextResponse.json({ error: 'Lead não encontrado ou não pertence a esta empresa' }, { status: 404 })
-    }
-
+    if (!Object.keys(updateData).length) throw new SacInputError('Nenhum campo alterado foi informado.')
+    updateData.updatedAt = new Date()
+    updateData.lastActionBy = actorName
+    updateData.lastActionAt = new Date()
+    updateData.contextVersion = sql`coalesce(${recoveryLeads.contextVersion}, 1) + 1`
+    const [updated] = await db.update(recoveryLeads).set(updateData).where(and(
+      eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id),
+      expected !== null ? sql`coalesce(${recoveryLeads.contextVersion}, 1) = ${expected}` : undefined,
+    )).returning()
+    if (!updated) return NextResponse.json({ error: 'Este atendimento foi alterado. Atualize antes de salvar.', code: 'CONTEXT_CONFLICT' }, { status: 409 })
     return NextResponse.json({ success: true, lead: updated })
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error: unknown) {
+    if (error instanceof SacInputError || error instanceof ForbiddenError || error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status })
+    return NextResponse.json({ error: 'Erro ao atualizar lead.' }, { status: 500 })
   }
 }

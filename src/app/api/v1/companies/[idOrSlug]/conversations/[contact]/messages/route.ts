@@ -4,69 +4,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
-import { sendWhatsAppMessage } from '@/lib/whatsapp'
-import { sendInstagramMessage } from '@/lib/instagram'
-import { sendBrevoEmail } from '@/lib/email/brevo'
+import { sendOutboundForLead } from '@/lib/outbound-send'
 import { eq, and, asc, or, sql } from 'drizzle-orm'
-import { markLeadContacted } from '@/lib/leads'
-import { type ContactIdentifier, parseContactIdentifier } from '@/lib/contact-resolution'
-import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
+import { resolveLeadForContact, type ResolvedLeadForContact } from '@/lib/contact-resolution'
 
 type Params = { params: Promise<{ idOrSlug: string; contact: string }> }
-type ResolvedLeadForContact = {
-  lead: typeof recoveryLeads.$inferSelect | undefined
-  identifier: ContactIdentifier
-  ambiguous: boolean
-}
 
-async function resolveLeadForContact(companyId: number, contact: string): Promise<ResolvedLeadForContact> {
-  const identifier = parseContactIdentifier(contact)
-  if (identifier.kind === 'leadId') {
-    const [lead] = await db
-      .select()
-      .from(recoveryLeads)
-      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.id, identifier.leadId)))
-      .limit(1)
-    return { lead, identifier, ambiguous: false }
-  }
-
-  const exactMatches = await db
-    .select()
-    .from(recoveryLeads)
-    .where(
-      and(
-        eq(recoveryLeads.companyId, companyId),
-        or(
-          eq(recoveryLeads.phone, identifier.raw),
-          identifier.digits
-            ? sql`regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g') = ${identifier.digits}`
-            : undefined
-        )
-      )
-    )
-    .limit(2)
-
-  if (exactMatches.length === 1) return { lead: exactMatches[0], identifier, ambiguous: false }
-  if (exactMatches.length > 1) return { lead: undefined, identifier, ambiguous: true }
-
-  if (identifier.digits.length >= 9) {
-    const suffixMatches = await db
-      .select()
-      .from(recoveryLeads)
-      .where(
-        and(
-          eq(recoveryLeads.companyId, companyId),
-          sql`right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9) = right(${identifier.digits}, 9)`
-        )
-      )
-      .limit(2)
-
-    if (suffixMatches.length === 1) return { lead: suffixMatches[0], identifier, ambiguous: false }
-    if (suffixMatches.length > 1) return { lead: undefined, identifier, ambiguous: true }
-  }
-
-  return { lead: undefined, identifier, ambiguous: false }
-}
 
 function contactIdentifierErrorResponse(err: unknown): NextResponse | null {
   if (!(err instanceof Error)) return null
@@ -138,10 +81,21 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   if (error || !context) return error!
 
   try {
-    const body = await req.json()
+    const body = await req.json().catch(() => null)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'Informe um objeto JSON.' }, { status: 400 })
+    }
+    for (const key of ['content', 'mediaUrl', 'messageType', 'clientRequestId', 'subject', 'senderName', 'channel']) {
+      if (body[key] != null && typeof body[key] !== 'string') {
+        return NextResponse.json({ error: `O campo ${key} deve ser texto.` }, { status: 400 })
+      }
+    }
+    if (body.channel && !['whatsapp', 'instagram', 'email'].includes(body.channel)) {
+      return NextResponse.json({ error: 'Canal inválido.' }, { status: 400 })
+    }
     const { content, messageType = 'text', mediaUrl, channel: requestedChannel = 'whatsapp' } = body
 
-    if (!content && !mediaUrl) {
+    if (!content?.trim() && !mediaUrl) {
       return NextResponse.json({ error: 'Conteúdo da mensagem ou mediaUrl é obrigatório' }, { status: 400 })
     }
 
@@ -183,105 +137,91 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     // O canal informado pela API só inicializa um lead novo. Para leads
     // existentes (e após a criação), o próprio lead é a fonte única do
     // transporte; um override conflitante no body é deliberadamente ignorado.
-    const deliveryChannel = resolveLeadDeliveryChannel(lead)
-    let externalId: string | null = null
+    const senderDisplayName = body.senderName || context.agentName
+    const clientRequestId =
+      (typeof body.clientRequestId === 'string' && body.clientRequestId.trim()) ||
+      req.headers.get('x-client-request-id')?.trim() ||
+      null
 
-    // Disparo real conforme canal
-    if (deliveryChannel === 'instagram') {
+    const sendResult = await sendOutboundForLead({
+      companyId: context.company.id,
+      lead,
+      content,
+      mediaUrl,
+      messageType,
+      clientRequestId,
+      sentBy: 'bot',
+      senderName: senderDisplayName,
+      agentId: context.agentId,
+      subject: body.subject || 'Mensagem de Atendimento',
+    })
+
+    if (!sendResult.ok) {
+      return NextResponse.json(
+        {
+          error: sendResult.error || 'Falha no transporte de envio',
+          isTimeout: sendResult.isTimeout,
+          message: sendResult.message
+            ? {
+                id: sendResult.message.id,
+                phone: sendResult.message.phone,
+                channel: sendResult.message.channel,
+                direction: sendResult.message.direction,
+                content: sendResult.message.content,
+                messageType: sendResult.message.messageType,
+                mediaUrl: sendResult.message.mediaUrl,
+                sentBy: sendResult.message.sentBy,
+                senderName: sendResult.message.senderName,
+                sendState: sendResult.message.sendState,
+                sendError: sendResult.message.sendError,
+                clientRequestId: sendResult.message.clientRequestId,
+                createdAt: sendResult.message.createdAt?.toISOString() ?? null,
+              }
+            : null,
+        },
+        { status: sendResult.status },
+      )
+    }
+
+    const msg = sendResult.message!
+
+    if (!sendResult.idempotentReplay) {
       try {
-        const igRes = await sendInstagramMessage({
-          recipientId: lead.phone,
-          text: content,
+        // Atualiza lastActionBy do agente no lead
+        await db
+          .update(recoveryLeads)
+          .set({
+            lastActionBy: `${senderDisplayName} (Agente IA)`,
+          })
+          .where(eq(recoveryLeads.id, lead.id))
+
+        // Log de auditoria
+        const { logAgentActivity } = await import('@/lib/agent-auth')
+        await logAgentActivity({
           companyId: context.company.id,
-        })
-        externalId = igRes.messageId || null
-      } catch (igErr) {
-        console.warn('[API Outbound Instagram Warning]:', igErr)
-      }
-    } else if (deliveryChannel === 'email' && lead.email) {
-      try {
-        await sendBrevoEmail({
-          to: [{ email: lead.email, name: lead.name || 'Cliente' }],
-          subject: body.subject || 'Mensagem de Atendimento',
-          htmlContent: `<p>${content.replace(/\n/g, '<br>')}</p>`,
-          textContent: content,
-          companyId: context.company.id,
-        })
-      } catch (emErr) {
-        console.warn('[API Outbound Email Warning]:', emErr)
-      }
-    } else {
-      // WhatsApp Meta / UazAPI
-      try {
-        externalId = await sendWhatsAppMessage(
-          lead.phone,
-          {
-            type: messageType,
-            content,
-            mediaUrl,
+          agentName: senderDisplayName,
+          agentId: context.agentId,
+          action: 'send_message',
+          entityType: 'message',
+          entityId: String(msg.id),
+          details: {
+            leadId: lead.id,
+            channel: msg.channel,
+            phone: lead.phone,
+            preview: (content || '').slice(0, 80),
           },
-          context.company.id
-        )
-      } catch (waErr) {
-        console.warn('[API Outbound WhatsApp Warning]:', waErr)
+        })
+      } catch {
+        console.warn('[SAC v1] Envio aceito; auditoria complementar pendente', { leadId: lead.id, messageId: msg.id })
       }
     }
 
-    // Registra no banco com autoria do agente (Luana / Renato)
-    const senderDisplayName = body.senderName || context.agentName
-    const [msg] = await db
-      .insert(whatsappMessages)
-      .values({
-        companyId: context.company.id,
-        leadId: lead.id,
-        phone: lead.phone,
-        channel: deliveryChannel,
-        direction: 'outbound',
-        content: content || null,
-        messageType,
-        mediaUrl: mediaUrl || null,
-        sentBy: 'bot',
-        senderName: senderDisplayName,
-        agentId: context.agentId,
-        externalId,
-      })
-      .returning()
-
-    // Mensagem real trocada: se for a primeira, marca a abordagem do lead
-    await markLeadContacted(lead.id)
-
-    // Atualiza timestamp e última ação do lead
-    await db
-      .update(recoveryLeads)
-      .set({
-        lastActionBy: `${senderDisplayName} (Agente IA)`,
-        lastActionAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(recoveryLeads.id, lead.id))
-
-    // Log de auditoria
-    const { logAgentActivity } = await import('@/lib/agent-auth')
-    await logAgentActivity({
-      companyId: context.company.id,
-      agentName: senderDisplayName,
-      agentId: context.agentId,
-      action: 'send_message',
-      entityType: 'message',
-      entityId: String(msg.id),
-      details: {
-        leadId: lead.id,
-        channel: deliveryChannel,
-        phone: lead.phone,
-        preview: (content || '').slice(0, 80),
-      },
-    })
-
     return NextResponse.json({
       ok: true,
-      message: 'Mensagem enviada e registrada com sucesso',
+      message: 'Mensagem aceita pelo transporte e registrada.',
+      idempotentReplay: sendResult.idempotentReplay || false,
       sentMessage: msg,
-    }, { status: 201 })
+    }, { status: sendResult.idempotentReplay ? 200 : 201 })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Erro ao enviar mensagem'
     return NextResponse.json({ error: message }, { status: 500 })

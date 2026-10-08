@@ -866,10 +866,170 @@ export function ensureSchema(client: any): Promise<void> {
             message,
           )
         }
+
+        // ─── SAC Lote 1: Card de contexto, notas, respostas, pendências e auditoria ─
+        try {
+          await client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS ai_agent_key TEXT`
+
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS request_summary TEXT`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS request_message_id INTEGER`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS commitment TEXT`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS next_action TEXT`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS human_owner_member_id INTEGER REFERENCES company_members(id) ON DELETE SET NULL`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS next_action_due_at TIMESTAMP`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS sac_case_state TEXT DEFAULT 'aberto'`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS context_version INTEGER DEFAULT 1`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS context_updated_by TEXT`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS bot_control_version INTEGER DEFAULT 1`
+
+          await client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS send_state TEXT`
+          await client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS client_request_id TEXT`
+          await client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS send_error TEXT`
+
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_messages_company_client_req_unique
+            ON whatsapp_messages (company_id, client_request_id)
+            WHERE client_request_id IS NOT NULL
+          `
+
+          await client`
+            CREATE TABLE IF NOT EXISTS sac_internal_notes (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
+              author_type TEXT NOT NULL DEFAULT 'human',
+              author_id TEXT,
+              author_name TEXT,
+              body TEXT NOT NULL,
+              created_at TIMESTAMP DEFAULT NOW(),
+              updated_at TIMESTAMP DEFAULT NOW(),
+              deleted_at TIMESTAMP
+            )
+          `
+          await client`
+            CREATE INDEX IF NOT EXISTS sac_internal_notes_company_lead_created_idx
+            ON sac_internal_notes (company_id, lead_id, created_at)
+          `
+
+          await client`
+            CREATE TABLE IF NOT EXISTS sac_approved_replies (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              title TEXT NOT NULL,
+              shortcut TEXT,
+              body TEXT NOT NULL,
+              variables JSONB,
+              approval_state TEXT NOT NULL DEFAULT 'draft',
+              version INTEGER NOT NULL DEFAULT 1,
+              approved_by TEXT,
+              approved_at TIMESTAMP,
+              created_at TIMESTAMP DEFAULT NOW(),
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `
+          await client`
+            CREATE INDEX IF NOT EXISTS sac_approved_replies_company_state_idx
+            ON sac_approved_replies (company_id, approval_state)
+          `
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS sac_approved_replies_company_shortcut_unique
+            ON sac_approved_replies (company_id, shortcut)
+            WHERE shortcut IS NOT NULL
+          `
+
+          await client`
+            CREATE TABLE IF NOT EXISTS sac_pending_items (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
+              rule_type TEXT NOT NULL,
+              source_key TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              human_owner_member_id INTEGER REFERENCES company_members(id) ON DELETE SET NULL,
+              due_at TIMESTAMP,
+              state TEXT NOT NULL DEFAULT 'pendente',
+              created_at TIMESTAMP DEFAULT NOW(),
+              resolved_at TIMESTAMP
+            )
+          `
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS sac_pending_items_company_lead_rule_source_unique
+            ON sac_pending_items (company_id, lead_id, rule_type, source_key)
+          `
+          await client`
+            CREATE INDEX IF NOT EXISTS sac_pending_items_company_state_due_idx
+            ON sac_pending_items (company_id, state, due_at)
+          `
+
+          await client`
+            CREATE TABLE IF NOT EXISTS sac_audit_events (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              lead_id INTEGER REFERENCES recovery_leads(id) ON DELETE CASCADE,
+              type TEXT NOT NULL,
+              actor_type TEXT NOT NULL,
+              actor_id TEXT,
+              actor_name TEXT,
+              reference_type TEXT,
+              reference_id TEXT,
+              payload JSONB,
+              occurred_at TIMESTAMP DEFAULT NOW()
+            )
+          `
+          await client`
+            CREATE INDEX IF NOT EXISTS sac_audit_events_company_lead_occurred_idx
+            ON sac_audit_events (company_id, lead_id, occurred_at)
+          `
+          await client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS sac_followup_stage_ids JSONB NOT NULL DEFAULT '[]'::jsonb`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS sac_case_episode INTEGER NOT NULL DEFAULT 1`
+          await client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS outbound_payload_hash TEXT`
+          await client`ALTER TABLE whatsapp_messages ALTER COLUMN send_state DROP DEFAULT`
+          await client`ALTER TABLE sac_approved_replies ALTER COLUMN approval_state SET DEFAULT 'draft'`
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS company_members_company_user_unique
+            ON company_members (company_id, stack_auth_user_id) WHERE stack_auth_user_id IS NOT NULL
+          `
+          await client`
+            DO $$ BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'recovery_leads_request_message_id_fkey'
+                  AND conrelid = 'recovery_leads'::regclass
+              ) THEN
+                ALTER TABLE recovery_leads ADD CONSTRAINT recovery_leads_request_message_id_fkey
+                  FOREIGN KEY (request_message_id) REFERENCES whatsapp_messages(id)
+                  ON DELETE SET NULL NOT VALID;
+              END IF;
+            END $$
+          `
+          await client`
+            CREATE TABLE IF NOT EXISTS sac_rule_states (
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
+              rule_type TEXT NOT NULL,
+              active BOOLEAN NOT NULL DEFAULT FALSE,
+              fingerprint TEXT,
+              occurrence_number INTEGER NOT NULL DEFAULT 0,
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS sac_rule_states_company_lead_rule_unique
+            ON sac_rule_states (company_id, lead_id, rule_type)
+          `
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[DB Schema Sync Error] Falha ao criar infraestrutura SAC Lote 1:', message)
+          throw err
+        }
       } catch (err: any) {
         console.error('[DB Schema Sync Error]', err?.message || err)
+        throw err
       }
-    })()
+    })().catch(error => {
+      _migrationPromise = null
+      throw error
+    })
   }
   return _migrationPromise
 }

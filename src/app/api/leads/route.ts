@@ -56,6 +56,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const product = searchParams.get('product')
   const source = searchParams.get('source')
   const platform = searchParams.get('platform')
+  const paymentType = searchParams.get('payment_type')
+  const tag = searchParams.get('tag')?.trim()
+  const transactionId = searchParams.get('transaction_id')?.trim()
+  const hasPhone = searchParams.get('has_phone')
+  const hasEmail = searchParams.get('has_email')
+  const hasTags = searchParams.get('has_tags')
+  const isSale = searchParams.get('is_sale')
+  const minValue = searchParams.get('min_value')
+  const maxValue = searchParams.get('max_value')
+  const search = searchParams.get('search')?.trim() || searchParams.get('q')?.trim()
   const limit = parsedLimit.value
   const offset = parsedOffset.value
   const period = searchParams.get('period') ?? '30d'
@@ -76,6 +86,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json(rows.map(r => r.productName).filter(Boolean))
   }
 
+  // Retorna lista de plataformas distintas para o dropdown de filtro
+  if (searchParams.get('platforms_only') === 'true') {
+    const rows = await db
+      .selectDistinct({ platform: recoveryLeads.platform })
+      .from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, company.id), sql`${recoveryLeads.platform} is not null`))
+      .orderBy(recoveryLeads.platform)
+      .limit(100)
+    return NextResponse.json(rows.map(r => r.platform).filter(Boolean))
+  }
+
   const { fromDate, toDate } = getDateRange(period, new Date(), fromStr, toStr)
 
   const conditions = [eq(recoveryLeads.companyId, company.id)]
@@ -88,21 +109,122 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
   }
   if (source) {
-    // channelWhereCondition é a ÚNICA fonte da verdade de classificação de
-    // canal (src/lib/inbox-channel-filter.ts, mesma usada em /api/inbox e
-    // no Inbox em memória) — reaproveitada aqui em vez de duplicar a
-    // heurística com um ILIKE de texto livre, que não pegava sinônimo real
-    // (ex.: "Minerador" do CRM não bate em ILIKE '%mineracao%', mas bate na
-    // regra de borda de palavra 'miner' de channelWhereCondition).
-    // Retorna undefined pra valor desconhecido: cai no ILIKE de texto livre
-    // como fallback, preservando o comportamento antigo pra source arbitrário.
     const knownChannelCondition = channelWhereCondition(source)
     conditions.push(knownChannelCondition ?? sql`${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'}`)
   }
   if (platform) conditions.push(eq(recoveryLeads.platform, platform))
   if (product) conditions.push(eq(recoveryLeads.productName, product))
-  if (fromDate) conditions.push(gte(recoveryLeads.createdAt, fromDate))
-  conditions.push(lte(recoveryLeads.createdAt, toDate))
+  if (paymentType) conditions.push(eq(recoveryLeads.paymentType, paymentType))
+
+  // Busca textual global no banco (nome, telefone, email, produto, id da transação)
+  if (search) {
+    const pattern = `%${search}%`
+    conditions.push(sql`(
+      ${recoveryLeads.name} ILIKE ${pattern} OR
+      ${recoveryLeads.phone} ILIKE ${pattern} OR
+      ${recoveryLeads.email} ILIKE ${pattern} OR
+      ${recoveryLeads.productName} ILIKE ${pattern} OR
+      ${recoveryLeads.transactionId} ILIKE ${pattern}
+    )`)
+  }
+
+  // Filtro por tags
+  if (tag) {
+    conditions.push(sql`EXISTS (
+      SELECT 1 FROM lead_tags
+      WHERE lead_tags.lead_id = ${recoveryLeads.id}
+        AND lead_tags.tag ILIKE ${'%' + tag + '%'}
+    )`)
+  }
+
+  // Filtro por existência de tags, telefone ou e-mail
+  if (hasTags === 'true') {
+    conditions.push(sql`EXISTS (SELECT 1 FROM lead_tags WHERE lead_tags.lead_id = ${recoveryLeads.id})`)
+  }
+  if (hasPhone === 'true') {
+    conditions.push(sql`(${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != '')`)
+  }
+  if (hasEmail === 'true') {
+    conditions.push(sql`(${recoveryLeads.email} IS NOT NULL AND ${recoveryLeads.email} != '')`)
+  }
+
+  // Venda fechada versus Lead
+  if (isSale === 'true') {
+    conditions.push(eq(recoveryLeads.status, 'converted'))
+  } else if (isSale === 'false') {
+    conditions.push(sql`COALESCE(${recoveryLeads.status}, '') != 'converted'`)
+  }
+
+  // ID Externo / Transação
+  if (transactionId) {
+    conditions.push(sql`${recoveryLeads.transactionId} ILIKE ${'%' + transactionId + '%'}`)
+  }
+
+  // Valores Mínimo e Máximo
+  if (minValue) {
+    const minCents = parseValueToCents(minValue)
+    if (minCents > 0) conditions.push(gte(recoveryLeads.productValue, minCents))
+  }
+  if (maxValue) {
+    const maxCents = parseValueToCents(maxValue)
+    if (maxCents > 0) conditions.push(lte(recoveryLeads.productValue, maxCents))
+  }
+
+  // Se houver busca por texto, permitimos buscar sem limitar estritamente pela data se fromStr não for explícito
+  if (!search) {
+    if (fromDate) conditions.push(gte(recoveryLeads.createdAt, fromDate))
+    conditions.push(lte(recoveryLeads.createdAt, toDate))
+  } else if (fromStr && fromDate) {
+    conditions.push(gte(recoveryLeads.createdAt, fromDate))
+    conditions.push(lte(recoveryLeads.createdAt, toDate))
+  }
+
+  // Exportação CSV completa no servidor para todos os leads filtrados da empresa
+  if (searchParams.get('export') === 'csv') {
+    const exportRows = await db
+      .select()
+      .from(recoveryLeads)
+      .where(and(...conditions))
+      .orderBy(desc(recoveryLeads.createdAt))
+      .limit(10_000)
+
+    const headers = ['ID', 'Nome', 'Telefone', 'Email', 'Produto', 'Valor (R$)', 'Evento', 'Status', 'Plataforma', 'Origem', 'ID Transacao', 'Data de Criacao']
+    const escapeCsv = (val: unknown) => {
+      if (val == null) return '""'
+      const str = String(val).replace(/"/g, '""')
+      return `"${str}"`
+    }
+
+    const csvLines = [
+      headers.join(';'),
+      ...exportRows.map(l => [
+        escapeCsv(l.id),
+        escapeCsv(l.name),
+        escapeCsv(l.phone),
+        escapeCsv(l.email),
+        escapeCsv(l.productName),
+        escapeCsv(l.productValue ? (l.productValue / 100).toFixed(2).replace('.', ',') : '0,00'),
+        escapeCsv(l.eventType),
+        escapeCsv(l.status),
+        escapeCsv(l.platform),
+        escapeCsv(l.channel || l.trackingSource),
+        escapeCsv(l.transactionId),
+        escapeCsv(l.createdAt ? new Date(l.createdAt).toISOString() : ''),
+      ].join(';'))
+    ]
+
+    // UTF-8 BOM (\uFEFF) para compatibilidade nativa com Excel
+    const csvContent = '\uFEFF' + csvLines.join('\r\n')
+    const filename = `leads_export_${new Date().toISOString().split('T')[0]}.csv`
+
+    return new NextResponse(csvContent, {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Cache-Control': 'no-store',
+      },
+    })
+  }
 
   let query = db
     .select()

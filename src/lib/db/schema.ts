@@ -1,5 +1,6 @@
 import { pgTable, serial, integer, bigint, numeric, text, boolean, timestamp, jsonb, uniqueIndex, index, date, time } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
 
 // ─── Empresas (multi-tenant) ──────────────────────────────────────────────────
 export const companies = pgTable('companies', {
@@ -128,6 +129,11 @@ export const settings = pgTable('settings', {
   // como o GATE manual: nulo = resposta automática desligada pra essa empresa,
   // preenchido = ligada (ver src/lib/ai-reply.ts).
   aiSystemPrompt: text('ai_system_prompt'),
+  // Vínculo configurável empresa -> agente / perfil de ações (SAC Lote 1, item 5.4).
+  // Fallback: mapeamento padrão por slug da empresa se nulo.
+  aiAgentKey: text('ai_agent_key'),
+  // Explicit opt-in: custom Pipeline IDs whose active leads require a return.
+  sacFollowupStageIds: jsonb('sac_followup_stage_ids').$type<string[]>().notNull().default([]),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => [
   uniqueIndex('settings_meta_phone_number_id_unique').on(table.metaPhoneNumberId),
@@ -461,6 +467,19 @@ export const recoveryLeads = pgTable('recovery_leads', {
     }
   }>(),
 
+  // ─── SAC Lote 1: Card de contexto e coordenação de atendimento humano ───────
+  requestSummary: text('request_summary'),
+  requestMessageId: integer('request_message_id').references((): AnyPgColumn => whatsappMessages.id, { onDelete: 'set null' }),
+  commitment: text('commitment'),
+  nextAction: text('next_action'),
+  humanOwnerMemberId: integer('human_owner_member_id').references(() => companyMembers.id, { onDelete: 'set null' }),
+  nextActionDueAt: timestamp('next_action_due_at'),
+  sacCaseState: text('sac_case_state').default('aberto'), // 'aberto' | 'aguardando_retorno' | 'resolvido' | 'reaberto'
+  sacCaseEpisode: integer('sac_case_episode').notNull().default(1),
+  contextVersion: integer('context_version').default(1),
+  contextUpdatedBy: text('context_updated_by'),
+  botControlVersion: integer('bot_control_version').default(1),
+
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => [
@@ -611,6 +630,11 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
   externalId: text('external_id'),
   reasoning: text('reasoning'),
   sentEmail: text('sent_email'),
+  // SAC Lote 1: Rastreamento do ciclo de envio manual e idempotência de disparo
+  sendState: text('send_state'), // null = no transport evidence; never presume acceptance
+  clientRequestId: text('client_request_id'),        // Chave única de idempotência do cliente/interface
+  outboundPayloadHash: text('outbound_payload_hash'), // immutable full-payload binding for idempotency
+  sendError: text('send_error'),                      // Erro legível retornado pelo transporte em caso de falha
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   // Cursor do histórico aberto: os dois índices deixam o Postgres buscar só
@@ -646,6 +670,10 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
   uniqueIndex('whatsapp_messages_inbound_company_channel_external_id_unique')
     .on(table.companyId, table.channel, table.externalId)
     .where(sql`${table.externalId} is not null and ${table.direction} = 'inbound'`),
+  // SAC Lote 1: Idempotência de envio por clientRequestId (evita duplo clique e retry concorrente)
+  uniqueIndex('whatsapp_messages_company_client_req_unique')
+    .on(table.companyId, table.clientRequestId)
+    .where(sql`${table.clientRequestId} is not null`),
 ])
 
 // ─── Log de atividades dos agentes IA (Luana e Renato) ─────────────────────────
@@ -716,7 +744,11 @@ export const companyMembers = pgTable('company_members', {
   status: text('status').default('pending').notNull(), // 'pending' | 'ativo'
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
-})
+}, table => [
+  uniqueIndex('company_members_company_user_unique')
+    .on(table.companyId, table.stackAuthUserId)
+    .where(sql`${table.stackAuthUserId} is not null`),
+])
 
 // ─── Automações de Comentário vira DM (Instagram Comment-to-DM) ─────────────
 export const instagramCommentAutomations = pgTable('instagram_comment_automations', {
@@ -858,6 +890,92 @@ export const aiBridgeCalls = pgTable('ai_bridge_calls', {
   createdAt: timestamp('created_at').defaultNow(),
 })
 
+// ─── SAC Lote 1: Notas internas datadas ─────────────────────────────────────
+export const sacInternalNotes = pgTable('sac_internal_notes', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  authorType: text('author_type').default('human').notNull(), // 'human' | 'bot' | 'system'
+  authorId: text('author_id'),
+  authorName: text('author_name'),
+  body: text('body').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+  deletedAt: timestamp('deleted_at'),
+}, (table) => [
+  index('sac_internal_notes_company_lead_created_idx').on(table.companyId, table.leadId, table.createdAt),
+])
+
+// ─── SAC Lote 1: Respostas aprovadas do compositor ──────────────────────────
+export const sacApprovedReplies = pgTable('sac_approved_replies', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  title: text('title').notNull(),
+  shortcut: text('shortcut'), // ex: '/pix', '/horario'
+  body: text('body').notNull(),
+  variables: jsonb('variables').$type<string[]>(),
+  approvalState: text('approval_state').default('draft').notNull(), // 'draft' | 'approved' | 'deprecated'
+  version: integer('version').default(1).notNull(),
+  approvedBy: text('approved_by'),
+  approvedAt: timestamp('approved_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => [
+  index('sac_approved_replies_company_state_idx').on(table.companyId, table.approvalState),
+  uniqueIndex('sac_approved_replies_company_shortcut_unique')
+    .on(table.companyId, table.shortcut)
+    .where(sql`${table.shortcut} is not null`),
+])
+
+// ─── SAC Lote 1: Pendências internas das 3 regras prontas ───────────────────
+export const sacPendingItems = pgTable('sac_pending_items', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  ruleType: text('rule_type').notNull(), // 'retorno_vencido' | 'transbordo_sem_dono' | 'etapa_sem_retorno'
+  sourceKey: text('source_key').notNull(), // chave única estável para dedup de ocorrência
+  reason: text('reason').notNull(),
+  humanOwnerMemberId: integer('human_owner_member_id').references(() => companyMembers.id, { onDelete: 'set null' }),
+  dueAt: timestamp('due_at'),
+  state: text('state').default('pendente').notNull(), // 'pendente' | 'em_atendimento' | 'resolvido' | 'descartado'
+  createdAt: timestamp('created_at').defaultNow(),
+  resolvedAt: timestamp('resolved_at'),
+}, (table) => [
+  uniqueIndex('sac_pending_items_company_lead_rule_source_unique')
+    .on(table.companyId, table.leadId, table.ruleType, table.sourceKey),
+  index('sac_pending_items_company_state_due_idx').on(table.companyId, table.state, table.dueAt),
+])
+
+// Durable condition observations, independent of an operator acknowledging an alert.
+export const sacRuleStates = pgTable('sac_rule_states', {
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  ruleType: text('rule_type').notNull(),
+  active: boolean('active').notNull().default(false),
+  fingerprint: text('fingerprint'),
+  occurrenceNumber: integer('occurrence_number').notNull().default(0),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, table => [
+  uniqueIndex('sac_rule_states_company_lead_rule_unique').on(table.companyId, table.leadId, table.ruleType),
+])
+
+// ─── SAC Lote 1: Eventos de auditoria do atendimento ────────────────────────
+export const sacAuditEvents = pgTable('sac_audit_events', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }),
+  type: text('type').notNull(), // 'assume_case' | 'transfer_case' | 'pause_bot' | 'resume_bot' | 'context_updated' | 'internal_note_added' | 'pending_rule_triggered' | 'pending_rule_resolved'
+  actorType: text('actor_type').notNull(), // 'human' | 'bot' | 'system'
+  actorId: text('actor_id'),
+  actorName: text('actor_name'),
+  referenceType: text('reference_type'),
+  referenceId: text('reference_id'),
+  payload: jsonb('payload'),
+  occurredAt: timestamp('occurred_at').defaultNow(),
+}, (table) => [
+  index('sac_audit_events_company_lead_occurred_idx').on(table.companyId, table.leadId, table.occurredAt),
+])
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const companiesRelations = relations(companies, ({ one, many }) => ({
   settings: one(settings, { fields: [companies.id], references: [settings.companyId] }),
@@ -872,6 +990,10 @@ export const companiesRelations = relations(companies, ({ one, many }) => ({
   agendaBlockedDates: many(agendaBlockedDates),
   metaConversionEvents: many(metaConversionEvents),
   massDispatchBatches: many(massDispatchBatches),
+  internalNotes: many(sacInternalNotes),
+  approvedReplies: many(sacApprovedReplies),
+  pendingItems: many(sacPendingItems),
+  auditEvents: many(sacAuditEvents),
 }))
 
 export const settingsRelations = relations(settings, ({ one }) => ({
@@ -898,6 +1020,9 @@ export const recoveryLeadsRelations = relations(recoveryLeads, ({ one, many }) =
   gramadoReservations: many(gramadoReservations),
   tags: many(leadTags),
   massDispatchRecipients: many(massDispatchRecipients),
+  internalNotes: many(sacInternalNotes),
+  pendingItems: many(sacPendingItems),
+  auditEvents: many(sacAuditEvents),
 }))
 
 export const massDispatchBatchesRelations = relations(massDispatchBatches, ({ one, many }) => ({
@@ -948,4 +1073,24 @@ export const instagramCommentLogsRelations = relations(instagramCommentLogs, ({ 
 
 export const agendaBlockedDatesRelations = relations(agendaBlockedDates, ({ one }) => ({
   company: one(companies, { fields: [agendaBlockedDates.companyId], references: [companies.id] }),
+}))
+
+export const sacInternalNotesRelations = relations(sacInternalNotes, ({ one }) => ({
+  company: one(companies, { fields: [sacInternalNotes.companyId], references: [companies.id] }),
+  lead: one(recoveryLeads, { fields: [sacInternalNotes.leadId], references: [recoveryLeads.id] }),
+}))
+
+export const sacApprovedRepliesRelations = relations(sacApprovedReplies, ({ one }) => ({
+  company: one(companies, { fields: [sacApprovedReplies.companyId], references: [companies.id] }),
+}))
+
+export const sacPendingItemsRelations = relations(sacPendingItems, ({ one }) => ({
+  company: one(companies, { fields: [sacPendingItems.companyId], references: [companies.id] }),
+  lead: one(recoveryLeads, { fields: [sacPendingItems.leadId], references: [recoveryLeads.id] }),
+  ownerMember: one(companyMembers, { fields: [sacPendingItems.humanOwnerMemberId], references: [companyMembers.id] }),
+}))
+
+export const sacAuditEventsRelations = relations(sacAuditEvents, ({ one }) => ({
+  company: one(companies, { fields: [sacAuditEvents.companyId], references: [companies.id] }),
+  lead: one(recoveryLeads, { fields: [sacAuditEvents.leadId], references: [recoveryLeads.id] }),
 }))

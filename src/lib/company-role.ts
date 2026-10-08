@@ -1,0 +1,79 @@
+// Resolução do cargo do usuário DENTRO da empresa ativa (SAC Lote 1, item 5.5).
+//
+// Escopo de empresa (requireCompany) e cargo são verificações distintas: antes
+// desta função, qualquer pessoa com acesso à empresa conseguia convidar,
+// promover, rebaixar e excluir membros, e alterar credenciais, porque as rotas
+// só checavam requireCompany. Ocultar botão na interface não substitui a guarda
+// no servidor.
+//
+// Função pura (sem 'server-only', sem banco) para poder ser testada direto.
+// O wrapper que busca os dados fica em src/lib/auth.ts (getCompanyAccess).
+
+export type CompanyRole = 'platform_admin' | 'admin' | 'membro'
+
+export interface CompanyRoleMembership {
+  id?: number
+  companyId: number
+  stackAuthUserId: string | null
+  email: string
+  role: string
+  status: string
+}
+
+export interface ResolveCompanyRoleInput {
+  companyId: number
+  userId: string
+  email?: string | null
+  isPlatformAdmin: boolean
+  companyOwnerUserId?: string | null
+  memberships: CompanyRoleMembership[]
+}
+
+export interface ResolvedCompanyRole {
+  role: CompanyRole | null
+  memberId: number | null
+}
+
+const RANK: Record<CompanyRole, number> = { membro: 1, admin: 2, platform_admin: 3 }
+
+function normalizeEmail(email: string | null | undefined): string {
+  return (email ?? '').trim().toLowerCase()
+}
+
+/**
+ * Ordem de decisão:
+ * 1. Administrador da plataforma (lista de ADMIN_EMAILS) tem escopo próprio.
+ * 2. Proprietário da empresa (companies.stack_auth_user_id) é admin.
+ * 3. Vínculo ativo DESTA empresa aceito por esta conta usa o cargo gravado.
+ * 4. Sem vínculo válido, o acesso falha fechado.
+ */
+export function resolveCompanyRole(input: ResolveCompanyRoleInput): ResolvedCompanyRole {
+  if (input.isPlatformAdmin) return { role: 'platform_admin', memberId: null }
+
+  if (input.companyOwnerUserId && input.companyOwnerUserId === input.userId) {
+    const ownerMembership = input.memberships.find((m) => m.companyId === input.companyId && m.status === 'ativo' && m.stackAuthUserId === input.userId)
+    return { role: 'admin', memberId: ownerMembership?.id ?? null }
+  }
+
+  const sameCompany = input.memberships.filter((m) => m.companyId === input.companyId && m.status === 'ativo')
+  const byId = sameCompany.find((m) => m.stackAuthUserId && m.stackAuthUserId === input.userId)
+  const email = normalizeEmail(input.email)
+  const byEmail = email ? sameCompany.find((m) => normalizeEmail(m.email) === email) : undefined
+  // E-mail is not an alternative to an accepted, account-bound membership.
+  const membership = byId ?? (byEmail?.stackAuthUserId === input.userId ? byEmail : undefined)
+
+  if (membership) {
+    const role: CompanyRole = membership.role === 'admin' ? 'admin' : 'membro'
+    return { role, memberId: membership.id ?? null }
+  }
+  return { role: null, memberId: null }
+}
+
+export function roleSatisfies(role: CompanyRole | null, minimum: CompanyRole): boolean {
+  return role !== null && RANK[role] >= RANK[minimum]
+}
+
+export function isCompanyAdminRole(role: string | null | undefined): boolean {
+  return role === 'admin' || role === 'platform_admin' || role === 'owner'
+}
+

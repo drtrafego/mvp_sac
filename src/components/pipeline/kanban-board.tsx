@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
+import { useRouter } from 'next/navigation'
 import {
   MessageSquare,
   Mail,
-  Calendar,
   Sparkles,
   Filter,
   Plus,
@@ -17,18 +17,18 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  GripVertical,
   Check,
   Globe,
-  Share2,
   DollarSign,
   User,
   Phone,
-  Tag,
   ShoppingBag,
-  ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { followupDayKey, followupDayToIso } from '@/lib/sac-followup-date'
+import { savePipelineColumns } from './pipeline-column-save'
+
+const subscribeHydration = () => () => {}
 
 function InstagramIcon({ size = 13, className = '' }: { size?: number; className?: string }) {
   return (
@@ -196,13 +196,22 @@ export function KanbanBoard({
   initialLeads: KanbanLead[]
   companySlug?: string
 }) {
-  const [mounted, setMounted] = useState(false)
-  const [leads, setLeads] = useState<KanbanLead[]>(initialLeads)
+  const router=useRouter()
+  const mounted=useSyncExternalStore(subscribeHydration,()=>true,()=>false)
+  // An optimistic edit belongs to one server snapshot. A refresh renders fresh
+  // props immediately without an effect copying props into state afterward.
+  const [leadState,setLeadState]=useState({base:initialLeads,value:initialLeads})
+  const leads=leadState.base===initialLeads ? leadState.value : initialLeads
+  const setLeads=useCallback((update:React.SetStateAction<KanbanLead[]>)=> {
+    setLeadState(current=> {
+      const previous=current.base===initialLeads ? current.value : initialLeads
+      return {base:initialLeads,value:typeof update==='function' ? update(previous) : update}
+    })
+  },[initialLeads])
   const [stages, setStages] = useState<KanbanStage[]>(DEFAULT_STAGES)
 
   // Carregar etapas da API ou localStorage
   useEffect(() => {
-    setMounted(true)
     async function loadStages() {
       try {
         const res = await fetch('/api/pipeline/columns')
@@ -227,10 +236,6 @@ export function KanbanBoard({
     }
     loadStages()
   }, [companySlug])
-
-  useEffect(() => {
-    setLeads(initialLeads)
-  }, [initialLeads])
 
   const [filterChannel, setFilterChannel] = useState<string>('all')
   const [filterOrigin, setFilterOrigin] = useState<string>('all')
@@ -268,35 +273,29 @@ export function KanbanBoard({
 
   // Salvar etapas no banco e localStorage
   const persistStages = useCallback(async (newStages: KanbanStage[], migrateFromColumn?: string, migrateToColumn?: string) => {
-    setStages(newStages)
-    try {
-      localStorage.setItem(`mvp_sac_pipeline_stages_${companySlug}`, JSON.stringify(newStages))
-    } catch {}
-
-    try {
-      const res = await fetch('/api/pipeline/columns', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          columns: newStages,
-          migrateFromColumn,
-          migrateToColumn,
-        }),
-      })
-      if (!res.ok) {
-        console.error('Falha ao salvar colunas na API')
-      }
-    } catch (err) {
-      console.error('Erro ao persistir colunas na API:', err)
+    const result=await savePipelineColumns({columns:newStages,expectedColumns:stages,migrateFromColumn,migrateToColumn})
+    if (!result.ok) {
+      try {
+        const response=await fetch('/api/pipeline/columns',{cache:'no-store'})
+        const data=await response.json()
+        if (response.ok) setStages(Array.isArray(data.columns) && data.columns.length ? data.columns : DEFAULT_STAGES)
+      } catch {}
+      router.refresh()
+      alert(result.message)
+      return false
     }
-  }, [companySlug])
+    setStages(newStages)
+    try { localStorage.setItem(`mvp_sac_pipeline_stages_${companySlug}`,JSON.stringify(newStages)) } catch {}
+    router.refresh()
+    return true
+  }, [companySlug,stages,router])
 
-  function handleCreateStage(e: React.FormEvent) {
+  async function handleCreateStage(e: React.FormEvent) {
     e.preventDefault()
     if (!newStageLabel.trim()) return
     const id = newStageLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '_' + Date.now().toString().slice(-4)
     const newStages = [...stages, { id, label: newStageLabel.trim(), color: newStageColor }]
-    persistStages(newStages)
+    if (!await persistStages(newStages)) return
     setNewStageLabel('')
     setShowAddStageModal(false)
     setSavedToast(`Nova etapa "${newStageLabel}" criada!`)
@@ -308,13 +307,13 @@ export function KanbanBoard({
     setInlineEditingLabel(stage.label)
   }
 
-  function saveInlineEdit(stageId: string) {
+  async function saveInlineEdit(stageId: string) {
     if (!inlineEditingLabel.trim()) {
       setInlineEditingStageId(null)
       return
     }
     const newStages = stages.map(s => s.id === stageId ? { ...s, label: inlineEditingLabel.trim() } : s)
-    persistStages(newStages)
+    if (!await persistStages(newStages)) return
     setInlineEditingStageId(null)
     setSavedToast(`Coluna renomeada para "${inlineEditingLabel.trim()}"`)
     setTimeout(() => setSavedToast(null), 3000)
@@ -326,7 +325,7 @@ export function KanbanBoard({
     setEditStageColor(stage.color)
   }
 
-  function handleSaveEditStage(e: React.FormEvent) {
+  async function handleSaveEditStage(e: React.FormEvent) {
     e.preventDefault()
     if (!editingStage || !editStageLabel.trim()) return
 
@@ -335,7 +334,7 @@ export function KanbanBoard({
         ? { ...s, label: editStageLabel.trim(), color: editStageColor }
         : s
     )
-    persistStages(newStages)
+    if (!await persistStages(newStages)) return
     const oldName = editingStage.label
     setEditingStage(null)
     setSavedToast(`Etapa "${oldName}" atualizada com sucesso!`)
@@ -352,7 +351,7 @@ export function KanbanBoard({
     persistStages(newStages)
   }
 
-  function handleDeleteStage(stageId: string) {
+  async function handleDeleteStage(stageId: string) {
     if (stages.length <= 1) {
       alert('Você precisa ter pelo menos uma etapa no pipeline.')
       return
@@ -364,13 +363,13 @@ export function KanbanBoard({
 
     const fallbackStageId = stages.find(s => s.id !== stageId)?.id || 'novo_contato'
 
-    // Move leads da etapa excluída para a primeira disponível
+    const newStages = stages.filter(s => s.id !== stageId)
+    if (!await persistStages(newStages,stageId,fallbackStageId)) return
+    // Only show migrated leads after the server accepted the atomic change.
     setLeads(prev =>
       prev.map(l => (l.stage === stageId ? { ...l, stage: fallbackStageId } : l))
     )
 
-    const newStages = stages.filter(s => s.id !== stageId)
-    persistStages(newStages, stageId, fallbackStageId)
     setSavedToast(`Etapa excluída. Leads movidos para a coluna inicial.`)
     setTimeout(() => setSavedToast(null), 3000)
   }
@@ -379,7 +378,7 @@ export function KanbanBoard({
   const setFollowUpShortcut = (days: number) => {
     const d = new Date()
     d.setDate(d.getDate() + days)
-    setModalFollowUpDate(d.toISOString().slice(0, 10))
+    setModalFollowUpDate(followupDayKey(d) ?? '')
   }
 
   // Filtragem dos leads
@@ -464,7 +463,7 @@ export function KanbanBoard({
     if (lead.followUpDate) {
       try {
         const d = new Date(lead.followUpDate)
-        setModalFollowUpDate(d.toISOString().slice(0, 10))
+        setModalFollowUpDate(followupDayKey(d) ?? '')
       } catch {
         setModalFollowUpDate('')
       }
@@ -489,10 +488,10 @@ export function KanbanBoard({
       phone: modalPhone.trim(),
       email: modalEmail.trim() || null,
       productName: modalProductName.trim() || null,
-      productValue: isNaN(valCentavos as any) ? null : valCentavos,
+      productValue: valCentavos !== null && Number.isNaN(valCentavos) ? null : valCentavos,
       trackingSource: modalTrackingSource.trim() || null,
       stage: modalStage,
-      followUpDate: modalFollowUpDate ? new Date(modalFollowUpDate + 'T12:00:00-03:00').toISOString() : null,
+      followUpDate: followupDayToIso(modalFollowUpDate),
       followUpNote: modalFollowUpNote.trim() || null,
       responsibleAgent: modalResponsibleAgent.trim() || null,
     }

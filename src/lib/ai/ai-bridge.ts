@@ -41,7 +41,7 @@ const JANELA_SEGUNDOS = 300
 const LIMITE_JANELA = 15
 const TIMEOUT_MS = 150_000
 
-export type Bot = 'nina' | 'amanda'
+export type Bot = 'nina' | 'amanda' | 'bela'
 
 export type HistoricoTurno = { role: 'lead' | 'bot'; text: string }
 

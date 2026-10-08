@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server'
-import { requireCompany, getCurrentUser, unauthorizedResponse } from '@/lib/auth'
+import { requireCompanyRole, getCurrentUser, unauthorizedResponse, forbiddenResponse, ForbiddenError } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { companyMembers, companies } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { randomBytes } from 'crypto'
+import { publicCompanyMember } from '@/lib/member-invite-policy'
 
 export async function GET() {
   try {
-    const company = await requireCompany()
-    const user = await getCurrentUser()
+    const { company, user } = await requireCompanyRole('membro')
 
     const members = await db
       .select()
@@ -24,16 +24,16 @@ export async function GET() {
 
     // Filtrar para não listar o próprio proprietário duas vezes se ele já estiver na lista de membros
     const filteredMembers = members.filter(
-      m => !user?.primaryEmail || m.email.toLowerCase() !== user.primaryEmail.toLowerCase()
+      m => !ownerCompany?.stackAuthUserId || m.stackAuthUserId !== ownerCompany.stackAuthUserId
     )
 
     return NextResponse.json({
       owner: {
-        email: user?.primaryEmail ?? null,
-        name: user?.displayName ?? null,
+        email: user.id === ownerCompany?.stackAuthUserId ? user.primaryEmail : members.find(m => m.stackAuthUserId === ownerCompany?.stackAuthUserId)?.email ?? null,
+        name: user.id === ownerCompany?.stackAuthUserId ? user.displayName : members.find(m => m.stackAuthUserId === ownerCompany?.stackAuthUserId)?.name ?? null,
         stackAuthUserId: ownerCompany?.stackAuthUserId ?? null,
       },
-      members: filteredMembers,
+      members: filteredMembers.map(publicCompanyMember),
     })
   } catch {
     return unauthorizedResponse()
@@ -42,10 +42,11 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const company = await requireCompany()
+    // Convidar membro é operação administrativa (SAC Lote 1, 5.5).
+    const { company } = await requireCompanyRole('admin')
     const { email, role = 'admin' } = await req.json()
 
-    if (!email || typeof email !== 'string') {
+    if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       return NextResponse.json({ error: 'Email obrigatório' }, { status: 400 })
     }
 
@@ -65,7 +66,7 @@ export async function POST(req: Request) {
       .from(companyMembers)
       .where(eq(companyMembers.companyId, company.id))
 
-    const alreadyExists = existing.find(m => m.email.toLowerCase() === email.toLowerCase())
+    const alreadyExists = existing.find(m => m.email.toLowerCase().trim() === email.toLowerCase().trim())
     if (alreadyExists) {
       return NextResponse.json({ error: 'Este email já foi convidado ou já é membro.' }, { status: 409 })
     }
@@ -86,8 +87,9 @@ export async function POST(req: Request) {
     const origin = req.headers.get('origin') ?? ''
     const inviteUrl = `${origin}/invite/membro/${inviteToken}`
 
-    return NextResponse.json({ member, inviteUrl })
-  } catch {
+    return NextResponse.json({ member: publicCompanyMember(member), inviteUrl })
+  } catch (err) {
+    if (err instanceof ForbiddenError) return forbiddenResponse()
     return unauthorizedResponse()
   }
 }

@@ -1,18 +1,23 @@
 import { NextResponse } from 'next/server'
-import { requireCompany, unauthorizedResponse } from '@/lib/auth'
+import { requireCompanyRole, unauthorizedResponse, forbiddenResponse, ForbiddenError } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { companyMembers } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
+import { publicCompanyMember } from '@/lib/member-invite-policy'
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const company = await requireCompany()
+    // Excluir/promover/rebaixar membro exige administrador da empresa (SAC Lote 1, 5.5).
+    const { company } = await requireCompanyRole('admin')
     const { id } = await params
     const memberId = parseInt(id)
 
     if (isNaN(memberId)) {
       return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
     }
+
+    const [target] = await db.select().from(companyMembers).where(and(eq(companyMembers.id, memberId), eq(companyMembers.companyId, company.id)))
+    if (target?.stackAuthUserId && target.stackAuthUserId === company.stackAuthUserId) return NextResponse.json({ error: 'O vínculo do proprietário não pode ser removido.' }, { status: 409 })
 
     const [deleted] = await db
       .delete(companyMembers)
@@ -24,14 +29,16 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     }
 
     return NextResponse.json({ ok: true })
-  } catch {
+  } catch (err) {
+    if (err instanceof ForbiddenError) return forbiddenResponse()
     return unauthorizedResponse()
   }
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const company = await requireCompany()
+    // Excluir/promover/rebaixar membro exige administrador da empresa (SAC Lote 1, 5.5).
+    const { company } = await requireCompanyRole('admin')
     const { id } = await params
     const memberId = parseInt(id)
     const { role } = await req.json()
@@ -45,6 +52,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: 'Cargo inválido' }, { status: 400 })
     }
 
+    const [target] = await db.select().from(companyMembers).where(and(eq(companyMembers.id, memberId), eq(companyMembers.companyId, company.id)))
+    if (target?.stackAuthUserId && target.stackAuthUserId === company.stackAuthUserId && role !== 'admin') return NextResponse.json({ error: 'O proprietário permanece administrador da empresa.' }, { status: 409 })
+
     const [updated] = await db
       .update(companyMembers)
       .set({ role, updatedAt: new Date() })
@@ -55,8 +65,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: 'Membro não encontrado' }, { status: 404 })
     }
 
-    return NextResponse.json({ member: updated })
-  } catch {
+    return NextResponse.json({ member: publicCompanyMember(updated) })
+  } catch (err) {
+    if (err instanceof ForbiddenError) return forbiddenResponse()
     return unauthorizedResponse()
   }
 }

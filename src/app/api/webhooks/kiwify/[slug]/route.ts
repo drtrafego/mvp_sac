@@ -8,6 +8,11 @@ import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import { purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
+import {
+  isFunilCursosTrigger,
+  createInitialFunilCursosState,
+  calculateFunilCursosSchedules,
+} from '@/lib/funnels/funil-cursos'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
 // Fonte: docs.kiwify.com.br, exemplos oficiais de payload e captura real do
@@ -720,8 +725,8 @@ export async function POST(
 
     const leadId = lead.id
 
-    // Cancelar jobs pendentes e marcar como convertido quando chega compra_aprovada.
-    if (mappedType === 'compra_aprovada' && draft.phone) {
+    // Cancelar jobs pendentes e marcar como convertido quando chega compra_aprovada ou disputa (reembolso/chargeback).
+    if ((mappedType === 'compra_aprovada' || mappedType === 'disputa') && draft.phone) {
       const leadsToCancel = await db
         .select({ id: recoveryLeads.id })
         .from(recoveryLeads)
@@ -748,9 +753,11 @@ export async function POST(
             ? `msg_${lastSent.messageOrder}`
             : 'webhook'
 
-          await db.update(recoveryLeads)
-            .set({ status: 'converted', convertedFrom, updatedAt: new Date() })
-            .where(eq(recoveryLeads.id, cancelledLeadId))
+          if (mappedType === 'compra_aprovada') {
+            await db.update(recoveryLeads)
+              .set({ status: 'converted', convertedFrom, updatedAt: new Date() })
+              .where(eq(recoveryLeads.id, cancelledLeadId))
+          }
         }
       }
     }
@@ -777,11 +784,57 @@ export async function POST(
     const isRecovery = RECOVERY_TYPES.includes(mappedType)
     const now = new Date()
 
+    // ─── Funil Cursos (Isabela Fanini - Despertar das Bellas) ─────────────────
+    const isFunilEligible = isFunilCursosTrigger({
+      companySlug: company.slug,
+      platform: 'kiwify',
+      eventType: mappedType,
+      productName: draft.productName,
+      productId: draft.productId,
+      transactionId: draft.transactionId,
+    })
+
+    if (isFunilEligible && draft.phone) {
+      const initialFunnelState = createInitialFunilCursosState({
+        transactionId: draft.transactionId!,
+        productName: draft.productName,
+        approvedDate: draft.approvedDate ?? draft.orderDate ?? now,
+      })
+
+      // Grava o estado inicial do funil no lead
+      await db.update(recoveryLeads)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .set({ aiScheduleState: initialFunnelState as any })
+        .where(eq(recoveryLeads.id, leadId))
+
+      // Agenda D+7 (10.080 min) e D+15 (21.600 min) a partir de approvedDate no fuso America/Sao_Paulo
+      const schedules = calculateFunilCursosSchedules(draft.approvedDate ?? draft.orderDate ?? now)
+
+      await db.insert(messageJobs).values([
+        {
+          leadId,
+          upsellContent: schedules.d7.template,
+          scheduledFor: schedules.d7.scheduledFor,
+          status: 'pending',
+          checkBeforeSend: false,
+          messageOrder: schedules.d7.order,
+        },
+        {
+          leadId,
+          upsellContent: schedules.d15.template,
+          scheduledFor: schedules.d15.scheduledFor,
+          status: 'pending',
+          checkBeforeSend: false,
+          messageOrder: schedules.d15.order,
+        },
+      ])
+    }
+
     // Disputa: apenas registra o lead, não envia nada.
     // Sem telefone: grava o lead (serve para analytics e receita) mas NÃO agenda
     // job nenhum, senão o cron criaria mensagem que falha e sujaria o painel.
     // Acontece quando a cliente desabilitou o campo de celular no checkout.
-    if (sequence && mappedType !== 'disputa' && draft.phone) {
+    if (!isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
       const messages = await db
         .select()
         .from(sequenceMessages)
@@ -792,7 +845,9 @@ export async function POST(
         await db.insert(messageJobs).values(
           messages.map((msg, i) => {
             let delayMs = (msg.delayMinutes ?? 0) * 60 * 1000
-            if (isRecovery && i === 0 && delayMs < MIN_FIRST_DELAY_MS) delayMs = MIN_FIRST_DELAY_MS
+            // Regra 6: PIX mensagem após 1 hora (60m); boleto/cartão após 30m
+            const minDelay = mappedType === 'pix' ? 60 * 60 * 1000 : 30 * 60 * 1000
+            if (isRecovery && i === 0 && delayMs < minDelay) delayMs = minDelay
             return {
               leadId,
               messageId: msg.id,

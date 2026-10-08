@@ -19,7 +19,7 @@ export async function sendInstagramMessage({
   mediaUrl,
   mediaType = 'image',
   companyId,
-}: SendInstagramMessageOptions): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+}: SendInstagramMessageOptions): Promise<{ ok: boolean; messageId?: string; error?: string; uncertain?: boolean; isTimeout?: boolean }> {
   const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
 
   const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
@@ -56,6 +56,7 @@ export async function sendInstagramMessage({
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30_000),
     })
 
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
@@ -69,8 +70,8 @@ export async function sendInstagramMessage({
     const messageId = (data.message_id as string) || (data.id as string)
     return { ok: true, messageId }
   } catch (error) {
-    console.error('[Instagram Send Exception]:', error)
-    return { ok: false, error: String(error) }
+    const value = error as { name?: string }
+    return { ok: false, error: error instanceof Error ? error.message : String(error), uncertain: true, isTimeout: value?.name === 'TimeoutError' || value?.name === 'AbortError' }
   }
 }
 

@@ -3,12 +3,14 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { db } from '@/lib/db'
-import { whatsappMessages, recoveryLeads } from '@/lib/db/schema'
-import { eq, and } from 'drizzle-orm'
+import { whatsappMessages, recoveryLeads, sacAuditEvents, companyMembers } from '@/lib/db/schema'
+import { eq, and, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
-import { requireCompany } from '@/lib/auth'
+import { sendOutboundForLead } from '@/lib/outbound-send'
+import { requireCompany, requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
+import { parseSacObject, parsePositiveId, parseExpectedVersion, validateSacContextFields, sacEpisodeForState, SacInputError } from '@/lib/sac-access'
 import { markLeadContacted } from '@/lib/leads'
 import { getEmailEngagement } from '@/lib/email-engagement'
 import {
@@ -59,17 +61,26 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
 
   if (!lead) return noStoreJson({ error: 'Lead não encontrado' }, { status: 404 })
 
+  const [humanOwner] = lead.humanOwnerMemberId ? await db.select({ name: companyMembers.name, userId: companyMembers.stackAuthUserId })
+    .from(companyMembers)
+    .where(and(eq(companyMembers.id, lead.humanOwnerMemberId), eq(companyMembers.companyId, company.id), eq(companyMembers.status, 'ativo')))
+    .limit(1) : []
+
+  const rawAroundMessageId = searchParams.get('aroundMessageId')
+  const aroundMessageId = rawAroundMessageId ? parseInt(rawAroundMessageId) : null
+
   const messagePage = await loadInboxMessagePage({
     companyId: company.id,
     leadId: id,
     phone: lead.phone,
     before,
     limit: parsedLimit.value,
+    aroundMessageId: aroundMessageId && !isNaN(aroundMessageId) ? aroundMessageId : null,
   })
   const messages = messagePage.messages
 
   const lastInbound = [...messages].reverse().find(m => m.direction === 'inbound')
-  const lastOutbound = [...messages].reverse().find(m => m.direction === 'outbound')
+  const lastOutbound = [...messages].reverse().find(m => m.direction === 'outbound' && (!m.sendState || m.sendState === 'accepted'))
   const lastMsg = messages[messages.length - 1]
 
   return noStoreJson({
@@ -84,11 +95,26 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       platform: lead.platform,
       eventType: lead.eventType,
       status: lead.status,
+      priority: lead.priority ?? null,
       productName: lead.productName,
       productValue: lead.productValue,
       botPaused: lead.botPaused ?? false,
       botPausedAt: lead.botPausedAt,
       botPausedBy: lead.botPausedBy,
+      requestSummary: lead.requestSummary ?? null,
+      requestMessageId: lead.requestMessageId ?? null,
+      commitment: lead.commitment ?? null,
+      nextAction: lead.nextAction ?? null,
+      humanOwnerMemberId: lead.humanOwnerMemberId ?? null,
+      humanOwnerName: humanOwner?.name ?? null,
+      humanOwnerUserId: humanOwner?.userId ?? null,
+      nextActionDueAt: lead.nextActionDueAt?.toISOString() ?? null,
+      sacCaseState: lead.sacCaseState ?? null,
+      pipelineStage: lead.pipelineStage ?? null,
+      responsibleAgent: lead.responsibleAgent ?? null,
+      followUpDate: lead.followUpDate?.toISOString() ?? null,
+      followUpNote: lead.followUpNote ?? null,
+      contextVersion: lead.contextVersion ?? 1,
       trackingSource: lead.trackingSource,
       utmCampaign: lead.utmCampaign,
       adsetName: lead.adsetName,
@@ -117,6 +143,9 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       sentBy: m.sentBy ?? 'human',
       reasoning: m.reasoning ?? null,
       sentEmail: m.sentEmail ?? null,
+      sendState: m.sendState ?? null,
+      sendError: m.sendError ?? null,
+      clientRequestId: m.clientRequestId ?? null,
       createdAt: m.createdAt?.toISOString() ?? null,
     })),
     history: { hasMore: messagePage.hasMore, nextCursor: messagePage.nextCursor },
@@ -156,84 +185,52 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   const content = typeof body.content === 'string' ? body.content : ''
   const mediaUrl = typeof body.mediaUrl === 'string' ? body.mediaUrl : undefined
   const messageType = typeof body.messageType === 'string' ? body.messageType : undefined
+  const clientRequestId =
+    (typeof body.clientRequestId === 'string' && body.clientRequestId.trim()) ||
+    req.headers.get('x-client-request-id')?.trim() ||
+    null
 
   if (!content.trim() && !mediaUrl) {
     return noStoreJson({ error: 'Mensagem vazia' }, { status: 400 })
   }
 
-  const deliveryChannel = resolveLeadDeliveryChannel(lead)
-  let externalId: string | null = null
+  const sendResult = await sendOutboundForLead({
+    companyId: company.id,
+    lead,
+    content,
+    mediaUrl,
+    messageType,
+    clientRequestId,
+    sentBy: 'human',
+  })
 
-  // 1. Roteamento de envio pelo canal apropriado
-  if (deliveryChannel === 'instagram') {
-    const igRes = await sendInstagramMessage({
-      recipientId: lead.phone,
-      text: content,
-      mediaUrl,
-      companyId: company.id,
-    })
-    if (!igRes.ok) {
-      console.warn('[Inbox Send Instagram Warning]:', igRes.error)
-    }
-    externalId = igRes.messageId ?? null
-  } else if (deliveryChannel === 'email' && lead.email) {
-    const emailRes = await sendBrevoEmail({
-      to: [{ email: lead.email, name: lead.name || undefined }],
-      subject: `Re: Atendimento - ${lead.productName || 'SAC'}`,
-      htmlContent: `<p>${content.replace(/\n/g, '<br/>')}</p>`,
-      textContent: content,
-      companyId: company.id,
-    })
-    if (!emailRes.ok) {
-      console.warn('[Inbox Send Email Warning]:', emailRes.error)
-    }
-  } else {
-    // WhatsApp (Meta Cloud API ou UazAPI)
-    try {
-      externalId = await sendWhatsAppMessage(
-        lead.phone,
-        {
-          type: (messageType ?? 'text') as 'text' | 'image' | 'video' | 'audio' | 'document',
-          content,
-          mediaUrl,
-        },
-        company.id
-      )
-    } catch (err) {
-      console.error('[Inbox Send WhatsApp Error]:', err)
-      // Ainda gravamos no banco como histórico local
-    }
+  if (!sendResult.ok) {
+    return noStoreJson(
+      {
+        error: sendResult.error || 'Falha no transporte de envio',
+        isTimeout: sendResult.isTimeout,
+        message: sendResult.message
+          ? {
+              id: sendResult.message.id,
+              phone: sendResult.message.phone,
+              channel: sendResult.message.channel,
+              direction: sendResult.message.direction,
+              content: sendResult.message.content,
+              messageType: sendResult.message.messageType,
+              mediaUrl: sendResult.message.mediaUrl,
+              sentBy: sendResult.message.sentBy,
+              sendState: sendResult.message.sendState,
+              sendError: sendResult.message.sendError,
+              clientRequestId: sendResult.message.clientRequestId,
+              createdAt: sendResult.message.createdAt?.toISOString() ?? null,
+            }
+          : null,
+      },
+      { status: sendResult.status },
+    )
   }
 
-  // 2. Gravar no banco de dados
-  const [msg] = await db
-    .insert(whatsappMessages)
-    .values({
-      companyId: company.id,
-      leadId: lead.id,
-      phone: lead.phone,
-      channel: deliveryChannel,
-      direction: 'outbound',
-      content: content || null,
-      messageType: messageType ?? 'text',
-      mediaUrl: mediaUrl ?? null,
-      sentBy: 'human',
-      externalId,
-    })
-    .returning()
-
-  // Mensagem real trocada: se for a primeira, marca a abordagem do lead
-  await markLeadContacted(lead.id)
-
-  // Atualizar data de modificação e a última ação do lead. lastActionAt
-  // precisa entrar junto: o COALESCE de ordenação do Inbox trava no
-  // primeiro valor não nulo, então uma resposta manual do agente não subia
-  // a conversa na lista quando lastActionAt já existia de antes.
-  await db
-    .update(recoveryLeads)
-    .set({ updatedAt: new Date(), lastActionAt: new Date() })
-    .where(eq(recoveryLeads.id, lead.id))
-
+  const msg = sendResult.message!
   return noStoreJson({
     id: msg.id,
     phone: msg.phone,
@@ -243,6 +240,34 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     messageType: msg.messageType,
     mediaUrl: msg.mediaUrl,
     sentBy: msg.sentBy,
+    sendState: msg.sendState,
+    clientRequestId: msg.clientRequestId,
     createdAt: msg.createdAt?.toISOString() ?? null,
   })
+}
+
+export async function PATCH(req: NextRequest, { params }: Params): Promise<NextResponse> {
+  try {
+    const { leadId } = await params
+    const id = parsePositiveId(leadId, 'Lead')
+    const { company, actorId, actorName } = await requireSacActor()
+    const body = parseSacObject(await req.json().catch(() => null))
+    const expected = parseExpectedVersion(body.expectedContextVersion)
+    const [lead] = await db.select().from(recoveryLeads)
+      .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
+    if (!lead) return noStoreJson({ error: 'Lead não encontrado' }, { status: 404 })
+    const fields = await validateSacContextFields(body, lead)
+    const episode = typeof fields.sacCaseState === 'string' ? { sacCaseEpisode: sacEpisodeForState(fields.sacCaseState) } : {}
+    if (Object.keys(fields).length === 0) return noStoreJson({ error: 'Nenhum campo alterado foi informado.' }, { status: 400 })
+    const [updatedLead] = await db.update(recoveryLeads).set({
+      ...fields, ...episode, updatedAt: new Date(), lastActionBy: actorName, lastActionAt: new Date(),
+      contextVersion: sql`coalesce(${recoveryLeads.contextVersion}, 1) + 1`,
+    }).where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id), sql`coalesce(${recoveryLeads.contextVersion}, 1) = ${expected}`)).returning()
+    if (!updatedLead) return noStoreJson({ error: 'Outra pessoa alterou este atendimento. Atualize os dados antes de salvar.', code: 'CONTEXT_CONFLICT' }, { status: 409 })
+    await db.insert(sacAuditEvents).values({ companyId: company.id, leadId: id, type: 'context_updated', actorType: 'human', actorId, actorName, payload: { updatedFields: Object.keys(fields), contextVersion: updatedLead.contextVersion } }).catch(() => { console.error('[SAC audit] context_updated not recorded', { companyId: company.id, leadId: id }) })
+    return noStoreJson({ success: true, lead: updatedLead })
+  } catch (err: unknown) {
+    if (err instanceof SacInputError || err instanceof ForbiddenError || err instanceof AuthError) return noStoreJson({ error: err.message }, { status: err.status })
+    return noStoreJson({ error: 'Erro ao atualizar atendimento.' }, { status: 500 })
+  }
 }

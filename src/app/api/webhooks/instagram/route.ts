@@ -16,13 +16,8 @@ import { fetchInstagramUserProfile } from "@/lib/instagram"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
+import { AmbiguousCredentialError } from "@/lib/instagram-webhook-errors"
 
-export class AmbiguousCredentialError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'AmbiguousCredentialError'
-  }
-}
 
 // Resolve a empresa dona de um pageId (Instagram Account ID ou Page ID) e,
 // junto, o slug dela pra registrar em webhook_received (mesmo padrão de log
