@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-// Teste das funções puras de tokenização e regras de substituição do Copiloto
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
@@ -38,8 +37,12 @@ function matchAndFillReply(
   let replacedText = bestMatch.body
     .replace(/\{nome\}/gi, leadName)
     .replace(/\{name\}/gi, leadName)
-    .replace(/\{produto\}/gi, productName)
-    .replace(/\{product\}/gi, productName)
+
+  if (productName) {
+    replacedText = replacedText
+      .replace(/\{produto\}/gi, productName)
+      .replace(/\{product\}/gi, productName)
+  }
 
   const missingVars = replacedText.match(/\{([a-zA-Z0-9_]+)\}/g) || []
 
@@ -50,17 +53,38 @@ function matchAndFillReply(
   }
 }
 
-test('Copiloto: substituição de variáveis com resposta aprovada', () => {
+function buildContextualDraft(clientText: string, leadName: string, productName: string) {
+  const missingInfo: string[] = []
+  const productPlaceholder = productName || '{produto}'
+  let contextualDraft = ''
+
+  if (clientText.toLowerCase().includes('dificuldade') || clientText.toLowerCase().includes('ajuda') || clientText.toLowerCase().includes('acesso')) {
+    contextualDraft = `Olá, ${leadName}! Vi que você mencionou uma dificuldade. Conte comigo para resolver isso agora! O que exatamente está acontecendo com seu acesso ao ${productPlaceholder}?`
+  } else if (clientText.toLowerCase().includes('portal') || clientText.toLowerCase().includes('continuar')) {
+    contextualDraft = `Olá, ${leadName}! Que maravilha ver seu interesse em continuar evoluindo no ${productPlaceholder}! Me conta, você gostaria de conhecer os detalhes da próxima etapa?`
+  } else {
+    contextualDraft = `Olá, ${leadName}! Tudo bem? Vi sua mensagem recente e estou aqui para te apoiar no ${productPlaceholder}. Como posso te ajudar hoje?`
+  }
+
+  const remainingVars = contextualDraft.match(/\{([a-zA-Z0-9_]+)\}/g) || []
+  for (const v of remainingVars) {
+    if (!missingInfo.includes(v)) {
+      missingInfo.push(v)
+    }
+  }
+
+  return {
+    draft: contextualDraft,
+    missingInfo,
+  }
+}
+
+test('Copiloto: substituição de variáveis com resposta aprovada quando produto está preenchido', () => {
   const replies = [
     {
       id: 1,
       title: 'Dúvidas de Acesso ao Despertar',
       body: 'Oi, {nome}! Vi que você teve dúvidas para acessar o {produto}. Vamos resolver isso agora mesmo!',
-    },
-    {
-      id: 2,
-      title: 'Chave Pix para Pagamento',
-      body: 'Oi, {nome}! Aqui está a chave Pix para seu pedido do {produto}: {chave_pix}. Me avise assim que pagar!',
     },
   ]
 
@@ -76,7 +100,31 @@ test('Copiloto: substituição de variáveis com resposta aprovada', () => {
   assert.equal(result.missingVars.length, 0)
 })
 
-test('Copiloto: detecção de variáveis pendentes não resolvidas', () => {
+test('Copiloto: resposta aprovada SEM produto NÃO inventa nome e sinaliza {produto}', () => {
+  const replies = [
+    {
+      id: 1,
+      title: 'Dúvidas de Acesso',
+      body: 'Oi, {nome}! Vi que você teve dúvidas para acessar o {produto}. Vamos resolver isso agora mesmo!',
+    },
+  ]
+
+  const tokens = tokenize('Não consigo entrar e acessar')
+  // Produto vazio/ausente
+  const result = matchAndFillReply(tokens, replies, 'Mariana', '')
+
+  assert.ok(result)
+  assert.equal(result.source, 'Dúvidas de Acesso')
+  // Mantém {produto} no texto para o atendente preencher
+  assert.equal(
+    result.draft,
+    'Oi, Mariana! Vi que você teve dúvidas para acessar o {produto}. Vamos resolver isso agora mesmo!'
+  )
+  assert.ok(!result.draft.includes('Despertar das Bellas'))
+  assert.deepEqual(result.missingVars, ['{produto}'])
+})
+
+test('Copiloto: detecção de variáveis pendentes adicionais ({chave_pix}, {horario})', () => {
   const replies = [
     {
       id: 2,
@@ -93,13 +141,24 @@ test('Copiloto: detecção de variáveis pendentes não resolvidas', () => {
   assert.deepEqual(result.missingVars, ['{chave_pix}', '{horario}'])
 })
 
-test('Copiloto: fallback contextual quando nenhuma resposta aprovada tem pontuação', () => {
-  const replies = [
-    { id: 1, title: 'Boleto Vencido', body: 'Seu boleto venceu' }
-  ]
+test('Copiloto: sugestão contextual COM produto real utiliza o produto correto', () => {
+  const result = buildContextualDraft('Estou com dificuldade no acesso', 'Luciana', 'Mentoria Black')
 
-  const tokens = tokenize('mensagem sem correspondencia com o catalogo xyz')
-  const result = matchAndFillReply(tokens, replies, 'Carlos', 'Portal')
+  assert.equal(
+    result.draft,
+    'Olá, Luciana! Vi que você mencionou uma dificuldade. Conte comigo para resolver isso agora! O que exatamente está acontecendo com seu acesso ao Mentoria Black?'
+  )
+  assert.equal(result.missingInfo.length, 0)
+})
 
-  assert.equal(result, null)
+test('Copiloto: sugestão contextual SEM produto NÃO inventa produto padrão e sinaliza {produto}', () => {
+  const result = buildContextualDraft('Estou com dificuldade no acesso', 'Luciana', '')
+
+  assert.equal(
+    result.draft,
+    'Olá, Luciana! Vi que você mencionou uma dificuldade. Conte comigo para resolver isso agora! O que exatamente está acontecendo com seu acesso ao {produto}?'
+  )
+  // Nunca deve inventar Despertar das Bellas
+  assert.ok(!result.draft.includes('Despertar das Bellas'))
+  assert.deepEqual(result.missingInfo, ['{produto}'])
 })

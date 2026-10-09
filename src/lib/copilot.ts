@@ -89,7 +89,7 @@ export async function generateCopilotDraft(
     )
 
   const leadName = lead.name?.trim() || 'Cliente'
-  const productName = lead.productName?.trim() || 'Despertar das Bellas'
+  const productName = lead.productName?.trim() || ''
 
   // 4. Busca correspondência em Respostas Aprovadas
   const searchBasis = (operatorDraft ? `${operatorDraft} ` : '') + clientText
@@ -117,10 +117,14 @@ export async function generateCopilotDraft(
     let replacedText = bestMatch.body
       .replace(/\{nome\}/gi, leadName)
       .replace(/\{name\}/gi, leadName)
-      .replace(/\{produto\}/gi, productName)
-      .replace(/\{product\}/gi, productName)
 
-    // Detecta variáveis pendentes que não foram substituídas
+    if (productName) {
+      replacedText = replacedText
+        .replace(/\{produto\}/gi, productName)
+        .replace(/\{product\}/gi, productName)
+    }
+
+    // Detecta variáveis pendentes que não foram substituídas (ex.: {produto}, {chave_pix}, {horario})
     const remainingVars = replacedText.match(/\{([a-zA-Z0-9_]+)\}/g)
     if (remainingVars) {
       for (const v of remainingVars) {
@@ -147,6 +151,7 @@ export async function generateCopilotDraft(
   // 5. Sugestão contextual baseada nos dados do lead e compromisso
   let contextualDraft = ''
   const sources: CopilotSource[] = []
+  const productPlaceholder = productName || '{produto}'
 
   if (lead.commitment && lead.nextAction) {
     contextualDraft = `Olá, ${leadName}! Conforme combinamos (${lead.commitment}), estou entrando em contato sobre ${lead.nextAction}. Como podemos te ajudar agora?`
@@ -155,23 +160,33 @@ export async function generateCopilotDraft(
       type: 'lead_context',
     })
   } else if (clientText.toLowerCase().includes('dificuldade') || clientText.toLowerCase().includes('ajuda') || clientText.toLowerCase().includes('acesso')) {
-    contextualDraft = `Olá, ${leadName}! Vi que você mencionou uma dificuldade. Conte comigo para resolver isso agora! O que exatamente está acontecendo com seu acesso ao ${productName}?`
+    contextualDraft = `Olá, ${leadName}! Vi que você mencionou uma dificuldade. Conte comigo para resolver isso agora! O que exatamente está acontecendo com seu acesso ao ${productPlaceholder}?`
     sources.push({
       title: 'Contexto de Suporte e Acesso',
       type: 'lead_context',
     })
   } else if (clientText.toLowerCase().includes('portal') || clientText.toLowerCase().includes('continuar')) {
-    contextualDraft = `Olá, ${leadName}! Que maravilha ver seu interesse em continuar evoluindo no ${productName}! Me conta, você gostaria de conhecer os detalhes da próxima etapa?`
+    contextualDraft = `Olá, ${leadName}! Que maravilha ver seu interesse em continuar evoluindo no ${productPlaceholder}! Me conta, você gostaria de conhecer os detalhes da próxima etapa?`
     sources.push({
-      title: 'Contexto de Continuidade e Despertar',
+      title: 'Contexto de Continuidade e Atendimento',
       type: 'lead_context',
     })
   } else {
-    contextualDraft = `Olá, ${leadName}! Tudo bem? Vi sua mensagem recente e estou aqui para te apoiar no ${productName}. Como posso te ajudar hoje?`
+    contextualDraft = `Olá, ${leadName}! Tudo bem? Vi sua mensagem recente e estou aqui para te apoiar no ${productPlaceholder}. Como posso te ajudar hoje?`
     sources.push({
       title: 'Contexto Geral do Atendimento',
       type: 'lead_context',
     })
+  }
+
+  // Detecta variáveis pendentes na sugestão contextual (ex.: {produto})
+  const remainingContextualVars = contextualDraft.match(/\{([a-zA-Z0-9_]+)\}/g)
+  if (remainingContextualVars) {
+    for (const v of remainingContextualVars) {
+      if (!missingInfo.includes(v)) {
+        missingInfo.push(v)
+      }
+    }
   }
 
   return {
