@@ -625,7 +625,7 @@ export function KanbanBoard({
               key={stage.id}
               onDragOver={handleDragOver}
               onDrop={() => handleDrop(stage.id)}
-              className="flex flex-col rounded-[var(--r-md)] bg-surface-base border border-line-subtle min-w-[280px] max-w-[320px] shrink-0 h-full overflow-hidden shadow-xs"
+              className="studio-pipeline-column flex flex-col rounded-[var(--r-md)] bg-surface-base border border-line-subtle min-w-[280px] max-w-[320px] shrink-0 h-full overflow-hidden shadow-xs"
             >
               {/* Topo da Coluna com Controles de Reordenação e Edição */}
               <div
@@ -741,7 +741,7 @@ export function KanbanBoard({
                       draggable
                       onDragStart={() => handleDragStart(lead.id)}
                       onClick={() => openEditModal(lead)}
-                      className="card bg-surface-raised border border-line-subtle p-3 rounded-[var(--r-sm)] shadow-xs hover:border-brand-ink/60 hover:-translate-y-0.5 transition-all cursor-pointer space-y-2 group select-none"
+                      className="studio-pipeline-card card bg-surface-raised border border-line-subtle p-3 rounded-[var(--r-sm)] shadow-xs hover:border-brand-ink/60 hover:-translate-y-0.5 transition-all cursor-pointer space-y-2 group select-none"
                     >
                       {/* Selos de Origem, Canal e Agente */}
                       <div className="flex items-center justify-between gap-1 flex-wrap">

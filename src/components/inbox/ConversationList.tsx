@@ -448,12 +448,12 @@ export function ConversationList({
   return (
     <aside
       className={cn(
-        'w-full shrink-0 md:w-[330px] xl:w-[380px] flex flex-col border-r border-line-subtle bg-surface-panel h-full min-h-0 overflow-hidden',
+        'studio-conversation-list w-full shrink-0 md:w-[330px] xl:w-[380px] flex flex-col border-r border-line-subtle bg-surface-panel h-full min-h-0 overflow-hidden',
         activeId ? 'hidden md:flex' : 'flex'
       )}
     >
       {/* Cabeçalho com Título, Total e Refresh */}
-      <div className="border-b border-line-subtle p-3.5 space-y-2.5 shrink-0">
+      <div className="studio-conversation-list-header border-b border-line-subtle p-3.5 space-y-2.5 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-h3 text-fg font-bold">{title}</h2>
@@ -783,16 +783,16 @@ export function ConversationList({
               >
                 <div
                   className={cn(
-                    'relative flex flex-col gap-1.5 rounded-xl p-2.5 transition-all cursor-pointer border',
+                    'studio-conversation-item relative flex flex-col gap-1.5 rounded-xl p-2.5 transition-all cursor-pointer border',
                     isActive
-                      ? 'bg-surface-raised border-brand-solid/40 shadow-xs'
+                      ? 'is-active bg-surface-raised border-brand-solid/40 shadow-xs'
                       : 'border-transparent hover:border-line-subtle hover:bg-surface-inset/70'
                   )}
                 >
                   {/* Linha 1: Nome, Hora do Último Envio e Ícone do Canal */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-inset border border-line-subtle text-[11px] font-bold text-fg-muted">
+                      <div className="studio-conversation-avatar flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-inset border border-line-subtle text-[11px] font-bold text-fg-muted">
                         {initials}
                       </div>
                       <span className="truncate text-body font-semibold text-fg leading-tight">

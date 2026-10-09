@@ -12,6 +12,8 @@ import {
   CircleCheck,
   Clock3,
   Inbox,
+  MessageSquare,
+  Sparkles,
   Loader2,
   RefreshCw,
   UserRound,
@@ -19,7 +21,6 @@ import {
   UserRoundMinus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { PageHeader } from '@/components/ui/page-header'
 import type { AttentionItem, AttentionResponse, AttentionView } from '@/lib/sac-attention-types'
 
 const PAGE_SIZE = 25
@@ -115,7 +116,7 @@ function OpenConversation({ leadId, view, page, compact = false }: { leadId: num
   return (
     <Link
       href={`/inbox/${leadId}?context=1&from=attention&attentionView=${view}&attentionPage=${page}`}
-      className={cn('focus-ring inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-line-default bg-surface-raised px-3 text-micro font-semibold text-fg transition-colors hover:border-brand-solid/40 hover:bg-surface-overlay hover:text-brand-ink', compact && 'w-full')}
+      className={cn('attention-open-conversation focus-ring', compact && 'w-full')}
     >
       Abrir atendimento <ArrowUpRight size={14} aria-hidden="true" />
     </Link>
@@ -146,6 +147,8 @@ export function AttentionQueue({ companyName, initialView = 'all', initialPage =
   const activeRequest = useRef<AbortController | null>(null)
   const pageHeading = useRef<HTMLHeadingElement>(null)
   const focusAfterLoad = useRef(false)
+  const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null)
+  const contextPanel = useRef<HTMLElement>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -248,123 +251,85 @@ export function AttentionQueue({ companyName, initialView = 'all', initialPage =
     setRefreshVersion(current => current + 1)
   }
 
+  const selectedItem = data?.items.find(item => item.leadId === selectedLeadId) ?? data?.items[0] ?? null
+  const selectedName = selectedItem?.name?.trim() || selectedItem?.phone || 'Atendimento'
+  const updatedAt = snapshot ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).format(new Date(snapshot.response.now)) : null
+
+  function inspect(item: AttentionItem) {
+    setSelectedLeadId(item.leadId)
+    if (window.matchMedia('(max-width: 1000px)').matches) {
+      contextPanel.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
+    }
+  }
+
   return (
-    <div className="flex flex-col gap-6 pb-3">
-      <PageHeader
-        title="Atender agora"
-        icon={<Inbox size={20} strokeWidth={1.7} />}
-        eyebrow={<span className="text-micro font-medium text-fg-subtle">Atendimento <span className="mx-1 text-fg-faint">/</span> {companyName}</span>}
-        description="Veja quem precisa de uma pessoa, o que foi prometido e quais prazos precisam da sua atenção."
-        actions={<button type="button" onClick={refresh} disabled={loading} className="focus-ring inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-line-default bg-surface-panel px-4 text-micro font-semibold text-fg transition-colors hover:bg-surface-raised disabled:cursor-wait disabled:opacity-60">
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
-          {loading && data ? 'Atualizando' : 'Atualizar'}
-        </button>}
-      />
-
-      <section aria-label="Visões de atendimento" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        {attentionCards.map(({ view, title, description, icon: Icon, tone }) => {
-          const selected = query.view === view
-          return (
-            <button
-              key={view}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => selectView(view)}
-              className={cn('focus-ring group relative overflow-hidden rounded-2xl border bg-surface-panel p-4 text-left transition-colors sm:p-5', selected ? 'border-brand-solid/50 bg-surface-raised shadow-xs' : 'border-line-subtle hover:border-line-strong hover:bg-surface-raised')}
-            >
-              <div className="mb-4 flex items-center justify-between gap-2">
-                <span className={cn('flex h-9 w-9 items-center justify-center rounded-xl border border-line-subtle bg-surface-inset', tone)}><Icon size={17} strokeWidth={1.7} /></span>
-                {selected ? <span className="rounded-full bg-brand-solid/10 p-1 text-brand-ink"><Check size={12} aria-hidden="true" /></span> : <ArrowUpRight size={14} className="text-fg-faint transition-colors group-hover:text-fg-muted" aria-hidden="true" />}
-              </div>
-              {counts ? <p className="text-metric tabular-nums text-fg">{counts[view]}</p> : <div className="mb-1 h-8 w-12 animate-pulse rounded bg-surface-overlay" aria-hidden="true" />}
-              <p className="mt-2 text-body font-semibold leading-snug text-fg">{title}</p>
-              <p className="mt-1 hidden text-micro text-fg-subtle sm:block">{description}</p>
-            </button>
-          )
-        })}
-      </section>
-
-      {counts && (loading || error) && <p className="-mt-3 px-1 text-micro text-fg-subtle">{loading ? 'Atualizando a fila. Os indicadores exibidos são da última consulta concluída.' : 'Os indicadores exibidos são da última consulta concluída.'}</p>}
-
-      <section aria-labelledby="attention-list-title" className="overflow-hidden rounded-2xl border border-line-subtle bg-surface-panel shadow-xs">
-        <div className="flex flex-col justify-between gap-4 border-b border-line-subtle px-4 py-4 sm:flex-row sm:items-center sm:px-5">
-          <div className="min-w-0">
-            <h2 id="attention-list-title" ref={pageHeading} tabIndex={-1} className="text-h2 text-fg outline-none">{viewLabels[query.view]}</h2>
-            <p className="mt-1 text-micro text-fg-subtle">Priorize os prazos vencidos e abra a conversa com o contexto à vista.</p>
-          </div>
-          <div className="inline-flex shrink-0 self-start rounded-xl border border-line-subtle bg-surface-inset p-1 sm:self-auto" aria-label="Filtrar atendimentos">
-            <button type="button" aria-pressed={query.view === 'all'} onClick={() => selectView('all')} className={cn('focus-ring inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-micro font-semibold transition-colors', query.view === 'all' ? 'bg-surface-overlay text-fg shadow-xs' : 'text-fg-muted hover:text-fg')}>
-              Todos {counts && <span className="rounded-md bg-surface-panel px-1.5 py-0.5 text-[10px] tabular-nums">{counts.all}</span>}
-            </button>
-            <button type="button" aria-pressed={query.view === 'mine'} onClick={() => selectView('mine')} disabled={!currentMemberId} title={!currentMemberId ? 'Meus atendimentos fica disponível para um membro ativo da empresa.' : undefined} className={cn('focus-ring inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-micro font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40', query.view === 'mine' ? 'bg-surface-overlay text-fg shadow-xs' : 'text-fg-muted hover:text-fg')}>
-              Meus {counts && <span className="rounded-md bg-surface-panel px-1.5 py-0.5 text-[10px] tabular-nums">{counts.mine}</span>}
-            </button>
-          </div>
+    <div className="attention-studio">
+      <header className="attention-hero">
+        <div className="attention-hero-copy">
+          <p className="attention-eyebrow"><span className="attention-live-dot" /> CENTRAL DE ATENDIMENTO <span className="attention-eyebrow-company">/ {companyName}</span></p>
+          <h1>O próximo cuidado<br /><span>começa aqui.</span></h1>
+          <p className="attention-hero-description">Compromissos, pessoas e próximos passos.<br className="hidden sm:block" /> Uma visão clara de quem precisa de você.</p>
+          <div className="attention-hero-footer"><span><Inbox size={14} /> Atender agora</span><span className="attention-hero-divider" /><span>{updatedAt ? `Consultado às ${updatedAt}` : 'Consultando atendimentos'}</span></div>
         </div>
+        <div className="attention-hero-priority">
+          <div className="attention-priority-icon"><Sparkles size={21} strokeWidth={1.5} /></div>
+          <p className="attention-eyebrow">COMECE PELO QUE IMPORTA</p>
+          <p className="attention-priority-number">{counts ? String(counts.overdue).padStart(2, '0') : '—'}<span>prazos vencidos</span></p>
+          <p className="attention-priority-copy">{counts?.overdue ? 'Confira os compromissos que precisam de um retorno.' : counts ? 'Nenhum prazo vencido na última consulta.' : 'Os dados aparecerão após a consulta.'}</p>
+          <button type="button" onClick={() => selectView('overdue')} className="attention-priority-link">Ver prioridades <ArrowUpRight size={17} /></button>
+        </div>
+      </header>
 
-        <div aria-live="polite" className="sr-only">{loading ? 'Carregando fila de atendimento.' : error ? 'Erro ao carregar a fila.' : data ? `${data.total} atendimentos nesta visão. Página ${data.page} de ${pageCount}.` : ''}</div>
-
-        {error && <div role="alert" className="m-4 flex flex-col gap-3 rounded-xl border border-st-negativo/25 bg-st-negativo/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3"><AlertCircle size={17} className="mt-0.5 shrink-0 text-st-negativo" /><div><p className="text-body font-semibold text-fg">Não foi possível atualizar a fila</p><p className="mt-1 text-micro text-fg-muted">{error}</p>{data && <p className="mt-1 text-micro text-fg-muted">Os dados abaixo são da última atualização concluída.</p>}</div></div>
-          <button type="button" onClick={refresh} disabled={loading} className="focus-ring min-h-10 shrink-0 rounded-lg border border-line-default bg-surface-panel px-3 text-micro font-semibold text-fg disabled:opacity-50">Tentar novamente</button>
-        </div>}
-
-        {loading && !data && <QueueSkeleton />}
-
-        {!loading && !error && data?.items.length === 0 && <div className="flex flex-col items-center px-6 py-14 text-center">
-          <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-brand-solid/20 bg-brand-solid/10 text-brand-ink"><CircleCheck size={23} strokeWidth={1.6} /></span>
-          <h3 className="text-h2 text-fg">{query.view === 'all' ? 'Nenhum atendimento exige atenção agora' : 'Nenhum atendimento nesta visão'}</h3>
-          <p className="mt-2 max-w-[45ch] text-body text-fg-muted">{query.view === 'all' ? 'Os atendimentos sem alertas continuam disponíveis em Conversas.' : 'Você pode consultar outra visão ou abrir todas as conversas.'}</p>
-          <Link href="/inbox" className="focus-ring mt-5 inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-line-default px-4 text-micro font-semibold text-fg hover:bg-surface-raised">Ir para Conversas <ArrowUpRight size={14} /></Link>
-        </div>}
-
-        {data && data.items.length > 0 && <div aria-busy={loading} className={cn('transition-opacity', loading && 'opacity-65')}>
-          <div className="hidden overflow-x-auto lg:block">
-            <table className="w-full min-w-[860px] text-left">
-              <caption className="sr-only">{viewLabels[query.view]}</caption>
-              <thead className="bg-surface-inset text-[11px] font-medium text-fg-subtle">
-                <tr><th scope="col" className="px-5 py-3">Contato</th><th scope="col" className="px-4 py-3">Por que atender</th><th scope="col" className="px-4 py-3">Responsável</th><th scope="col" className="px-4 py-3">Prazo e próxima ação</th><th scope="col" className="px-5 py-3"><span className="sr-only">Abrir conversa</span></th></tr>
-              </thead>
-              <tbody className="divide-y divide-line-subtle">
-                {data.items.map(item => <tr key={item.leadId} className="align-top transition-colors hover:bg-surface-raised/50">
-                  <td className="max-w-[240px] px-5 py-5"><ContactIdentity item={item} /></td>
-                  <td className="max-w-[260px] px-4 py-5"><ReasonList item={item} />{item.requestSummary && <p className="mt-2 line-clamp-2 text-micro text-fg-subtle" title={item.requestSummary}>{item.requestSummary}</p>}</td>
-                  <td className="max-w-[190px] px-4 py-5"><p className={cn('text-micro font-medium', item.humanOwnerName ? 'text-fg-muted' : 'text-st-atencao')}>{item.humanOwnerName || 'Sem responsável'}</p></td>
-                  <td className="max-w-[270px] px-4 py-5"><p className={cn('flex items-center gap-1.5 text-micro font-semibold', item.overdue ? 'text-st-negativo' : 'text-fg')}><Clock3 size={12} />{dueLabel(item.dueAt, data.now)}</p><p className="mt-2 line-clamp-2 text-micro leading-relaxed text-fg-muted" title={item.nextAction || undefined}>{item.nextAction || 'Próxima ação não registrada'}</p></td>
-                  <td className="px-5 py-5 text-right"><OpenConversation leadId={item.leadId} view={query.view} page={data.page} /></td>
-                </tr>)}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="divide-y divide-line-subtle lg:hidden">
-            {data.items.map(item => <article key={item.leadId} className="space-y-4 p-4 sm:p-5">
-              <ContactIdentity item={item} />
-              <ReasonList item={item} />
-              {item.requestSummary && <p className="line-clamp-2 text-micro text-fg-muted">{item.requestSummary}</p>}
-              <div className="grid grid-cols-2 gap-4 rounded-xl border border-line-subtle bg-surface-inset p-3">
-                <div><p className="mb-1 text-[11px] text-fg-subtle">Responsável</p><p className={cn('text-micro font-medium', item.humanOwnerName ? 'text-fg' : 'text-st-atencao')}>{item.humanOwnerName || 'Sem responsável'}</p></div>
-                <div><p className="mb-1 text-[11px] text-fg-subtle">Prazo</p><p className={cn('text-micro font-semibold', item.overdue ? 'text-st-negativo' : 'text-fg')}>{dueLabel(item.dueAt, data.now)}</p></div>
-                <div className="col-span-2 border-t border-line-subtle pt-3"><p className="mb-1 text-[11px] text-fg-subtle">Próxima ação</p><p className="text-body leading-relaxed text-fg">{item.nextAction || 'Próxima ação não registrada'}</p></div>
-              </div>
-              <OpenConversation leadId={item.leadId} view={query.view} page={data.page} compact />
-            </article>)}
-          </div>
-        </div>}
-
-        {data && data.total > 0 && <footer className="flex flex-col items-start justify-between gap-3 border-t border-line-subtle bg-surface-inset/40 px-4 py-4 sm:flex-row sm:items-center sm:px-5">
-          <p id="attention-pagination" className="text-micro text-fg-muted">{firstItem > 0 ? `${firstItem}–${lastItem} de ${data.total}` : `Nenhum item nesta página · ${data.total} atendimentos`}<span className="ml-2 text-fg-subtle">Página {data.page} de {pageCount}</span></p>
-          <nav aria-label="Páginas da fila" className="flex w-full items-center justify-between gap-2 sm:w-auto">
-            <button type="button" onClick={() => changePage(data.page - 1)} disabled={loading || data.page <= 1} aria-describedby="attention-pagination" className="focus-ring inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-line-default bg-surface-panel px-3 text-micro font-semibold text-fg hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft size={14} />Anterior</button>
-            <button type="button" onClick={() => changePage(data.page + 1)} disabled={loading || !data.hasMore} aria-describedby="attention-pagination" className="focus-ring inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-line-default bg-surface-panel px-3 text-micro font-semibold text-fg hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-40">Próxima<ChevronRight size={14} /></button>
-          </nav>
-        </footer>}
+      <section className="attention-signals" aria-label="Visões de atendimento">
+        {attentionCards.map(({ view, title, icon: Icon }) => <button key={view} type="button" className={cn('attention-signal', `attention-signal-${view}`, query.view === view && 'is-active')} aria-pressed={query.view === view} onClick={() => selectView(view)}>
+          <span className="attention-signal-icon"><Icon size={20} strokeWidth={1.6} /></span>
+          <span className="attention-signal-copy"><span>{title}</span><strong>{counts ? String(counts[view]).padStart(2, '0') : '—'}</strong></span>
+          <ArrowUpRight size={15} className="attention-signal-arrow" />
+        </button>)}
       </section>
+      {counts && (loading || error) && <p className="attention-stale">{loading ? 'Atualizando. ' : ''}Os indicadores são da última consulta concluída.</p>}
 
-      <div className="flex flex-col justify-between gap-2 px-1 text-micro text-fg-subtle sm:flex-row">
-        <div className="space-y-1"><p>Um atendimento pode aparecer em mais de uma visão.</p><p>Atualiza automaticamente a cada minuto, com a aba visível.</p></div>
-        {snapshot && <p className="inline-flex shrink-0 items-center gap-1.5 self-start">{loading && data ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}Última consulta às {new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).format(new Date(snapshot.response.now))}</p>}
+      <div className="attention-workspace">
+        <section className="attention-queue" aria-labelledby="attention-list-title">
+          <div className="attention-queue-heading">
+            <div><p className="attention-eyebrow">SUA FILA DE ATENDIMENTO</p><h2 id="attention-list-title" ref={pageHeading} tabIndex={-1}>{viewLabels[query.view]}</h2></div>
+            <button type="button" className="attention-icon-button" onClick={refresh} disabled={loading} aria-label="Atualizar fila"><RefreshCw size={17} className={loading ? 'animate-spin' : ''} /></button>
+          </div>
+          <div className="attention-queue-toolbar">
+            <div className="attention-tabs" aria-label="Filtrar atendimentos">
+              <button type="button" aria-pressed={query.view === 'all'} onClick={() => selectView('all')} className={query.view === 'all' ? 'is-active' : ''}>Todos <span>{counts?.all ?? '—'}</span></button>
+              <button type="button" aria-pressed={query.view === 'mine'} onClick={() => selectView('mine')} disabled={!currentMemberId} title={!currentMemberId ? 'Disponível para um membro ativo da empresa.' : undefined} className={query.view === 'mine' ? 'is-active' : ''}>Meus <span>{counts?.mine ?? '—'}</span></button>
+            </div>
+            <span className="attention-order"><Clock3 size={13} /> Prazos primeiro</span>
+          </div>
+          <div aria-live="polite" className="sr-only">{loading ? 'Carregando fila.' : error ? 'Erro ao carregar a fila.' : data ? `${data.total} atendimentos. Página ${data.page} de ${pageCount}.` : ''}</div>
+          {error && <div role="alert" className="attention-error"><AlertCircle size={18} /><div><strong>Não foi possível atualizar</strong><p>{error}</p>{data && <p>Os dados exibidos são da última consulta concluída.</p>}<button type="button" onClick={refresh} disabled={loading}>Tentar novamente</button></div></div>}
+          {loading && !data && <QueueSkeleton />}
+          {!loading && !error && data?.items.length === 0 && <div className="attention-empty"><CircleCheck size={38} strokeWidth={1.3} /><h3>Nada pendente nesta visão</h3><p>Os demais atendimentos continuam disponíveis em Conversas.</p><Link href="/inbox">Ir para Conversas <ArrowUpRight size={15} /></Link></div>}
+          {data && data.items.length > 0 && <div className={cn('attention-rows', loading && 'is-loading')} aria-busy={loading}>
+            {data.items.map((item, index) => <button type="button" key={item.leadId} onClick={() => inspect(item)} aria-pressed={selectedItem?.leadId === item.leadId} aria-controls="attention-context-panel" className={cn('attention-row', selectedItem?.leadId === item.leadId && 'is-selected', item.overdue && 'is-overdue')}>
+              <span className="attention-row-index">{String((data.page - 1) * data.pageSize + index + 1).padStart(2, '0')}</span>
+              <span className="attention-row-body"><ContactIdentity item={item} /><span className="attention-row-summary">{item.requestSummary || item.nextAction || item.reasons.join(' · ') || 'Consulte o contexto deste atendimento'}</span><span className="attention-row-meta"><span className={cn('attention-reason', item.overdue && 'is-overdue')}>{item.overdue ? 'Prazo vencido' : stateLabels[item.sacCaseState || 'aberto'] || 'Atendimento aberto'}</span><span><UserRound size={11} />{item.humanOwnerName || 'Sem responsável'}</span></span></span>
+              <span className="attention-row-end"><span className={item.overdue ? 'is-overdue' : ''}>{dueLabel(item.dueAt, data.now)}</span><ChevronRight size={19} /></span>
+            </button>)}
+          </div>}
+          {data && data.total > 0 && <footer className="attention-pagination"><p id="attention-pagination">{firstItem}–{lastItem} de {data.total}<span> · Página {data.page} de {pageCount}</span></p><nav aria-label="Páginas da fila"><button type="button" aria-label="Página anterior" onClick={() => changePage(data.page - 1)} disabled={loading || data.page <= 1}><ChevronLeft size={17} /></button><button type="button" aria-label="Próxima página" onClick={() => changePage(data.page + 1)} disabled={loading || !data.hasMore}><ChevronRight size={17} /></button></nav></footer>}
+        </section>
+
+        <aside className="attention-context" id="attention-context-panel" ref={contextPanel} aria-label="Contexto do atendimento selecionado">
+          <div className="attention-context-top"><span className="attention-eyebrow">CONTEXTO EM FOCO</span><MessageSquare size={16} /></div>
+          {selectedItem ? <>
+            <div className="attention-context-identity"><span className="attention-avatar">{selectedName.split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase()}</span><ChannelLabel channel={selectedItem.channel} /><h2>{selectedName}</h2><p>{selectedItem.phone}</p></div>
+            <div className="attention-context-section"><p className="attention-eyebrow">POR QUE ATENDER</p><ReasonList item={selectedItem} /></div>
+            <div className="attention-context-section"><p className="attention-eyebrow">O QUE O CLIENTE PRECISA</p><p className="attention-context-description">{selectedItem.requestSummary || 'Nenhum resumo registrado. Consulte a conversa para entender o pedido.'}</p></div>
+            <div className={cn('attention-next-step', selectedItem.overdue && 'is-overdue')}><div><CalendarClock size={16} /><span>PRÓXIMO PASSO</span></div><p>{selectedItem.nextAction || 'Próxima ação não registrada'}</p><span className="attention-next-deadline"><Clock3 size={13} />{dueLabel(selectedItem.dueAt, data?.now)}{selectedItem.overdue ? ' · Vencido' : ''}</span></div>
+            <div className="attention-context-owner"><span className="attention-owner-avatar"><UserRound size={16} /></span><div><span>RESPONSÁVEL</span><p>{selectedItem.humanOwnerName || 'Ainda não atribuído'}</p></div></div>
+            <OpenConversation leadId={selectedItem.leadId} view={query.view} page={data?.page ?? query.page} compact />
+            <p className="attention-context-note">A conversa abre com o Contexto à vista.</p>
+          </> : <div className="attention-context-placeholder"><MessageSquare size={35} strokeWidth={1.2} /><h3>Uma conversa, todo o contexto.</h3><p>Selecione um atendimento para consultar o pedido, o responsável e o próximo passo.</p></div>}
+        </aside>
       </div>
+      <footer className="attention-footnote"><span><span className="attention-live-dot" /> Consulta automática a cada minuto com a aba visível.</span><span>{loading ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {updatedAt ? `Última consulta às ${updatedAt}` : 'Aguardando consulta'}</span></footer>
     </div>
   )
 }

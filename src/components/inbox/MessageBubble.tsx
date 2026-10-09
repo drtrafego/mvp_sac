@@ -95,7 +95,7 @@ export function MessageBubble({
   return (
     <div
       className={cn(
-        'flex items-end gap-2.5 my-1 group',
+        'studio-message flex items-end gap-2.5 my-1 group',
         isInbound ? 'justify-start' : 'flex-row-reverse justify-start'
       )}
     >
@@ -123,12 +123,12 @@ export function MessageBubble({
       {/* Bolha de mensagem */}
       <div
         className={cn(
-          'min-w-0 max-w-[85%] md:max-w-[70%] rounded-2xl px-4 py-2.5 text-body leading-relaxed shadow-xs transition-colors',
+          'studio-message-bubble min-w-0 max-w-[85%] md:max-w-[70%] rounded-2xl px-4 py-2.5 text-body leading-relaxed shadow-xs transition-colors',
           isInbound
-            ? 'rounded-bl-xs bg-surface-raised border border-line-subtle text-fg'
+            ? 'is-inbound rounded-bl-xs bg-surface-raised border border-line-subtle text-fg'
             : isHuman
-              ? 'rounded-br-xs bg-emerald-500/10 dark:bg-emerald-950/40 border border-emerald-500/30 text-fg'
-              : 'rounded-br-xs bg-brand-solid/10 border border-brand-solid/30 text-fg'
+              ? 'is-outbound rounded-br-xs bg-emerald-500/10 dark:bg-emerald-950/40 border border-emerald-500/30 text-fg'
+              : 'is-outbound rounded-br-xs bg-brand-solid/10 border border-brand-solid/30 text-fg'
         )}
       >
         {/* Rótulo do emissor e canal */}

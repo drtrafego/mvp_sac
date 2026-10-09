@@ -7,6 +7,7 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { MobileTopbar } from '@/components/layout/mobile-topbar'
 import { MobileTabBar } from '@/components/layout/mobile-tabbar'
 import { AdminBanner } from '@/components/layout/admin-banner'
+import { WorkspaceToolbar } from '@/components/layout/workspace-toolbar'
 import { PageSurface } from '@/components/layout/page-surface'
 import { Suspense } from 'react'
 
@@ -54,7 +55,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     const { activeConnections, sidebarConfig } = await getCompanySidebarData(company.id)
 
     return (
-      <div className="flex flex-col h-dvh bg-surface-base">
+      <div className="sac-shell flex flex-col h-dvh bg-surface-base">
         <AdminBanner companyName={company.name} companyId={company.id} />
         <div className="flex flex-1 overflow-hidden">
           <Suspense fallback={SIDEBAR_FALLBACK}>
@@ -62,6 +63,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </Suspense>
           <div className="flex flex-1 min-w-0 flex-col overflow-hidden">
             <MobileTopbar />
+            <WorkspaceToolbar companyName={company.name} />
             <main className={MAIN_CLASS}>
               <Shell>{children}</Shell>
             </main>
@@ -79,12 +81,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const { activeConnections, sidebarConfig } = await getCompanySidebarData(company.id)
 
   return (
-    <div className="flex h-dvh bg-surface-base">
+    <div className="sac-shell flex h-dvh bg-surface-base">
       <Suspense fallback={SIDEBAR_FALLBACK}>
         <Sidebar activeConnections={activeConnections} sidebarConfig={sidebarConfig} />
       </Suspense>
       <div className="flex flex-1 min-w-0 flex-col overflow-hidden">
         <MobileTopbar />
+            <WorkspaceToolbar companyName={company.name} />
         <main className={MAIN_CLASS}>
           <Shell>{children}</Shell>
         </main>

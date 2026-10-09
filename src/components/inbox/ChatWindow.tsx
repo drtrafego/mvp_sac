@@ -832,7 +832,7 @@ export function ChatWindow({
 
         {/* 1. Cabeçalho do Atendimento */}
         {fromAttention && <div className="shrink-0 border-b border-line-subtle bg-surface-panel px-3.5 py-2"><Link href={backHref} className="focus-ring inline-flex items-center gap-1.5 rounded-md text-micro font-semibold text-brand-ink hover:underline"><ArrowLeft size={13} />Voltar para Atender agora</Link></div>}
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2.5 border-b border-line-subtle bg-surface-panel px-3.5 py-3 shrink-0">
+        <div className="studio-chat-header flex flex-wrap items-center justify-between gap-x-3 gap-y-2.5 border-b border-line-subtle bg-surface-panel px-3.5 py-3 shrink-0">
           <div className="flex flex-1 basis-[180px] items-center gap-2.5 min-w-0">
             <Link
               href={backHref}
@@ -949,7 +949,7 @@ export function ChatWindow({
           </div>
         </div>
 
-        <section aria-label="Resumo salvo do atendimento" className="shrink-0 border-b border-line-subtle bg-surface-panel/70 px-3.5 py-2.5 space-y-1.5">
+        <section aria-label="Resumo salvo do atendimento" className="studio-chat-summary shrink-0 border-b border-line-subtle bg-surface-panel/70 px-3.5 py-2.5 space-y-1.5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-micro">
             <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-semibold', summary.state === 'resolvido' ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-line-subtle bg-surface-inset text-fg')}>
               {summary.state === 'resolvido' ? <CheckCircle2 size={12} /> : <MessageSquare size={12} />}
@@ -975,7 +975,7 @@ export function ChatWindow({
         <div
           ref={messagesContainerRef}
           onScroll={handleMessagesScroll}
-          className="scroll-thin flex-1 overflow-y-auto bg-surface-base px-4 py-4 min-h-0"
+          className="studio-chat-thread scroll-thin flex-1 overflow-y-auto bg-surface-base px-4 py-4 min-h-0"
         >
           {(hasMoreHistory || loadingHistory) && (
             <div className="flex justify-center pb-3">
@@ -994,7 +994,7 @@ export function ChatWindow({
         </div>
 
         {/* 3. Área de Envio da Mensagem */}
-        <div className="border-t border-line-subtle bg-surface-panel p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:pb-3 shrink-0 space-y-2">
+        <div className="studio-chat-composer border-t border-line-subtle bg-surface-panel p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:pb-3 shrink-0 space-y-2">
           {sendError && (
             <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-micro flex items-center justify-between gap-2">
               <span className="flex-1">⚠️ {sendError}</span>
@@ -1222,7 +1222,7 @@ export function ChatWindow({
       {/* Painel Lateral com Contexto SAC, Notas Internas e Detalhes */}
       {showDetails && <button type="button" aria-label="Fechar painel de atendimento" onClick={() => setShowDetails(false)} className="absolute inset-0 z-40 bg-black/40 xl:hidden" />}
       {showDetails && (
-        <aside id={`sac-context-panel-${lead.id}`} aria-label="Painel de atendimento SAC" className="absolute inset-y-0 right-0 z-50 w-full max-w-[360px] xl:relative xl:w-84 xl:max-w-none shrink-0 border-l border-line-subtle bg-surface-panel p-4 overflow-y-auto scroll-thin flex flex-col gap-4 animate-in slide-in-from-right duration-200">
+        <aside id={`sac-context-panel-${lead.id}`} aria-label="Painel de atendimento SAC" className="studio-chat-context absolute inset-y-0 right-0 z-50 w-full max-w-[360px] xl:relative xl:w-84 xl:max-w-none shrink-0 border-l border-line-subtle bg-surface-panel p-4 overflow-y-auto scroll-thin flex flex-col gap-4 animate-in slide-in-from-right duration-200">
           <div className="flex items-center justify-between pb-2 border-b border-line-subtle">
             <h3 className="text-body font-bold text-fg">Atendimento SAC</h3>
             <button

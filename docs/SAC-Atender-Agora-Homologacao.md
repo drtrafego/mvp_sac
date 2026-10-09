@@ -53,3 +53,39 @@ Os testes usam PostgreSQL WASM descartável (PGlite), sem acessar dados, transpo
 - Dois usuários e duas empresas: validar Meus e isolamento de responsáveis.
 
 Não foi possível concluir inspeção visual no navegador desta sessão: não havia Chromium local e o navegador remoto não abre os arquivos locais. A prévia separada usa componentes reais, fontes de sistema e dados fictícios identificados; não substitui a homologação autenticada de todas as páginas. Nenhuma configuração de autenticação foi relaxada.
+
+
+## Revisão visual Studio — escopo global
+
+Após o apontamento de que a primeira rodada mantinha a aparência anterior, foi
+implementada uma segunda direção visual para todo o workspace do SAC:
+
+- Verde profundo, superfícies de papel claro e acento verde suave; tema escuro
+  coordenado. Tipografia editorial, títulos maiores e hierarquia de informação.
+- Navegação com marca redesenhada, itens ativos destacados e indicação acessível
+  da página atual em todas as seções; nova barra superior com empresa, área,
+  acesso à fila e alternância real de tema.
+- Dashboard com nova composição inicial e bloco Da visão à ação, usando os
+  números existentes da abordagem/fila. Indicadores comerciais são preservados.
+- Conversas com nova lista, seleção destacada, cabeçalho, resumo, fundo do
+  histórico, bolhas de mensagens, compositor e painel de contexto.
+- Pipeline com novos acabamentos das colunas e cards, preservando o arrastar,
+  editar, salvar e regras de negócio existentes.
+- Atender agora com hero de prioridades, indicadores compactos, seleção de
+  atendimento e contexto ao lado. A seleção não altera o responsável nem envia
+  mensagens. Resumo, prazo e motivo vêm da consulta existente.
+- Os cabeçalhos, cards, tabelas e controles das demais páginas seguem a mesma
+  identidade global. Não foi criado um dashboard separado apenas para a prévia.
+
+Verificações nesta revisão: build de produção e TypeScript aprovados; 27 testes
+existentes de inbox, navegação da fila e salvamento do Pipeline aprovados; lint
+dos novos componentes e serviços da tela aprovado; git diff --check limpo.
+Os 114 testes completos pertencem à entrega funcional anterior. O redesenho
+não modifica o backend dessa entrega.
+
+A prévia Studio inclui Sidebar, toolbar, Atender agora, ConversationList,
+ChatWindow e KanbanBoard reais, com APIs substituídas por fixtures locais e
+escritas recusadas. O dashboard da prévia usa o cabeçalho e bloco de ação reais,
+com métricas/gráficos fictícios identificados. Canais na prévia é ilustrativo.
+Sem acesso aos clientes. Ela não substitui inspeção da aplicação autenticada;
+essa inspeção visual continua pendente e não foi anunciada como concluída.

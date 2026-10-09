@@ -26,7 +26,7 @@ export function PageHeader({
       <div className="page-heading-copy">
         {icon ? <div className="page-heading-icon" aria-hidden="true">{icon}</div> : null}
         <div className="min-w-0 flex-1">
-          {eyebrow ? <div className="mb-2 flex flex-wrap items-center gap-2">{eyebrow}</div> : null}
+          <div className="studio-page-eyebrow">{eyebrow || "Central de operações"}</div>
           <h1 className="flex flex-wrap items-center gap-2 text-h1 font-semibold text-fg">{title}</h1>
           {description ? <p className="page-heading-description text-body text-fg-muted">{description}</p> : null}
           {children}

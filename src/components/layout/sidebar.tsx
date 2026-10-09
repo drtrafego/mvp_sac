@@ -262,16 +262,20 @@ export interface SidebarProps {
   sidebarConfig?: SidebarMenuConfig | null
 }
 
+function StudioBrandMark() {
+  return <svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M7 5h9a6 6 0 0 1 6 6v4a6 6 0 0 1-6 6h-3l-5 3v-5a6 6 0 0 1-5-6v-2a6 6 0 0 1 4-6Z" stroke="currentColor" strokeWidth="1.7" /><path d="M9 10h9M9 14h6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+}
+
 export function SidebarBrand({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <div className={cn('flex items-center', collapsed ? 'justify-center w-full' : 'gap-3')}>
-      <div className="w-9 h-9 rounded-xl bg-brand-solid flex items-center justify-center font-black text-on-accent text-xs shadow-sm shrink-0">
-        CT
+      <div className="studio-brandmark">
+        <StudioBrandMark />
       </div>
       {!collapsed && (
         <div className="flex flex-col min-w-0">
-          <span className="font-bold text-fg text-sm tracking-tight leading-tight">SAC Casal do Tráfego</span>
-          <span className="text-[9px] font-bold tracking-wider text-fg-subtle uppercase">CENTRAL MULTICANAL</span>
+          <span className="studio-brand-name">SAC</span>
+          <span className="studio-brand-caption">Casal do Tráfego</span>
         </div>
       )}
     </div>
@@ -467,8 +471,8 @@ export function SidebarNavContent({
                   <Link
                     key={href}
                     href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                     title={label}
-                    aria-current={active ? 'page' : undefined}
                     className={cn(
                       'focus-ring nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
                       collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-3 py-2 text-[0.8125rem]',
@@ -521,6 +525,7 @@ export function SidebarNavContent({
                 <Link
                   key={href}
                   href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                   title={label}
                   className={cn(
                     'nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
@@ -576,6 +581,7 @@ export function SidebarNavContent({
                 <Link
                   key={href}
                   href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                   title={label}
                   className={cn(
                     'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
@@ -627,6 +633,7 @@ export function SidebarNavContent({
                   <Link
                     key={href}
                     href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                     title={label}
                     className={cn(
                       'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
@@ -679,6 +686,7 @@ export function SidebarNavContent({
                   <Link
                     key={href}
                     href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                     title={label}
                     className={cn(
                       'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
@@ -731,6 +739,7 @@ export function SidebarNavContent({
                   <Link
                     key={href}
                     href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                     title={label}
                     className={cn(
                       'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
@@ -783,6 +792,7 @@ export function SidebarNavContent({
                   <Link
                     key={href}
                     href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                     title={label}
                     className={cn(
                       'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
@@ -835,6 +845,7 @@ export function SidebarNavContent({
                   <Link
                     key={href}
                     href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                     title={label}
                     className={cn(
                       'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
@@ -886,6 +897,7 @@ export function SidebarNavContent({
                   <Link
                     key={href}
                     href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                     title={label}
                     className={cn(
                       'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
@@ -942,6 +954,7 @@ export function SidebarNavContent({
                 <Link
                   key={href}
                   href={href}
+                    aria-current={isActive(href) ? 'page' : undefined}
                   title={label}
                   className={cn(
                     'nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
@@ -1058,17 +1071,17 @@ export function Sidebar({ isAdmin, activeConnections, sidebarConfig }: SidebarPr
           <div
             onClick={collapsed ? toggleCollapsed : undefined}
             className={cn(
-              'w-9 h-9 rounded-xl bg-brand-solid flex items-center justify-center font-black text-on-accent text-base shadow-sm shrink-0',
+              'studio-brandmark',
               collapsed && 'cursor-pointer hover:opacity-90 transition-opacity'
             )}
             title={collapsed ? 'Clique para expandir o menu' : undefined}
           >
-            CT
+            <StudioBrandMark />
           </div>
           {!collapsed && (
             <div className="flex flex-col min-w-0">
-              <span className="font-bold text-fg text-sm tracking-tight leading-tight">SAC Casal do Tráfego</span>
-              <span className="text-[9px] font-bold tracking-wider text-fg-subtle uppercase">CENTRAL MULTICANAL</span>
+              <span className="studio-brand-name">SAC</span>
+              <span className="studio-brand-caption">Casal do Tráfego</span>
             </div>
           )}
         </div>

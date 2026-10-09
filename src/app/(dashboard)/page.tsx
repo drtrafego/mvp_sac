@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { DashboardFocus } from '@/components/dashboard/dashboard-focus'
 import { PageHeader } from '@/components/ui/page-header'
 import Link from 'next/link'
 import { db } from '@/lib/db'
@@ -500,12 +501,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const queueTotal = queue.reduce((acc, item) => acc + item.value, 0)
 
   return (
-    <div className="flex flex-col gap-[var(--space-section)]">
+    <div className="dashboard-studio flex flex-col gap-[var(--space-section)]">
       {/* 1. Cabeçalho da Empresa Ativa & Filtro de Datas */}
       <div className="rise rise-1 flex flex-col gap-3">
         <PageHeader
           icon={<Building2 size={22} />}
-          title="Central de Atendimento & Fechamento"
+          title="Seu atendimento, em perspectiva."
           description={<>
             {isGramado
               ? 'Painel de reservas de mesas, clientes confirmados e atendimento do restaurante.'
@@ -532,7 +533,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               <PeriodBar from={from} to={to} />
             </Suspense>
           </>}
-          className="shrink-0"
+          className="dashboard-heading shrink-0"
         />
 
         {/* Canais e Plataformas Conectadas (100% Clicáveis) */}
@@ -672,11 +673,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         </div>
       </div>
 
+      <DashboardFocus awaiting={panelAwaitingCount} pendingMessages={pendingJobs} checkout={isInfoproduto} />
+
       {/* 2. HERO CARD ADAPTATIVO & KPIS PRINCIPAIS */}
       <div className="rise rise-2 grid grid-cols-12 gap-[var(--space-gutter)]">
         <div
           className={cn(
-            'card-highlight col-span-12 flex flex-col justify-between p-[var(--space-card)]',
+            'dashboard-feature card-highlight col-span-12 flex flex-col justify-between p-[var(--space-card)]',
             isInfoproduto ? 'lg:col-span-3' : 'lg:col-span-5',
           )}
           style={{ minHeight: 'clamp(150px, 12vw, 210px)' }}
@@ -765,7 +768,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           {kpis.map(({ label, value, icon: Icon, hint }) => (
             <div
               key={label}
-              className="card flex flex-col justify-between p-[var(--space-card)]"
+              className="dashboard-metric card flex flex-col justify-between p-[var(--space-card)]"
               style={{ minHeight: 'clamp(120px, 9vw, 150px)' }}
             >
               <div className="flex items-start justify-between gap-2">
