@@ -1,7 +1,8 @@
 'use client'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { useState, useEffect } from 'react'
-import { Download, MessageSquare, Check } from 'lucide-react'
+import { Download, MessageSquare, Check, BookOpen } from 'lucide-react'
 
 interface PresetMessage {
   order: number
@@ -74,12 +75,11 @@ export default function BibliotecaPage() {
 
   return (
     <div className="space-y-4">
-      <div className="rise rise-1">
-        <h1 className="text-h1 text-fg">Biblioteca de sequências</h1>
-        <p className="text-body text-fg-muted mt-1 max-w-[70ch]">
-          Importe sequências prontas e já comprovadas. As mensagens são adicionadas à sequência existente, você pode editar depois.
-        </p>
-      </div>
+      <PageHeader
+        icon={<BookOpen size={22} />}
+        title="Biblioteca de sequências"
+        description="Importe sequências prontas e já comprovadas. As mensagens são adicionadas à sequência existente, você pode editar depois."
+      />
 
       <div className="grid gap-3 rise rise-2">
         {presets.map(preset => {

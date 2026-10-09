@@ -1,5 +1,6 @@
 'use client'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { useState } from 'react'
 import {
   Key,
@@ -361,37 +362,31 @@ console.log(data);`
   return (
     <div className="space-y-6 pb-12">
       {/* Header Principal */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-surface-raised border border-line-subtle rounded-2xl p-6 shadow-sm">
-        <div className="space-y-1.5">
+      <PageHeader
+        title={<>
+          Documentação da API para Agentes IA
+          <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            v1.0 Live
+          </span>
+        </>}
+        description={<>
+          Integração RESTful completa para os agentes autônomos <strong className="text-rose-400">Bia (Amanda)</strong> e <strong className="text-purple-400">Luana (Gastão)</strong>.
+        </>}
+        icon={<Bot size={22} />}
+        actions={<>
           <div className="flex items-center gap-2">
-            <span className="p-2 rounded-xl bg-brand-glow text-brand-ink border border-brand-solid/30">
-              <Bot size={22} />
-            </span>
-            <div>
-              <h1 className="text-h2 font-bold text-fg flex items-center gap-2">
-                Documentação da API para Agentes IA
-                <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                  v1.0 Live
-                </span>
-              </h1>
-              <p className="text-micro text-fg-subtle">
-                Integração RESTful completa para os agentes autônomos <strong className="text-rose-400">Bia (Amanda)</strong> e <strong className="text-purple-400">Luana (Gastão)</strong>.
-              </p>
-            </div>
+            <a
+              href="/docs/API_AGENTE_SAC.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-micro font-bold px-3 py-2 rounded-xl bg-surface-base border border-line-subtle text-fg hover:border-brand-ink transition-all"
+            >
+              <BookOpen size={14} />
+              Documentação Técnica (Markdown)
+            </a>
           </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <a
-            href="/docs/API_AGENTE_SAC.md"
-            target="_blank"
-            className="inline-flex items-center gap-1.5 text-micro font-bold px-3 py-2 rounded-xl bg-surface-base border border-line-subtle text-fg hover:border-brand-ink transition-all"
-          >
-            <BookOpen size={14} />
-            Documentação Técnica (Markdown)
-          </a>
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Cartões dos 2 Agentes (Bia e Luana) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

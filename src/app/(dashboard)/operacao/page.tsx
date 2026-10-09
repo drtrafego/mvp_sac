@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { messageJobs, recoveryLeads, webhookReceived, companyMembers, recoverySequences } from '@/lib/db/schema'
@@ -100,7 +101,7 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
   const sentJobs = jobStats?.sent ?? 0
   const failedJobs = jobStats?.failed ?? 0
   const totalJobs = sentJobs + failedJobs + pendingJobs
-  const successRate = (sentJobs + failedJobs) > 0 ? (((sentJobs) / (sentJobs + failedJobs)) * 100).toFixed(1) : '100.0'
+  const successRate = (sentJobs + failedJobs) > 0 ? (((sentJobs) / (sentJobs + failedJobs)) * 100).toFixed(1) + '%' : 'Sem dados'
 
   const totalWebhooks = webhookStats?.total ?? 0
   const failedWebhooks = webhookStats?.failedOrSkipped ?? 0
@@ -108,11 +109,11 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
   const convertedLeads = leadStats?.convertedLeads ?? 0
   const pausedLeads = pausedStats?.pausedCount ?? 0
 
-  // Métricas do Bot AutonomIA baseadas em dados reais
-  const botAutonomyRate = totalLeads > 0
+  // Pausa é um estado de controle; não comprova resolução autônoma.
+  const botEnabledRate = totalLeads > 0
     ? (((totalLeads - pausedLeads) / totalLeads) * 100).toFixed(1) + '%'
-    : '100.0%'
-  const botSlaSeconds = 'Instantâneo (< 5s)'
+    : 'Sem dados'
+  const botSlaSeconds = 'Não medido'
   const activeSequencesCount = sequences.filter(s => s.isActive).length
 
   const saude = [
@@ -120,7 +121,7 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
       label: 'Fila de Saída (Outbox)',
       valor: `${pendingJobs} ${pendingJobs === 1 ? 'mensagem' : 'mensagens'}`,
       apoio: pendingJobs === 0 ? 'Nenhuma mensagem represada' : 'Processamento contínuo em fila',
-      status: pendingJobs === 0 ? 'Entregando' : 'Processando',
+      status: pendingJobs === 0 ? 'Sem pendências' : 'Na fila',
       statusColor: pendingJobs === 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20',
     },
     {
@@ -144,7 +145,7 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
       name: 'AutonomIA (Recuperador Master)',
       role: 'Agente de Recuperação & Reversão de Vendas',
       channel: 'WhatsApp Cloud API Oficial',
-      status: 'Ativo & Operando',
+      status: 'Sem verificação ao vivo',
       badgeColor: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
       description: 'Dispara automaticamente mensagens personalizadas com links de pagamento, Pix Copia e Cola e boleto.',
       statLabel: 'Disparos no Período',
@@ -154,17 +155,17 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
       name: 'Minerador (Outreach & Base Fria)',
       role: 'Agente de Prospecção & Qualificação Fria',
       channel: 'WhatsApp & Webhook Mineração',
-      status: 'Ativo',
+      status: 'Sem verificação ao vivo',
       badgeColor: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
       description: 'Recebe os contatos minerados e encaminha para a régua de primeiro contato e agendamento.',
-      statLabel: 'Origem Mineração',
+      statLabel: 'Contatos da empresa',
       statValue: `${totalLeads} contatos`,
     },
     {
       name: 'Nina (Atendimento & SAC)',
       role: 'Agente de Atendimento & Dúvidas Rápidas',
       channel: 'WhatsApp Multicanal',
-      status: 'Ativo',
+      status: 'Sem verificação ao vivo',
       badgeColor: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
       description: 'Responde dúvidas frequentes sobre os produtos, entrega de acesso e pós-venda.',
       statLabel: 'Tempo Estimado de Resposta',
@@ -176,41 +177,45 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
     <div className="flex flex-col gap-[var(--space-section)]">
       {/* 1. Cabeçalho com Empresa & PeriodBar Oficial */}
       <div className="rise rise-1 flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
+        <PageHeader
+          icon={<Activity size={22} />}
+          title="Operação de atendimento"
+          description={<>
+            Acompanhe filas de envio, falhas e o estado do atendimento da <strong>{company.name}</strong>.
+          </>}
+          eyebrow={<>
             <div className="flex items-center gap-2 mb-1">
               <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
                 <Activity size={12} />
                 Empresa: {company.name}
               </span>
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
-                <Cpu size={12} /> Bot AutonomIA Ativo
+                <Cpu size={12} /> Operação da empresa
               </span>
             </div>
-            <h1 className="text-h1 text-fg">Operação, SLA & Autonomia dos Bots</h1>
-            <p className="text-body text-fg-muted mt-0.5">
-              Auditoria dos disparos automatizados, saúde das filas de envio e métricas de autonomia dos agentes IA da <strong>{company.name}</strong>.
-            </p>
-          </div>
-          <Suspense fallback={null}>
-            <PeriodBar from={from} to={to} />
-          </Suspense>
-        </div>
+          </>}
+          actions={<>
+            <Suspense fallback={null}>
+              <PeriodBar from={from} to={to} />
+            </Suspense>
+          </>}
+          className="shrink-0"
+        />
       </div>
 
       {/* 2. KPIs de Autonomia do Bot */}
       <div className="rise rise-2 grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="panel p-4 rounded-[var(--r-lg)] border border-line-subtle bg-surface-panel flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-label uppercase text-fg-subtle font-semibold">Taxa de Autonomia</span>
+            <span className="text-label uppercase text-fg-subtle font-semibold">Bot liberado</span>
             <div className="h-7 w-7 rounded-[var(--r-md)] bg-emerald-500/10 flex items-center justify-center text-emerald-400">
               <Bot size={15} />
             </div>
           </div>
           <div className="mt-3">
-            <span className="num text-metric text-emerald-400 font-bold">{botAutonomyRate}</span>
+            <span className="num text-metric-sm text-emerald-400 font-bold">{botEnabledRate}</span>
             <p className="mt-0.5 text-micro text-fg-subtle">
-              sem intervenção manual
+              contatos sem pausa do bot; não mede resolução
             </p>
           </div>
         </div>
@@ -223,24 +228,24 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
             </div>
           </div>
           <div className="mt-3">
-            <span className="num text-metric text-brand-ink font-bold">{botSlaSeconds}</span>
+            <span className="text-metric-sm text-fg-muted font-semibold">{botSlaSeconds}</span>
             <p className="mt-0.5 text-micro text-fg-subtle">
-              tempo de resposta imediato
+              tempo médio ainda sem medição
             </p>
           </div>
         </div>
 
         <div className="panel p-4 rounded-[var(--r-lg)] border border-line-subtle bg-surface-panel flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-label uppercase text-fg-subtle font-semibold">Taxa de Entrega</span>
+            <span className="text-label uppercase text-fg-subtle font-semibold">Sucesso do envio</span>
             <div className="h-7 w-7 rounded-[var(--r-md)] bg-cyan-500/10 flex items-center justify-center text-cyan-400">
               <Zap size={15} />
             </div>
           </div>
           <div className="mt-3">
-            <span className="num text-metric text-fg font-bold">{successRate}%</span>
+            <span className="num text-metric-sm text-fg font-bold">{successRate}</span>
             <p className="mt-0.5 text-micro text-fg-subtle">
-              {sentJobs} mensagens enviadas
+              {sentJobs} envios concluídos; entrega é outro estado
             </p>
           </div>
         </div>
@@ -287,8 +292,7 @@ export default async function OperacaoPage({ searchParams }: PageProps) {
             <h2 className="text-h2 text-fg">Agentes IA Casal do Tráfego & AutonomIA ({company.name})</h2>
           </div>
           <span className="text-micro text-emerald-400 font-semibold flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            3 Agentes Conectados
+            {botAgents.length} perfis · sem monitoramento ao vivo
           </span>
         </div>
 

@@ -3,6 +3,8 @@ import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
+import { nullableDate, SacInputError } from '@/lib/sac-access'
+import { followupDayToIso } from '@/lib/sac-followup-date'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -57,8 +59,14 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
   if (body.utmMedium !== undefined) updateData.utmMedium = body.utmMedium ? String(body.utmMedium) : null
   if (body.notes !== undefined) updateData.notes = body.notes ? String(body.notes) : null
 
-  if (body.followUpDate !== undefined) {
-    updateData.followUpDate = body.followUpDate ? new Date(body.followUpDate) : null
+  try {
+    for (const field of ['followUpDate', 'nextActionDueAt'] as const) {
+      if (body[field] === undefined) continue
+      const value = body[field]
+      updateData[field] = nullableDate(typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? followupDayToIso(value) : value, field)
+    }
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Prazo inválido' }, { status: error instanceof SacInputError ? error.status : 400 })
   }
   if (body.followUpNote !== undefined) {
     updateData.followUpNote = body.followUpNote ? String(body.followUpNote) : null
@@ -68,9 +76,6 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
   if (body.requestSummary !== undefined) updateData.requestSummary = body.requestSummary ? String(body.requestSummary) : null
   if (body.commitment !== undefined) updateData.commitment = body.commitment ? String(body.commitment) : null
   if (body.nextAction !== undefined) updateData.nextAction = body.nextAction ? String(body.nextAction) : null
-  if (body.nextActionDueAt !== undefined) {
-    updateData.nextActionDueAt = body.nextActionDueAt ? new Date(body.nextActionDueAt) : null
-  }
   if (body.humanOwnerMemberId !== undefined) {
     updateData.humanOwnerMemberId = body.humanOwnerMemberId ? parseInt(body.humanOwnerMemberId) : null
   }

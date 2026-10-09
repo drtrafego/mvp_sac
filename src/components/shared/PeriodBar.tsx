@@ -60,7 +60,9 @@ export default function PeriodBar({ from, to, children }: Props) {
         <div className="flex items-center gap-1">
           <button
             onClick={() => goMonth(-1)}
-            className="text-fg-subtle hover:text-fg flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            className="text-fg-subtle hover:text-fg flex h-11 w-11 md:h-9 md:w-9 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            type="button"
+            aria-label="Mês anterior"
             title="Mês anterior"
           >
             <ChevronLeft size={16} />
@@ -70,7 +72,9 @@ export default function PeriodBar({ from, to, children }: Props) {
           </span>
           <button
             onClick={() => goMonth(1)}
-            className="text-fg-subtle hover:text-fg flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            className="text-fg-subtle hover:text-fg flex h-11 w-11 md:h-9 md:w-9 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            type="button"
+            aria-label="Próximo mês"
             title="Próximo mês"
           >
             <ChevronRight size={16} />
@@ -81,7 +85,9 @@ export default function PeriodBar({ from, to, children }: Props) {
         <div className="flex items-center gap-1">
           <button
             onClick={() => goDay(-1)}
-            className="text-fg-subtle hover:text-fg flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            className="text-fg-subtle hover:text-fg flex h-11 w-11 md:h-9 md:w-9 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            type="button"
+            aria-label="Dia anterior"
             title="Dia anterior"
           >
             <ChevronLeft size={16} />
@@ -89,7 +95,9 @@ export default function PeriodBar({ from, to, children }: Props) {
           <DateRangePicker from={from} to={to} />
           <button
             onClick={() => goDay(1)}
-            className="text-fg-subtle hover:text-fg flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            className="text-fg-subtle hover:text-fg flex h-11 w-11 md:h-9 md:w-9 items-center justify-center bg-surface-panel border border-line-subtle rounded-xl hover:bg-surface-raised transition-colors cursor-pointer shadow-xs"
+            type="button"
+            aria-label="Próximo dia"
             title="Próximo dia"
           >
             <ChevronRight size={16} />

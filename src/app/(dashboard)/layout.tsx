@@ -7,6 +7,7 @@ import { Sidebar } from '@/components/layout/sidebar'
 import { MobileTopbar } from '@/components/layout/mobile-topbar'
 import { MobileTabBar } from '@/components/layout/mobile-tabbar'
 import { AdminBanner } from '@/components/layout/admin-banner'
+import { PageSurface } from '@/components/layout/page-surface'
 import { Suspense } from 'react'
 
 const MAIN_CLASS =
@@ -35,7 +36,7 @@ function BottomNavSpacer() {
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="shell flex flex-1 min-h-0 flex-col">
-      {children}
+      <PageSurface>{children}</PageSurface>
       <BottomNavSpacer />
     </div>
   )
@@ -53,7 +54,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     const { activeConnections, sidebarConfig } = await getCompanySidebarData(company.id)
 
     return (
-      <div className="flex flex-col h-screen bg-surface-base">
+      <div className="flex flex-col h-dvh bg-surface-base">
         <AdminBanner companyName={company.name} companyId={company.id} />
         <div className="flex flex-1 overflow-hidden">
           <Suspense fallback={SIDEBAR_FALLBACK}>
@@ -78,7 +79,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const { activeConnections, sidebarConfig } = await getCompanySidebarData(company.id)
 
   return (
-    <div className="flex h-screen bg-surface-base">
+    <div className="flex h-dvh bg-surface-base">
       <Suspense fallback={SIDEBAR_FALLBACK}>
         <Sidebar activeConnections={activeConnections} sidebarConfig={sidebarConfig} />
       </Suspense>

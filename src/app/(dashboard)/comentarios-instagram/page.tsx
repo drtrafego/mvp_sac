@@ -1,5 +1,6 @@
 'use client'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { useState, useEffect } from 'react'
 import {
   MessageCircle,
@@ -297,37 +298,39 @@ export default function ComentariosInstagramPage() {
   return (
     <div className="flex flex-col gap-[var(--space-section)]">
       {/* Header */}
-      <div className="rise rise-1 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
+      <PageHeader
+        icon={<InstagramIcon size={22} />}
+        title="Comentário vira DM no Instagram"
+        description="Transforme quem comenta nos seus posts e reels em leads no Direct e no Inbox do SAC em tempo real."
+        eyebrow={<>
           <div className="flex items-center gap-2 mb-1">
             <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-pink-400 bg-pink-500/10 px-2.5 py-0.5 rounded-full border border-pink-500/30">
               <InstagramIcon size={12} />
               Automação Oficial Meta Graph API
             </span>
           </div>
-          <h1 className="text-h1 text-fg">Comentário vira DM no Instagram</h1>
-          <p className="text-body text-fg-muted mt-0.5">
-            Transforme quem comenta nos seus posts e reels em leads no Direct e no Inbox do SAC em tempo real.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={loadData}
-            title="Atualizar Dados"
-            className="p-2.5 rounded-xl bg-surface-raised border border-line-subtle text-fg-muted hover:text-fg hover:bg-surface-base transition-colors"
-          >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          </button>
-          <button
-            onClick={openNewModal}
-            className="btn btn-primary flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs"
-          >
-            <Plus size={16} />
-            Nova Automação
-          </button>
-        </div>
-      </div>
+        </>}
+        actions={<>
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={loadData}
+              title="Atualizar Dados"
+              aria-label="Atualizar dados das automações"
+              className="p-2.5 rounded-xl bg-surface-raised border border-line-subtle text-fg-muted hover:text-fg hover:bg-surface-base transition-colors"
+            >
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            </button>
+            <button
+              onClick={openNewModal}
+              className="btn btn-primary flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs"
+            >
+              <Plus size={16} />
+              Nova Automação
+            </button>
+          </div>
+        </>}
+        className="shrink-0"
+      />
 
       {/* Cards de Métricas */}
       <div className="rise rise-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-[var(--space-gutter)]">

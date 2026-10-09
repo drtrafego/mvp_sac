@@ -25,6 +25,7 @@ import {
   Bot,
   Code2,
   MessageCircle,
+  ListTodo,
 } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
 import { cn } from '@/lib/utils'
@@ -123,6 +124,7 @@ export const atendimentoNav: Array<{
   requires?: NavigationRequirement
 }> = [
   { label: 'Visão geral', href: '/', icon: Activity },
+  { label: 'Atender agora', href: '/atender-agora', icon: ListTodo },
   { label: 'Conversas', href: '/inbox', icon: MessageSquare },
   {
     label: 'Comentário → DM',
@@ -345,9 +347,13 @@ export function SidebarNavContent({
 
   // Garantir que a seção ativa esteja sempre aberta
   useEffect(() => {
+    if (atendimentoNav.some(item => isActive(item.href))) {
+      // A fila diária também fica acessível quando a seção foi recolhida antes.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSectionsOpen(prev => ({ ...prev, atendimento: true }))
+    }
     if (analiseNav.some(item => isActive(item.href))) {
       // Abre a seção correspondente quando a rota muda.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSectionsOpen(prev => ({ ...prev, analise: true }))
     }
     if (apiOficialNav.some(item => isActive(item.href))) {
@@ -462,8 +468,9 @@ export function SidebarNavContent({
                     key={href}
                     href={href}
                     title={label}
+                    aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
+                      'focus-ring nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
                       collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-3 py-2 text-[0.8125rem]',
                       active
                         ? 'bg-surface-raised text-fg font-semibold shadow-sm border border-line-subtle/60'

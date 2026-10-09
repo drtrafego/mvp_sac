@@ -1,10 +1,11 @@
 'use client'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
-import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette, Columns3, CalendarClock, ChevronRight, PauseCircle, PlayCircle, AlertTriangle, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette, Columns3, CalendarClock, ChevronRight, PauseCircle, PlayCircle, AlertTriangle, Loader2, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -884,11 +885,13 @@ function AparenciaSection() {
           const active = mounted && theme === opt.id
           const Icon = opt.icon
           return (
-            <div
+            <button
               key={opt.id}
+              type="button"
+              aria-pressed={active}
               onClick={() => changeTheme(opt.id)}
               className={cn(
-                'group relative rounded-2xl border p-4 flex flex-col justify-between space-y-3 cursor-pointer transition-all duration-200',
+                'focus-ring group relative w-full text-left rounded-2xl border p-4 flex flex-col justify-between space-y-3 cursor-pointer transition-all duration-200',
                 active
                   ? 'border-brand-solid bg-brand-glow/10 shadow-md ring-1 ring-brand-solid/50'
                   : 'border-line-subtle bg-surface-inset hover:border-line-default hover:bg-surface-raised'
@@ -918,7 +921,7 @@ function AparenciaSection() {
                   {opt.desc}
                 </p>
               </div>
-            </div>
+            </button>
           )
         })}
       </div>
@@ -1088,12 +1091,11 @@ export default function ConfiguracoesPage() {
 
   return (
     <div className="max-w-[880px] flex flex-col gap-[var(--space-section)]">
-      <div>
-        <h1 className="text-h1 text-fg">Configurações</h1>
-        <p className="text-body text-fg-muted mt-1">
-          Aparência do sistema, credenciais das plataformas de pagamento, do WhatsApp e da sua equipe.
-        </p>
-      </div>
+      <PageHeader
+        icon={<Settings size={22} />}
+        title="Configurações"
+        description="Aparência do sistema, credenciais das plataformas de pagamento, do WhatsApp e da sua equipe."
+      />
 
       {/* Aparência & Tema */}
       <AparenciaSection />

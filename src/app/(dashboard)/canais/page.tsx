@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { db } from '@/lib/db'
 import { settings, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { eq, sql, count } from 'drizzle-orm'
@@ -58,18 +59,21 @@ export default async function CanaisPage() {
 
   return (
     <div className="flex flex-col gap-[var(--space-section)]">
-      <div className="rise rise-1">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
-            <Radio size={12} />
-            Canais da Empresa: {company.name}
-          </span>
-        </div>
-        <h1 className="text-h1 text-fg">Canais de Atendimento & Disparo</h1>
-        <p className="text-body text-fg-muted mt-0.5">
+      <PageHeader
+        icon={<Radio size={22} />}
+        title="Canais de Atendimento & Disparo"
+        description={<>
           Provedores oficiais de <strong>WhatsApp</strong>, <strong>Instagram Direct</strong> e <strong>E-mail (Brevo)</strong> configurados para <strong>{company.name}</strong>.
-        </p>
-      </div>
+        </>}
+        eyebrow={<>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
+              <Radio size={12} />
+              Canais da Empresa: {company.name}
+            </span>
+          </div>
+        </>}
+      />
 
       <div className="rise rise-2 grid grid-cols-1 md:grid-cols-2 gap-[var(--space-gutter)]">
         {canais.map((c) => {

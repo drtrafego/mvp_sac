@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { db } from '@/lib/db'
 import { recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { eq, count, and, desc, sql, gte, lte, lt } from 'drizzle-orm'
@@ -250,8 +251,11 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     <div className="flex flex-col gap-[var(--space-section)]">
       {/* Cabeçalho Unificado SAC Multiagente */}
       <div className="rise rise-1 flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
+        <PageHeader
+          icon={<Sparkles size={22} />}
+          title="Central de Atendimento & Vendas"
+          description="Visão geral multicanal integrada com WhatsApp Oficial, Mineração (Google Places), Meta Ads e Checkouts."
+          eyebrow={<>
             <div className="flex items-center gap-2 mb-1">
               <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
                 <Sparkles size={12} />
@@ -262,15 +266,14 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 Atendimento Multicanal & Recuperação
               </span>
             </div>
-            <h1 className="text-h1 text-fg">Central de Atendimento & Vendas</h1>
-            <p className="text-body text-fg-muted mt-0.5">
-              Visão geral multicanal integrada com WhatsApp Oficial, Mineração (Google Places), Meta Ads e Checkouts.
-            </p>
-          </div>
-          <Suspense fallback={null}>
-            <PeriodBar from={from} to={to} />
-          </Suspense>
-        </div>
+          </>}
+          actions={<>
+            <Suspense fallback={null}>
+              <PeriodBar from={from} to={to} />
+            </Suspense>
+          </>}
+          className="shrink-0"
+        />
 
         {/* Canais e Plataformas Conectadas */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line-subtle text-micro text-fg-subtle">

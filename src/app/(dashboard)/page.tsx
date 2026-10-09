@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { PageHeader } from '@/components/ui/page-header'
 import Link from 'next/link'
 import { db } from '@/lib/db'
 import { recoveryLeads, messageJobs, gramadoReservations, whatsappMessages } from '@/lib/db/schema'
@@ -502,8 +503,19 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     <div className="flex flex-col gap-[var(--space-section)]">
       {/* 1. Cabeçalho da Empresa Ativa & Filtro de Datas */}
       <div className="rise rise-1 flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
+        <PageHeader
+          icon={<Building2 size={22} />}
+          title="Central de Atendimento & Fechamento"
+          description={<>
+            {isGramado
+              ? 'Painel de reservas de mesas, clientes confirmados e atendimento do restaurante.'
+              : isLucas
+              ? 'Painel de agendamentos de consultas médicas, procedimentos e pacientes da clínica.'
+              : isAgencia
+              ? 'Painel de fechamentos comerciais, propostas e prospecção de clientes AutonomIA.'
+              : 'Visão geral multicanal integrada com checkouts, WhatsApp e atendimento automatizado.'}
+          </>}
+          eyebrow={<>
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
                 <Building2 size={12} />
@@ -514,21 +526,14 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 {heroTag} · /{company.slug}
               </span>
             </div>
-            <h1 className="text-h1 text-fg">Central de Atendimento & Fechamento</h1>
-            <p className="text-body text-fg-muted mt-0.5">
-              {isGramado
-                ? 'Painel de reservas de mesas, clientes confirmados e atendimento do restaurante.'
-                : isLucas
-                ? 'Painel de agendamentos de consultas médicas, procedimentos e pacientes da clínica.'
-                : isAgencia
-                ? 'Painel de fechamentos comerciais, propostas e prospecção de clientes AutonomIA.'
-                : 'Visão geral multicanal integrada com checkouts, WhatsApp e atendimento automatizado.'}
-            </p>
-          </div>
-          <Suspense fallback={null}>
-            <PeriodBar from={from} to={to} />
-          </Suspense>
-        </div>
+          </>}
+          actions={<>
+            <Suspense fallback={null}>
+              <PeriodBar from={from} to={to} />
+            </Suspense>
+          </>}
+          className="shrink-0"
+        />
 
         {/* Canais e Plataformas Conectadas (100% Clicáveis) */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line-subtle text-micro text-fg-subtle">

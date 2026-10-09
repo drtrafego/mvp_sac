@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { LayoutDashboard, MessageSquare, Users, BarChart3, Menu } from 'lucide-react'
 import { Sheet } from '@/components/ui/sheet'
-import { SidebarNavContent, SidebarFooter, ActiveConnections } from './sidebar'
+import { SidebarNavContent, SidebarFooter, type ActiveConnections, type SidebarMenuConfig } from './sidebar'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { cn } from '@/lib/utils'
 
@@ -19,17 +19,17 @@ const tabs = [
 interface MobileTabBarProps {
   isAdmin?: boolean
   activeConnections?: ActiveConnections
-  sidebarConfig?: any
+  sidebarConfig?: SidebarMenuConfig | null
 }
 
-export function MobileTabBar({ isAdmin, activeConnections, sidebarConfig }: MobileTabBarProps) {
+export function MobileTabBar(props: MobileTabBarProps) {
   const pathname = usePathname()
-  const [open, setOpen] = useState(false)
+  // O estado pertence à rota: navegar desmonta o menu e libera seu foco/scroll.
+  return <MobileTabBarForRoute key={pathname} {...props} pathname={pathname} />
+}
 
-  // Fecha o menu sempre que a rota muda
-  useEffect(() => {
-    setOpen(false)
-  }, [pathname])
+function MobileTabBarForRoute({ isAdmin, activeConnections, sidebarConfig, pathname }: MobileTabBarProps & { pathname: string }) {
+  const [open, setOpen] = useState(false)
 
   // Dentro de uma conversa o rodapé é o campo de digitação, então a tab bar some
   const inConversation =
@@ -39,6 +39,7 @@ export function MobileTabBar({ isAdmin, activeConnections, sidebarConfig }: Mobi
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
+  const moreActive = !tabs.some(tab => isActive(tab.href))
 
   return (
     <>
@@ -50,8 +51,9 @@ export function MobileTabBar({ isAdmin, activeConnections, sidebarConfig }: Mobi
               <Link
                 key={href}
                 href={href}
+                aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex flex-1 flex-col items-center justify-center gap-1 text-[11px] leading-none transition-colors',
+                  'focus-ring flex flex-1 flex-col items-center justify-center gap-1 text-[11px] leading-none transition-colors',
                   active ? 'text-brand-ink font-bold' : 'text-fg-subtle hover:text-fg'
                 )}
               >
@@ -65,9 +67,10 @@ export function MobileTabBar({ isAdmin, activeConnections, sidebarConfig }: Mobi
             type="button"
             onClick={() => setOpen(true)}
             aria-label="Abrir menu"
+            aria-expanded={open}
             className={cn(
-              'flex flex-1 flex-col items-center justify-center gap-1 text-[11px] leading-none transition-colors cursor-pointer',
-              open ? 'text-brand-ink font-bold' : 'text-fg-subtle hover:text-fg'
+              'focus-ring flex flex-1 flex-col items-center justify-center gap-1 text-[11px] leading-none transition-colors cursor-pointer',
+              open || moreActive ? 'text-brand-ink font-bold' : 'text-fg-subtle hover:text-fg'
             )}
           >
             <Menu size={19} className="shrink-0" />

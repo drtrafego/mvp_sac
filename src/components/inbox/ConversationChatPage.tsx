@@ -7,6 +7,7 @@ import { getEmailEngagement } from '@/lib/email-engagement'
 import { loadInboxMessagePage } from '@/lib/inbox-messages'
 import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
 import { ChatWindow } from '@/components/inbox/ChatWindow'
+import { attentionConversationNavigation } from '@/lib/sac-attention-navigation'
 
 interface ConversationChatPageProps {
   leadId: string
@@ -30,6 +31,7 @@ export async function ConversationChatPage({
   if (Number.isNaN(id)) notFound()
 
   const sParams = searchParams ? await searchParams : {}
+  const navigation = attentionConversationNavigation(sParams, backHref)
   const rawAround = Array.isArray(sParams.aroundMessageId) ? sParams.aroundMessageId[0] : sParams.aroundMessageId
   const parsedAround = rawAround && /^\d+$/.test(rawAround) ? Number(rawAround) : null
   const validAround = parsedAround && Number.isSafeInteger(parsedAround) && parsedAround > 0 ? parsedAround : null
@@ -92,9 +94,11 @@ export async function ConversationChatPage({
 
   return (
     <ChatWindow
-      key={`${id}:${validAround ?? 'current'}`}
+      key={`${id}:${validAround ?? 'current'}:${navigation.initialContextOpen ? 'context' : 'chat'}:${navigation.fromAttention ? 'attention' : 'inbox'}`}
       highlightMessageId={validAround}
-      backHref={backHref}
+      backHref={navigation.backHref}
+      conversationHref={navigation.conversationHref}
+      initialContextOpen={navigation.initialContextOpen}
       lead={{
         id: lead.id,
         phone: lead.phone,

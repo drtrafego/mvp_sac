@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
 import { eq, and, gte, lte, sql, desc, inArray } from 'drizzle-orm'
@@ -314,10 +315,11 @@ export default async function AnalyticsVendasPage({ searchParams }: PageProps) {
 
   return (
     <div className="space-y-4">
-      <div className="rise rise-1">
-        <h1 className="text-h1 text-fg">Analytics Vendas</h1>
-        <p className="text-body text-fg-muted mt-1">Receita, clientes e atribuição de campanhas</p>
-      </div>
+      <PageHeader
+        icon={<TrendingUp size={22} />}
+        title="Analytics Vendas"
+        description="Receita, clientes e atribuição de campanhas"
+      />
 
       {/* Filtros: uma linha só, o resto vive no painel lateral */}
       <div className="card-section p-3 rise rise-1">

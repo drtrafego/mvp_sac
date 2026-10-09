@@ -266,6 +266,20 @@ test('SAC: handlers reais com PostgreSQL PGlite', async (suite) => {
     const stale = await inbox.PATCH(request('/api/inbox/100', 'PATCH', { expectedContextVersion: 1, requestSummary: 'Sobrescrito' }), leadParams())
     assert.equal(stale.status, 409); assert.equal((await lead()).requestSummary, 'Pedido original')
   })
+  await suite.test('prazo da próxima ação preserva o dia escolhido e rejeita data impossível', async () => {
+    await reset()
+    const response = await inbox.PATCH(request('/api/inbox/100', 'PATCH', {
+      expectedContextVersion: 1, dirtyFields: ['nextActionDueAt', 'nextAction'],
+      nextActionDueAt: '2026-10-09', nextAction: 'Enviar orçamento',
+    }), leadParams())
+    assert.equal(response.status, 200, JSON.stringify(await response.clone().json()))
+    assert.equal(new Date((await lead()).nextActionDueAt as string).toISOString(), '2026-10-09T15:00:00.000Z')
+    const invalid = await inbox.PATCH(request('/api/inbox/100', 'PATCH', {
+      expectedContextVersion: 2, dirtyFields: ['nextActionDueAt'], nextActionDueAt: '2026-02-30',
+    }), leadParams())
+    assert.equal(invalid.status, 400)
+    assert.equal((await lead()).contextVersion, 2)
+  })
   await suite.test('PATCH valida responsável ativo e mesma empresa antes de gravar qualquer campo', async () => {
     for (const invalidId of [20, 13, 999]) {
       await reset()

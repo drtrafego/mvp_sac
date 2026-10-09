@@ -8,7 +8,6 @@ import {
   Pause,
   Play,
   Loader2,
-  Info,
   X,
   ExternalLink,
   Sparkles,
@@ -37,6 +36,7 @@ import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { cn } from '@/lib/utils'
 import { buildContextPatch, canStartComposerIntent, contextFromLead, draftAfterAccepted, fillReplyTemplate, mergeContextDraft, unresolvedReplyVariables, upsertInboxMessages, type ComposerIntent, type SacContextDraft } from './sac-inbox-state'
 import type { EmailEngagement } from '@/lib/email-engagement'
+import { attentionMessageReferenceHref, isAttentionReturnHref, persistedSacContextSummary, type ConversationBaseHref, type ConversationReturnHref } from '@/lib/sac-attention-navigation'
 
 const ACTIVE_CHAT_POLL_MS = 5_000
 const DEFAULT_PIPELINE_COLUMNS = [
@@ -131,13 +131,17 @@ export function ChatWindow({
   appointments = [],
   initialHistory,
   backHref = '/inbox',
+  conversationHref,
+  initialContextOpen = false,
   highlightMessageId,
 }: {
   lead: ChatLead
   initialMessages: InboxMessage[]
   appointments?: MirroredAppointment[]
   initialHistory: { hasMore: boolean; nextCursor: string | null }
-  backHref?: '/inbox' | '/instagram'
+  backHref?: ConversationReturnHref
+  conversationHref?: ConversationBaseHref
+  initialContextOpen?: boolean
   highlightMessageId?: number | null
 }) {
   const [messages, setMessages] = useState<InboxMessage[]>(initialMessages)
@@ -145,7 +149,7 @@ export function ChatWindow({
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
-  const [showDetails, setShowDetails] = useState(false)
+  const [showDetails, setShowDetails] = useState(initialContextOpen)
   const [hasMoreHistory, setHasMoreHistory] = useState(initialHistory.hasMore)
   const [historyCursor, setHistoryCursor] = useState(initialHistory.nextCursor)
   const [loadingHistory, setLoadingHistory] = useState(false)
@@ -164,6 +168,8 @@ export function ChatWindow({
   const [sidePanelTab, setSidePanelTab] = useState<'context' | 'notes' | 'pending' | 'info'>('context')
 
   // SAC Lote 1: Card de Contexto e Próxima Ação
+  // The compact summary only reflects confirmed server data, never a local edit.
+  const [persistedLead, setPersistedLead] = useState<ChatLead>(lead)
   const [contextDraft, setContextDraft] = useState(() => contextFromLead(lead))
   const { requestSummary, commitment, nextAction, nextActionDueAt, pipelineStage, followUpDate, followUpNote, sacCaseState } = contextDraft
   const contextDraftRef = useRef(contextDraft)
@@ -198,6 +204,7 @@ export function ChatWindow({
   const setFollowUpNote = (value: string) => editContextField('followUpNote', value)
 
   const hydrateContext = useCallback((incoming: Partial<ChatLead>) => {
+    setPersistedLead(previous => ({ ...previous, ...incoming }))
     const serverContext = contextFromLead(incoming)
     if (dirtyContextRef.current.size === 0) contextVersionRef.current = incoming.contextVersion ?? contextVersionRef.current
     contextDraftRef.current = mergeContextDraft(contextDraftRef.current, serverContext, dirtyContextRef.current)
@@ -794,6 +801,13 @@ export function ChatWindow({
   // agente resolvido (companies.agentDisplayName nulo), pra nunca quebrar a
   // tela por falta desse dado.
   const agentLabel = lead.agentDisplayName?.trim() || 'Bot IA'
+  const conversationBaseHref = conversationHref ?? (backHref === '/instagram' ? '/instagram' : '/inbox')
+  const summary = persistedSacContextSummary(persistedLead)
+  const savedContext = contextFromLead(persistedLead)
+  const hasUnsavedContext = (Object.keys(contextDraft) as Array<keyof SacContextDraft>)
+    .some(field => contextDraft[field] !== savedContext[field])
+  const fromAttention = isAttentionReturnHref(backHref)
+  const openContextPanel = () => { setShowDetails(true); setSidePanelTab('context') }
 
   const channelLabel =
     lead.channel === 'instagram' || lead.phone.startsWith('ig_')
@@ -817,12 +831,13 @@ export function ChatWindow({
         )}
 
         {/* 1. Cabeçalho do Atendimento */}
-        <div className="flex items-center justify-between gap-3 border-b border-line-subtle bg-surface-panel px-3.5 py-2.5 shrink-0">
-          <div className="flex items-center gap-2.5 min-w-0">
+        {fromAttention && <div className="shrink-0 border-b border-line-subtle bg-surface-panel px-3.5 py-2"><Link href={backHref} className="focus-ring inline-flex items-center gap-1.5 rounded-md text-micro font-semibold text-brand-ink hover:underline"><ArrowLeft size={13} />Voltar para Atender agora</Link></div>}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2.5 border-b border-line-subtle bg-surface-panel px-3.5 py-3 shrink-0">
+          <div className="flex flex-1 basis-[180px] items-center gap-2.5 min-w-0">
             <Link
               href={backHref}
               aria-label="Voltar para conversas"
-              className="focus-ring md:hidden flex items-center justify-center h-9 w-9 shrink-0 rounded-lg text-fg-muted transition-colors hover:text-fg hover:bg-surface-inset"
+              className={cn('focus-ring md:hidden flex items-center justify-center h-9 w-9 shrink-0 rounded-lg text-fg-muted transition-colors hover:text-fg hover:bg-surface-inset', fromAttention && 'hidden')}
             >
               <ArrowLeft size={18} />
             </Link>
@@ -876,8 +891,8 @@ export function ChatWindow({
             </div>
           </div>
 
-          {/* Ações do Topo: Botão Pausar/Retomar Bot, Info Lead e Refresh */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          {/* Ações do Topo: acesso explícito ao contexto, bot, pendências e atualização */}
+          <div className="ml-auto flex items-center gap-1.5 shrink-0">
             <button type="button" onClick={() => { setShowDetails(true); setSidePanelTab('pending'); void loadPending() }} title="Pendências de atendimento" aria-label="Abrir pendências de atendimento" className="h-8 w-8 rounded-lg border border-line-subtle flex items-center justify-center text-fg-muted hover:text-fg"><Clock size={14} /></button>
             {/* BOTÃO PAUSAR / RETOMAR BOT */}
             <button
@@ -903,19 +918,22 @@ export function ChatWindow({
               <span className="hidden sm:inline">{botPaused ? 'Retomar Bot' : 'Pausar Bot'}</span>
             </button>
 
-            {/* Alternador de Detalhes do Lead */}
+            {/* Contexto existente: abre diretamente a aba do card, sem alternar outra aba. */}
             <button
               type="button"
-              onClick={() => { if (!showDetails && sidePanelTab === 'notes') void loadNotes(); setShowDetails(prev => !prev) }}
-              title="Ver detalhes do lead"
+              onClick={openContextPanel}
+              aria-expanded={showDetails && sidePanelTab === 'context'}
+              aria-controls={`sac-context-panel-${lead.id}`}
+              title="Abrir card de contexto do atendimento"
               className={cn(
-                'h-8 w-8 flex items-center justify-center rounded-xl border text-fg-subtle transition-colors hover:text-fg cursor-pointer',
-                showDetails
+                'focus-ring h-8 px-2.5 flex items-center justify-center gap-1.5 rounded-xl border text-micro font-semibold text-fg-subtle transition-colors hover:text-fg cursor-pointer',
+                showDetails && sidePanelTab === 'context'
                   ? 'border-brand-solid/40 bg-surface-raised text-brand-ink'
                   : 'border-line-subtle bg-surface-inset hover:bg-surface-raised'
               )}
             >
-              <Info size={15} />
+              <FileText size={14} />
+              Contexto
             </button>
 
             {/* Botão de Atualizar */}
@@ -930,6 +948,19 @@ export function ChatWindow({
             </button>
           </div>
         </div>
+
+        <section aria-label="Resumo salvo do atendimento" className="shrink-0 border-b border-line-subtle bg-surface-panel/70 px-3.5 py-2.5 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-micro">
+            <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-semibold', summary.state === 'resolvido' ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-line-subtle bg-surface-inset text-fg')}>
+              {summary.state === 'resolvido' ? <CheckCircle2 size={12} /> : <MessageSquare size={12} />}
+              {summary.stateLabel}
+            </span>
+            <span className="inline-flex min-w-0 items-center gap-1.5 text-fg-muted"><UserCheck size={12} className="shrink-0" /><span className="max-w-[220px] truncate" title={summary.owner}>{summary.owner}</span></span>
+            {summary.dueLabel && <span className={cn('inline-flex items-center gap-1.5 font-semibold', summary.overdue ? 'text-rose-700 dark:text-rose-300' : 'text-fg-subtle')}><Clock size={12} />{summary.overdue ? 'Prazo vencido' : 'Prazo'}: {summary.dueLabel}</span>}
+          </div>
+          <p className="line-clamp-2 text-micro text-fg-muted" title={summary.nextAction}><span className="font-semibold text-fg-subtle">Próxima ação: </span>{summary.nextAction}</p>
+          {hasUnsavedContext && <p className="text-[10px] text-fg-subtle">O resumo mantém os dados salvos. Há alterações ainda não salvas no card.</p>}
+        </section>
 
         {/* 1.1 Banner da Janela Oficial da Meta (24h / 72h) */}
         <MetaWindowBanner lead={lead} />
@@ -1176,11 +1207,11 @@ export function ChatWindow({
             <span className="flex items-center gap-1 font-mono">
               {botPaused ? (
                 <span className="text-amber-500 font-semibold flex items-center gap-1">
-                  <UserCog size={12} /> Intervenção Humana Ativa
+                  <UserCog size={12} /> Bot pausado
                 </span>
               ) : (
                 <span className="text-emerald-500 font-semibold flex items-center gap-1">
-                  <Bot size={12} /> {agentLabel} Monitorando
+                  <Bot size={12} /> {agentLabel} liberado
                 </span>
               )}
             </span>
@@ -1191,7 +1222,7 @@ export function ChatWindow({
       {/* Painel Lateral com Contexto SAC, Notas Internas e Detalhes */}
       {showDetails && <button type="button" aria-label="Fechar painel de atendimento" onClick={() => setShowDetails(false)} className="absolute inset-0 z-40 bg-black/40 xl:hidden" />}
       {showDetails && (
-        <aside aria-label="Painel de atendimento SAC" className="absolute inset-y-0 right-0 z-50 w-full max-w-[360px] xl:relative xl:w-84 xl:max-w-none shrink-0 border-l border-line-subtle bg-surface-panel p-4 overflow-y-auto scroll-thin flex flex-col gap-4 animate-in slide-in-from-right duration-200">
+        <aside id={`sac-context-panel-${lead.id}`} aria-label="Painel de atendimento SAC" className="absolute inset-y-0 right-0 z-50 w-full max-w-[360px] xl:relative xl:w-84 xl:max-w-none shrink-0 border-l border-line-subtle bg-surface-panel p-4 overflow-y-auto scroll-thin flex flex-col gap-4 animate-in slide-in-from-right duration-200">
           <div className="flex items-center justify-between pb-2 border-b border-line-subtle">
             <h3 className="text-body font-bold text-fg">Atendimento SAC</h3>
             <button
@@ -1323,7 +1354,7 @@ export function ChatWindow({
                       {requestSummary || <span className="text-fg-faint italic">Nenhum pedido registrado</span>}
                     </p>
                   )}
-                  {requestMessageId && <Link href={`${backHref}/${lead.id}?aroundMessageId=${requestMessageId}`} className="text-[11px] text-brand-ink underline block">Abrir mensagem de referência #{requestMessageId}</Link>}
+                  {requestMessageId && <Link href={attentionMessageReferenceHref(conversationBaseHref, lead.id, requestMessageId, backHref)} className="text-[11px] text-brand-ink underline block">Abrir mensagem de referência #{requestMessageId}</Link>}
                 </div>
 
                 {/* Compromisso */}

@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { recoverySequences, recoveryLeads, messageJobs } from '@/lib/db/schema'
@@ -86,18 +87,21 @@ export default async function ApiCampanhasPage() {
 
   return (
     <div className="flex flex-col gap-[var(--space-section)]">
-      <div className="rise rise-1">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
-            <Send size={12} />
-            Empresa: {company.name} · Automação Ativa
-          </span>
-        </div>
-        <h1 className="text-h1 text-fg">Campanhas & Disparos Ativos</h1>
-        <p className="text-body text-fg-muted mt-0.5">
+      <PageHeader
+        icon={<Send size={22} />}
+        title="Campanhas & Disparos Ativos"
+        description={<>
           Campanhas ativas configuradas para envio automatizado de recuperação e engajamento da empresa <strong>{company.name}</strong>.
-        </p>
-      </div>
+        </>}
+        eyebrow={<>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
+              <Send size={12} />
+              Empresa: {company.name} · Automação Ativa
+            </span>
+          </div>
+        </>}
+      />
 
       <div className="rise rise-2 grid grid-cols-1 md:grid-cols-3 gap-[var(--space-gutter)]">
         {campanhas.map((c) => (

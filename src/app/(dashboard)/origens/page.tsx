@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
@@ -215,8 +216,13 @@ export default async function OrigensPage({ searchParams }: PageProps) {
     <div className="flex flex-col gap-[var(--space-section)]">
       {/* 1. Cabeçalho com Empresa & PeriodBar Oficial */}
       <div className="rise rise-1 flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
+        <PageHeader
+          icon={<Globe size={22} />}
+          title="Origens de Tráfego, Mineração & Checkouts"
+          description={<>
+            Rastreamento detalhado por canal e subcategoria (<strong>Mineração WhatsApp / E-mail / Instagram</strong>, <strong>Meta Ads</strong>, <strong>Google</strong> e <strong>Checkouts</strong>).
+          </>}
+          eyebrow={<>
             <div className="flex items-center gap-2 mb-1">
               <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
                 <Globe size={12} />
@@ -226,15 +232,14 @@ export default async function OrigensPage({ searchParams }: PageProps) {
                 Multicanal & Origens
               </span>
             </div>
-            <h1 className="text-h1 text-fg">Origens de Tráfego, Mineração & Checkouts</h1>
-            <p className="text-body text-fg-muted mt-0.5">
-              Rastreamento detalhado por canal e subcategoria (<strong>Mineração WhatsApp / E-mail / Instagram</strong>, <strong>Meta Ads</strong>, <strong>Google</strong> e <strong>Checkouts</strong>).
-            </p>
-          </div>
-          <Suspense fallback={null}>
-            <PeriodBar from={from} to={to} />
-          </Suspense>
-        </div>
+          </>}
+          actions={<>
+            <Suspense fallback={null}>
+              <PeriodBar from={from} to={to} />
+            </Suspense>
+          </>}
+          className="shrink-0"
+        />
         {source && (
           <div className="flex items-center gap-2 text-micro">
             <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">

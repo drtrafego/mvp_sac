@@ -173,5 +173,43 @@ await test('hundreds of actual leads reconcile in bounded SQL batches without N+
     assert.equal((await f.pg.query('SELECT count(*)::int AS n FROM sac_pending_items')).rows[0].n,200)
   } finally { await f.pg.close() }
 })
+
+await test('next-action promises expire after their São Paulo calendar day, with stable acknowledgment and rescheduling episodes', async () => {
+  const f = await fixture()
+  try {
+    await f.pg.query(`INSERT INTO recovery_leads(company_id,phone,next_action,next_action_due_at)
+      VALUES (1,'promise','Enviar orçamento',$1)`, [followupDayToIso('2026-10-08')])
+    assert.equal((await f.evaluate(1,'2026-10-08T23:59:59-03:00')).proximasAcoesVencidasCriadas,0)
+    assert.equal((await f.evaluate(1,'2026-10-09T00:00:00-03:00')).proximasAcoesVencidasCriadas,1)
+    assert.equal((await f.evaluate(1,'2026-10-09T00:01:00-03:00')).proximasAcoesVencidasCriadas,0)
+    const [{ reason }] = (await f.pg.query(`SELECT reason FROM sac_pending_items WHERE rule_type='proxima_acao_vencida'`)).rows
+    assert.match(String(reason),/Enviar orçamento/)
+    await f.pg.exec(`UPDATE sac_pending_items SET state='descartado',resolved_at=NOW() WHERE rule_type='proxima_acao_vencida';`)
+    assert.equal((await f.evaluate(1,'2026-10-09T01:00:00-03:00')).proximasAcoesVencidasCriadas,0)
+    // A different past deadline is a new occurrence even between cron runs.
+    await f.pg.query(`UPDATE recovery_leads SET next_action_due_at=$1,updated_at=NOW() WHERE id=1`,[followupDayToIso('2026-10-07')])
+    assert.equal((await f.evaluate(1,'2026-10-09T01:01:00-03:00')).proximasAcoesVencidasCriadas,1)
+    await f.pg.query(`UPDATE recovery_leads SET next_action_due_at=$1,updated_at=NOW() WHERE id=1`,[followupDayToIso('2026-10-10')])
+    assert.equal((await f.evaluate(1,'2026-10-09T01:02:00-03:00')).itensEncerrados,1)
+    assert.equal((await f.evaluate(1,'2026-10-11T00:00:00-03:00')).proximasAcoesVencidasCriadas,1)
+    await f.pg.exec(`UPDATE recovery_leads SET sac_case_state='resolvido',updated_at=NOW() WHERE id=1;`)
+    assert.equal((await f.evaluate(1,'2026-10-11T01:00:00-03:00')).itensEncerrados,1)
+    await f.pg.exec(`UPDATE recovery_leads SET sac_case_state='reaberto',sac_case_episode=sac_case_episode+1,updated_at=NOW() WHERE id=1;`)
+    assert.equal((await f.evaluate(1,'2026-10-11T02:00:00-03:00')).proximasAcoesVencidasCriadas,1)
+  } finally { await f.pg.close() }
+})
+
+await test('deadline without action text still alerts; commitment supplies context and only the active tenant is reconciled', async () => {
+  const f = await fixture()
+  try {
+    await f.pg.exec(`INSERT INTO recovery_leads(company_id,phone,commitment,next_action_due_at)
+      VALUES (1,'commitment','Confirmar disponibilidade','2026-10-07 15:00:00'),(2,'other',NULL,'2026-10-07 15:00:00');`)
+    assert.equal((await f.evaluate()).proximasAcoesVencidasCriadas,1)
+    assert.match(String((await f.pg.query('SELECT reason FROM sac_pending_items')).rows[0].reason),/Confirmar disponibilidade/)
+    assert.equal((await f.pg.query('SELECT count(*)::int AS n FROM sac_pending_items WHERE company_id=2')).rows[0].n,0)
+    await f.pg.exec(`UPDATE recovery_leads SET next_action_due_at=NULL,updated_at=NOW() WHERE company_id=1;`)
+    assert.equal((await f.evaluate()).itensEncerrados,1)
+  } finally { await f.pg.close() }
+})
 }
 main().catch(error => { console.error(error); process.exitCode=1 })

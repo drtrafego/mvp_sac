@@ -75,6 +75,7 @@
   --color-brand: var(--brand);
   --color-brand-ink: var(--brand-ink);
   --color-brand-solid: var(--brand-solid);
+  --color-brand-glow: var(--brand-glow);
 
   /* Cor por tipo de evento, usada só em ícone, filete e ponto de status */
   --color-ev-boleto: var(--ev-boleto);
@@ -186,20 +187,20 @@
     O preto tem dois pontos de azul em vez de cinza neutro puro porque neutro
     absoluto gera banding na compressão de vídeo.
   */
-  --surface-base: #08090a;
-  --surface-panel: #0c0e10;
-  --surface-raised: #111315;
-  --surface-overlay: #16191c;
-  --surface-inset: #0a0b0d;
+  --surface-base: #0a0e14;
+  --surface-panel: #10151c;
+  --surface-raised: #141b24;
+  --surface-overlay: #1b2430;
+  --surface-inset: #0b1017;
 
-  --line-subtle: rgba(255, 255, 255, 0.06);
-  --line-default: rgba(255, 255, 255, 0.10);
-  --line-strong: rgba(255, 255, 255, 0.16);
+  --line-subtle: rgba(167, 185, 208, 0.12);
+  --line-default: rgba(167, 185, 208, 0.20);
+  --line-strong: rgba(167, 185, 208, 0.32);
 
-  --fg: #f4f5f6;
-  --fg-muted: #9ba1a6;
-  --fg-subtle: #6b7177;
-  --fg-faint: #4a4f54;
+  --fg: #eef3f8;
+  --fg-muted: #a4b0c0;
+  --fg-subtle: #8997a9;
+  --fg-faint: #7c8ba0;
 
   --brand: #22c55e;
   --brand-ink: #4ade80;
@@ -233,10 +234,10 @@
 
   /* Raios com sistema. Antes conviviam 16px no .card, rounded-2xl nos cards de
      tipo e rounded-lg nas sequências, na mesma tela. */
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 14px;
-  --r-xl: 20px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
 
   /* Espaçamento fluido: acompanha a tela em vez de ter dois degraus fixos */
   --space-gutter: clamp(0.75rem, 0.55rem + 0.6vw, 1.25rem);
@@ -386,20 +387,20 @@ html:not(.dark) {
     elevada é mais clara que o fundo, no claro ela é branca e o fundo é cinza.
     Elevação no escuro é luz, elevação no claro é sombra.
   */
-  --surface-base: #f7f8f9;
+  --surface-base: #f3f6fa;
   --surface-panel: #ffffff;
   --surface-raised: #ffffff;
   --surface-overlay: #ffffff;
-  --surface-inset: #f1f2f4;
+  --surface-inset: #edf2f7;
 
   --line-subtle: rgba(9, 11, 13, 0.07);
   --line-default: rgba(9, 11, 13, 0.12);
   --line-strong: rgba(9, 11, 13, 0.20);
 
-  --fg: #0d0f11;
-  --fg-muted: #4e545a;
-  --fg-subtle: #71787e;
-  --fg-faint: #9ba1a6;
+  --fg: #132232;
+  --fg-muted: #4c5d70;
+  --fg-subtle: #62748a;
+  --fg-faint: #68798c;
 
   --brand: #16a34a;
   --brand-ink: #15803d;
@@ -443,14 +444,15 @@ html:not(.dark) {
 .card {
   border-radius: var(--r-lg);
   border: 1px solid var(--surface-border, var(--line-subtle));
-  background: var(--surface-bg, rgba(255, 255, 255, 0.025));
+  background: var(--surface-panel);
   box-shadow: var(--shadow-card);
   transition: border-color 140ms var(--ease-standard),
               background 140ms var(--ease-standard);
 }
-.card:hover {
+:is(a, button).card:hover,
+.card:focus-within {
   border-color: var(--surface-border-hover, var(--line-default));
-  background: var(--surface-bg-hover, rgba(255, 255, 255, 0.04));
+  background: var(--surface-overlay);
 }
 
 /* Card section: fundo sólido para tabelas e seções */
@@ -495,15 +497,15 @@ html:not(.dark) {
 .card-kpi {
   border-radius: var(--r-lg);
   border: 1px solid var(--surface-border, var(--line-subtle));
-  background: var(--surface-bg, rgba(255, 255, 255, 0.025));
+  background: var(--surface-panel);
   box-shadow: var(--shadow-card);
   transition: border-color 140ms var(--ease-standard),
               background 140ms var(--ease-standard);
   cursor: default;
 }
-.card-kpi:hover {
+:is(a, button).card-kpi:hover {
   border-color: var(--surface-border-hover, var(--line-default));
-  background: var(--surface-bg-hover, rgba(255, 255, 255, 0.04));
+  background: var(--surface-overlay);
 }
 
 /* Badge moderno */
@@ -603,6 +605,118 @@ html:not(.dark) .native-field {
   max-width: var(--w-content);
   margin-inline: auto;
 }
+
+/* Shared page rhythm. Conversation panes keep their own scroll and full height. */
+.workspace-page {
+  width: 100%;
+  min-width: 0;
+  flex: 1 0 auto;
+  padding: var(--space-shell);
+}
+.workspace-page[data-page-mode='conversation'],
+.workspace-page[data-page-mode='board'] {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.workspace-page[data-page-mode='conversation'] {
+  padding: 0;
+  overflow: hidden;
+}
+.workspace-page[data-page-mode='board'] {
+  overflow: hidden;
+}
+
+@layer components {
+  .page-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--line-subtle);
+  }
+  .page-heading-copy {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.875rem;
+    min-width: 0;
+    flex: 1 1 20rem;
+  }
+  .page-heading-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 2.75rem;
+    height: 2.75rem;
+    color: var(--brand-ink);
+    background: var(--brand-glow);
+    border: 1px solid var(--line-subtle);
+    border-radius: var(--r-md);
+  }
+  .page-heading-description {
+    max-width: 76ch;
+    margin-top: 0.4rem;
+    color: var(--fg-muted);
+    font-size: var(--text-body);
+    line-height: 1.6;
+  }
+  .page-heading-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: 100%;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+  .workspace-page table {
+    font-variant-numeric: tabular-nums;
+  }
+  .workspace-page table thead {
+    background: var(--surface-inset);
+  }
+  .workspace-page table th {
+    color: var(--fg-muted);
+    font-weight: 600;
+    padding-block: 0.875rem;
+  }
+  .workspace-page table td {
+    vertical-align: middle;
+    padding-block: 0.875rem;
+  }
+}
+
+/* The library primitives and older pages consume the same product palette. */
+html:root {
+  --background: var(--surface-base);
+  --foreground: var(--fg);
+  --card: var(--surface-raised);
+  --card-foreground: var(--fg);
+  --popover: var(--surface-overlay);
+  --popover-foreground: var(--fg);
+  --primary: var(--brand-solid);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-inset);
+  --secondary-foreground: var(--fg);
+  --muted: var(--surface-inset);
+  --muted-foreground: var(--fg-muted);
+  --accent: var(--surface-overlay);
+  --accent-foreground: var(--fg);
+  --border: var(--line-default);
+  --input: var(--line-default);
+  --ring: var(--brand);
+}
+
+@layer base {
+  :where(a, button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 3px;
+  }
+}
 /*
   Telas que precisam encostar nas bordas do <main>, como o Inbox, anulam o
   padding do shell em vez de repetir os valores em classe utilitária.
@@ -694,7 +808,9 @@ html:not(.dark) .native-field {
 @media (prefers-reduced-motion: reduce) {
   .rise,
   .live-dot,
-  .skeleton {
+  .skeleton,
+  .animate-pulse,
+  .animate-spin {
     animation: none;
   }
   .progress-fill {

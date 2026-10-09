@@ -4,14 +4,15 @@ import { inferPipelineStage } from '@/lib/pipeline-stage'
 import { followupDayKey } from '@/lib/sac-followup-date'
 import { effectivePipelineStageSql } from '@/lib/pipeline-columns-update'
 
-export type SacPendingRuleType = 'retorno_vencido' | 'transbordo_sem_dono' | 'etapa_sem_retorno'
+export type SacPendingRuleType = 'retorno_vencido' | 'transbordo_sem_dono' | 'etapa_sem_retorno' | 'proxima_acao_vencida'
 export interface EvaluatePendingRulesOptions { companyId: number; leadId?: number; now?: Date }
 export interface EvaluatePendingRulesResult {
   retornosVencidosCriados: number; transbordosCriados: number
-  etapasSemRetornoCriadas: number; itensEncerrados: number
+  etapasSemRetornoCriadas: number; proximasAcoesVencidasCriadas: number; itensEncerrados: number
 }
 export interface SacRuleLead {
   id: number; followUpDate: Date | null; followUpNote: string | null
+  nextActionDueAt: Date | null; nextAction: string | null; commitment: string | null
   humanOwnerMemberId: number | null; sacCaseState: string | null; sacCaseEpisode: number
   pipelineStage: string | null; status: string | null; eventType: string | null
   priority: number | null; botPausedAt: Date | null; updatedAt: string | null
@@ -106,7 +107,8 @@ export function sacRulesReconciliationSql(observations: SacRuleObservation[]): S
       (SELECT count(*)::integer FROM closed) AS closed,
       (SELECT count(*)::integer FROM inserted WHERE rule_type='retorno_vencido') AS "retornosVencidosCriados",
       (SELECT count(*)::integer FROM inserted WHERE rule_type='transbordo_sem_dono') AS "transbordosCriados",
-      (SELECT count(*)::integer FROM inserted WHERE rule_type='etapa_sem_retorno') AS "etapasSemRetornoCriadas"
+      (SELECT count(*)::integer FROM inserted WHERE rule_type='etapa_sem_retorno') AS "etapasSemRetornoCriadas",
+      (SELECT count(*)::integer FROM inserted WHERE rule_type='proxima_acao_vencida') AS "proximasAcoesVencidasCriadas"
   `
 }
 export function sacRuleReconciliationSql(observation: SacRuleObservation): SQL {
@@ -126,11 +128,13 @@ export function createSacPendingRuleStore(database: SacSqlExecutor): SacPendingR
     },
     async loadLeads(companyId, leadId) {
       const rows = sacSqlRows(await database.execute(sql`
-        SELECT id, follow_up_date, follow_up_note, human_owner_member_id, sac_case_state, sac_case_episode,
+        SELECT id, follow_up_date, follow_up_note, next_action_due_at, next_action, commitment,
+          human_owner_member_id, sac_case_state, sac_case_episode,
           pipeline_stage, status, event_type, priority, bot_paused_at, updated_at::text AS updated_at
         FROM recovery_leads WHERE company_id = ${companyId} ${leadId === undefined ? sql`` : sql`AND id = ${leadId}`}
           AND (
             (sac_case_state IS DISTINCT FROM 'resolvido' AND follow_up_date IS NOT NULL)
+            OR (sac_case_state IS DISTINCT FROM 'resolvido' AND next_action_due_at IS NOT NULL)
             OR sac_case_state='transbordo'
             OR (sac_case_state IS DISTINCT FROM 'resolvido' AND EXISTS (
               SELECT 1 FROM settings s WHERE s.company_id=recovery_leads.company_id
@@ -142,6 +146,8 @@ export function createSacPendingRuleStore(database: SacSqlExecutor): SacPendingR
       `))
       return rows.map(row => ({
         id: Number(row.id), followUpDate: dateOrNull(row.follow_up_date), followUpNote: row.follow_up_note as string | null,
+        nextActionDueAt: dateOrNull(row.next_action_due_at), nextAction: row.next_action as string | null,
+        commitment: row.commitment as string | null,
         humanOwnerMemberId: row.human_owner_member_id == null ? null : Number(row.human_owner_member_id),
         sacCaseState: row.sac_case_state as string | null, sacCaseEpisode: Number(row.sac_case_episode ?? 1),
         pipelineStage: row.pipeline_stage as string | null, status: row.status as string | null,
@@ -157,7 +163,8 @@ export function createSacPendingRuleStore(database: SacSqlExecutor): SacPendingR
       const [result] = sacSqlRows(await database.execute(sacRulesReconciliationSql(observations)))
       return {
         retornosVencidosCriados: Number(result.retornosVencidosCriados), transbordosCriados: Number(result.transbordosCriados),
-        etapasSemRetornoCriadas: Number(result.etapasSemRetornoCriadas), itensEncerrados: Number(result.closed),
+        etapasSemRetornoCriadas: Number(result.etapasSemRetornoCriadas),
+        proximasAcoesVencidasCriadas: Number(result.proximasAcoesVencidasCriadas), itensEncerrados: Number(result.closed),
       }
     },
   }
@@ -171,15 +178,22 @@ export async function evaluateSacPendingRules(
   const today = followupDayKey(now)!
   const requiredStages = new Set(await store.loadPolicy(options.companyId))
   const leads = await store.loadLeads(options.companyId, options.leadId)
-  const result = { retornosVencidosCriados: 0, transbordosCriados: 0, etapasSemRetornoCriadas: 0, itensEncerrados: 0 }
+  const result = { retornosVencidosCriados: 0, transbordosCriados: 0, etapasSemRetornoCriadas: 0, proximasAcoesVencidasCriadas: 0, itensEncerrados: 0 }
   const batch: SacRuleObservation[] = []
 
   for (const lead of leads) {
     const open = lead.sacCaseState !== 'resolvido'
     const returnDay = followupDayKey(lead.followUpDate)
+    const actionDay = followupDayKey(lead.nextActionDueAt)
     const stage = inferPipelineStage(lead)
     const episode = lead.sacCaseEpisode
     const observations: Array<Omit<SacRuleObservation, 'companyId' | 'leadId' | 'leadUpdatedAt' | 'now'>> = [
+      {
+        ruleType: 'proxima_acao_vencida', active: open && actionDay !== null && actionDay < today,
+        fingerprint: lead.nextActionDueAt ? `${episode}:${lead.nextActionDueAt.toISOString()}` : null,
+        reason: `Prazo da próxima ação (${actionDay ?? 'data não informada'}) está vencido.${lead.nextAction?.trim() ? ` Ação: ${lead.nextAction.trim()}` : lead.commitment?.trim() ? ` Compromisso: ${lead.commitment.trim()}` : ''}`,
+        ownerId: lead.humanOwnerMemberId, dueAt: lead.nextActionDueAt,
+      },
       {
         ruleType: 'retorno_vencido', active: open && returnDay !== null && returnDay < today,
         fingerprint: lead.followUpDate ? `${episode}:${lead.followUpDate.toISOString()}` : null,
@@ -202,7 +216,8 @@ export async function evaluateSacPendingRules(
       if (store.reconcileMany) { batch.push(input); continue }
       const reconciled = await store.reconcile(input)
       const key = observation.ruleType === 'retorno_vencido' ? 'retornosVencidosCriados'
-        : observation.ruleType === 'transbordo_sem_dono' ? 'transbordosCriados' : 'etapasSemRetornoCriadas'
+        : observation.ruleType === 'transbordo_sem_dono' ? 'transbordosCriados'
+        : observation.ruleType === 'proxima_acao_vencida' ? 'proximasAcoesVencidasCriadas' : 'etapasSemRetornoCriadas'
       result[key] += reconciled.created
       result.itensEncerrados += reconciled.closed
     }

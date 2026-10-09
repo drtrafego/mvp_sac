@@ -1,5 +1,6 @@
 'use client'
 
+import { PageHeader } from '@/components/ui/page-header'
 import React, { useState, useEffect } from 'react'
 import { Upload, FileText, CheckCircle, AlertTriangle, Send, RefreshCw, Layers, ShieldCheck, Users, ArrowRight } from 'lucide-react'
 
@@ -155,18 +156,19 @@ export default function DisparoEmMassaPage() {
   return (
     <div className="flex flex-col gap-[var(--space-section)]">
       {/* HEADER */}
-      <div className="rise rise-1">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
-            <Send size={12} />
-            API Oficial · Disparo em Massa
-          </span>
-        </div>
-        <h1 className="text-h1 text-fg">Disparo em Massa (CSV)</h1>
-        <p className="text-body text-fg-muted mt-0.5">
-          Importe uma lista de contatos via CSV e envie campanhas oficiais aprovadas pela Meta Cloud API com variáveis personalizadas.
-        </p>
-      </div>
+      <PageHeader
+        icon={<Send size={22} />}
+        title="Disparo em Massa (CSV)"
+        description="Importe uma lista de contatos via CSV e envie campanhas oficiais aprovadas pela Meta Cloud API com variáveis personalizadas."
+        eyebrow={<>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
+              <Send size={12} />
+              API Oficial · Disparo em Massa
+            </span>
+          </div>
+        </>}
+      />
 
       {/* ALERT DE SUCESSO */}
       {successMessage && (

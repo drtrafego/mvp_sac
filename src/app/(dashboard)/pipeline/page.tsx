@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
 import { eq, desc, and, gte, lte } from 'drizzle-orm'
@@ -89,39 +90,42 @@ export default async function PipelinePage({ searchParams }: PageProps) {
   })
 
   return (
-    <div className="flex flex-col gap-3 flex-1 min-h-[calc(100vh-5.5rem)] h-[calc(100vh-5rem)] pb-1">
+    <div className="flex min-h-0 flex-1 flex-col gap-[var(--space-gutter)] pb-1">
       {/* Cabeçalho do Pipeline */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between gap-4">
-        <div>
+      <PageHeader
+        icon={<Columns3 size={22} />}
+        title="Pipeline de Atendimento & Vendas"
+        description="Quadro Kanban com etapas personalizadas, lembretes de follow-up e origem das campanhas."
+        eyebrow={<>
           <div className="flex items-center gap-2 mb-1">
             <span className="inline-flex items-center gap-1.5 text-[11px] uppercase font-bold tracking-wider text-brand-ink bg-brand-glow px-2.5 py-0.5 rounded-full border border-brand-solid/30">
               <Columns3 size={12} />
               Empresa: {company.name} · Funil de Vendas
             </span>
           </div>
-          <h1 className="text-h1 text-fg">Pipeline de Atendimento & Vendas</h1>
-          <p className="text-body text-fg-muted mt-0.5">
-            Quadro Kanban com etapas personalizadas, lembretes de follow-up e origem das campanhas.
-          </p>
-          {source && (
-            <div className="flex items-center gap-2 text-micro mt-2">
-              <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">
-                <Target size={12} />
-                Filtrando por origem: {SOURCE_FILTER_LABELS[source] ?? source} ({leads.length} leads)
-              </span>
-              <Link
-                href={`/pipeline?from=${from}&to=${to}`}
-                className="text-fg-subtle hover:text-fg underline underline-offset-2"
-              >
-                Limpar filtro
-              </Link>
-            </div>
-          )}
-        </div>
-        <Suspense fallback={null}>
-          <PeriodBar from={from} to={to} />
-        </Suspense>
-      </div>
+        </>}
+        actions={<>
+          <Suspense fallback={null}>
+            <PeriodBar from={from} to={to} />
+          </Suspense>
+        </>}
+        className="shrink-0"
+      >
+        {source && (
+          <div className="flex items-center gap-2 text-micro mt-2">
+            <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">
+              <Target size={12} />
+              Filtrando por origem: {SOURCE_FILTER_LABELS[source] ?? source} ({leads.length} leads)
+            </span>
+            <Link
+              href={`/pipeline?from=${from}&to=${to}`}
+              className="text-fg-subtle hover:text-fg underline underline-offset-2"
+            >
+              Limpar filtro
+            </Link>
+          </div>
+        )}
+      </PageHeader>
 
       {/* Kanban Board Full Height Adaptativo */}
       <div className="flex-1 min-h-0 h-full flex flex-col">

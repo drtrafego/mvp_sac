@@ -82,7 +82,7 @@ export async function validateSacContextFields(
   for (const key of ['nextActionDueAt', 'followUpDate'] as const) if (allowed.has(key) && body[key] !== undefined) {
     const value = body[key]
     try {
-      update[key] = nullableDate(key === 'followUpDate' && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? followupDayToIso(value) : value, key)
+      update[key] = nullableDate(typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? followupDayToIso(value) : value, key)
     } catch (error) {
       if (error instanceof SacInputError) throw error
       throw new SacInputError('Data de retorno inválida.')

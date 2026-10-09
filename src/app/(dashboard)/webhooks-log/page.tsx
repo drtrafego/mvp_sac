@@ -1,5 +1,7 @@
 export const dynamic = 'force-dynamic'
 
+import { Webhook } from 'lucide-react'
+import { PageHeader } from '@/components/ui/page-header'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { webhookReceived } from '@/lib/db/schema'
@@ -118,15 +120,15 @@ export default async function WebhooksLogPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4 rise rise-1">
-        <div>
-          <h1 className="text-h1 text-fg">Webhooks recebidos</h1>
-          <p className="text-body text-fg-muted mt-1 max-w-[70ch]">
-            Últimos 50 webhooks recebidos de todas as plataformas para esta empresa. Útil para depurar quando algum evento não chega.
-          </p>
-        </div>
-        <RefreshButton />
-      </div>
+      <PageHeader
+        icon={<Webhook size={22} />}
+        title="Webhooks recebidos"
+        description="Últimos 50 webhooks recebidos de todas as plataformas para esta empresa. Útil para depurar quando algum evento não chega."
+        actions={<>
+          <RefreshButton />
+        </>}
+        className="shrink-0"
+      />
 
       {Object.keys(totalByEvent).length > 0 && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 rise rise-2">

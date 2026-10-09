@@ -1,5 +1,6 @@
 'use client'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
@@ -594,74 +595,78 @@ export function SequencePage({ eventType, title, description }: SequencePageProp
   return (
     <div className="space-y-6">
       {/* ─── CABEÇALHO COM TÍTULO E ABAS DE NAVEGAÇÃO ─── */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between border-b border-line-subtle pb-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-h1 text-fg">{title}</h1>
-            <span
+      <PageHeader
+        icon={<Layers size={22} />}
+        title={title}
+        description={description}
+        eyebrow={<>
+          <span
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-micro font-medium border',
+              sequence?.isActive
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                : 'bg-surface-inset text-fg-faint border-line-subtle'
+            )}
+          >
+            <span className={cn('h-1.5 w-1.5 rounded-full', sequence?.isActive ? 'bg-emerald-500 animate-pulse' : 'bg-fg-faint')} />
+            {sequence?.isActive ? 'Sequência Ativa' : 'Sequência Inativa'}
+          </span>
+        </>}
+        actions={<>
+          <div className="flex flex-wrap items-center gap-2 bg-surface-inset p-1 rounded-[var(--r-lg)] border border-line-subtle shrink-0">
+            <button
+              type="button"
+              aria-pressed={activeTab === 'leads'}
+              onClick={() => setActiveTab('leads')}
               className={cn(
-                'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-micro font-medium border',
-                sequence?.isActive
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                  : 'bg-surface-inset text-fg-faint border-line-subtle'
+                'focus-ring flex min-h-11 items-center gap-2 px-3.5 py-1.5 lg:min-h-9 rounded-[var(--r-md)] text-body font-medium transition-all cursor-pointer',
+                activeTab === 'leads'
+                  ? 'bg-surface-panel text-fg shadow-sm border border-line-subtle'
+                  : 'text-fg-muted hover:text-fg'
               )}
             >
-              <span className={cn('h-1.5 w-1.5 rounded-full', sequence?.isActive ? 'bg-emerald-500 animate-pulse' : 'bg-fg-faint')} />
-              {sequence?.isActive ? 'Sequência Ativa' : 'Sequência Inativa'}
+              <BarChart3 size={15} className={activeTab === 'leads' ? 'text-brand-ink' : ''} />
+              <span>Vendas & Leads</span>
+              <span className={cn(
+                'num text-micro px-1.5 py-0.2 rounded-full',
+                activeTab === 'leads' ? 'bg-brand-ink/10 text-brand-ink font-semibold' : 'bg-surface-raised text-fg-subtle'
+              )}>
+                {leads.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              aria-pressed={activeTab === 'settings'}
+              onClick={() => setActiveTab('settings')}
+              className={cn(
+                'focus-ring flex min-h-11 items-center gap-2 px-3.5 py-1.5 lg:min-h-9 rounded-[var(--r-md)] text-body font-medium transition-all cursor-pointer',
+                activeTab === 'settings'
+                  ? 'bg-surface-panel text-fg shadow-sm border border-line-subtle'
+                  : 'text-fg-muted hover:text-fg'
+              )}
+            >
+              <SlidersHorizontal size={15} className={activeTab === 'settings' ? 'text-brand-ink' : ''} />
+              <span>Configuração & Mensagens</span>
+              <span className={cn(
+                'num text-micro px-1.5 py-0.2 rounded-full',
+                activeTab === 'settings' ? 'bg-brand-ink/10 text-brand-ink font-semibold' : 'bg-surface-raised text-fg-subtle'
+              )}>
+                {activeMessages}
+              </span>
+            </button>
+          </div>
+        </>}
+      >
+        {platformFilter && (
+          <div className="flex items-center gap-2 text-micro mt-2">
+            <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">
+              <Target size={12} />
+              Filtrando por plataforma: {PLATFORM_FILTER_LABELS[platformFilter] ?? platformFilter} ({leads.length} leads)
             </span>
           </div>
-          <p className="mt-1 text-body text-fg-muted">{description}</p>
-          {platformFilter && (
-            <div className="flex items-center gap-2 text-micro mt-2">
-              <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">
-                <Target size={12} />
-                Filtrando por plataforma: {PLATFORM_FILTER_LABELS[platformFilter] ?? platformFilter} ({leads.length} leads)
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Botões de Alternância de Abas (Vendas vs Configuração) */}
-        <div className="flex items-center gap-2 bg-surface-inset p-1 rounded-[var(--r-lg)] border border-line-subtle shrink-0">
-          <button
-            onClick={() => setActiveTab('leads')}
-            className={cn(
-              'flex items-center gap-2 px-3.5 py-1.5 rounded-[var(--r-md)] text-body font-medium transition-all cursor-pointer',
-              activeTab === 'leads'
-                ? 'bg-surface-panel text-fg shadow-sm border border-line-subtle'
-                : 'text-fg-muted hover:text-fg'
-            )}
-          >
-            <BarChart3 size={15} className={activeTab === 'leads' ? 'text-brand-ink' : ''} />
-            <span>Vendas & Leads</span>
-            <span className={cn(
-              'num text-micro px-1.5 py-0.2 rounded-full',
-              activeTab === 'leads' ? 'bg-brand-ink/10 text-brand-ink font-semibold' : 'bg-surface-raised text-fg-subtle'
-            )}>
-              {leads.length}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={cn(
-              'flex items-center gap-2 px-3.5 py-1.5 rounded-[var(--r-md)] text-body font-medium transition-all cursor-pointer',
-              activeTab === 'settings'
-                ? 'bg-surface-panel text-fg shadow-sm border border-line-subtle'
-                : 'text-fg-muted hover:text-fg'
-            )}
-          >
-            <SlidersHorizontal size={15} className={activeTab === 'settings' ? 'text-brand-ink' : ''} />
-            <span>Configuração & Mensagens</span>
-            <span className={cn(
-              'num text-micro px-1.5 py-0.2 rounded-full',
-              activeTab === 'settings' ? 'bg-brand-ink/10 text-brand-ink font-semibold' : 'bg-surface-raised text-fg-subtle'
-            )}>
-              {activeMessages}
-            </span>
-          </button>
-        </div>
-      </div>
+        )}
+      </PageHeader>
 
       {/* ═══════════════════════════════════════════════════════════════════════
           ABA 1: VENDAS & LEADS (FOCO PRINCIPAL DO OPERADOR)

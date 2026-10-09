@@ -1,11 +1,12 @@
 export const dynamic = 'force-dynamic'
 
+import { PageHeader } from '@/components/ui/page-header'
 import Link from 'next/link'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { recoverySequences, sequenceMessages, recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { eq, and, sql, gte } from 'drizzle-orm'
-import { Info, ListOrdered, ArrowRight, Columns3 } from 'lucide-react'
+import { Info, ListOrdered, ArrowRight, Columns3, Bot } from 'lucide-react'
 import { AgentNameCard } from '@/components/agente/agent-name-card'
 import { AgendaSection } from '@/components/agente/agenda-section'
 import { FollowupCard } from '@/components/followup/followup-card'
@@ -57,13 +58,14 @@ export default async function AgentePage() {
 
   return (
     <div className="max-w-[880px] flex flex-col gap-[var(--space-section)]">
-      <div>
-        <h1 className="text-h1 text-fg">Agente</h1>
-        <p className="text-body text-fg-muted mt-1">
+      <PageHeader
+        icon={<Bot size={22} />}
+        title="Agente"
+        description={<>
           O cérebro do bot de atendimento da <strong>{company.name}</strong>: nome, horário de funcionamento,
           bloqueios de agenda e a régua de follow-up automática.
-        </p>
-      </div>
+        </>}
+      />
 
       <div className="rounded-[var(--r-md)] border border-brand-solid/30 bg-brand-solid/5 p-4 flex items-start gap-3">
         <Info size={18} className="text-brand-solid shrink-0 mt-0.5" />

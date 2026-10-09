@@ -1,5 +1,6 @@
 'use client'
 
+import { PageHeader } from '@/components/ui/page-header'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
@@ -19,6 +20,7 @@ import {
   CreditCard,
   Layers,
   CheckCircle2,
+  Users,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -453,52 +455,56 @@ export default function LeadsPage() {
       )}
 
       {/* Header com Ações */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-h1 text-fg">Leads & Contatos</h1>
-          <p className="text-body text-fg-muted mt-1">{subtitle}</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            onClick={() => setAddLeadModalOpen(true)}
-            className="shrink-0 gap-1.5 bg-brand-solid hover:bg-brand-solid/90 text-on-accent font-bold text-micro shadow-sm cursor-pointer"
-          >
-            <UserPlus size={15} />
-            + Novo Lead
-          </Button>
-          <Button
-            onClick={() => setImportModalOpen(true)}
-            className="shrink-0 gap-1.5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-micro cursor-pointer"
-          >
-            <UploadCloud size={15} />
-            Importar Planilha
-          </Button>
-          <Button
-            variant="outline"
-            onClick={exportCSV}
-            disabled={exporting}
-            className="shrink-0 gap-1.5 text-micro border-line-subtle text-fg hover:bg-surface-raised cursor-pointer"
-          >
-            {exporting ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
-            {exporting ? 'Exportando todos...' : 'Exportar CSV'}
-          </Button>
-          <PeriodBar from={from} to={to} />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => fetchLeads(page)}
-            className="shrink-0 gap-2 text-fg-muted hover:text-fg cursor-pointer"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            Atualizar
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Users size={22} />}
+        title="Leads & Contatos"
+        description={<>
+          {subtitle}
+        </>}
+        actions={<>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              onClick={() => setAddLeadModalOpen(true)}
+              className="shrink-0 gap-1.5 bg-brand-solid hover:bg-brand-solid/90 text-on-accent font-bold text-micro shadow-sm cursor-pointer"
+            >
+              <UserPlus size={15} />
+              + Novo Lead
+            </Button>
+            <Button
+              onClick={() => setImportModalOpen(true)}
+              className="shrink-0 gap-1.5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold text-micro cursor-pointer"
+            >
+              <UploadCloud size={15} />
+              Importar Planilha
+            </Button>
+            <Button
+              variant="outline"
+              onClick={exportCSV}
+              disabled={exporting}
+              className="shrink-0 gap-1.5 text-micro border-line-subtle text-fg hover:bg-surface-raised cursor-pointer"
+            >
+              {exporting ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
+              {exporting ? 'Exportando todos...' : 'Exportar CSV'}
+            </Button>
+            <PeriodBar from={from} to={to} />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => fetchLeads(page)}
+              className="shrink-0 gap-2 text-fg-muted hover:text-fg cursor-pointer"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              Atualizar
+            </Button>
+          </div>
+        </>}
+        className="shrink-0"
+      />
 
       {/* Barra de Busca Global e Filtros Principais */}
       <div className="p-3.5 sm:p-4 rounded-xl bg-surface-panel border border-line-subtle space-y-3">
         <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center">
-          <div className="relative flex-1 min-w-[240px]">
+          <div className="relative min-w-0 flex-1">
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-subtle" />
             <Input
               value={search}
