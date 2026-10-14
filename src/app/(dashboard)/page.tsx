@@ -46,6 +46,7 @@ import { dashboardLeadStatsSelect, gramadoDashboardCardCounts, resolveDashboardB
 import { GRAMADO_VALID_RESERVATION_STATUSES } from '@/lib/dashboard/gramado-reservations'
 import { hasDashboardOrigin, loadDashboardOriginPills } from '@/lib/dashboard/origin-pills'
 import { inferPipelineStage } from '@/lib/pipeline-stage'
+import { loadAgentMetrics } from '@/lib/agent-metrics'
 
 function splitMoney(cents: number): { inteiro: string; centavos: string } {
   const [inteiro, centavos] = (cents / 100)
@@ -123,7 +124,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return `/inbox?${q.toString()}`
   }
 
-  const [[leadStats], [checkoutStats], [firstContactStats], [gramadoConversationStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, gramadoTrafficBreakdown, checkoutTrafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats]] = await Promise.all([
+  const [[leadStats], [checkoutStats], [firstContactStats], [gramadoConversationStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, gramadoTrafficBreakdown, checkoutTrafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats], agentMetrics] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
       .from(recoveryLeads)
@@ -285,6 +286,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             ),
           )
       : Promise.resolve([{ totalReservas: null, totalPessoas: null }]),
+
+    loadAgentMetrics(cid, fromDate, toDate),
   ])
 
   const total = Number(isGramado ? gramadoConversationStats?.total ?? 0 : firstContactStats?.total ?? 0)
@@ -831,6 +834,48 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           </div>
         </div>
       )}
+
+      {/* 2.6 Auditoria dos agentes: mesma empresa e mesmo período do painel. */}
+      <section className="rise rise-2 flex flex-col gap-2" aria-labelledby="agent-metrics-title">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 id="agent-metrics-title" className="text-label uppercase text-fg-subtle font-bold flex items-center gap-1.5">
+              <Activity size={13} className="text-brand-ink" />
+              Métricas dos Agentes
+            </h2>
+            <p className="text-micro text-fg-faint mt-1">Ações registradas no SAC para o período selecionado.</p>
+          </div>
+          <span className="num text-metric-sm text-fg">{agentMetrics.totalActions}</span>
+        </div>
+
+        {agentMetrics.agents.length === 0 ? (
+          <div className="card bg-surface-raised border border-line-subtle rounded-xl p-[var(--space-card)] text-micro text-fg-subtle">
+            Nenhuma ação de agente registrada neste período.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-[var(--space-gutter)] md:grid-cols-2 lg:grid-cols-3">
+            {agentMetrics.agents.map((agent) => (
+              <article key={agent.id ?? agent.name} className="card bg-surface-raised border border-line-subtle rounded-xl p-[var(--space-card)]">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-h3 text-fg font-bold">{agent.name}</p>
+                    <p className="text-micro text-fg-faint mt-1">{agent.id ?? 'Agente sem identificador'}</p>
+                  </div>
+                  <span className="num text-metric-sm text-brand-ink">{agent.totalActions}</span>
+                </div>
+                <dl className="mt-4 flex flex-wrap gap-2">
+                  {Object.entries(agent.actions).map(([action, total]) => (
+                    <div key={action} className="rounded-md bg-surface-inset px-2 py-1 text-micro text-fg-muted">
+                      <dt className="inline">{action.replaceAll('_', ' ')}</dt>
+                      <dd className="num ml-1 inline text-fg">{total}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* 3. Etapas do Fechamento / Funil Adaptativo */}
       <div className="rise rise-3 flex flex-col gap-2">

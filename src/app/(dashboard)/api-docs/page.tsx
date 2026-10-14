@@ -247,8 +247,8 @@ const ENDPOINTS: EndpointDoc[] = [
       { name: 'Authorization', required: true, description: 'Bearer <API_KEY>' },
     ],
     params: [
-      { name: 'from', type: 'string', required: false, description: 'Início do período, em YYYY-MM-DD (00:00:00 UTC) ou ISO 8601. O padrão é 30 dias antes de to.' },
-      { name: 'to', type: 'string', required: false, description: 'Fim do período, em YYYY-MM-DD (23:59:59.999 UTC, inclusivo) ou ISO 8601. O padrão é agora.' },
+      { name: 'from', type: 'string', required: false, description: 'Início do período, em YYYY-MM-DD (00:00:00 UTC) ou ISO 8601 completo com timezone, por exemplo 2026-09-01T09:30:00-03:00. O padrão é 30 dias antes de to.' },
+      { name: 'to', type: 'string', required: false, description: 'Fim do período, em YYYY-MM-DD (23:59:59.999 UTC, inclusivo) ou ISO 8601 completo com timezone. O padrão é agora.' },
     ],
     responseExample: {
       ok: true,

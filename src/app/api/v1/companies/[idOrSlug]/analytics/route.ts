@@ -2,11 +2,12 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { agentActivityLogs, recoveryLeads, messageJobs } from '@/lib/db/schema'
+import { recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq, and, count, sql, gte, lte } from 'drizzle-orm'
 import { dashboardLeadStatsSelect, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
 import { resolveAnalyticsPeriod } from '@/lib/analytics-period'
+import { loadAgentMetrics } from '@/lib/agent-metrics'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   const isLucas = businessModel === 'lucas'
   const isAgencia = businessModel === 'agencia'
 
-  const [[leadStats], [jobStats], activityRows] = await Promise.all([
+  const [[leadStats], [jobStats], agentMetrics] = await Promise.all([
     db
       .select({
         ...dashboardLeadStatsSelect(businessModel),
@@ -56,20 +57,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       .innerJoin(recoveryLeads, eq(messageJobs.leadId, recoveryLeads.id))
       .where(baseWhere),
 
-    db
-      .select({
-        agentId: agentActivityLogs.agentId,
-        agentName: agentActivityLogs.agentName,
-        action: agentActivityLogs.action,
-        total: count(),
-      })
-      .from(agentActivityLogs)
-      .where(and(
-        eq(agentActivityLogs.companyId, cid),
-        gte(agentActivityLogs.createdAt, fromDate),
-        lte(agentActivityLogs.createdAt, toDate)
-      ))
-      .groupBy(agentActivityLogs.agentId, agentActivityLogs.agentName, agentActivityLogs.action),
+    loadAgentMetrics(cid, fromDate, toDate),
   ])
 
   const total = leadStats?.total ?? 0
@@ -110,27 +98,6 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     }
   }
 
-  const agents = new Map<string, {
-    id: string | null
-    name: string
-    totalActions: number
-    actions: Record<string, number>
-  }>()
-
-  for (const row of activityRows) {
-    const key = row.agentId ?? row.agentName
-    const existing = agents.get(key) ?? {
-      id: row.agentId,
-      name: row.agentName,
-      totalActions: 0,
-      actions: {},
-    }
-    const actionTotal = Number(row.total)
-    existing.totalActions += actionTotal
-    existing.actions[row.action] = actionTotal
-    agents.set(key, existing)
-  }
-
   return NextResponse.json({
     ok: true,
     company: { id: context.company.id, slug: context.company.slug, name: context.company.name },
@@ -138,10 +105,6 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     totalLeads: total,
     closingStats: modelMetrics,
     outbox: jobStats || { sent: 0, pending: 0, failed: 0 },
-    agentMetrics: {
-      source: 'agent_activity_logs',
-      totalActions: [...agents.values()].reduce((total, agent) => total + agent.totalActions, 0),
-      agents: [...agents.values()],
-    },
+    agentMetrics,
   })
 }

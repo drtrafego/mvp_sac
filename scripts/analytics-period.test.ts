@@ -11,13 +11,26 @@ test('aceita data de fim inclusiva para YYYY-MM-DD', () => {
 
 test('rejeita datas inválidas e período invertido', () => {
   assert.deepEqual(resolveAnalyticsPeriod('2026-02-30', null), {
-    error: 'Parâmetro "from" inválido. Use YYYY-MM-DD ou data ISO 8601.',
+    error: 'Parâmetro "from" inválido. Use YYYY-MM-DD ou data ISO 8601 com timezone.',
   })
   assert.deepEqual(resolveAnalyticsPeriod(null, 'invalida'), {
-    error: 'Parâmetro "to" inválido. Use YYYY-MM-DD ou data ISO 8601.',
+    error: 'Parâmetro "to" inválido. Use YYYY-MM-DD ou data ISO 8601 com timezone.',
   })
   assert.deepEqual(resolveAnalyticsPeriod('2026-10-15', '2026-10-14'), {
     error: 'O parâmetro "from" deve ser anterior ou igual a "to".',
+  })
+})
+
+test('aceita somente ISO 8601 completo com timezone e calendário válido', () => {
+  const valid = resolveAnalyticsPeriod('2026-10-01T09:30:00-03:00', '2026-10-01T12:30:00Z')
+  assert.ok(!('error' in valid))
+  if (!('error' in valid)) assert.equal(valid.fromDate.toISOString(), '2026-10-01T12:30:00.000Z')
+
+  assert.deepEqual(resolveAnalyticsPeriod('2026-10-01T09:30:00', null), {
+    error: 'Parâmetro "from" inválido. Use YYYY-MM-DD ou data ISO 8601 com timezone.',
+  })
+  assert.deepEqual(resolveAnalyticsPeriod('2026-02-30T09:30:00Z', null), {
+    error: 'Parâmetro "from" inválido. Use YYYY-MM-DD ou data ISO 8601 com timezone.',
   })
 })
 

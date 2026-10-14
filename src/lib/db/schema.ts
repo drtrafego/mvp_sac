@@ -687,7 +687,9 @@ export const agentActivityLogs = pgTable('agent_activity_logs', {
   entityId: text('entity_id'),
   details: jsonb('details'),
   createdAt: timestamp('created_at').defaultNow(),
-})
+}, (table) => [
+  index('agent_activity_logs_company_created_at_idx').on(table.companyId, table.createdAt),
+])
 
 // ─── Log de webhooks recebidos (debug Hotmart/Greenn/Zouti/Kiwify) ───────────
 export const webhookReceived = pgTable('webhook_received', {
