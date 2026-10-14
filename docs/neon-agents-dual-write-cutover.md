@@ -4,12 +4,12 @@
 
 O Supabase atual é a fonte operacional até o cutover concluído. O Neon disponível é um snapshot antigo e não pode receber escrita de produção, nem ser usado como verdade, antes de um restore validado. Esta fase não altera DSN, cron, runtime, agentes ou dados.
 
-As únicas variáveis de conexão aceitas pelos scripts desta pasta são `AGENTS_SOURCE_DATABASE_URL` e `AGENTS_TARGET_DATABASE_URL`. Elas entram pelo ambiente do processo inicial, nunca por arquivo versionado, argumento, log ou artefato. Antes de chamar clientes PostgreSQL, os scripts convertem cada URL em `PGPASSFILE` local com permissão 600 e removem as URLs do ambiente dos filhos.
+As únicas variáveis de conexão aceitas pelos scripts desta pasta são `AGENTS_SOURCE_DATABASE_URL` e `AGENTS_TARGET_DATABASE_URL`. Elas entram pelo ambiente do processo inicial, nunca por arquivo versionado, argumento, log ou artefato. Antes de chamar clientes PostgreSQL, os scripts convertem cada URL em `PGPASSFILE` local com permissão 600 e removem as URLs do ambiente dos filhos. Das opções libpq da URL, aceitam somente `sslmode` e `channel_binding`, que é preservado em `PGCHANNELBINDING`.
 
 ## Evidência obrigatória antes de qualquer escrita
 
 1. Executar `scripts/neon-migration/inventory-compare.sh` e arquivar o diretório emitido. O script é read-only, coleta schema, contagem exata por tabela e máximos de colunas numéricas e temporais candidatas.
-2. Gerar, revisar e aprovar `scripts/neon-migration/generate-restore-plan.sh`. O plano só roda com `--execute-approved`, revalida Neon direto, recusa host `-pooler` e consulta o destino em modo read-only para exigir ausência de tabelas de usuário.
+2. Gerar, revisar e aprovar `scripts/neon-migration/generate-restore-plan.sh`. O plano só roda com `--execute-approved`, revalida Neon direto, recusa host `-pooler`, consulta o destino em modo read-only para exigir ausência de tabelas de usuário e só cria dump novo, exclusivamente, em `approved-dumps`.
 3. Restaurar manualmente em branch/banco Neon vazio, fora do escopo deste repositório. Reexecutar o inventário e exigir `COMPATÍVEL`.
 4. Registrar dono, horário, hashes do dump e dos artefatos, versão de cada consumidor e plano de rollback.
 
