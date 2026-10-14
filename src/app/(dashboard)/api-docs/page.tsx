@@ -242,28 +242,44 @@ const ENDPOINTS: EndpointDoc[] = [
     method: 'GET',
     path: '/api/v1/companies/:idOrSlug/analytics',
     category: 'analytics',
-    description: 'Retorna contagem total de leads, faturamento recuperado/gerado e distribuição por etapa do funil.',
+    description: 'Retorna as métricas de negócio e a auditoria agregada das ações dos agentes, ambas apuradas no SAC para a empresa e período solicitados.',
     headers: [
       { name: 'Authorization', required: true, description: 'Bearer <API_KEY>' },
+    ],
+    params: [
+      { name: 'from', type: 'string', required: false, description: 'Início do período, em YYYY-MM-DD (00:00:00 UTC) ou ISO 8601. O padrão é 30 dias antes de to.' },
+      { name: 'to', type: 'string', required: false, description: 'Fim do período, em YYYY-MM-DD (23:59:59.999 UTC, inclusivo) ou ISO 8601. O padrão é agora.' },
     ],
     responseExample: {
       ok: true,
       company: { id: 12, slug: 'gramado-plaza' },
-      analytics: {
-        totalLeads: 694,
-        activeLeads: 142,
-        totalRevenue: 28450000,
-        stages: {
-          novo_contato: 85,
-          qualificado: 112,
-          agendado: 248,
-          fechado: 249
-        },
-        agents: {
-          luana: 380,
-          renato: 240,
-          unassigned: 74
-        }
+      period: { from: '2026-09-01T00:00:00.000Z', to: '2026-09-30T23:59:59.999Z' },
+      totalLeads: 694,
+      closingStats: {
+        model: 'agencia_contratos_b2b',
+        contratosFechados: 14,
+        valorContratosCents: 28450000,
+        propostasAndamento: 37,
+        taxaConversaoComercial: '2.0%'
+      },
+      outbox: { sent: 620, pending: 4, failed: 2 },
+      agentMetrics: {
+        source: 'agent_activity_logs',
+        totalActions: 620,
+        agents: [
+          {
+            id: 'luana',
+            name: 'Luana',
+            totalActions: 380,
+            actions: { create_lead: 120, send_message: 260 }
+          },
+          {
+            id: 'renato',
+            name: 'Renato',
+            totalActions: 240,
+            actions: { update_stage: 88, schedule_followup: 152 }
+          }
+        ]
       }
     }
   }

@@ -26,6 +26,7 @@
     "test:native-availability-sync": "tsx --experimental-test-module-mocks scripts/native-availability-sync.test.ts",
     "test:dashboard-lead-stats": "tsx scripts/dashboard-lead-stats.test.ts",
     "test:dashboard-origin-pills": "tsx scripts/dashboard-origin-pills.test.ts",
+    "test:analytics-period": "tsx --test scripts/analytics-period.test.ts",
     "test:inbox-source-filter": "tsx scripts/inbox-source-filter.test.ts",
     "test:inbox-email-engagement": "tsx --experimental-test-module-mocks --test scripts/inbox-email-engagement.test.ts",
     "test:channel-badge-origin": "tsx scripts/channel-badge-origin.test.tsx",
