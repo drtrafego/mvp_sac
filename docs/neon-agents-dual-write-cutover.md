@@ -9,7 +9,7 @@ As únicas variáveis de conexão aceitas pelos scripts desta pasta são `AGENTS
 ## Evidência obrigatória antes de qualquer escrita
 
 1. Executar `scripts/neon-migration/inventory-compare.sh` e arquivar o diretório emitido. O script é read-only, coleta schema, contagem exata por tabela e máximos de colunas numéricas e temporais candidatas.
-2. Gerar, revisar e aprovar `scripts/neon-migration/generate-restore-plan.sh`. O plano só roda com `--execute-approved`, revalida Neon direto, recusa host `-pooler`, consulta o destino em modo read-only para exigir ausência de tabelas de usuário e só cria dump novo, exclusivamente, em `approved-dumps`.
+2. Gerar, revisar e aprovar `scripts/neon-migration/generate-restore-plan.sh`. O plano só roda com `--execute-approved`, revalida Neon direto com `sslmode=require` ou `verify-*`, recusa host `-pooler`, consulta o destino em modo read-only para exigir ausência de tabelas de usuário e só cria dump novo, exclusivamente, a partir de basename seguro em `approved-dumps`.
 3. Restaurar manualmente em branch/banco Neon vazio, fora do escopo deste repositório. Reexecutar o inventário e exigir `COMPATÍVEL`.
 4. Registrar dono, horário, hashes do dump e dos artefatos, versão de cada consumidor e plano de rollback.
 

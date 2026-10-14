@@ -29,14 +29,15 @@ if [ "${1:-}" != '--execute-approved' ]; then
   printf 'Recusado: use --execute-approved <caminho-do-dump> depois da revisão humana.\n' >&2
   exit 64
 fi
-DUMP_FILE="${2:?Informe um caminho novo no diretório approved-dumps.}"
+DUMP_BASENAME="${2:?Informe um nome novo para o dump.}"
 [ "$#" -eq 2 ] || { printf 'Uso: %s --execute-approved <caminho-do-dump>\n' "$0" >&2; exit 64; }
 : "${AGENTS_SOURCE_DATABASE_URL:?Defina a fonte operacional no ambiente.}"
 : "${AGENTS_TARGET_DATABASE_URL:?Defina o Neon direto no ambiente.}"
 
 PLAN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 APPROVED_DUMP_DIR="$PLAN_DIR/approved-dumps"
-case "$DUMP_FILE" in "$APPROVED_DUMP_DIR"/*) ;; *) printf 'Recusado: dump deve ficar em %s\n' "$APPROVED_DUMP_DIR" >&2; exit 64;; esac
+case "$DUMP_BASENAME" in ''|.|..|*/*) printf 'Recusado: informe somente basename seguro para o dump.\n' >&2; exit 64;; esac
+DUMP_FILE="$APPROVED_DUMP_DIR/$DUMP_BASENAME"
 [ -d "$APPROVED_DUMP_DIR" ] || { printf 'Diretório aprovado ausente.\n' >&2; exit 64; }
 [ ! -e "$DUMP_FILE" ] || { printf 'Recusado: DUMP_FILE já existe.\n' >&2; exit 64; }
 umask 077
@@ -77,6 +78,10 @@ esac
 case "${HOST[target]}" in
   *-pooler.*) printf 'Recusado: destino Neon precisa da conexão direta, sem pooler.\n' >&2; exit 65 ;;
 esac
+case "${SSLMODE[target]}" in
+  require|verify-ca|verify-full) ;;
+  *) printf 'Recusado: destino Neon exige sslmode=require ou verify-*.\n' >&2; exit 65 ;;
+esac
 
 # Gate read-only: o destino deve não ter tabelas de usuário antes do restore.
 TARGET_EMPTY="$(run_connection target env PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=30000' \
@@ -107,7 +112,7 @@ O gerador não conecta, não cria dump e não restaura dados. O plano gerado:
 2. Revalida host Neon direto durante a execução e recusa `-pooler`.
 3. Converte as URLs recebidas no ambiente em `PGPASSFILE` local com permissão 600, preserva apenas `sslmode` e `channel_binding`, remove as URLs antes de iniciar `psql`, `pg_dump` e `pg_restore` e nunca as passa em argv.
 4. Confirma por consulta read-only que o banco alvo não contém tabelas de usuário fora de todos os schemas `pg_*` e `information_schema`.
-5. Aceita somente um `DUMP_FILE` novo dentro de `approved-dumps`, criando-o com noclobber.
+5. Aceita somente basename seguro para um `DUMP_FILE` novo dentro de `approved-dumps`, criando-o com noclobber.
 6. Não usa `--clean` nem `--create`.
 7. Exige inventário compatível depois do restore e antes do contrato de cutover.
 PLAN

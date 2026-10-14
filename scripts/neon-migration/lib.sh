@@ -70,4 +70,11 @@ assert_direct_neon_target() {
       exit 1
       ;;
   esac
+  case "${CONNECTION_SSLMODE[target]}" in
+    require|verify-ca|verify-full) ;;
+    *)
+      printf 'AGENTS_TARGET_DATABASE_URL deve usar sslmode=require ou verify-*.\n' >&2
+      exit 1
+      ;;
+  esac
 }

@@ -63,7 +63,7 @@ chmod 700 "$FAKE_BIN"/*
 
 export PATH="$FAKE_BIN:$PATH" TRACE_FILE="$TMP_DIR/trace"
 export FAKE_TARGET_EMPTY=f
-if "$TMP_DIR/plan/restore-plan.sh" --execute-approved "$TMP_DIR/plan/approved-dumps/blocked.dump" >/dev/null 2>&1; then
+if "$TMP_DIR/plan/restore-plan.sh" --execute-approved blocked.dump >/dev/null 2>&1; then
   printf 'O destino não vazio deveria bloquear o restore.\n' >&2
   exit 1
 fi
@@ -71,20 +71,31 @@ grep -Fq 'pg_dump:' "$TRACE_FILE" && { printf 'Dump não deveria iniciar antes d
 
 : >"$TRACE_FILE"
 export FAKE_TARGET_EMPTY=t
-"$TMP_DIR/plan/restore-plan.sh" --execute-approved "$TMP_DIR/plan/approved-dumps/approved.dump" >/dev/null
+"$TMP_DIR/plan/restore-plan.sh" --execute-approved approved.dump >/dev/null
 grep -Fq 'pg_dump:' "$TRACE_FILE"
 grep -Fq 'pg_restore:' "$TRACE_FILE"
 grep -Fq 'postgresql://' "$TRACE_FILE" && { printf 'DSN apareceu no argv.\n' >&2; exit 1; } || true
 
 touch "$TMP_DIR/plan/approved-dumps/existing.dump"
-if "$TMP_DIR/plan/restore-plan.sh" --execute-approved "$TMP_DIR/plan/approved-dumps/existing.dump" >/dev/null 2>&1; then
+if "$TMP_DIR/plan/restore-plan.sh" --execute-approved existing.dump >/dev/null 2>&1; then
   printf 'DUMP_FILE existente deveria ser recusado.\n' >&2
+  exit 1
+fi
+
+if "$TMP_DIR/plan/restore-plan.sh" --execute-approved ../escape.dump >/dev/null 2>&1; then
+  printf 'Basename com ../ deveria ser recusado.\n' >&2
   exit 1
 fi
 
 export AGENTS_TARGET_DATABASE_URL='postgresql://target:password@target-pooler.example.neon.tech/agents?sslmode=require'
 if "$SCRIPT_DIR/generate-restore-plan.sh" "$TMP_DIR/pooler" >/dev/null 2>&1; then
   printf 'O pooler deveria ser rejeitado.\n' >&2
+  exit 1
+fi
+
+export AGENTS_TARGET_DATABASE_URL='postgresql://target:password@ep-test-123.sa-east-1.aws.neon.tech/agents?sslmode=prefer'
+if "$SCRIPT_DIR/generate-restore-plan.sh" "$TMP_DIR/insecure-tls" >/dev/null 2>&1; then
+  printf 'sslmode inseguro deveria ser rejeitado.\n' >&2
   exit 1
 fi
 
