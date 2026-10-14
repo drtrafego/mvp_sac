@@ -11,8 +11,10 @@ OUT_DIR="${1:-artifacts/neon-migration/restore-plan}"
 umask 077
 require_commands python3 mkdir cp
 prepare_connections
+trap cleanup_connections EXIT
 assert_direct_neon_target
 cleanup_connections
+trap - EXIT
 mkdir -p "$OUT_DIR"
 chmod 700 "$OUT_DIR"
 mkdir -p "$OUT_DIR/approved-dumps"

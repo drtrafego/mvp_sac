@@ -26,15 +26,21 @@ prepare_connections() {
   require_database_urls
   CONNECTION_DIR="$(mktemp -d)"
   chmod 700 "$CONNECTION_DIR"
-  local role url fields
+  local role url fields source_url="$AGENTS_SOURCE_DATABASE_URL" target_url="$AGENTS_TARGET_DATABASE_URL"
+  unset AGENTS_SOURCE_DATABASE_URL AGENTS_TARGET_DATABASE_URL
   for role in source target; do
-    if [ "$role" = source ]; then url="$AGENTS_SOURCE_DATABASE_URL"; else url="$AGENTS_TARGET_DATABASE_URL"; fi
-    fields="$(env -u AGENTS_SOURCE_DATABASE_URL -u AGENTS_TARGET_DATABASE_URL \
-      python3 "$SCRIPT_DIR/prepare-libpq.py" "$CONNECTION_DIR/$role" <<<"$url")"
-    IFS=$'\t' read -r "CONNECTION_HOST[$role]" "CONNECTION_PORT[$role]" "CONNECTION_DATABASE[$role]" "CONNECTION_USER[$role]" "CONNECTION_SSLMODE[$role]" "CONNECTION_CHANNELBINDING[$role]" <<<"$fields"
+    if [ "$role" = source ]; then url="$source_url"; else url="$target_url"; fi
+    if ! fields="$(env -u AGENTS_SOURCE_DATABASE_URL -u AGENTS_TARGET_DATABASE_URL \
+      python3 "$SCRIPT_DIR/prepare-libpq.py" "$CONNECTION_DIR/$role" <<<"$url")"; then
+      cleanup_connections
+      return 1
+    fi
+    if ! IFS=$'\t' read -r "CONNECTION_HOST[$role]" "CONNECTION_PORT[$role]" "CONNECTION_DATABASE[$role]" "CONNECTION_USER[$role]" "CONNECTION_SSLMODE[$role]" "CONNECTION_CHANNELBINDING[$role]" <<<"$fields"; then
+      cleanup_connections
+      return 1
+    fi
     CONNECTION_PGPASS[$role]="$CONNECTION_DIR/$role.pgpass"
   done
-  unset AGENTS_SOURCE_DATABASE_URL AGENTS_TARGET_DATABASE_URL
 }
 
 cleanup_connections() {

@@ -88,15 +88,21 @@ if "$TMP_DIR/plan/restore-plan.sh" --execute-approved ../escape.dump >/dev/null 
 fi
 
 export AGENTS_TARGET_DATABASE_URL='postgresql://target:password@target-pooler.example.neon.tech/agents?sslmode=require'
+CONNECTION_TMP="$TMP_DIR/connection-tmp"
+mkdir "$CONNECTION_TMP"
+export TMPDIR="$CONNECTION_TMP"
 if "$SCRIPT_DIR/generate-restore-plan.sh" "$TMP_DIR/pooler" >/dev/null 2>&1; then
   printf 'O pooler deveria ser rejeitado.\n' >&2
   exit 1
 fi
+[ -z "$(find "$CONNECTION_TMP" -mindepth 1 -print -quit)" ] || { printf 'Pooler deixou PGPASSFILE temporário.\n' >&2; exit 1; }
 
 export AGENTS_TARGET_DATABASE_URL='postgresql://target:password@ep-test-123.sa-east-1.aws.neon.tech/agents?sslmode=prefer'
 if "$SCRIPT_DIR/generate-restore-plan.sh" "$TMP_DIR/insecure-tls" >/dev/null 2>&1; then
   printf 'sslmode inseguro deveria ser rejeitado.\n' >&2
   exit 1
 fi
+[ -z "$(find "$CONNECTION_TMP" -mindepth 1 -print -quit)" ] || { printf 'TLS inseguro deixou PGPASSFILE temporário.\n' >&2; exit 1; }
+unset TMPDIR
 
 printf 'OK: plano exige aprovação, confirma alvo vazio e isola DSNs dos filhos.\n'
