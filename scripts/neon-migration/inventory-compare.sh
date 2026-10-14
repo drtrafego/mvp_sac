@@ -8,18 +8,21 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 OUT_DIR="${1:-artifacts/neon-migration/inventory-$(date -u +%Y%m%dT%H%M%SZ)}"
-require_commands psql pg_dump diff sort mkdir mktemp
-require_database_urls
+umask 077
+require_commands psql pg_dump diff sort mkdir mktemp python3
+prepare_connections
+trap cleanup_connections EXIT
 mkdir -p "$OUT_DIR/source" "$OUT_DIR/target"
+chmod 700 "$OUT_DIR" "$OUT_DIR/source" "$OUT_DIR/target"
 
 collect_inventory() {
   local role="$1"
-  local database_url="$2"
+  local unused_database_url="$2"
   local role_dir="$OUT_DIR/$role"
   local tables_file="$role_dir/tables.tsv"
   local maxima_file="$role_dir/maxima.tsv"
 
-  readonly_psql "$database_url" -AtF $'\t' -c "
+  readonly_psql "$role" -AtF $'\t' -c "
     SELECT n.nspname, c.relname, c.reltuples::bigint
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -32,10 +35,10 @@ collect_inventory() {
   : >"$maxima_file"
   while IFS=$'\t' read -r schema table _estimate; do
     local relation
-    relation="$(readonly_psql "$database_url" -At -c "SELECT format('%I.%I', '$schema', '$table')")"
-    printf '%s\t%s\t%s\n' "$schema" "$table" "$(readonly_psql "$database_url" -At -c "SELECT count(*) FROM $relation")" >>"$role_dir/counts.tsv"
+    relation="$(readonly_psql "$role" -At -c "SELECT format('%I.%I', '$schema', '$table')")"
+    printf '%s\t%s\t%s\n' "$schema" "$table" "$(readonly_psql "$role" -At -c "SELECT count(*) FROM $relation")" >>"$role_dir/counts.tsv"
 
-    readonly_psql "$database_url" -AtF $'\t' -c "
+    readonly_psql "$role" -AtF $'\t' -c "
       SELECT quote_ident(a.attname)
       FROM pg_attribute a
       JOIN pg_class c ON c.oid = a.attrelid
@@ -48,17 +51,17 @@ collect_inventory() {
       ORDER BY a.attnum;
     " | while IFS= read -r column; do
       printf '%s\t%s\t%s\t%s\n' "$schema" "$table" "$column" \
-        "$(readonly_psql "$database_url" -At -c "SELECT coalesce(max($column)::text, '') FROM $relation")" >>"$maxima_file"
+        "$(readonly_psql "$role" -At -c "SELECT coalesce(max($column)::text, '') FROM $relation")" >>"$maxima_file"
     done
   done <"$tables_file"
 
-  pg_dump "$database_url" --schema-only --no-owner --no-privileges --quote-all-identifiers \
+  with_connection "$role" pg_dump --schema-only --no-owner --no-privileges --quote-all-identifiers \
     | sed '/^-- Dumped from database version/d;/^-- Dumped by pg_dump version/d;/^\\\\restrict /d;/^\\\\unrestrict /d' \
     >"$role_dir/schema.sql"
 }
 
-collect_inventory source "$AGENTS_SOURCE_DATABASE_URL"
-collect_inventory target "$AGENTS_TARGET_DATABASE_URL"
+collect_inventory source ''
+collect_inventory target ''
 
 for file in tables.tsv counts.tsv maxima.tsv schema.sql; do
   diff -u "$OUT_DIR/source/$file" "$OUT_DIR/target/$file" >"$OUT_DIR/$file.diff" || true
