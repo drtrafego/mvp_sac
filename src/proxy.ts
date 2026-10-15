@@ -123,7 +123,9 @@ export async function proxy(request: NextRequest) {
       return NextResponse.json({ error: 'Use x-agent-token ou POST para autenticação de agente.' }, { status: 400 })
     }
 
-    const token = request.headers.get('x-agent-token')
+    const authHeader = request.headers.get('authorization')?.trim()
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null
+    const token = request.headers.get('x-agent-token') ?? bearerToken
     if (token !== null) {
       if (!configuredMasterAgentToken()) {
         return NextResponse.json({ error: 'Login de agente desativado.' }, { status: 503 })
@@ -173,7 +175,16 @@ export async function proxy(request: NextRequest) {
   // Se o usuário possui cookie de sessão de agente válido (assinado e não expirado), permite acesso direto ao painel
   const agentSession = request.cookies.get('agent_auth_session')?.value
   if (agentSession && (await verifyAgentSessionCookie(agentSession))) {
-    return NextResponse.next()
+    const maxAge = AGENT_SESSION_TTL_MS / 1000
+    const response = NextResponse.next()
+    response.cookies.set('agent_auth_session', agentSession, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge,
+    })
+    return response
   }
 
   const stackProjectId = process.env.NEXT_PUBLIC_STACK_PROJECT_ID || process.env.STACK_PROJECT_ID

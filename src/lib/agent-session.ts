@@ -58,15 +58,15 @@ async function hmacKey(): Promise<CryptoKey> {
   )
 }
 
-// TTL curto por padrão. A sessão de agente é um mecanismo de acesso privilegiado,
-// não deve durar 30 dias como o cookie antigo.
-const DEFAULT_TTL_MS = 12 * 60 * 60 * 1000 // 12h
+// TTL longo de 10 anos para permitir sessões permanentes ("login eterno") usadas por
+// agentes autônomos, gravações de tela automatizadas e bots do servidor.
+const DEFAULT_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000 // 10 anos
 
 export async function createAgentSessionCookie(
   data: Omit<AgentSessionPayload, 'exp'>,
   ttlMs: number = DEFAULT_TTL_MS
 ): Promise<string> {
-  const payload: AgentSessionPayload = { ...data, exp: Date.now() + ttlMs }
+  const payload: AgentSessionPayload = { ...data, exp: ttlMs > 0 ? Date.now() + ttlMs : 0 }
   const payloadB64 = toBase64Url(new TextEncoder().encode(JSON.stringify(payload)).buffer as ArrayBuffer)
   const key = await hmacKey()
   const sigBuf = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64))
@@ -92,7 +92,8 @@ export async function verifyAgentSessionCookie(
     if (!valid) return null
 
     const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(payloadB64))) as AgentSessionPayload
-    if (typeof payload.exp !== 'number' || payload.exp < Date.now()) return null
+    if (typeof payload.exp !== 'number') return null
+    if (payload.exp > 0 && payload.exp < Date.now()) return null
     if (typeof payload.isAdmin !== 'boolean') return null
     return payload
   } catch {
