@@ -37,6 +37,7 @@ import {
 const BOT_POR_SLUG: Record<string, Bot> = {
   autonomia: 'nina',
   amanda: 'amanda',
+  bela: 'bela',
   'isabela-fanini': 'bela',
   fanini: 'bela',
 }
