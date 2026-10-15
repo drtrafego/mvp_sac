@@ -1098,3 +1098,53 @@ html:not(.dark) {
   .studio-chat-composer { margin: 0; border-inline: 0; border-bottom: 0; border-radius: 0; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); box-shadow: none; }
   .studio-chat-composer > :last-child { display: none; }
 }
+
+/* Em conversa aberta no telefone, a prioridade é ler e responder. */
+@media (max-width:767px) {
+  .studio-chat-header {
+    min-height: 48px;
+    padding: 7px 10px;
+    gap: 6px;
+  }
+  .studio-chat-identity {
+    flex-basis: 0;
+    gap: 8px;
+  }
+  .studio-chat-identity > div:first-of-type {
+    display: none;
+  }
+  .studio-chat-identity > div > p {
+    display: none;
+  }
+  .studio-chat-identity button {
+    max-width: min(58vw, 220px);
+    font-size: 13px;
+  }
+  .studio-chat-badges > :not(:first-child) {
+    display: none;
+  }
+  .studio-chat-thread {
+    padding: 10px 12px;
+  }
+  .studio-message {
+    margin-block: 6px;
+  }
+  .studio-message > :first-child {
+    display: none;
+  }
+  .studio-message-bubble {
+    max-width: 90%;
+    padding: 10px 12px;
+  }
+  .studio-chat-composer {
+    margin: 0;
+    border-inline: 0;
+    border-bottom: 0;
+    border-radius: 0;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    box-shadow: none;
+  }
+  .studio-chat-composer > :last-child {
+    display: none;
+  }
+}

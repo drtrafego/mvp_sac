@@ -894,7 +894,7 @@ export function ChatWindow({
           </div>
 
           {/* Ações do Topo: acesso explícito ao contexto, bot, pendências e atualização */}
-          <div className="studio-chat-actions ml-auto flex items-center gap-1.5 shrink-0">
+          <div className="studio-chat-actions ml-auto hidden md:flex items-center gap-1.5 shrink-0">
             <button type="button" onClick={() => { setShowDetails(true); setSidePanelTab('pending'); void loadPending() }} title="Pendências de atendimento" aria-label="Abrir pendências de atendimento" className="h-8 w-8 rounded-lg border border-line-subtle flex items-center justify-center text-fg-muted hover:text-fg"><Clock size={14} /></button>
             {/* BOTÃO PAUSAR / RETOMAR BOT */}
             <button
@@ -951,7 +951,7 @@ export function ChatWindow({
           </div>
         </div>
 
-        <section aria-label="Resumo salvo do atendimento" className="studio-chat-summary shrink-0 border-b border-line-subtle bg-surface-panel/70 px-3.5 py-2.5 space-y-1.5">
+        <section aria-label="Resumo salvo do atendimento" className="studio-chat-summary hidden md:block shrink-0 border-b border-line-subtle bg-surface-panel/70 px-3.5 py-2.5 space-y-1.5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-micro">
             <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-semibold', summary.state === 'resolvido' ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-line-subtle bg-surface-inset text-fg')}>
               {summary.state === 'resolvido' ? <CheckCircle2 size={12} /> : <MessageSquare size={12} />}
@@ -1021,7 +1021,7 @@ export function ChatWindow({
             </div>
           )}
           {/* SAC Lote 1 e Lote 2: Atalhos para Respostas Aprovadas e Copiloto */}
-          <div className="flex items-center justify-between gap-2 px-1">
+          <div className="studio-chat-composer-tools hidden md:flex items-center justify-between gap-2 px-1">
             <div className="flex items-center gap-2">
               <button
                 type="button"

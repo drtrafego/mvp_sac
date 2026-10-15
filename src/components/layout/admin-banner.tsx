@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Building2, ChevronDown, Check, Plus, Bot, Layers, Sparkles } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
@@ -24,6 +24,10 @@ export function AdminBanner({ companyName, companyId }: AdminBannerProps) {
   const [switching, setSwitching] = useState<number | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+  const pathname = usePathname()
+  const inConversation =
+    (pathname.startsWith('/inbox/') && pathname !== '/inbox') ||
+    (pathname.startsWith('/instagram/') && pathname !== '/instagram')
 
   useEffect(() => {
     fetch('/api/admin/companies')
@@ -67,7 +71,10 @@ export function AdminBanner({ companyName, companyId }: AdminBannerProps) {
   }
 
   return (
-    <div className="relative z-50 flex flex-wrap items-center justify-between gap-3 border-b border-brand-solid/25 bg-surface-panel px-4 py-2 text-micro shadow-xs">
+    <div className={cn(
+      'relative z-50 flex flex-wrap items-center justify-between gap-3 border-b border-brand-solid/25 bg-surface-panel px-4 py-2 text-micro shadow-xs',
+      inConversation && 'hidden md:flex',
+    )}>
       <div className="flex items-center gap-3" ref={dropdownRef}>
         <div className="flex items-center gap-2">
           <span className="flex h-2 w-2 relative">
