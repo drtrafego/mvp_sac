@@ -34,8 +34,21 @@ import { db } from '@/lib/db'
 // condicionais que o query builder do Drizzle não expressa numa única
 // query atômica); o import de schema não é necessário aqui.
 
-const BASE_URL = process.env.AI_BRIDGE_URL ?? ''
-const TOKEN = process.env.AI_BRIDGE_TOKEN ?? ''
+type BridgeConfig = { url: string; token: string }
+
+function bridgeConfig(bot: Bot): BridgeConfig {
+  if (bot === 'bela') {
+    return {
+      url: process.env.AI_BRIDGE_URL_BELA ?? '',
+      token: process.env.AI_BRIDGE_TOKEN_BELA ?? '',
+    }
+  }
+
+  return {
+    url: process.env.AI_BRIDGE_URL ?? '',
+    token: process.env.AI_BRIDGE_TOKEN ?? '',
+  }
+}
 
 const JANELA_SEGUNDOS = 300
 const LIMITE_JANELA = 15
@@ -106,8 +119,9 @@ export async function gerarResposta(opts: {
   waId?: string
   agendamentoAtual?: Record<string, unknown> | null
 }): Promise<ResultadoBridge> {
-  if (!BASE_URL || !TOKEN) {
-    console.error('[AI Bridge] AI_BRIDGE_URL / AI_BRIDGE_TOKEN não configurados nesta env, abortando (fail-closed)')
+  const bridge = bridgeConfig(opts.bot)
+  if (!bridge.url || !bridge.token) {
+    console.error(`[AI Bridge] ponte não configurada para bot=${opts.bot}, abortando (fail-closed)`)
     return { ok: false, motivo: 'sem_config' }
   }
 
@@ -124,10 +138,10 @@ export async function gerarResposta(opts: {
   }
 
   try {
-    const resp = await fetch(BASE_URL, {
+    const resp = await fetch(bridge.url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${TOKEN}`,
+        Authorization: `Bearer ${bridge.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
