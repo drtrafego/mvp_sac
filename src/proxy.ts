@@ -109,6 +109,10 @@ export async function proxy(request: NextRequest) {
           maxAge: 60 * 60 * 24 * 30,
         })
       }
+      response.headers.set(
+        'Content-Security-Policy',
+        "frame-ancestors 'self' https://cliente.casaldotrafego.com https://clientes.casaldotrafego.com"
+      )
       return response
     } catch (e) {
       console.error('[SSO] __st inválido:', e)
@@ -199,7 +203,12 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  return NextResponse.next()
+  const response = NextResponse.next()
+  response.headers.set(
+    'Content-Security-Policy',
+    "frame-ancestors 'self' https://cliente.casaldotrafego.com https://clientes.casaldotrafego.com"
+  )
+  return response
 }
 
 export const config = {
