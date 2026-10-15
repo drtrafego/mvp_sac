@@ -1,33 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { timingSafeEqual } from 'node:crypto'
 import { createAgentSessionCookie } from '@/lib/agent-session'
+import {
+  AGENT_SESSION_TTL_MS,
+  configuredMasterAgentToken,
+  isValidMasterAgentToken,
+  parseAgentLoginOptions,
+} from '@/lib/agent-login'
 
-// Sem fallback hardcoded: a mesma chave hardcoded que existia aqui era a
-// mesma string exposta em api/admin/audit-clients (removida dali por ser
-// segredo previsível e versionado). Falha fechada se a env não existir.
-const MASTER_AGENT_TOKEN = process.env.MASTER_AGENT_TOKEN?.trim()
+function loginOptionsFromUnknown(value: unknown) {
+  if (value instanceof URLSearchParams) return parseAgentLoginOptions(value)
 
-function safeEqual(a: string, b: string): boolean {
-  const bufA = Buffer.from(a)
-  const bufB = Buffer.from(b)
-  if (bufA.length !== bufB.length) return false
-  return timingSafeEqual(bufA, bufB)
+  const params = new URLSearchParams()
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const body = value as Record<string, unknown>
+    if (typeof body.company_id === 'string') params.set('company_id', body.company_id)
+    if (typeof body.name === 'string') params.set('name', body.name)
+  }
+  return parseAgentLoginOptions(params)
 }
 
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000 // 12h
-const DEFAULT_COMPANY_ID = 14 // AutonomIA
-
-// Login só pelo token mestre de agente. O fallback que também aceitava
-// invite_token de empresa/membro foi removido: não é usado em nenhum lugar
-// do app (convite real passa por /invite/[token] e /invite/membro/[token],
-// com Stack Auth de verdade) e permitia que um invite token comum, feito
-// pra convidar UM cliente, virasse admin do sistema inteiro.
-async function loginWithToken(request: NextRequest, token: string | null, redirectValue: unknown) {
+async function loginWithToken(request: NextRequest, token: string | null, redirectValue: unknown, optionsValue: unknown) {
   if (typeof redirectValue !== 'string') {
     return NextResponse.json({ error: 'Destino de redirecionamento inválido.' }, { status: 400 })
   }
 
-  if (!MASTER_AGENT_TOKEN) {
+  if (!configuredMasterAgentToken()) {
     return NextResponse.json({ error: 'Login de agente desativado: MASTER_AGENT_TOKEN não configurado.' }, { status: 503 })
   }
 
@@ -35,8 +32,7 @@ async function loginWithToken(request: NextRequest, token: string | null, redire
     return NextResponse.json({ error: 'Token de acesso não fornecido.' }, { status: 400 })
   }
 
-  const isValid = safeEqual(token, MASTER_AGENT_TOKEN)
-  if (!isValid) {
+  if (!(await isValidMasterAgentToken(token))) {
     return NextResponse.json({ error: 'Token de acesso inválido ou expirado.' }, { status: 401 })
   }
 
@@ -53,6 +49,7 @@ async function loginWithToken(request: NextRequest, token: string | null, redire
   }
 
   const response = NextResponse.redirect(destination)
+  const { companyId, displayName } = loginOptionsFromUnknown(optionsValue)
 
   let sessionCookie: string
   try {
@@ -60,16 +57,13 @@ async function loginWithToken(request: NextRequest, token: string | null, redire
       {
         id: 'agent-ia-casal-admin-id',
         primaryEmail: 'agente.ia@casaldotrafego.com',
-        displayName: 'Agente IA (Admin)',
+        displayName,
         isAdmin: true,
-        companyId: DEFAULT_COMPANY_ID,
+        companyId,
       },
-      SESSION_TTL_MS
+      AGENT_SESSION_TTL_MS
     )
   } catch {
-    // getSecret() falha fechado quando AGENT_SESSION_SECRET/STACK_SECRET_SERVER_KEY
-    // não estão configurados (ver src/lib/agent-session.ts). Sem isso, login de
-    // agente fica desativado, nunca aceito com um segredo previsível.
     return NextResponse.json(
       { error: 'Login de agente desativado: AGENT_SESSION_SECRET (ou STACK_SECRET_SERVER_KEY) não configurado.' },
       { status: 503 }
@@ -81,30 +75,17 @@ async function loginWithToken(request: NextRequest, token: string | null, redire
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
-    maxAge: SESSION_TTL_MS / 1000,
+    maxAge: AGENT_SESSION_TTL_MS / 1000,
   })
-
-  response.cookies.set('admin_viewing', String(DEFAULT_COMPANY_ID), {
+  response.cookies.set('admin_viewing', String(companyId), {
     httpOnly: false,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
-    maxAge: SESSION_TTL_MS / 1000,
+    maxAge: AGENT_SESSION_TTL_MS / 1000,
   })
 
   return response
-}
-
-// Mantém o fluxo usado pelo agente no navegador: abrir a URL GET cria a sessão
-// e redireciona diretamente para o inbox. O token continua vindo somente da
-// variável de ambiente; ele não volta a ficar gravado no código.
-export async function GET(request: NextRequest) {
-  const { searchParams } = request.nextUrl
-  return loginWithToken(
-    request,
-    searchParams.get('token'),
-    searchParams.get('redirect') || searchParams.get('next') || '/',
-  )
 }
 
 export async function POST(request: NextRequest) {
@@ -114,5 +95,10 @@ export async function POST(request: NextRequest) {
   }
 
   const body = parsedBody as Record<string, unknown>
-  return loginWithToken(request, typeof body.token === 'string' ? body.token : null, body.redirect ?? body.next ?? '/')
+  return loginWithToken(
+    request,
+    typeof body.token === 'string' ? body.token : null,
+    body.redirect ?? body.next ?? '/',
+    body,
+  )
 }

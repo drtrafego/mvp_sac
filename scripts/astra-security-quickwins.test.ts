@@ -92,16 +92,6 @@ test('PATCH /api/comment-automations rejeita tipo inválido em todos os textos o
   }
 })
 
-test('login de agente mantém o fluxo GET usado pelo navegador', async () => {
-  const { GET } = await import('../src/app/api/auth/agent-login/route')
-  const response = await GET(new NextRequest(
-    'https://app.example/api/auth/agent-login?token=segredo-de-teste&redirect=%2Finbox',
-  ))
-  assert.equal(response.status, 307)
-  assert.equal(response.headers.get('location'), 'https://app.example/inbox')
-  assert.match(response.headers.get('set-cookie') ?? '', /agent_auth_session=/)
-})
-
 test('login de agente rejeita redirect protocol-relative para outro domínio', async () => {
   const { POST } = await import('../src/app/api/auth/agent-login/route')
   const response = await POST(new NextRequest('https://app.example/api/auth/agent-login', {
@@ -125,4 +115,46 @@ test('login de agente aceita destino relativo na mesma origem', async () => {
   assert.equal(response.status, 307)
   assert.equal(response.headers.get('location'), 'https://app.example/inbox?filtro=novo')
   assert.match(response.headers.get('set-cookie') ?? '', /agent_auth_session=/)
+})
+
+test('header x-agent-token autentica a requisição direta sem redirecionar ou expor o token', async () => {
+  const { proxy } = await import('../src/proxy')
+  const response = await proxy(new NextRequest('https://app.example/atender-agora?company_id=42&name=Renato', {
+    headers: { 'x-agent-token': 'segredo-de-teste' },
+  }))
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('location'), null)
+  const cookies = response.headers.get('set-cookie') ?? ''
+  assert.match(cookies, /agent_auth_session=/)
+  assert.match(cookies, /admin_viewing=42/)
+  assert.doesNotMatch(cookies, /segredo-de-teste/)
+  assert.equal(response.headers.get('x-middleware-request-x-agent-token'), null)
+  assert.doesNotMatch(response.headers.get('x-middleware-override-headers') ?? '', /x-agent-token/i)
+})
+
+test('x-agent-token não cria sessão fora da allowlist de gravação', async () => {
+  const { proxy } = await import('../src/proxy')
+  const response = await proxy(new NextRequest('https://app.example/pipeline', {
+    headers: { 'x-agent-token': 'segredo-de-teste' },
+  }))
+
+  assert.equal(response.headers.get('set-cookie'), null)
+})
+
+test('rota direta rejeita token na query string', async () => {
+  const { proxy } = await import('../src/proxy')
+  const response = await proxy(new NextRequest('https://app.example/inbox?token=segredo-de-teste'))
+  assert.equal(response.status, 400)
+  assert.equal(response.headers.get('location'), null)
+  assert.equal(response.headers.get('set-cookie'), null)
+})
+
+test('rota direta rejeita query token mesmo quando há x-agent-token válido', async () => {
+  const { proxy } = await import('../src/proxy')
+  const response = await proxy(new NextRequest('https://app.example/inbox?token=segredo-de-teste', {
+    headers: { 'x-agent-token': 'segredo-de-teste' },
+  }))
+  assert.equal(response.status, 400)
+  assert.equal(response.headers.get('set-cookie'), null)
 })

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { stackMiddlewareApp } from '@/stack.middleware'
 import { isIpAllowed, getClientIp } from '@/lib/ip-auth'
-import { verifyAgentSessionCookie } from '@/lib/agent-session'
+import { createAgentSessionCookie, verifyAgentSessionCookie } from '@/lib/agent-session'
+import { AGENT_SESSION_TTL_MS, configuredMasterAgentToken, isValidMasterAgentToken, parseAgentLoginOptions } from '@/lib/agent-login'
+
+const AGENT_DIRECT_LOGIN_PATHS = new Set(['/atender-agora', '/inbox'])
 
 const PUBLIC_PATHS = [
   '/handler',
@@ -33,6 +36,36 @@ function sanitizeReturnPath(pathname: string, base: URL) {
   } catch {
     return '/'
   }
+}
+
+function setAgentLoginCookies(response: NextResponse, session: string, companyId: number) {
+  const maxAge = AGENT_SESSION_TTL_MS / 1000
+  const secure = process.env.NODE_ENV === 'production'
+  response.cookies.set('agent_auth_session', session, {
+    httpOnly: true,
+    secure,
+    sameSite: 'lax',
+    path: '/',
+    maxAge,
+  })
+  response.cookies.set('admin_viewing', String(companyId), {
+    httpOnly: false,
+    secure,
+    sameSite: 'lax',
+    path: '/',
+    maxAge,
+  })
+}
+
+function cookieHeaderWithAgentSession(request: NextRequest, session: string, companyId: number): Headers {
+  const headers = new Headers(request.headers)
+  headers.delete('x-agent-token')
+  const current = headers.get('cookie')
+  headers.set(
+    'cookie',
+    `${current ? `${current}; ` : ''}agent_auth_session=${session}; admin_viewing=${companyId}`
+  )
+  return headers
 }
 
 export async function proxy(request: NextRequest) {
@@ -79,6 +112,45 @@ export async function proxy(request: NextRequest) {
       return response
     } catch (e) {
       console.error('[SSO] __st inválido:', e)
+    }
+  }
+
+  // Fluxo reservado para robôs de gravação. Tokens na query string são
+  // rejeitados antes de renderizar ou redirecionar, pois podem vazar em logs,
+  // histórico e cache. Só o header x-agent-token é aceito nestas duas telas.
+  if (AGENT_DIRECT_LOGIN_PATHS.has(pathname)) {
+    if (request.nextUrl.searchParams.has('token')) {
+      return NextResponse.json({ error: 'Use x-agent-token ou POST para autenticação de agente.' }, { status: 400 })
+    }
+
+    const token = request.headers.get('x-agent-token')
+    if (token !== null) {
+      if (!configuredMasterAgentToken()) {
+        return NextResponse.json({ error: 'Login de agente desativado.' }, { status: 503 })
+      }
+      if (!(await isValidMasterAgentToken(token))) {
+        return NextResponse.json({ error: 'Token de acesso inválido ou expirado.' }, { status: 401 })
+      }
+
+      const { companyId, displayName } = parseAgentLoginOptions(request.nextUrl.searchParams)
+      let session: string
+      try {
+        session = await createAgentSessionCookie({
+          id: 'agent-ia-casal-admin-id',
+          primaryEmail: 'agente.ia@casaldotrafego.com',
+          displayName,
+          isAdmin: true,
+          companyId,
+        }, AGENT_SESSION_TTL_MS)
+      } catch {
+        return NextResponse.json({ error: 'Login de agente desativado.' }, { status: 503 })
+      }
+
+      const response = NextResponse.next({
+        request: { headers: cookieHeaderWithAgentSession(request, session, companyId) },
+      })
+      setAgentLoginCookies(response, session, companyId)
+      return response
     }
   }
 
