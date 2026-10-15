@@ -833,7 +833,7 @@ export function ChatWindow({
         {/* 1. Cabeçalho do Atendimento */}
         {fromAttention && <div className="shrink-0 border-b border-line-subtle bg-surface-panel px-3.5 py-2"><Link href={backHref} className="focus-ring inline-flex items-center gap-1.5 rounded-md text-micro font-semibold text-brand-ink hover:underline"><ArrowLeft size={13} />Voltar para Atender agora</Link></div>}
         <div className="studio-chat-header flex flex-wrap items-center justify-between gap-x-3 gap-y-2.5 border-b border-line-subtle bg-surface-panel px-3.5 py-3 shrink-0">
-          <div className="flex flex-1 basis-[180px] items-center gap-2.5 min-w-0">
+          <div className="studio-chat-identity flex flex-1 basis-[180px] items-center gap-2.5 min-w-0">
             <Link
               href={backHref}
               aria-label="Voltar para conversas"
@@ -875,9 +875,11 @@ export function ChatWindow({
                     )}
                   </button>
                 )}
-                <ChannelBadge channel={lead.channel} />
-                <PlatformBadge platform={lead.platform || lead.trackingSource} eventType={lead.eventType} />
-                <EmailEngagementBadge engagement={lead.emailEngagement} />
+                <div className="studio-chat-badges flex items-center gap-1.5">
+                  <ChannelBadge channel={lead.channel} />
+                  <PlatformBadge platform={lead.platform || lead.trackingSource} eventType={lead.eventType} />
+                  <EmailEngagementBadge engagement={lead.emailEngagement} />
+                </div>
               </div>
               {nameError && (
                 <p className="mt-0.5 text-[10px] font-medium text-red-500">
@@ -892,7 +894,7 @@ export function ChatWindow({
           </div>
 
           {/* Ações do Topo: acesso explícito ao contexto, bot, pendências e atualização */}
-          <div className="ml-auto flex items-center gap-1.5 shrink-0">
+          <div className="studio-chat-actions ml-auto flex items-center gap-1.5 shrink-0">
             <button type="button" onClick={() => { setShowDetails(true); setSidePanelTab('pending'); void loadPending() }} title="Pendências de atendimento" aria-label="Abrir pendências de atendimento" className="h-8 w-8 rounded-lg border border-line-subtle flex items-center justify-center text-fg-muted hover:text-fg"><Clock size={14} /></button>
             {/* BOTÃO PAUSAR / RETOMAR BOT */}
             <button
@@ -933,7 +935,7 @@ export function ChatWindow({
               )}
             >
               <FileText size={14} />
-              Contexto
+              <span className="studio-chat-context-label">Contexto</span>
             </button>
 
             {/* Botão de Atualizar */}
@@ -958,7 +960,7 @@ export function ChatWindow({
             <span className="inline-flex min-w-0 items-center gap-1.5 text-fg-muted"><UserCheck size={12} className="shrink-0" /><span className="max-w-[220px] truncate" title={summary.owner}>{summary.owner}</span></span>
             {summary.dueLabel && <span className={cn('inline-flex items-center gap-1.5 font-semibold', summary.overdue ? 'text-rose-700 dark:text-rose-300' : 'text-fg-subtle')}><Clock size={12} />{summary.overdue ? 'Prazo vencido' : 'Prazo'}: {summary.dueLabel}</span>}
           </div>
-          <p className="line-clamp-2 text-micro text-fg-muted" title={summary.nextAction}><span className="font-semibold text-fg-subtle">Próxima ação: </span>{summary.nextAction}</p>
+          <p className="studio-chat-summary-action line-clamp-2 text-micro text-fg-muted" title={summary.nextAction}><span className="font-semibold text-fg-subtle">Próxima ação: </span>{summary.nextAction}</p>
           {hasUnsavedContext && <p className="text-[10px] text-fg-subtle">O resumo mantém os dados salvos. Há alterações ainda não salvas no card.</p>}
         </section>
 

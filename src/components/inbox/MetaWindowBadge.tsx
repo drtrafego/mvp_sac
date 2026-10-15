@@ -92,7 +92,7 @@ export function MetaWindowBanner({
 
   if (info.status === 'expired') {
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2 bg-rose-500/10 border-b border-rose-500/20 text-rose-700 dark:text-rose-400 text-micro">
+      <div className="studio-meta-window flex items-center justify-between gap-3 px-4 py-2 bg-rose-500/10 border-b border-rose-500/20 text-rose-700 dark:text-rose-400 text-micro">
         <div className="flex items-center gap-2">
           <Lock size={14} className="shrink-0 text-rose-500" />
           <span>
@@ -111,7 +111,7 @@ export function MetaWindowBanner({
 
   if (info.status === 'expiring_soon') {
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2 bg-amber-500/15 border-b border-amber-500/25 text-amber-800 dark:text-amber-300 text-micro animate-pulse">
+      <div className="studio-meta-window flex items-center justify-between gap-3 px-4 py-2 bg-amber-500/15 border-b border-amber-500/25 text-amber-800 dark:text-amber-300 text-micro animate-pulse">
         <div className="flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0 text-amber-600" />
           <span>
@@ -124,7 +124,7 @@ export function MetaWindowBanner({
 
   if (info.status === 'active') {
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-1.5 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-micro">
+      <div className="studio-meta-window flex items-center justify-between gap-3 px-4 py-1.5 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-micro">
         <div className="flex items-center gap-2">
           <CheckCircle2 size={13} className="shrink-0 text-emerald-500" />
           <span>
@@ -138,7 +138,7 @@ export function MetaWindowBanner({
 
   // waiting_user
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-1.5 bg-surface-inset border-b border-line-subtle text-fg-subtle text-micro">
+    <div className="studio-meta-window flex items-center justify-between gap-3 px-4 py-1.5 bg-surface-inset border-b border-line-subtle text-fg-subtle text-micro">
       <div className="flex items-center gap-2">
         <MessageSquare size={13} className="shrink-0 text-fg-faint" />
         <span>
