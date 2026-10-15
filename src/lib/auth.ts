@@ -177,6 +177,29 @@ export async function getCurrentCompany() {
     if (memberCompany) return memberCompany
   }
 
+  // 2.1. Reconhecer diretamente por email em companyMembers (membros sincronizados pelo portal ou cadastrados previamente)
+  if (user.primaryEmail) {
+    const cleanUserEmail = user.primaryEmail.toLowerCase().trim()
+    const [memberByEmail] = await db
+      .select()
+      .from(companyMembers)
+      .where(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`)
+
+    if (memberByEmail) {
+      if (memberByEmail.stackAuthUserId !== user.id || memberByEmail.status !== 'ativo') {
+        await db
+          .update(companyMembers)
+          .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
+          .where(eq(companyMembers.id, memberByEmail.id))
+      }
+      const [memberCompany] = await db
+        .select()
+        .from(companies)
+        .where(eq(companies.id, memberByEmail.companyId))
+      if (memberCompany) return memberCompany
+    }
+  }
+
   // 3. Reconhecer pelo e-mail: se o e-mail do usuário foi cadastrado como membro em Configurações > Equipe
   if (user.primaryEmail && user.primaryEmailVerified) {
     const cleanUserEmail = user.primaryEmail.toLowerCase().trim()
