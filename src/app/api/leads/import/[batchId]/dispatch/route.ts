@@ -7,8 +7,9 @@ import {
   messageJobs,
   settings,
 } from '@/lib/db/schema'
-import { buildMassDispatchPreview, isApprovedTemplateOnlySequence, queueMassDispatchBatch } from '@/lib/mass-dispatch'
+import { buildMassDispatchPreview, isApprovedTemplateOnlySequence, queueDirectTemplateMassDispatchBatch, queueMassDispatchBatch } from '@/lib/mass-dispatch'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
+import { buildCanonicalSnapshot, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
 
 type Params = { params: Promise<{ batchId: string }> }
 
@@ -18,6 +19,49 @@ async function loadPreview(batchId: number, companyId: number) {
     eq(massDispatchBatches.companyId, companyId),
   )).limit(1)
   if (!batch) return null
+
+  const statsRows = await db.select({
+    status: messageJobs.status,
+    count: sql<number>`cast(count(*) as int)`,
+  }).from(messageJobs).where(eq(messageJobs.massDispatchBatchId, batchId)).groupBy(messageJobs.status)
+  const stats = Object.fromEntries(statsRows.map(row => [row.status ?? 'unknown', row.count]))
+
+  if (batch.dispatchSource === 'direct_template') {
+    const recipientRows = await db.execute<{ recipient_count: number }>(sql`
+      SELECT count(*)::int AS recipient_count
+      FROM mass_dispatch_recipients r
+      JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = ${companyId}
+      WHERE r.batch_id = ${batchId}
+        AND l.bot_paused IS NOT TRUE
+        AND NOT EXISTS (
+          SELECT 1 FROM message_jobs existing_job
+          WHERE existing_job.lead_id = l.id
+            AND existing_job.mass_dispatch_batch_id IS NOT NULL
+            AND existing_job.status IN ('pending', 'processing')
+        )
+    `)
+    const recipientRowsArray = Array.isArray(recipientRows) ? recipientRows : recipientRows.rows
+    const hasTemplate = Boolean(batch.templateName && batch.templateLanguage && batch.templateVariablesMap && batch.templateSnapshot)
+    return {
+      ...buildMassDispatchPreview({
+        batchId,
+        status: batch.status,
+        recipientCount: Number(recipientRowsArray[0]?.recipient_count ?? 0),
+        eventType: batch.eventType,
+        messages: hasTemplate ? [{
+          id: 0,
+          order: 1,
+          delayMinutes: 0,
+          messageType: 'template',
+          content: snapshotBodyText(batch.templateSnapshot),
+          templateName: batch.templateName,
+          templateLanguage: batch.templateLanguage,
+          templateVariablesMap: batch.templateVariablesMap,
+        }] : [],
+      }),
+      stats,
+    }
+  }
 
   const eligibleRows = await db.execute<{
     recipient_count: number
@@ -76,12 +120,6 @@ async function loadPreview(batchId: number, companyId: number) {
   const rows = Array.isArray(eligibleRows) ? eligibleRows : eligibleRows.rows
   const eligibleRecipientCount = Number(rows[0]?.recipient_count ?? 0)
 
-  const statsRows = await db.select({
-    status: messageJobs.status,
-    count: sql<number>`cast(count(*) as int)`,
-  }).from(messageJobs).where(eq(messageJobs.massDispatchBatchId, batchId)).groupBy(messageJobs.status)
-
-  const stats = Object.fromEntries(statsRows.map(row => [row.status ?? 'unknown', row.count]))
   return {
     ...buildMassDispatchPreview({
       batchId,
@@ -135,7 +173,14 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   if (preview.messageCount === 0) {
     return NextResponse.json({ error: 'Nenhuma mensagem ativa configurada para este tipo de evento' }, { status: 409 })
   }
-  if (!isApprovedTemplateOnlySequence(preview.messages)) {
+  const [batch] = await db.select().from(massDispatchBatches).where(and(
+    eq(massDispatchBatches.id, id),
+    eq(massDispatchBatches.companyId, company.id),
+  )).limit(1)
+  if (!batch) return NextResponse.json({ error: 'Lote não encontrado' }, { status: 404 })
+
+  const isDirectTemplate = batch.dispatchSource === 'direct_template'
+  if (!isDirectTemplate && !isApprovedTemplateOnlySequence(preview.messages)) {
     return NextResponse.json({
       error: 'Esta sequência tem mensagem de texto livre; só é permitido disparo em massa com sequência 100% de template aprovado',
     }, { status: 409 })
@@ -148,22 +193,51 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     }, { status: 409 })
   }
   let approvedTemplateNames: Set<string>
+  let matchingDirectTemplate: Awaited<ReturnType<typeof listMetaTemplates>>[number] | undefined
   try {
     const approvedTemplates = await listMetaTemplates(config.metaWabaId, config.metaAccessToken)
     approvedTemplateNames = new Set(approvedTemplates.map(template => template.name))
+    if (isDirectTemplate) {
+      matchingDirectTemplate = approvedTemplates.find(template =>
+        metaTemplateKey(template.name, template.language) === metaTemplateKey(batch.templateName ?? '', batch.templateLanguage ?? '')
+      )
+    }
   } catch (err) {
     console.error('[mass-dispatch] falha ao validar templates aprovados na Meta', err)
     return NextResponse.json({
       error: 'Não foi possível validar os templates aprovados na Meta; nenhum disparo foi enfileirado',
     }, { status: 503 })
   }
-  if (!isApprovedTemplateOnlySequence(preview.messages, approvedTemplateNames)) {
+  if (isDirectTemplate) {
+    if (!matchingDirectTemplate) {
+      return NextResponse.json({ error: 'O template deste lote não está mais aprovado na Meta; nenhum disparo foi enfileirado' }, { status: 409 })
+    }
+    if (hasUnsupportedDynamicComponents(matchingDirectTemplate.components ?? [])) {
+      return NextResponse.json({ error: 'O template passou a ter HEADER ou BUTTON dinâmico, que não é suportado neste disparo' }, { status: 409 })
+    }
+    const currentSnapshot = buildCanonicalSnapshot(matchingDirectTemplate)
+    const savedSnapshot = batch.templateSnapshot as { bodyText?: string; bodyVariableIndexes?: number[]; category?: string } | null
+    if (!savedSnapshot || currentSnapshot.bodyText !== (savedSnapshot.bodyText ?? '')
+        || currentSnapshot.category !== (savedSnapshot.category ?? '')
+        || !sameIndexes(currentSnapshot.bodyVariableIndexes, savedSnapshot.bodyVariableIndexes ?? [])) {
+      return NextResponse.json({ error: 'O template mudou na Meta desde a importação; recrie o lote e revise o preview' }, { status: 409 })
+    }
+    const mappedIndexes = Object.keys(asVariablesMap(batch.templateVariablesMap)).map(Number).sort((a, b) => a - b)
+    if (!sameIndexes(mappedIndexes, currentSnapshot.bodyVariableIndexes)) {
+      return NextResponse.json({ error: 'A estrutura de variáveis do template mudou; recrie o lote e revise o preview' }, { status: 409 })
+    }
+    if (currentSnapshot.name !== batch.templateName || currentSnapshot.language !== batch.templateLanguage) {
+      return NextResponse.json({ error: 'O template do lote diverge da configuração aprovada na Meta' }, { status: 409 })
+    }
+  } else if (!isApprovedTemplateOnlySequence(preview.messages, approvedTemplateNames)) {
     return NextResponse.json({
       error: 'A sequência contém template que não está aprovado na Meta; nenhum disparo foi enfileirado',
     }, { status: 409 })
   }
 
-  const queued = await queueMassDispatchBatch(id, company.id, config.metaPhoneNumberId, body.previewMessages)
+  const queued = isDirectTemplate
+    ? await queueDirectTemplateMassDispatchBatch(id, company.id, config.metaPhoneNumberId, body.previewMessages)
+    : await queueMassDispatchBatch(id, company.id, config.metaPhoneNumberId, body.previewMessages)
   if (queued.status === 'preview_changed') {
     return NextResponse.json({
       error: 'A sequência mudou depois do preview; revise o conteúdo atualizado antes de confirmar novamente',
@@ -188,4 +262,20 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     return NextResponse.json({ error: 'O lote foi confirmado por outra requisição ou não pôde ser enfileirado' }, { status: 409 })
   }
   return NextResponse.json({ success: true, batchId: id, status: 'queued', jobsCreated: queued.jobsCreated })
+}
+
+function asVariablesMap(value: unknown): Record<string, string> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, string>
+    : {}
+}
+
+function snapshotBodyText(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
+  const bodyText = (value as { bodyText?: unknown }).bodyText
+  return typeof bodyText === 'string' ? bodyText : ''
+}
+
+function sameIndexes(left: number[], right: number[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }

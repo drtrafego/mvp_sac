@@ -571,8 +571,14 @@ export const massDispatchBatches = pgTable('mass_dispatch_batches', {
   trackingSource: text('tracking_source').notNull(),
   status: text('status').notNull().default('draft'),
   recipientCount: integer('recipient_count').notNull().default(0),
+  dispatchSource: text('dispatch_source').notNull().default('sequence'),
+  templateName: text('template_name'),
+  templateLanguage: text('template_language'),
+  templateVariablesMap: jsonb('template_variables_map'),
+  templateSnapshot: jsonb('template_snapshot'),
   confirmedAt: timestamp('confirmed_at'),
   createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at'),
 })
 
 export const massDispatchRecipients = pgTable('mass_dispatch_recipients', {

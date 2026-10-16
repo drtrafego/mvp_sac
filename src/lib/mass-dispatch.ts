@@ -21,6 +21,7 @@ export interface MessageSnapshot {
   templateName: string | null
   templateLanguage: string | null
   templateVariablesMap: unknown
+  source?: string
 }
 
 export function createMessageSnapshot(message: MessageSnapshot): MessageSnapshot {
@@ -317,6 +318,144 @@ export async function queueMassDispatchBatch(
     if (Number(row.non_template_count) > 0) {
       return { status: 'non_template', nonTemplateCount: Number(row.non_template_count) }
     }
+    const jobsCreated = Number(row.jobs_created)
+    if (jobsCreated === 0) {
+      return {
+        status: 'daily_limit',
+        requested: Number(row.eligible_job_count),
+        available: Math.max(0, dailyLimit - Number(row.reserved_count)),
+      }
+    }
+    return { status: 'queued', jobsCreated }
+  })
+}
+
+export async function queueDirectTemplateMassDispatchBatch(
+  batchId: number,
+  companyId: number,
+  metaPhoneNumberId: string,
+  approvedPreview: DispatchPreviewMessage[],
+): Promise<QueueMassDispatchResult> {
+  return db.transaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(77421, hashtext(${metaPhoneNumberId}))`)
+    const dailyLimit = metaDailyMessageLimit()
+    const result = await tx.execute<{
+      batch_count: number
+      eligible_job_count: number
+      preview_matches: boolean
+      reserved_count: number
+      jobs_created: number
+    }>(sql`
+      WITH target_batch AS (
+        SELECT b.*
+        FROM mass_dispatch_batches b
+        WHERE b.id = ${batchId}
+          AND b.company_id = ${companyId}
+          AND b.status = 'draft'
+          AND b.dispatch_source = 'direct_template'
+      ), eligible_recipients AS (
+        SELECT r.lead_id
+        FROM target_batch b
+        JOIN mass_dispatch_recipients r ON r.batch_id = b.id
+        JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = b.company_id
+        WHERE l.bot_paused IS NOT TRUE
+          AND NOT EXISTS (
+            SELECT 1 FROM message_jobs existing_job
+            WHERE existing_job.lead_id = l.id
+              AND existing_job.mass_dispatch_batch_id IS NOT NULL
+              AND existing_job.status IN ('pending', 'processing')
+          )
+      ), current_preview AS (
+        SELECT jsonb_build_array(jsonb_build_object(
+          'id', 0,
+          'order', 1,
+          'delayMinutes', 0,
+          'messageType', 'template',
+          'content', coalesce(b.template_snapshot->>'bodyText', ''),
+          'templateName', b.template_name,
+          'templateLanguage', b.template_language,
+          'templateVariablesMap', b.template_variables_map
+        )) AS messages
+        FROM target_batch b
+      ), summary AS (
+        SELECT
+          (SELECT count(*)::int FROM target_batch) AS batch_count,
+          (SELECT count(*)::int FROM eligible_recipients) AS eligible_job_count,
+          coalesce((SELECT messages FROM current_preview), '[]'::jsonb) = ${stableJsonStringify(approvedPreview)}::jsonb AS preview_matches
+      ), queued_or_sent_jobs AS (
+        SELECT count(*)::int AS cnt
+        FROM message_jobs j
+        JOIN recovery_leads l ON l.id = j.lead_id
+        JOIN settings cfg ON cfg.company_id = l.company_id
+        WHERE cfg.meta_phone_number_id = ${metaPhoneNumberId}
+          AND (
+            j.status IN ('pending', 'processing')
+            OR (
+              j.status IN ('sent', 'sent_unconfirmed')
+              AND coalesce(j.sent_at, j.created_at) >= now() - interval '24 hours'
+            )
+          )
+      ), direct_sent_messages AS (
+        SELECT count(*)::int AS cnt
+        FROM whatsapp_messages wm
+        JOIN settings cfg ON cfg.company_id = wm.company_id
+        WHERE cfg.meta_phone_number_id = ${metaPhoneNumberId}
+          AND wm.direction = 'outbound'
+          AND wm.created_at >= now() - interval '24 hours'
+          AND (wm.external_id IS NULL OR NOT EXISTS (
+            SELECT 1 FROM message_jobs mj WHERE mj.external_wamid = wm.external_id
+          ))
+      ), usage AS (
+        SELECT (j.cnt + m.cnt)::int AS reserved_count
+        FROM queued_or_sent_jobs j, direct_sent_messages m
+      ), claimed AS (
+        UPDATE mass_dispatch_batches b
+        SET status = 'queued', confirmed_at = now(), updated_at = now()
+        FROM summary s, usage u
+        WHERE b.id = ${batchId}
+          AND b.company_id = ${companyId}
+          AND b.status = 'draft'
+          AND b.dispatch_source = 'direct_template'
+          AND s.eligible_job_count > 0
+          AND s.preview_matches
+          AND u.reserved_count + s.eligible_job_count <= ${dailyLimit}
+        RETURNING b.id, b.template_name, b.template_language, b.template_variables_map
+      ), inserted AS (
+        INSERT INTO message_jobs (
+          lead_id, message_id, message_order, scheduled_for, status,
+          check_before_send, mass_dispatch_batch_id, message_snapshot
+        )
+        SELECT r.lead_id, NULL, 1, now(), 'pending', true, c.id,
+          jsonb_build_object(
+            'messageType', 'template',
+            'content', NULL,
+            'mediaUrl', NULL,
+            'caption', NULL,
+            'buttonsJson', NULL,
+            'templateName', c.template_name,
+            'templateLanguage', c.template_language,
+            'templateVariablesMap', c.template_variables_map,
+            'source', 'direct_template'
+          )
+        FROM claimed c
+        JOIN eligible_recipients r ON true
+        ON CONFLICT (mass_dispatch_batch_id, lead_id) WHERE mass_dispatch_batch_id IS NOT NULL AND message_id IS NULL DO NOTHING
+        RETURNING id
+      )
+      SELECT s.batch_count, s.eligible_job_count, s.preview_matches,
+             u.reserved_count, (SELECT count(*)::int FROM inserted) AS jobs_created
+      FROM summary s CROSS JOIN usage u
+    `)
+    const [row] = rowsOf<{
+      batch_count: number
+      eligible_job_count: number
+      preview_matches: boolean
+      reserved_count: number
+      jobs_created: number
+    }>(result)
+    if (!row || Number(row.batch_count) === 0) return { status: 'not_found_or_claimed' }
+    if (Number(row.eligible_job_count) === 0) return { status: 'no_eligible_messages' }
+    if (!row.preview_matches) return { status: 'preview_changed' }
     const jobsCreated = Number(row.jobs_created)
     if (jobsCreated === 0) {
       return {

@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { leadTags, massDispatchBatches, massDispatchRecipients, messageJobs, recoveryLeads } from '@/lib/db/schema'
+import { leadTags, massDispatchBatches, massDispatchRecipients, messageJobs, recoveryLeads, settings } from '@/lib/db/schema'
 import { desc, eq, and, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { isLeadChannel, MAX_TAG_LENGTH, normalizeTag, PESSOA_TAG, type LeadChannel } from '@/lib/lead-tags'
 import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
 import { formatBrazilianPhone } from '@/lib/phone'
+import { listMetaTemplates } from '@/lib/whatsapp/meta'
+import { buildCanonicalSnapshot, extractBodyPlaceholders, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
+import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 
 function parseValueToCents(raw: string | number | null | undefined): number {
   if (raw == null) return 0
@@ -96,6 +99,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     createMassDispatch,
     massDispatch,
     triggerMassDispatch,
+    massDispatchTemplate: rawMassDispatchTemplate,
     recordType: rawRecordType,
     platform: rawPlatform,
     tag: rawTag,
@@ -104,6 +108,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   if (!Array.isArray(items) || items.length === 0) {
     return NextResponse.json({ error: 'Nenhum contato enviado para importação' }, { status: 400 })
+  }
+  const MAX_MASS_IMPORT_ROWS = 5000
+  if (items.length > MAX_MASS_IMPORT_ROWS) {
+    return NextResponse.json({ error: `O limite é ${MAX_MASS_IMPORT_ROWS} contatos por importação; envie ${items.length} em lotes menores` }, { status: 400 })
   }
 
   const hasTag = rawTag !== undefined && rawTag !== null && rawTag !== ''
@@ -136,7 +144,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     : 'mineracao'
   const importEventType = defaultEventType || 'atendimento'
 
-  if (shouldCreateMassDispatch && !defaultEventType) {
+  const parsedMassDispatchTemplate = rawMassDispatchTemplate === undefined
+    ? null
+    : MassDispatchTemplateSelection.safeParse(rawMassDispatchTemplate)
+  if (parsedMassDispatchTemplate && !parsedMassDispatchTemplate.success) {
+    return NextResponse.json({ error: 'Configuração do template de disparo inválida' }, { status: 400 })
+  }
+  const massDispatchTemplate = parsedMassDispatchTemplate?.data ?? null
+
+  if (shouldCreateMassDispatch && !massDispatchTemplate && !defaultEventType) {
     return NextResponse.json({ error: 'Selecione o tipo de evento para preparar o disparo em massa' }, { status: 400 })
   }
 
@@ -144,13 +160,62 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Vendas fechadas não podem entrar em disparo de recuperação' }, { status: 400 })
   }
 
+  let directTemplate: {
+    name: string
+    language: string
+    variablesMap: Record<string, string>
+    snapshot: ReturnType<typeof buildCanonicalSnapshot>
+  } | null = null
+  if (massDispatchTemplate) {
+    const [config] = await db.select().from(settings).where(eq(settings.companyId, company.id)).limit(1)
+    if (!config || (config.whatsappProvider ?? 'meta') !== 'meta' || !config.metaWabaId || !config.metaPhoneNumberId || !config.metaAccessToken) {
+      return NextResponse.json({
+        error: 'Disparo em massa com template exige Meta Cloud API configurada com WABA ID, número e token de acesso',
+      }, { status: 409 })
+    }
+
+    try {
+      const templates = await listMetaTemplates(config.metaWabaId, config.metaAccessToken)
+      const template = templates.find(candidate =>
+        metaTemplateKey(candidate.name, candidate.language) === metaTemplateKey(massDispatchTemplate.templateName, massDispatchTemplate.templateLanguage)
+      )
+      if (!template) {
+        return NextResponse.json({ error: 'O template selecionado não está aprovado na Meta' }, { status: 409 })
+      }
+      if (hasUnsupportedDynamicComponents(template.components ?? [])) {
+        return NextResponse.json({ error: 'Templates com HEADER ou BUTTON dinâmico ainda não são suportados no disparo em massa' }, { status: 409 })
+      }
+
+      const expectedIndexes = extractBodyPlaceholders(template.components ?? [])
+      const mappedIndexes = Object.keys(massDispatchTemplate.templateVariablesMap).map(Number).sort((a, b) => a - b)
+      if (expectedIndexes.length !== mappedIndexes.length || expectedIndexes.some((index, position) => index !== mappedIndexes[position])) {
+        return NextResponse.json({ error: 'Mapeie todas e somente as variáveis do BODY do template selecionado' }, { status: 400 })
+      }
+      directTemplate = {
+        name: template.name,
+        language: template.language,
+        variablesMap: massDispatchTemplate.templateVariablesMap,
+        snapshot: buildCanonicalSnapshot(template),
+      }
+    } catch (err) {
+      console.error('[mass-dispatch] falha ao validar template da Meta antes da importação', err)
+      return NextResponse.json({ error: 'Não foi possível validar o template aprovado na Meta; nenhum lead foi importado' }, { status: 503 })
+    }
+  }
+
   const [batch] = shouldCreateMassDispatch
     ? await db.insert(massDispatchBatches).values({
         companyId: company.id,
         fileName: typeof fileName === 'string' ? fileName.slice(0, 255) : null,
-        eventType: defaultEventType,
+        eventType: directTemplate ? 'mass_dispatch' : defaultEventType,
         trackingSource: defaultSource,
         status: 'draft',
+        dispatchSource: directTemplate ? 'direct_template' : 'sequence',
+        templateName: directTemplate?.name ?? null,
+        templateLanguage: directTemplate?.language ?? null,
+        templateVariablesMap: directTemplate?.variablesMap ?? null,
+        templateSnapshot: directTemplate?.snapshot ?? null,
+        updatedAt: new Date(),
       }).returning({ id: massDispatchBatches.id })
     : []
 
