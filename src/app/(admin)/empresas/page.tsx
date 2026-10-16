@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Pencil, Trash2, LogIn, RefreshCw, Copy, Check, Link2, Bot, Database, Sparkles, CheckCircle2, AlertCircle, ChevronRight } from 'lucide-react'
+import { Plus, Pencil, Trash2, LogIn, RefreshCw, Copy, Check, Link2, Bot, Database, Sparkles, CheckCircle2, AlertCircle, ChevronRight, Search } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 
@@ -44,6 +44,7 @@ export default function EmpresasPage() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [entering, setEntering] = useState<number | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  const [searchTerm, setSearchTerm] = useState('')
 
   // Supabase Hub state
   const [supabaseUrlInput, setSupabaseUrlInput] = useState('')
@@ -273,7 +274,23 @@ export default function EmpresasPage() {
         </div>
       ) : (
         <div className="space-y-3 rise rise-2">
-          {companies.map(company => (
+          <div className="relative">
+            <Search size={16} className="absolute left-3.5 top-3 text-fg-subtle" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Pesquisar empresa por nome ou slug..."
+              className="w-full h-10 bg-surface-panel border border-line-subtle rounded-xl pl-10 pr-4 text-xs text-fg placeholder:text-fg-faint focus:outline-none focus:border-brand-solid"
+            />
+          </div>
+
+          {companies
+            .filter((c) =>
+              c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+              c.slug.toLowerCase().includes(searchTerm.toLowerCase())
+            )
+            .map(company => (
             <div key={company.id}>
               {editingId === company.id ? (
                 <EditCompanyForm
