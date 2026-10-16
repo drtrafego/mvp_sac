@@ -21,7 +21,6 @@ const PUBLIC_PATHS = [
   '/favicon.ico',
   '/public',
   '/index.html',
-  '/RAG-Isabella-Portal-das-Bellas.txt',
 ]
 
 // Garante que after_auth_return_to só aponte pra um caminho da mesma origem.
