@@ -1217,7 +1217,7 @@ export default function ConfiguracoesPage() {
                 {[
                   { key: 'showVisaoGeral', label: 'Visão Geral (Dashboard)' },
                   { key: 'showConversas', label: 'Conversas (Inbox / WhatsApp Direct)' },
-                  { key: 'showPipeline', label: 'Pipeline (Kanban de Vendas)' },
+                  { key: 'showPipeline', label: 'CRM (Kanban de Vendas)' },
                   { key: 'showLeads', label: 'Leads Recentes (Tabela & Filtros)' },
                 ].map(({ key, label }) => {
                   const cfg = form.sidebarConfig ?? {}

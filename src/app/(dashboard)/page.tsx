@@ -891,7 +891,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               : 'Eventos de Checkout & Recuperação'}
           </p>
           <Link href="/pipeline" className="text-micro font-semibold text-brand-ink hover:underline flex items-center gap-1">
-            Ver no Pipeline <ExternalLink size={12} />
+            Ver no CRM <ExternalLink size={12} />
           </Link>
         </div>
         <div className="scroll-thin flex snap-x snap-mandatory gap-[var(--space-gutter)] overflow-x-auto pb-2 md:grid md:grid-cols-5 md:overflow-visible md:pb-0">

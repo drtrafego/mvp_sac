@@ -338,7 +338,7 @@ export function ChatWindow({
   useEffect(() => {
     let cancelled = false
     fetch('/api/pipeline/columns', { cache: 'no-store' }).then(async response => {
-      if (!response.ok) throw new Error('Não foi possível carregar as etapas do pipeline.')
+      if (!response.ok) throw new Error('Não foi possível carregar as etapas do CRM.')
       const data = await response.json()
       if (cancelled) return
       const columns = Array.isArray(data.columns) ? data.columns : DEFAULT_PIPELINE_COLUMNS
@@ -1417,7 +1417,7 @@ export function ChatWindow({
               {/* Etapa Comercial */}
               <div className="p-3 bg-surface-inset border border-line-subtle rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-micro font-bold uppercase text-fg-subtle">Etapa do Pipeline</span>
+                  <span className="text-micro font-bold uppercase text-fg-subtle">Etapa do CRM</span>
                   <a
                     href="/pipeline"
                     className="text-[10px] text-brand-ink hover:underline font-semibold flex items-center gap-1"

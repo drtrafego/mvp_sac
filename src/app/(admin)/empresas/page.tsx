@@ -535,7 +535,7 @@ function EditCompanyForm({
       items: [
         { key: 'showVisaoGeral', label: 'Visão Geral' },
         { key: 'showConversas', label: 'Conversas (Inbox)' },
-        { key: 'showPipeline', label: 'Pipeline (Funil)' },
+        { key: 'showPipeline', label: 'CRM (Funil)' },
         { key: 'showLeads', label: 'Todos os Leads' },
       ],
     },

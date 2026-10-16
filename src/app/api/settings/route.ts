@@ -156,7 +156,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       const ids = body.sacFollowupStageIds
       if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new SacInputError('Etapas de acompanhamento inválidas.')
       const validStages = await getCompanyPipelineStageIds(company.id)
-      if (ids.some((id) => !validStages.includes(id))) throw new SacInputError('Uma etapa não existe no pipeline desta empresa.')
+      if (ids.some((id) => !validStages.includes(id))) throw new SacInputError('Uma etapa não existe no CRM desta empresa.')
       body.sacFollowupStageIds = [...new Set(ids)]
     }
   } catch (error) {

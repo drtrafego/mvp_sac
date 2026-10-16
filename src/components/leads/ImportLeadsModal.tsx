@@ -968,7 +968,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               <p className="text-h2 text-fg font-bold">
                 {importResult.tagFailed > 0 || importResult.dispatchRecipientFailed > 0 ? 'Importação concluída com ressalvas' : 'Importação Concluída com Sucesso!'}
               </p>
-              <p className="text-micro text-fg-muted">Os contatos já estão disponíveis no painel de Leads, Pipeline e Origens.</p>
+              <p className="text-micro text-fg-muted">Os contatos já estão disponíveis no painel de Leads, CRM e Origens.</p>
             </div>
 
             <div className="grid grid-cols-3 gap-3">

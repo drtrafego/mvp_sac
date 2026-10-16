@@ -132,7 +132,7 @@ export const atendimentoNav: Array<{
     icon: MessageCircle,
     requires: 'instagramCommentAutomation',
   },
-  { label: 'Pipeline', href: '/pipeline', icon: Columns3 },
+  { label: 'CRM', href: '/pipeline', icon: Columns3 },
   { label: 'Leads Recentes', href: '/leads', icon: Users },
 ]
 
@@ -211,7 +211,7 @@ export const instagramNav: Array<{
 export const mineracaoNav = [
   { label: 'Leads Minerados', href: '/leads?source=mineracao' },
   { label: 'Canais de Mineração', href: '/origens?source=mineracao' },
-  { label: 'Pipeline Prospecção', href: '/pipeline?source=mineracao' },
+  { label: 'CRM Prospecção', href: '/pipeline?source=mineracao' },
 ]
 
 export const ajustesNav = [

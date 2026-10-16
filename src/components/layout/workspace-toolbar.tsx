@@ -7,7 +7,7 @@ import { ThemeToggle } from '@/components/theme-toggle'
 
 const labels: Record<string, string> = {
   '/': 'Visão geral', '/inbox': 'Conversas', '/instagram': 'Instagram',
-  '/atender-agora': 'Atender agora', '/pipeline': 'Pipeline', '/leads': 'Contatos',
+  '/atender-agora': 'Atender agora', '/pipeline': 'CRM', '/leads': 'Contatos',
   '/canais': 'Canais', '/origens': 'Origens', '/operacao': 'Operação',
   '/analytics-vendas': 'Analytics', '/agente': 'Agente', '/configuracoes': 'Configurações',
   '/biblioteca': 'Biblioteca', '/api-docs': 'Documentação', '/api-modelos': 'Mensagens aprovadas',
