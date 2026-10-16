@@ -727,6 +727,17 @@ export function ensureSchema(client: any): Promise<void> {
             CREATE UNIQUE INDEX IF NOT EXISTS message_jobs_mass_dispatch_unique
             ON message_jobs (mass_dispatch_batch_id, lead_id, message_id)
           `
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS dispatch_source text NOT NULL DEFAULT 'sequence'`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_name text`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_language text`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_variables_map jsonb`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_snapshot jsonb`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS updated_at timestamp`
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS message_jobs_direct_template_unique
+            ON message_jobs (mass_dispatch_batch_id, lead_id)
+            WHERE mass_dispatch_batch_id IS NOT NULL AND message_id IS NULL
+          `
           await client`
             CREATE TABLE IF NOT EXISTS mass_dispatch_phone_cooldowns (
               meta_phone_number_id TEXT PRIMARY KEY,
