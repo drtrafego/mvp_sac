@@ -71,6 +71,10 @@ function cookieHeaderWithAgentSession(request: NextRequest, session: string, com
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  if (pathname === '/RAG-Isabella-Portal-das-Bellas.txt') {
+    return new NextResponse(null, { status: 404 })
+  }
+
   // Permitir arquivos estáticos (css, js, json, svg, png, etc.)
   if (/\.(css|js|json|svg|png|jpg|jpeg|ico|woff|woff2|ttf|eot)$/i.test(pathname)) {
     return NextResponse.next()
