@@ -85,6 +85,7 @@ export async function proxy(request: NextRequest) {
   // stack-refresh-<projeto>). Sem isto, só entrava quem já tinha logado direto no
   // SAC antes; os demais caíam na tela de login dentro do iframe, onde o Google
   // é bloqueado. Mesmo receptor do CRM (mvp_crm/src/middleware.ts).
+  const orgParam = request.nextUrl.searchParams.get('org') || request.nextUrl.searchParams.get('company') || request.nextUrl.searchParams.get('slug')
   const stParam = request.nextUrl.searchParams.get('__st')
   if (stParam) {
     try {
@@ -92,6 +93,16 @@ export async function proxy(request: NextRequest) {
       const cleanUrl = new URL(request.url)
       cleanUrl.searchParams.delete('__st')
       const response = NextResponse.redirect(cleanUrl)
+
+      if (orgParam) {
+        response.cookies.set('admin_viewing_slug', orgParam.toLowerCase().trim(), {
+          path: '/',
+          httpOnly: false,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          maxAge: 60 * 60 * 24 * 7,
+        })
+      }
 
       if (typeof decoded.a === 'string') {
         response.cookies.set('stack-access', decoded.a, {
@@ -207,7 +218,27 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  const response = NextResponse.next()
+  const requestHeaders = new Headers(request.headers)
+  if (orgParam) {
+    requestHeaders.set('x-company-slug', orgParam.toLowerCase().trim())
+  }
+
+  const response = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  })
+
+  if (orgParam) {
+    response.cookies.set('admin_viewing_slug', orgParam.toLowerCase().trim(), {
+      path: '/',
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 7,
+    })
+  }
+
   response.headers.set(
     'Content-Security-Policy',
     "frame-ancestors 'self' https://cliente.casaldotrafego.com https://clientes.casaldotrafego.com"

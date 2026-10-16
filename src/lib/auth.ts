@@ -2,9 +2,9 @@ import 'server-only'
 import { stackServerApp } from '@/stack'
 import { db } from '@/lib/db'
 import { companies, companyMembers } from '@/lib/db/schema'
-import { eq, sql, and, isNull } from 'drizzle-orm'
+import { eq, sql, and, isNull, or } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { verifyAgentSessionCookie } from '@/lib/agent-session'
 import { resolveCompanyRole, roleSatisfies, type CompanyRole } from '@/lib/company-role'
 import { canAcceptMemberInvite, normalizeMemberEmail } from '@/lib/member-invite-policy'
@@ -85,6 +85,34 @@ export async function getCurrentCompany() {
     }
 
     const cookieStore = await cookies()
+    let targetSlug: string | undefined
+    try {
+      const headerStore = await headers()
+      targetSlug = headerStore.get('x-company-slug') ?? undefined
+    } catch {
+      // fora de request context
+    }
+    if (!targetSlug) {
+      targetSlug = cookieStore.get('admin_viewing_slug')?.value
+    }
+
+    if (targetSlug) {
+      const cleanSlug = targetSlug.toLowerCase().trim()
+      const [companyBySlug] = await db
+        .select()
+        .from(companies)
+        .where(
+          or(
+            sql`lower(trim(${companies.slug})) = ${cleanSlug}`,
+            sql`replace(lower(trim(${companies.slug})), 'nn', 'n') = replace(${cleanSlug}, 'nn', 'n')`,
+            sql`lower(trim(${companies.name})) = ${cleanSlug}`
+          )
+        )
+        .limit(1)
+
+      if (companyBySlug) return companyBySlug
+    }
+
     const viewingId = cookieStore.get('admin_viewing')?.value
     if (viewingId) {
       const [company] = await db

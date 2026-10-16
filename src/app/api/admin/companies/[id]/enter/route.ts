@@ -31,6 +31,15 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     path: '/',
     maxAge: 60 * 60 * 24 * 7, // 7 dias
   })
+  if (company.slug) {
+    cookieStore.set('admin_viewing_slug', company.slug.toLowerCase().trim(), {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7,
+    })
+  }
 
   return NextResponse.json({ ok: true })
 }
