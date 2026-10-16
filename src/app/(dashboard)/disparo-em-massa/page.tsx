@@ -37,6 +37,93 @@ interface DispatchPreview {
   }>
 }
 
+function detectCsvDelimiter(content: string): ',' | ';' {
+  let commas = 0
+  let semicolons = 0
+  let quoted = false
+
+  for (let index = 0; index < content.length; index++) {
+    const character = content[index]
+    if (character === '"') {
+      if (quoted && content[index + 1] === '"') {
+        index++
+      } else {
+        quoted = !quoted
+      }
+      continue
+    }
+    if (!quoted && (character === '\n' || character === '\r')) break
+    if (!quoted && character === ',') commas++
+    if (!quoted && character === ';') semicolons++
+  }
+
+  return semicolons > commas ? ';' : ','
+}
+
+function parseMassDispatchCsv(content: string) {
+  const delimiter = detectCsvDelimiter(content)
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ''
+  let quoted = false
+
+  for (let index = 0; index < content.length; index++) {
+    const character = content[index]
+
+    if (character === '"') {
+      if (quoted && content[index + 1] === '"') {
+        field += '"'
+        index++
+      } else {
+        quoted = !quoted
+      }
+      continue
+    }
+
+    if (!quoted && character === delimiter) {
+      row.push(field.trim())
+      field = ''
+      continue
+    }
+
+    if (!quoted && (character === '\n' || character === '\r')) {
+      if (character === '\r' && content[index + 1] === '\n') index++
+      row.push(field.trim())
+      if (row.some(value => value.length > 0)) rows.push(row)
+      row = []
+      field = ''
+      continue
+    }
+
+    field += character
+  }
+
+  row.push(field.trim())
+  if (row.some(value => value.length > 0)) rows.push(row)
+
+  const [header, ...dataRows] = rows
+  if (!header) throw new Error('O CSV precisa conter uma linha de cabeçalho.')
+
+  const normalizedHeader = header.map(value => value.replace(/^\uFEFF/, '').trim().toLocaleLowerCase('pt-BR'))
+  const phoneIndex = normalizedHeader.findIndex(value => value === 'telefone' || value === 'phone')
+  const nameIndex = normalizedHeader.findIndex(value => value === 'nome' || value === 'name')
+  const emailIndex = normalizedHeader.findIndex(value => value === 'email')
+
+  if (phoneIndex === -1) {
+    throw new Error('Não foi encontrada a coluna de telefone. Use o cabeçalho "telefone" ou "phone".')
+  }
+
+  if (dataRows.length > 5000) {
+    throw new Error('O CSV pode conter no máximo 5000 contatos por importação.')
+  }
+
+  return dataRows.map(row => ({
+    phone: (row[phoneIndex] || '').trim(),
+    ...(nameIndex >= 0 && row[nameIndex]?.trim() ? { name: row[nameIndex].trim() } : {}),
+    ...(emailIndex >= 0 && row[emailIndex]?.trim() ? { email: row[emailIndex].trim() } : {}),
+  }))
+}
+
 export default function DisparoEmMassaPage() {
   const [file, setFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -81,16 +168,24 @@ export default function DisparoEmMassaPage() {
     setSuccessMessage(null)
 
     try {
-      const formData = new FormData()
-      formData.append('file', file)
+      const items = parseMassDispatchCsv(await file.text())
+      if (items.length === 0) {
+        throw new Error('O CSV não possui contatos para importar.')
+      }
 
       const res = await fetch('/api/leads/import', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items,
+          createMassDispatch: true,
+          defaultEventType: 'atendimento',
+          fileName: file.name,
+        }),
       })
 
       const data = await res.json()
-      if (!res.ok || !data.ok) {
+      if (!res.ok || !data.success) {
         throw new Error(data.error || 'Falha ao importar o arquivo CSV.')
       }
 
@@ -132,11 +227,11 @@ export default function DisparoEmMassaPage() {
       const res = await fetch(`/api/leads/import/${activeBatchId}/dispatch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: true }),
+        body: JSON.stringify({ confirm: true, previewMessages: preview?.messages }),
       })
 
       const data = await res.json()
-      if (!res.ok || !data.ok) {
+      if (!res.ok || !data.success) {
         throw new Error(data.error || data.message || 'Falha ao confirmar disparo em massa.')
       }
 

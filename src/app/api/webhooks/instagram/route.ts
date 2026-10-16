@@ -441,6 +441,20 @@ export async function POST(req: NextRequest) {
                   }
                 }
 
+                // Antes do insert, checar se canal instagram esta pausado nesta empresa
+                const [channelPauseCheck] = await db
+                  .select({ id: recoveryLeads.id })
+                  .from(recoveryLeads)
+                  .where(
+                    and(
+                      eq(recoveryLeads.companyId, companyId),
+                      eq(recoveryLeads.botPaused, true),
+                      eq(recoveryLeads.botPausedChannel, 'instagram')
+                    )
+                  )
+                  .limit(1)
+                const isChannelPaused = !!channelPauseCheck
+
                 // Upsert atômico: SELECT-então-INSERT deixava uma janela de
                 // corrida entre duas requisições concorrentes com o mesmo
                 // telefone novo, e cada uma criava um lead próprio (provado
@@ -459,6 +473,14 @@ export async function POST(req: NextRequest) {
                     name: leadName,
                     status: 'in_conversation',
                     trackingSource,
+                    ...(isChannelPaused
+                      ? {
+                          botPaused: true,
+                          botPausedAt: new Date(),
+                          botPausedBy: 'auto (canal pausado)',
+                          botPausedChannel: 'instagram',
+                        }
+                      : {}),
                     ...(metaAdId ? { metaAdId: String(metaAdId) } : {}),
                     ...(adName ? { adName: String(adName) } : {}),
                     ...(metaCampaignId ? { metaCampaignId: String(metaCampaignId) } : {}),
