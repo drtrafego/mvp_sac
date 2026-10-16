@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { leadTags, massDispatchBatches, massDispatchRecipients, recoveryLeads } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { leadTags, massDispatchBatches, massDispatchRecipients, messageJobs, recoveryLeads } from '@/lib/db/schema'
+import { desc, eq, and, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { isLeadChannel, MAX_TAG_LENGTH, normalizeTag, PESSOA_TAG, type LeadChannel } from '@/lib/lead-tags'
 import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
@@ -35,6 +35,53 @@ interface ImportItem {
     createdOn?: string
     originalSource?: string
   }
+}
+
+export async function GET(): Promise<NextResponse> {
+  const company = await requireCompany()
+  const batches = await db
+    .select({
+      id: massDispatchBatches.id,
+      fileName: massDispatchBatches.fileName,
+      recipientCount: massDispatchBatches.recipientCount,
+      status: massDispatchBatches.status,
+      createdAt: massDispatchBatches.createdAt,
+      confirmedAt: massDispatchBatches.confirmedAt,
+    })
+    .from(massDispatchBatches)
+    .where(eq(massDispatchBatches.companyId, company.id))
+    .orderBy(desc(massDispatchBatches.createdAt))
+    .limit(50)
+
+  const statsRows = await db
+    .select({
+      batchId: messageJobs.massDispatchBatchId,
+      status: messageJobs.status,
+      count: sql<number>`cast(count(*) as int)`,
+    })
+    .from(messageJobs)
+    .innerJoin(massDispatchBatches, eq(messageJobs.massDispatchBatchId, massDispatchBatches.id))
+    .where(eq(massDispatchBatches.companyId, company.id))
+    .groupBy(messageJobs.massDispatchBatchId, messageJobs.status)
+
+  const statsByBatch = new Map<number, { pending: number; sent: number; failed: number; total: number }>()
+  for (const row of statsRows) {
+    if (!row.batchId) continue
+    const stats = statsByBatch.get(row.batchId) ?? { pending: 0, sent: 0, failed: 0, total: 0 }
+    const count = Number(row.count) || 0
+    stats.total += count
+    if (row.status === 'sent') stats.sent += count
+    else if (row.status === 'failed') stats.failed += count
+    else if (row.status === 'pending' || row.status === 'processing') stats.pending += count
+    statsByBatch.set(row.batchId, stats)
+  }
+
+  return NextResponse.json({
+    batches: batches.map(batch => ({
+      ...batch,
+      stats: statsByBatch.get(batch.id) ?? { pending: 0, sent: 0, failed: 0, total: 0 },
+    })),
+  })
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
