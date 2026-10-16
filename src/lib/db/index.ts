@@ -323,7 +323,7 @@ export function ensureSchema(client: any): Promise<void> {
               AND settings.ai_system_prompt IS NULL
           `,
 
-          // Garante os proprietários como administradores ativos de todas as empresas
+          // Garante os proprietários, robôs e administradores como ativos de todas as empresas
           client`
             INSERT INTO company_members (company_id, email, name, role, status)
             SELECT c.id, 'amandafelixgolden@gmail.com', 'Amanda Felix', 'admin', 'ativo'
@@ -340,6 +340,42 @@ export function ensureSchema(client: any): Promise<void> {
             WHERE NOT EXISTS (
               SELECT 1 FROM company_members cm 
               WHERE cm.company_id = c.id AND cm.email = 'dr.trafego@gmail.com'
+            )
+          `,
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'agente.ia@casaldotrafego.com', 'Agente IA', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'agente.ia@casaldotrafego.com'
+            )
+          `,
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'luana@casaldotrafego.com', 'Luana', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'luana@casaldotrafego.com'
+            )
+          `,
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'renato@casaldotrafego.com', 'Renato', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'renato@casaldotrafego.com'
+            )
+          `,
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'bia@casaldotrafego.com', 'Bia', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'bia@casaldotrafego.com'
             )
           `,
 

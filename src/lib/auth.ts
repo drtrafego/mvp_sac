@@ -21,7 +21,14 @@ export function unauthorizedResponse() {
   return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
 }
 
-const ADMIN_EMAILS_DEFAULT = ['dr.trafego@gmail.com', 'amandafelixgolden@gmail.com', 'agente.ia@casaldotrafego.com']
+const ADMIN_EMAILS_DEFAULT = [
+  'dr.trafego@gmail.com',
+  'amandafelixgolden@gmail.com',
+  'agente.ia@casaldotrafego.com',
+  'luana@casaldotrafego.com',
+  'renato@casaldotrafego.com',
+  'bia@casaldotrafego.com',
+]
 
 export function checkIsAdmin(email: string | null | undefined): boolean {
   if (!email) return false
@@ -69,6 +76,14 @@ export async function getCurrentCompany() {
   const isAdmin = user.isAdmin || (user.primaryEmailVerified && checkIsAdmin(user.primaryEmail))
 
   if (isAdmin) {
+    if (user.primaryEmail && user.id) {
+      const cleanUserEmail = user.primaryEmail.toLowerCase().trim()
+      await db
+        .update(companyMembers)
+        .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
+        .where(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`)
+    }
+
     const cookieStore = await cookies()
     const viewingId = cookieStore.get('admin_viewing')?.value
     if (viewingId) {
@@ -177,20 +192,20 @@ export async function getCurrentCompany() {
     if (memberCompany) return memberCompany
   }
 
-  // 2.1. Reconhecer diretamente por email em companyMembers (membros sincronizados pelo portal ou cadastrados previamente)
+  // 2.1. Reconhecer diretamente por email em companyMembers (membros ativos sincronizados pelo portal ou cadastrados previamente)
   if (user.primaryEmail) {
     const cleanUserEmail = user.primaryEmail.toLowerCase().trim()
     const [memberByEmail] = await db
       .select()
       .from(companyMembers)
-      .where(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`)
+      .where(and(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`, eq(companyMembers.status, 'ativo')))
 
     if (memberByEmail) {
-      if (memberByEmail.stackAuthUserId !== user.id || memberByEmail.status !== 'ativo') {
+      if (memberByEmail.stackAuthUserId !== user.id) {
         await db
           .update(companyMembers)
-          .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
-          .where(eq(companyMembers.id, memberByEmail.id))
+          .set({ stackAuthUserId: user.id, updatedAt: new Date() })
+          .where(and(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`, eq(companyMembers.status, 'ativo')))
       }
       const [memberCompany] = await db
         .select()
