@@ -893,6 +893,29 @@ export function ChatWindow({
             </div>
           </div>
 
+          {/* Botão pausar/retomar compacto — visível APENAS no mobile (md: esconde porque o desktop usa a barra completa abaixo) */}
+          <button
+            type="button"
+            aria-label={botPaused ? 'Retomar Bot' : 'Pausar Bot'}
+            onClick={handleToggleBotPause}
+            disabled={pauseLoading}
+            title={botPaused ? 'Retomar robô' : 'Pausar robô'}
+            className={cn(
+              'ml-auto md:hidden inline-flex items-center justify-center h-9 w-9 rounded-lg border transition-all cursor-pointer shrink-0',
+              botPaused
+                ? 'border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+            )}
+          >
+            {pauseLoading ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : botPaused ? (
+              <Play size={16} className="fill-current" />
+            ) : (
+              <Pause size={16} className="fill-current" />
+            )}
+          </button>
+
           {/* Ações do Topo: acesso explícito ao contexto, bot, pendências e atualização */}
           <div className="studio-chat-actions ml-auto hidden md:flex items-center gap-1.5 shrink-0">
             <button type="button" onClick={() => { setShowDetails(true); setSidePanelTab('pending'); void loadPending() }} title="Pendências de atendimento" aria-label="Abrir pendências de atendimento" className="h-8 w-8 rounded-lg border border-line-subtle flex items-center justify-center text-fg-muted hover:text-fg"><Clock size={14} /></button>
@@ -1184,7 +1207,7 @@ export function ChatWindow({
               value={text}
               onChange={e => setText(e.target.value)}
               onKeyDown={handleComposerKeyDown}
-              placeholder={`Responder ${displayName} via ${channelLabel}... (Enter para enviar, Shift+Enter para quebra de linha)`}
+              placeholder="Escreva aqui..."
               rows={1}
               className="focus-ring flex-1 resize-none rounded-xl border border-line-subtle bg-surface-inset px-4 py-2.5 text-body text-fg placeholder:text-fg-subtle outline-none max-h-32 overflow-y-auto scroll-thin leading-relaxed"
               style={{ minHeight: 44 }}
