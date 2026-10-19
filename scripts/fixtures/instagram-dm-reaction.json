@@ -1,0 +1,8 @@
+{
+  "field": "message_reactions",
+  "value": {
+    "sender": { "id": "17890000001", "username": "cliente" },
+    "message_id": "mid.dm.1",
+    "reaction": { "emoji": "❤️" }
+  }
+}

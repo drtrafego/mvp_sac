@@ -16,7 +16,7 @@ import { fetchInstagramUserProfile } from "@/lib/instagram"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
-import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramStoryReply } from "@/lib/instagram-inbound-tags"
+import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction, isInstagramStoryReply } from "@/lib/instagram-inbound-tags"
 
 
 function instagramDebugPayload(opts: {
@@ -156,6 +156,10 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
   if (rawBody.object === "instagram" && Array.isArray(rawBody.entry)) {
     for (const entry of rawBody.entry as Record<string, unknown>[]) {
       const pageId = (entry.id as string) || ''
+      if (!isInstagramEntryForCompany(pageId, companySettingsForSecret ?? {})) {
+        console.warn(`[Instagram Webhook] entry recusado: id não pertence à empresa do slug=${slug}, entry.id=${pageId || '(ausente)'}`)
+        continue
+      }
       const messagingList = (entry.messaging as Record<string, unknown>[]) ?? []
       for (const item of messagingList) {
         const sender = item.sender as { id?: string } | undefined
@@ -552,7 +556,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         if (change.field === 'message_reactions' && change.value) {
           const val = change.value as Record<string, unknown>
           const sender = val.sender as { id?: string; username?: string } | undefined
-          if (sender?.id && sender.id !== pageId) {
+          if (sender?.id && sender.id !== pageId && isInstagramStoryReaction(val)) {
             await captureInstagramInboundInteraction({
               companyId: company.id,
               instagramUserId: sender.id,

@@ -17,7 +17,7 @@ import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { AmbiguousCredentialError } from "@/lib/instagram-webhook-errors"
-import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramStoryReply } from "@/lib/instagram-inbound-tags"
+import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramStoryReaction, isInstagramStoryReply } from "@/lib/instagram-inbound-tags"
 
 
 // Resolve a empresa dona de um pageId (Instagram Account ID ou Page ID) e,
@@ -645,7 +645,7 @@ export async function POST(req: NextRequest) {
             if (change.field === 'message_reactions' && change.value) {
               const val = change.value as Record<string, unknown>
               const sender = val.sender as { id?: string; username?: string } | undefined
-              if (sender?.id && sender.id !== pageId) {
+              if (sender?.id && sender.id !== pageId && isInstagramStoryReaction(val)) {
                 await captureInstagramInboundInteraction({
                   companyId,
                   instagramUserId: sender.id,

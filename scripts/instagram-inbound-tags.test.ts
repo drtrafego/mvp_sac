@@ -1,6 +1,7 @@
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
@@ -62,7 +63,14 @@ test('cada interação Instagram cria ou atualiza um único lead e aplica sua ta
   mock.module('@/lib/db', { namedExports: { db: testDb } })
 
   const [company] = await testDb.insert(schema.companies).values({ name: 'Teste Instagram', slug: 'teste-instagram-tags' }).returning()
-  const { captureInstagramInboundInteraction } = await import('../src/lib/instagram-inbound-tags')
+  const { captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction } = await import('../src/lib/instagram-inbound-tags')
+  const storyReaction = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'scripts/fixtures/instagram-story-reaction.json'), 'utf8')) as { value: Record<string, unknown> }
+  const dmReaction = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'scripts/fixtures/instagram-dm-reaction.json'), 'utf8')) as { value: Record<string, unknown> }
+
+  assert.equal(isInstagramStoryReaction(storyReaction.value), true, 'a reação vinculada à Story recebe a tag de Story')
+  assert.equal(isInstagramStoryReaction(dmReaction.value), false, 'a reação de DM não pode receber uma tag de Story')
+  assert.equal(isInstagramEntryForCompany('CONTA_A', { instagramAccountId: 'CONTA_A', instagramPageId: 'PAGINA_A' }), true)
+  assert.equal(isInstagramEntryForCompany('CONTA_B', { instagramAccountId: 'CONTA_A', instagramPageId: 'PAGINA_A' }), false, 'payload da conta B é recusado na rota da empresa A')
   const interactions = ['comment', 'direct', 'story_reply', 'story_reaction'] as const
 
   for (const interaction of interactions) {

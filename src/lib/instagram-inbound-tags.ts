@@ -22,6 +22,34 @@ export function isInstagramStoryReply(message: Record<string, unknown> | undefin
   return false
 }
 
+export function isInstagramStoryReaction(value: Record<string, unknown> | undefined): boolean {
+  if (!value) return false
+  if (value.story || value.story_id || value.storyId) return true
+
+  const message = value.message
+  if (message && typeof message === 'object' && !Array.isArray(message)) {
+    return isInstagramStoryReply(message as Record<string, unknown>)
+  }
+
+  const reaction = value.reaction
+  if (reaction && typeof reaction === 'object' && !Array.isArray(reaction)) {
+    const reactionData = reaction as Record<string, unknown>
+    return Boolean(reactionData.story || reactionData.story_id || reactionData.storyId)
+  }
+  return false
+}
+
+export function isInstagramEntryForCompany(
+  entryId: unknown,
+  settings: { instagramAccountId?: string | null; instagramPageId?: string | null },
+): boolean {
+  if (typeof entryId !== 'string' || !entryId.trim()) return false
+  const acceptedIds = [settings.instagramAccountId, settings.instagramPageId]
+    .filter((id): id is string => typeof id === 'string' && Boolean(id.trim()))
+    .map(id => id.trim())
+  return acceptedIds.includes(entryId.trim())
+}
+
 export async function applyInstagramInboundTag(
   leadId: number | null | undefined,
   interaction: InstagramInboundInteraction,
