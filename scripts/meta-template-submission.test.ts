@@ -19,6 +19,8 @@ test('validação estrutural exige BODY único e limita componentes e botões', 
   assert.deepEqual(validateMetaTemplateComponents([{ type: 'BODY', text: 'Olá {{1}}' }]), [{ type: 'BODY', text: 'Olá {{1}}' }])
   assert.throws(() => validateMetaTemplateComponents([{ type: 'HEADER', text: 'Cabeçalho' }]), /exatamente um componente BODY/)
   assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'ok' }, { type: 'BUTTONS', buttons: Array.from({ length: 4 }, () => ({ type: 'QUICK_REPLY', text: 'Sim' })) }]), /um a três botões/)
+  assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'ok', unexpected: true }]), /propriedade não suportada/)
+  assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'ok' }, { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Sim', unexpected: true }] }]), /propriedade não suportada/)
 })
 
 test('sincronização mantém pendente e motivo de rejeição', async () => {
