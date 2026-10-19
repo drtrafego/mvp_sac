@@ -8,10 +8,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+function requireOnlyKeys(value: Record<string, unknown>, allowed: string[], label: string) {
+  if (Object.keys(value).some(key => !allowed.includes(key))) {
+    throw new SacInputError(`${label} contém propriedade não suportada.`)
+  }
+}
+
 export function validateMetaTemplateComponents(value: unknown): TemplateComponent[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > 4) throw new SacInputError('Inclua de um a quatro componentes Meta.')
   const components = value.map((component) => {
     if (!isRecord(component) || typeof component.type !== 'string' || !TYPES.has(component.type)) throw new SacInputError('Componente Meta inválido.')
+    const allowedKeys = component.type === 'BUTTONS'
+      ? ['type', 'buttons']
+      : component.type === 'HEADER'
+        ? ['type', 'text', 'format', 'example']
+        : component.type === 'BODY'
+          ? ['type', 'text', 'example']
+          : ['type', 'text']
+    requireOnlyKeys(component, allowedKeys, 'Componente Meta')
     if (component.text !== undefined && typeof component.text !== 'string') throw new SacInputError('Texto do componente inválido.')
     if (component.type === 'BODY' && (!component.text || component.text.trim().length > 1024)) throw new SacInputError('O componente BODY exige texto de até 1024 caracteres.')
     if ((component.type === 'HEADER' || component.type === 'FOOTER') && component.text !== undefined && component.text.length > 60) throw new SacInputError('HEADER e FOOTER aceitam no máximo 60 caracteres.')
@@ -19,6 +33,7 @@ export function validateMetaTemplateComponents(value: unknown): TemplateComponen
       if (!Array.isArray(component.buttons) || component.buttons.length === 0 || component.buttons.length > 3) throw new SacInputError('BUTTONS exige de um a três botões.')
       for (const button of component.buttons) {
         if (!isRecord(button) || typeof button.type !== 'string' || typeof button.text !== 'string' || !button.text.trim() || button.text.length > 20) throw new SacInputError('Botão Meta inválido.')
+        requireOnlyKeys(button, ['type', 'text', 'url', 'phone_number', 'example'], 'Botão Meta')
       }
     }
     return component as TemplateComponent
