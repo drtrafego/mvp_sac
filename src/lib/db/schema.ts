@@ -935,6 +935,29 @@ export const sacApprovedReplies = pgTable('sac_approved_replies', {
     .where(sql`${table.shortcut} is not null`),
 ])
 
+export const metaMessageTemplates = pgTable('meta_message_templates', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  name: text('name').notNull(),
+  language: text('language').notNull().default('pt_BR'),
+  category: text('category').notNull(),
+  components: jsonb('components').$type<unknown[]>().notNull(),
+  status: text('status').notNull().default('DRAFT'),
+  metaTemplateId: text('meta_template_id'),
+  rejectionReason: text('rejection_reason'),
+  lastMetaResponse: jsonb('last_meta_response'),
+  requestCount: integer('request_count').notNull().default(0),
+  createdBy: text('created_by'),
+  submittedBy: text('submitted_by'),
+  submittedAt: timestamp('submitted_at'),
+  syncedAt: timestamp('synced_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, table => [
+  uniqueIndex('meta_message_templates_company_name_language_unique').on(table.companyId, table.name, table.language),
+  index('meta_message_templates_company_status_updated_idx').on(table.companyId, table.status, table.updatedAt),
+])
+
 // ─── SAC Lote 1: Pendências internas das 3 regras prontas ───────────────────
 export const sacPendingItems = pgTable('sac_pending_items', {
   id: serial('id').primaryKey(),
