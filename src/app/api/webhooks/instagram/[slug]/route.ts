@@ -139,20 +139,6 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "invalid_signature" }, { status: 401 })
   }
 
-  try {
-    await db.insert(webhookReceived).values({
-      companyId: company.id,
-      slug,
-      source: "instagram",
-      event: (rawBody.object as string) || "instagram_direct",
-      processed: true,
-      rawBody,
-      headers: headersObj,
-    })
-  } catch (err) {
-    console.error("[Instagram Webhook] Erro ao registrar webhook_received:", err)
-  }
-
   if (rawBody.object === "instagram" && Array.isArray(rawBody.entry)) {
     for (const entry of rawBody.entry as Record<string, unknown>[]) {
       const pageId = (entry.id as string) || ''

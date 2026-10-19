@@ -1,15 +1,18 @@
 import { test, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { and, eq } from 'drizzle-orm'
 import * as schema from '../src/lib/db/schema'
+import { NextRequest as RealNextRequest, NextResponse as RealNextResponse } from 'next/server'
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const CONTAINER_NAME = 'instagram_inbound_tags_test'
+const APP_SECRET = 'instagram-inbound-tags-test-secret'
 
 function dockerAvailable(): boolean {
   return spawnSync('docker', ['info'], { stdio: 'ignore' }).status === 0
@@ -63,6 +66,29 @@ test('cada interação Instagram cria ou atualiza um único lead e aplica sua ta
   mock.module('@/lib/db', { namedExports: { db: testDb } })
 
   const [company] = await testDb.insert(schema.companies).values({ name: 'Teste Instagram', slug: 'teste-instagram-tags' }).returning()
+  const [otherCompany] = await testDb.insert(schema.companies).values({ name: 'Outra Empresa', slug: 'outra-empresa' }).returning()
+  await testDb.insert(schema.settings).values({
+    companyId: company.id,
+    instagramAccountId: 'CONTA_A',
+    instagramPageId: 'PAGINA_A',
+    instagramAppSecret: APP_SECRET,
+  })
+  await testDb.insert(schema.settings).values({ companyId: otherCompany.id, instagramAccountId: 'CONTA_B', instagramPageId: 'PAGINA_B' })
+
+  mock.module('@/lib/instagram', {
+    namedExports: {
+      fetchInstagramUserProfile: async () => ({ ok: false, error: 'não usado' }),
+      sendInstagramPrivateReply: async () => ({ ok: true, messageId: 'noop' }),
+      sendInstagramMessage: async () => ({ ok: true, messageId: 'noop' }),
+      checkInstagramUserFollowsBusiness: async () => ({ ok: true, follows: false }),
+      replyInstagramCommentPublic: async () => ({ ok: true }),
+      hideInstagramComment: async () => ({ ok: true }),
+    },
+  })
+  mock.module('@/lib/ai-reply', { namedExports: { generateAndSendAiReply: async () => {} } })
+  mock.module('next/server', {
+    namedExports: { NextRequest: RealNextRequest, NextResponse: RealNextResponse, after: () => {} },
+  })
   const { captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction } = await import('../src/lib/instagram-inbound-tags')
   const storyReaction = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'scripts/fixtures/instagram-story-reaction.json'), 'utf8')) as { value: Record<string, unknown> }
   const dmReaction = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'scripts/fixtures/instagram-dm-reaction.json'), 'utf8')) as { value: Record<string, unknown> }
@@ -71,6 +97,21 @@ test('cada interação Instagram cria ou atualiza um único lead e aplica sua ta
   assert.equal(isInstagramStoryReaction(dmReaction.value), false, 'a reação de DM não pode receber uma tag de Story')
   assert.equal(isInstagramEntryForCompany('CONTA_A', { instagramAccountId: 'CONTA_A', instagramPageId: 'PAGINA_A' }), true)
   assert.equal(isInstagramEntryForCompany('CONTA_B', { instagramAccountId: 'CONTA_A', instagramPageId: 'PAGINA_A' }), false, 'payload da conta B é recusado na rota da empresa A')
+
+  const { POST: postSlugWebhook } = await import('../src/app/api/webhooks/instagram/[slug]/route')
+  const rejectedPayload = JSON.stringify({
+    object: 'instagram',
+    entry: [{ id: 'CONTA_B', messaging: [{ sender: { id: 'usuario-b' }, message: { mid: 'mid-b', text: 'dado privado B' } }] }],
+  })
+  const rejectedRequest = new RealNextRequest('https://sac.example.com/api/webhooks/instagram/teste-instagram-tags', {
+    method: 'POST',
+    headers: { 'x-hub-signature-256': `sha256=${createHmac('sha256', APP_SECRET).update(rejectedPayload).digest('hex')}` },
+    body: rejectedPayload,
+  })
+  const rejectedResponse = await postSlugWebhook(rejectedRequest, { params: Promise.resolve({ slug: company.slug }) })
+  assert.equal(rejectedResponse.status, 200)
+  const rejectedLogs = await testDb.select().from(schema.webhookReceived)
+  assert.equal(rejectedLogs.length, 0, 'payload da conta B não pode ser persistido, nem como rawBody, no histórico da empresa A')
   const interactions = ['comment', 'direct', 'story_reply', 'story_reaction'] as const
 
   for (const interaction of interactions) {
