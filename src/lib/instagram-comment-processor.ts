@@ -293,7 +293,7 @@ export async function processInstagramComment(event: CommentEventData) {
     let [lead] = await db
       .select()
       .from(recoveryLeads)
-      .where(eq(recoveryLeads.phone, igPhone))
+      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, igPhone)))
       .limit(1)
 
     if (!lead) {

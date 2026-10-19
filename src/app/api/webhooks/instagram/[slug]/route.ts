@@ -16,6 +16,7 @@ import { fetchInstagramUserProfile } from "@/lib/instagram"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
+import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramStoryReply } from "@/lib/instagram-inbound-tags"
 
 
 function instagramDebugPayload(opts: {
@@ -154,6 +155,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
   if (rawBody.object === "instagram" && Array.isArray(rawBody.entry)) {
     for (const entry of rawBody.entry as Record<string, unknown>[]) {
+      const pageId = (entry.id as string) || ''
       const messagingList = (entry.messaging as Record<string, unknown>[]) ?? []
       for (const item of messagingList) {
         const sender = item.sender as { id?: string } | undefined
@@ -163,6 +165,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           is_echo?: boolean
           attachments?: Array<{ type?: string; payload?: Record<string, unknown> }>
           referral?: Record<string, unknown>
+          reply_to?: Record<string, unknown>
+          is_story_reply?: boolean
         } | undefined
         const recipient = item.recipient as { id?: string } | undefined
         const ownAccountIds = [companySettingsForSecret?.instagramAccountId, companySettingsForSecret?.instagramPageId].filter(Boolean)
@@ -298,6 +302,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         }
 
         if (hasOnlyIgnoredShare) {
+          if (sender?.id && isInstagramStoryReply(message)) {
+            await captureInstagramInboundInteraction({
+              companyId: company.id,
+              instagramUserId: sender.id,
+              interaction: 'story_reply',
+            })
+          }
           const types = attachmentTypes.join(', ')
           await markInstagramItemLog({ processed: false, skipReason: `anexo/partilha ignorado para IA (types=${types})`, decision: 'skip_attachment_share' })
           console.log(`[Instagram Webhook] anexo/partilha ignorado para IA (types=${types}), slug=${slug}, mid=${message?.mid}`)
@@ -437,6 +448,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               }).onConflictDoNothing()
             }
 
+            await applyInstagramInboundTag(lead?.id, isInstagramStoryReply(message) ? 'story_reply' : 'direct')
+
             try {
               await db.insert(whatsappMessages).values({
                 companyId: company.id,
@@ -519,6 +532,12 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           const mediaId = mediaObj?.id || (val.media_id as string) || ''
 
           if (commentId && commenterId && commentText) {
+            await captureInstagramInboundInteraction({
+              companyId: company.id,
+              instagramUserId: commenterId,
+              username: commenterUsername,
+              interaction: 'comment',
+            })
             await processInstagramComment({
               companyId: company.id,
               commentId,
@@ -527,6 +546,19 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               mediaId,
               commentText,
             }).catch(err => console.error(`[Comment-to-DM Webhook ${slug} Error]:`, err))
+          }
+        }
+
+        if (change.field === 'message_reactions' && change.value) {
+          const val = change.value as Record<string, unknown>
+          const sender = val.sender as { id?: string; username?: string } | undefined
+          if (sender?.id && sender.id !== pageId) {
+            await captureInstagramInboundInteraction({
+              companyId: company.id,
+              instagramUserId: sender.id,
+              username: sender.username,
+              interaction: 'story_reaction',
+            })
           }
         }
       }

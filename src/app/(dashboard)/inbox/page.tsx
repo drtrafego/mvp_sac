@@ -1,22 +1,10 @@
 import { MessageSquare } from 'lucide-react'
-import { redirect } from 'next/navigation'
-
 export default async function InboxPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>
 }) {
-  // Compatibilidade com favoritos/deep links criados antes da área dedicada.
-  const params = await searchParams
-  if (params.channel === 'instagram') {
-    const nextParams = new URLSearchParams()
-    for (const [key, value] of Object.entries(params)) {
-      if (key === 'channel' || value === undefined) continue
-      for (const item of Array.isArray(value) ? value : [value]) nextParams.append(key, item)
-    }
-    const query = nextParams.toString()
-    redirect(query ? `/instagram?${query}` : '/instagram')
-  }
+  await searchParams
 
   return (
     <div className="studio-inbox-empty hidden md:flex flex-col items-center justify-center h-full gap-3 bg-surface-base text-center">

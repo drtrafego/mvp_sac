@@ -143,7 +143,7 @@ export function ConversationList({
       ? 'mineracao'
       : initialChannelParam.startsWith('anuncio')
       ? 'anuncio'
-      : initialChannelParam === 'whatsapp' || initialChannelParam === 'email'
+      : initialChannelParam === 'whatsapp' || initialChannelParam === 'email' || initialChannelParam === 'instagram'
       ? initialChannelParam
       : 'all'
   )
@@ -534,6 +534,19 @@ export function ConversationList({
           >
             <Mail size={12} className="text-indigo-400 shrink-0" />
             E-mail ({counts.email})
+          </button>
+          <button
+            type="button"
+            onClick={() => selectChannelFilter('instagram')}
+            className={cn(
+              'inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold tracking-tight shrink-0 transition-colors cursor-pointer',
+              channelFilter === 'instagram'
+                ? 'bg-pink-600 text-white shadow-xs'
+                : 'bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-raised'
+            )}
+          >
+            <InstagramLogoIcon size={12} className="text-pink-400 shrink-0" />
+            Instagram ({counts.instagram})
           </button>
           <button
             type="button"
