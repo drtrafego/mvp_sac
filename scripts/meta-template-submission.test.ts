@@ -21,6 +21,10 @@ test('validação estrutural exige BODY único e limita componentes e botões', 
   assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'ok' }, { type: 'BUTTONS', buttons: Array.from({ length: 4 }, () => ({ type: 'QUICK_REPLY', text: 'Sim' })) }]), /um a três botões/)
   assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'ok', unexpected: true }]), /propriedade não suportada/)
   assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'ok' }, { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Sim', unexpected: true }] }]), /propriedade não suportada/)
+  assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'Olá {{2}}' }]), /variáveis sequenciais/)
+  assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'ok' }, { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'Abrir', url: 'javascript:alert(1)' }] }]), /URL HTTP\(S\) válida/)
+  assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'ok' }, { type: 'BUTTONS', buttons: [{ type: 'PHONE_NUMBER', text: 'Ligar', phone_number: '11999999999' }] }]), /E\.164/)
+  assert.throws(() => validateMetaTemplateComponents([{ type: 'BODY', text: 'ok' }, { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Sim', url: 'https://exemplo.com' }] }]), /Resposta rápida/)
 })
 
 test('sincronização mantém pendente e motivo de rejeição', async () => {

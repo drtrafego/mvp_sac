@@ -44,6 +44,9 @@ test('formulário exige exemplos suficientes para as variáveis e mídia de cabe
     buttons: [],
   }), /Informe 2 exemplo/)
   assert.throws(() => formToMetaTemplateComponents({
+    body: 'Olá {{2}}', bodyExamples: 'Gastão', headerType: 'none', headerText: '', headerExample: '', footer: '', buttons: [],
+  }), /variáveis sequenciais/)
+  assert.throws(() => formToMetaTemplateComponents({
     body: 'Olá',
     bodyExamples: '',
     headerType: 'video',
@@ -52,6 +55,14 @@ test('formulário exige exemplos suficientes para as variáveis e mídia de cabe
     footer: '',
     buttons: [],
   }), /identificador de mídia/)
+  assert.throws(() => formToMetaTemplateComponents({
+    body: 'Olá', bodyExamples: '', headerType: 'none', headerText: '', headerExample: '', footer: '',
+    buttons: [{ type: 'URL', text: 'Abrir', value: 'ftp://exemplo.com' }],
+  }), /URL HTTP\(S\) válida/)
+  assert.throws(() => formToMetaTemplateComponents({
+    body: 'Olá', bodyExamples: '', headerType: 'none', headerText: '', headerExample: '', footer: '',
+    buttons: [{ type: 'PHONE_NUMBER', text: 'Ligar', value: '(11) 99999-9999' }],
+  }), /E\.164/)
 })
 
 test('tela expõe controles visuais e não expõe editor JSON', () => {
