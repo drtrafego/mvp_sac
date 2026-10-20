@@ -219,7 +219,7 @@ async function main() {
       assert.equal(rows.length, 0)
     })
 
-    await test('segunda chamada para o mesmo media_id atualiza sem duplicar', async () => {
+    await test('segunda chamada para o mesmo media_id atualiza sem duplicar e preserva uma pausa existente', async () => {
       await testDb
         .update(schema.instagramCommentAutomations)
         .set({ isActive: false })
@@ -243,7 +243,7 @@ async function main() {
 
       assert.equal(response.status, 200)
       assert.equal(body.created, false)
-      assert.equal(body.automation.isActive, true)
+      assert.equal(body.automation.isActive, false)
       assert.equal(body.automation.keywords, 'NOVA TRILHA')
 
       const rows = await testDb
@@ -257,7 +257,7 @@ async function main() {
         )
       assert.equal(rows.length, 1, 'retry não pode criar automação duplicada')
       assert.equal(rows[0].dmMessage, updatedMessage)
-      assert.equal(rows[0].isActive, true)
+      assert.equal(rows[0].isActive, false, 'um sync de mídia não pode reativar uma automação pausada')
       assert.equal(rows[0].name, 'Entrega da trilha', 'campo opcional ausente não deve apagar o nome existente')
       assert.equal(rows[0].matchType, 'exact', 'campo opcional ausente não deve alterar o match type existente')
     })

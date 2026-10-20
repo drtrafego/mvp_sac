@@ -79,7 +79,6 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     const updateData: Partial<typeof instagramCommentAutomations.$inferInsert> = {
       keywords: keyword,
       dmMessage,
-      isActive: true,
       updatedAt: new Date(),
     }
     if (suppliedName !== undefined) updateData.name = suppliedName.trim()
