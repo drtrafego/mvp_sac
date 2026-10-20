@@ -124,9 +124,9 @@ export function TemplateManager() {
 
     <fieldset className="rounded-xl border border-line-subtle p-4 space-y-4">
       <legend className="px-1 text-sm font-semibold">Cabeçalho, opcional</legend>
-      <div className="grid gap-3 md:grid-cols-2"><div className="space-y-2"><Label htmlFor="header-type">Tipo</Label><select id="header-type" className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" value={headerType} onChange={event => setHeaderType(event.target.value as MetaHeaderType)}><option value="none">Sem cabeçalho</option><option value="text">Texto</option><option value="image">Imagem</option><option value="video">Vídeo</option><option value="document">Documento</option></select></div>
+      <div className="grid gap-3 md:grid-cols-2"><div className="space-y-2"><Label htmlFor="header-type">Tipo</Label><select id="header-type" className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" value={headerType} onChange={event => setHeaderType(event.target.value as MetaHeaderType)}><option value="none">Sem cabeçalho</option><option value="text">Texto</option></select><p className="text-xs text-fg-muted">Cabeçalhos de mídia estarão disponíveis quando o envio de arquivo estiver integrado.</p></div>
       {headerType === 'text' && <div className="space-y-2"><Label htmlFor="header-text">Texto do cabeçalho</Label><Input id="header-text" value={headerText} onChange={event => setHeaderText(event.target.value)} maxLength={60} placeholder="Olá, {{1}}" /></div>}
-      {headerType !== 'none' && <div className="space-y-2"><Label htmlFor="header-example">{headerType === 'text' ? 'Exemplo das variáveis, separado por vírgula' : 'Identificador de mídia de exemplo da Meta'}</Label><Input id="header-example" value={headerExample} onChange={event => setHeaderExample(event.target.value)} placeholder={headerType === 'text' ? 'Gastão' : 'handle recebido no upload da Meta'} /></div>}</div>
+      {headerType === 'text' && <div className="space-y-2"><Label htmlFor="header-example">Exemplo das variáveis, separado por vírgula</Label><Input id="header-example" value={headerExample} onChange={event => setHeaderExample(event.target.value)} placeholder="Gastão" /></div>}</div>
     </fieldset>
 
     <fieldset className="rounded-xl border border-line-subtle p-4 space-y-3">
