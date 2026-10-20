@@ -5,13 +5,13 @@ import assert from 'node:assert/strict'
 import { formToMetaTemplateComponents } from '../src/lib/meta-template-form'
 import { validateMetaTemplateComponents } from '../src/lib/meta-template-validation'
 
-test('formulário visual monta o payload Meta com variáveis, mídia e botões', () => {
+test('formulário visual monta o payload Meta com variáveis, cabeçalho de texto e botões', () => {
   const components = formToMetaTemplateComponents({
     body: 'Olá {{1}}, sua consulta é {{2}}.',
     bodyExamples: 'Gastão, amanhã às 14h',
-    headerType: 'image',
-    headerText: '',
-    headerExample: 'media-handle-123',
+    headerType: 'text',
+    headerText: 'Olá, {{1}}',
+    headerExample: 'Gastão',
     footer: 'Equipe de atendimento',
     buttons: [
       { type: 'QUICK_REPLY', text: 'Confirmar', value: '' },
@@ -21,7 +21,7 @@ test('formulário visual monta o payload Meta com variáveis, mídia e botões',
   })
 
   assert.deepEqual(components, [
-    { type: 'HEADER', format: 'IMAGE', example: { header_handle: ['media-handle-123'] } },
+    { type: 'HEADER', format: 'TEXT', text: 'Olá, {{1}}', example: { header_text: ['Gastão'] } },
     { type: 'BODY', text: 'Olá {{1}}, sua consulta é {{2}}.', example: { body_text: [['Gastão', 'amanhã às 14h']] } },
     { type: 'FOOTER', text: 'Equipe de atendimento' },
     { type: 'BUTTONS', buttons: [
@@ -33,7 +33,7 @@ test('formulário visual monta o payload Meta com variáveis, mídia e botões',
   assert.deepEqual(validateMetaTemplateComponents(components), components)
 })
 
-test('formulário exige exemplos suficientes para as variáveis e mídia de cabeçalho', () => {
+test('formulário exige exemplos suficientes para as variáveis', () => {
   assert.throws(() => formToMetaTemplateComponents({
     body: 'Olá {{1}} e {{2}}',
     bodyExamples: 'Gastão',
@@ -46,15 +46,6 @@ test('formulário exige exemplos suficientes para as variáveis e mídia de cabe
   assert.throws(() => formToMetaTemplateComponents({
     body: 'Olá {{2}}', bodyExamples: 'Gastão', headerType: 'none', headerText: '', headerExample: '', footer: '', buttons: [],
   }), /variáveis sequenciais/)
-  assert.throws(() => formToMetaTemplateComponents({
-    body: 'Olá',
-    bodyExamples: '',
-    headerType: 'video',
-    headerText: '',
-    headerExample: '',
-    footer: '',
-    buttons: [],
-  }), /identificador de mídia/)
   assert.throws(() => formToMetaTemplateComponents({
     body: 'Olá', bodyExamples: '', headerType: 'none', headerText: '', headerExample: '', footer: '',
     buttons: [{ type: 'URL', text: 'Abrir', value: 'ftp://exemplo.com' }],

@@ -33,6 +33,16 @@ function validateSequentialVariables(text: string, label: string) {
   }
 }
 
+function validateHeaderExample(example: unknown, variableCount: number) {
+  if (example === undefined) {
+    if (variableCount > 0) throw new SacInputError('HEADER com variável exige example.header_text.')
+    return
+  }
+  if (!isRecord(example) || Object.keys(example).some(key => key !== 'header_text') || !Array.isArray(example.header_text) || example.header_text.some(value => typeof value !== 'string' || !value.trim()) || example.header_text.length !== variableCount) {
+    throw new SacInputError('example.header_text do HEADER é inválido.')
+  }
+}
+
 export function validateMetaTemplateComponents(value: unknown): TemplateComponent[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > 4) throw new SacInputError('Inclua de um a quatro componentes Meta.')
   const components = value.map((component) => {
@@ -49,6 +59,10 @@ export function validateMetaTemplateComponents(value: unknown): TemplateComponen
     if (component.type === 'BODY' && (!component.text || component.text.trim().length > 1024)) throw new SacInputError('O componente BODY exige texto de até 1024 caracteres.')
     if ((component.type === 'HEADER' || component.type === 'FOOTER') && component.text !== undefined && component.text.length > 60) throw new SacInputError('HEADER e FOOTER aceitam no máximo 60 caracteres.')
     if ((component.type === 'BODY' || component.type === 'HEADER') && typeof component.text === 'string') validateSequentialVariables(component.text, component.type === 'BODY' ? 'O BODY' : 'O HEADER')
+    if (component.type === 'HEADER') {
+      if (component.format !== 'TEXT' || typeof component.text !== 'string' || !component.text.trim()) throw new SacInputError('HEADER aceita apenas format TEXT com texto não vazio.')
+      validateHeaderExample(component.example, Math.max(0, ...Array.from(component.text.matchAll(/\{\{\s*(\d+)\s*\}\}/g), match => Number(match[1]))))
+    }
     if (component.type === 'BUTTONS') {
       if (!Array.isArray(component.buttons) || component.buttons.length === 0 || component.buttons.length > 3) throw new SacInputError('BUTTONS exige de um a três botões.')
       for (const button of component.buttons) {

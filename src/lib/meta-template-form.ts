@@ -1,4 +1,4 @@
-export type MetaHeaderType = 'none' | 'text' | 'image' | 'video' | 'document'
+export type MetaHeaderType = 'none' | 'text'
 export type MetaButtonType = 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER'
 
 export interface MetaTemplateFormButton {
@@ -66,10 +66,6 @@ export function formToMetaTemplateComponents(input: MetaTemplateFormInput): Meta
     if (!text) throw new Error('Escreva o texto do cabeçalho.')
     const examples = requireExamples(text, input.headerExample, 'O cabeçalho')
     components.push({ type: 'HEADER', format: 'TEXT', text, ...(examples.length ? { example: { header_text: examples } } : {}) })
-  } else if (input.headerType !== 'none') {
-    const handle = input.headerExample.trim()
-    if (!handle) throw new Error('Informe o identificador de mídia de exemplo do cabeçalho.')
-    components.push({ type: 'HEADER', format: input.headerType.toUpperCase(), example: { header_handle: [handle] } })
   }
 
   components.push({ type: 'BODY', text: body, ...(bodyExamples.length ? { example: { body_text: [bodyExamples] } } : {}) })
