@@ -545,6 +545,13 @@ function PausarTudoSection({ slug }: { slug: string }) {
   const activeCount = counts ? counts.total - counts.paused : 0
   const wa = channelCounts?.whatsapp || { total: 0, active: 0, paused: 0, pausedByChannel: 0, pausedIndividually: 0 }
   const ig = channelCounts?.instagram || { total: 0, active: 0, paused: 0, pausedByChannel: 0, pausedIndividually: 0 }
+  const instagramOperationalStatus = ig.total === 0
+    ? 'Sem conversas'
+    : ig.active === 0
+      ? 'Bot pausado'
+      : ig.paused === 0
+        ? 'Bot ativo'
+        : 'Pausa parcial'
 
   const targetTitle =
     confirmTarget === 'all'
@@ -623,11 +630,11 @@ function PausarTudoSection({ slug }: { slug: string }) {
         <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
+              <span className={`w-2.5 h-2.5 rounded-full ${ig.active === 0 ? 'bg-st-atencao' : 'bg-emerald-500'}`} />
               <h3 className="text-body font-semibold text-fg">Instagram</h3>
             </div>
-            <span className="text-micro text-fg-subtle">
-              Total: {loadingCounts ? '—' : ig.total}
+            <span className={`text-micro font-semibold ${ig.active === 0 ? 'text-st-atencao' : 'text-st-positivo'}`}>
+              {loadingCounts ? 'Verificando…' : instagramOperationalStatus}
             </span>
           </div>
 
