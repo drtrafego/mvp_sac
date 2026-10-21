@@ -76,6 +76,8 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       'metaAdsAccessToken',
       'metaAdsAccountId',
       'metaPixelId',
+      'ga4MeasurementId',
+      'ga4ApiSecret',
       'uazapiBaseUrl',
       'uazapiInstanceToken',
       'notificationPhone',
@@ -103,7 +105,7 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     if (invalidField) {
       return NextResponse.json({ error: `O campo ${invalidField} deve ser um texto.` }, { status: 400 })
     }
-    const booleanKeys = ['hotmartEnabled', 'greennEnabled', 'kiwifyEnabled', 'zoutiEnabled'] as const
+    const booleanKeys = ['hotmartEnabled', 'greennEnabled', 'kiwifyEnabled', 'zoutiEnabled', 'ga4Enabled'] as const
     const invalidBooleanField = booleanKeys.find(key => body[key] != null && typeof body[key] !== 'boolean')
     if (invalidBooleanField) {
       return NextResponse.json({ error: `O campo ${invalidBooleanField} deve ser um booleano.` }, { status: 400 })

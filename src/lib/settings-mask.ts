@@ -43,6 +43,7 @@ const SETTINGS_SECRET_FIELDS = [
   'metaAccessToken',
   'metaAppSecret',
   'metaAdsAccessToken',
+  'ga4ApiSecret',
   'uazapiInstanceToken',
   'brevoApiKey',
   'instagramAccessToken',

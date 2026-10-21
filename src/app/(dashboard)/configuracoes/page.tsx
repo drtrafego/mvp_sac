@@ -62,6 +62,9 @@ interface SettingsData {
   metaAdsAccessToken: string
   metaAdsAccountId: string
   metaPixelId: string
+  ga4Enabled: boolean
+  ga4MeasurementId: string
+  ga4ApiSecret: string
   uazapiBaseUrl: string
   uazapiInstanceToken: string
   notificationPhone: string
@@ -135,6 +138,9 @@ const defaults: SettingsData = {
   metaAdsAccessToken: '',
   metaAdsAccountId: '',
   metaPixelId: '',
+  ga4Enabled: false,
+  ga4MeasurementId: '',
+  ga4ApiSecret: '',
   uazapiBaseUrl: '',
   uazapiInstanceToken: '',
   notificationPhone: '',
@@ -983,6 +989,9 @@ export default function ConfiguracoesPage() {
         metaAdsAccessToken: data.metaAdsAccessToken ?? '',
         metaAdsAccountId: data.metaAdsAccountId ?? '',
         metaPixelId: data.metaPixelId ?? '',
+        ga4Enabled: data.ga4Enabled ?? false,
+        ga4MeasurementId: data.ga4MeasurementId ?? '',
+        ga4ApiSecret: data.ga4ApiSecret ?? '',
         uazapiBaseUrl: data.uazapiBaseUrl ?? '',
         uazapiInstanceToken: data.uazapiInstanceToken ?? '',
         notificationPhone: data.notificationPhone ?? '',
@@ -1058,7 +1067,7 @@ export default function ConfiguracoesPage() {
     }
   }
 
-  function set(key: keyof SettingsData, value: string) {
+  function set<K extends keyof SettingsData>(key: K, value: SettingsData[K]) {
     setForm(f => ({ ...f, [key]: value }))
   }
 
@@ -1613,6 +1622,34 @@ export default function ConfiguracoesPage() {
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
             Formato act_XXXXXXXXXXXX, visível na URL do Gerenciador de Anúncios.
           </p>
+        </div>
+      </section>
+
+      {/* Google Analytics 4 (Measurement Protocol) */}
+      <section className="panel space-y-4 p-[var(--space-card)]">
+        <div className="flex items-center gap-2">
+          <h2 className="text-h2 text-fg">Google Analytics 4</h2>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">
+            Measurement Protocol
+          </span>
+        </div>
+        <Separator className="bg-line-subtle" />
+        <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+          Envia as conversões confirmadas do SAC para o GA4: <strong>purchase</strong> para vendas e <strong>generate_lead</strong> para reservas. Depois de o evento aparecer no GA4, marque-o como evento principal e importe-o no Google Ads. O Google Ads começa a contar somente a partir da importação, sem backfill; a conversão importada nasce como Secundária e precisa ser marcada como Primária para entrar nos lances.
+        </p>
+        <div className="flex items-center gap-3">
+          <Switch checked={form.ga4Enabled} onCheckedChange={v => set('ga4Enabled', v)} />
+          <Label>Ativar envio de eventos para esta empresa</Label>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Measurement ID</Label>
+          <Input value={form.ga4MeasurementId} onChange={e => set('ga4MeasurementId', e.target.value)} placeholder="G-XXXXXXXXXX" className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]" />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">No GA4: Administrador &gt; Fluxos de dados &gt; fluxo Web &gt; Measurement ID.</p>
+        </div>
+        <div className="space-y-1.5">
+          <Label>API Secret</Label>
+          <SecretInput value={form.ga4ApiSecret} onChange={v => set('ga4ApiSecret', v)} placeholder="Secret do fluxo Web no GA4" />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">No GA4: Administrador &gt; Fluxos de dados &gt; fluxo Web &gt; Measurement Protocol API secrets. O valor fica mascarado depois de salvo.</p>
         </div>
       </section>
 

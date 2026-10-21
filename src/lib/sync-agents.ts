@@ -151,6 +151,9 @@ export interface CrmLeadDbRow {
   utm_campaign: string | null
   utm_content: string | null
   utm_term: string | null
+  gclid: string | null
+  gbraid: string | null
+  wbraid: string | null
   ai_agent: string | null
   created_at: string | null
   first_contact_at: string | null
@@ -2049,7 +2052,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       const crmColumns = await detectAgentsTableColumns(scope.schema, 'crm_leads', [
         'id', 'organization_id', 'whatsapp', 'phone', 'email', 'name', 'company', 'notes', 'value', 'status',
         'follow_up_date', 'follow_up_note', 'campaign_source', 'utm_source', 'utm_medium', 'utm_campaign',
-        'utm_content', 'utm_term', 'ai_agent', 'created_at', 'first_contact_at', 'updated_at',
+        'utm_content', 'utm_term', 'gclid', 'gbraid', 'wbraid', 'ai_agent', 'created_at', 'first_contact_at', 'updated_at',
       ])
       if (!crmColumns.has('id') || (!crmColumns.has('whatsapp') && !crmColumns.has('phone'))) continue
 
@@ -2070,6 +2073,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         col('email'), col('name'), col('company'), col('notes'), col('value', 'null::numeric'), col('status'),
         col('follow_up_date', 'null::timestamp'), col('follow_up_note'), col('campaign_source'), col('utm_source'),
         col('utm_medium'), col('utm_campaign'), col('utm_content'), col('utm_term'), col('ai_agent'),
+        col('gclid'), col('gbraid'), col('wbraid'),
         col('created_at', 'null::timestamp'), col('first_contact_at', 'null::timestamp'),
         `${crmLeadSortExpr} as __sync_sort_at`,
         `${crmLeadIdExpr} as __sync_cursor_id`,
@@ -2108,22 +2112,27 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const existingId = (cleanPhone && resolvePhoneLeadLookup(leadMap, ambiguousLeadKeys, scope.company.id, cleanPhone)) ||
           (email && readUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactExactKey(scope.company.id, email)))
         const nativeSource = realCampaignSource(l.campaign_source, isOutreachCompany) || realCampaignSource(l.utm_source, isOutreachCompany)
+        const googleSource = l.gclid || l.gbraid || l.wbraid ? 'google_ads' : null
+        const resolvedSource = nativeSource || googleSource
 
         if (existingId && existingId > 0) {
           const attributionPatch: Omit<Partial<typeof recoveryLeads.$inferInsert>,
-            'trackingSource' | 'utmMedium' | 'utmCampaign' | 'utmContent' | 'utmTerm'> & {
+            'trackingSource' | 'utmMedium' | 'utmCampaign' | 'utmContent' | 'utmTerm' | 'googleClickId' | 'googleGbraid' | 'googleWbraid'> & {
             trackingSource?: string | SQL
             utmMedium?: string | SQL
             utmCampaign?: string | SQL
             utmContent?: string | SQL
             utmTerm?: string | SQL
+            googleClickId?: string | SQL
+            googleGbraid?: string | SQL
+            googleWbraid?: string | SQL
           } = {}
-          if (nativeSource) {
+          if (resolvedSource) {
             attributionPatch.trackingSource = sql`case
               when coalesce(trim(${recoveryLeads.trackingSource}), '') = ''
                 or lower(trim(${recoveryLeads.trackingSource})) in
                   ('whatsapp', 'whatsapp_sac', 'agente_ia', 'atendimento', 'atendimento_ia', 'sac', 'direct', 'direto', 'organic', 'organico', 'orgânico')
-              then ${nativeSource}
+              then ${resolvedSource}
               else ${recoveryLeads.trackingSource}
             end`
           }
@@ -2131,6 +2140,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           if (l.utm_campaign) attributionPatch.utmCampaign = sql`coalesce(nullif(${recoveryLeads.utmCampaign}, ''), ${l.utm_campaign})`
           if (l.utm_content) attributionPatch.utmContent = sql`coalesce(nullif(${recoveryLeads.utmContent}, ''), ${l.utm_content})`
           if (l.utm_term) attributionPatch.utmTerm = sql`coalesce(nullif(${recoveryLeads.utmTerm}, ''), ${l.utm_term})`
+          if (l.gclid) attributionPatch.googleClickId = sql`coalesce(nullif(${recoveryLeads.googleClickId}, ''), ${l.gclid})`
+          if (l.gbraid) attributionPatch.googleGbraid = sql`coalesce(nullif(${recoveryLeads.googleGbraid}, ''), ${l.gbraid})`
+          if (l.wbraid) attributionPatch.googleWbraid = sql`coalesce(nullif(${recoveryLeads.googleWbraid}, ''), ${l.wbraid})`
           if (Object.keys(attributionPatch).length > 0) {
             attributionPatch.updatedAt = new Date()
             await db.update(recoveryLeads).set(attributionPatch).where(eq(recoveryLeads.id, existingId))
@@ -2152,14 +2164,17 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           productValue: prodVal,
           platform: 'sac',
           channel: cleanPhone ? 'whatsapp' : 'email',
-          eventType: nativeSource || (isOutreachCompany ? 'prospeccao' : 'atendimento_ia'),
+          eventType: resolvedSource || (isOutreachCompany ? 'prospeccao' : 'atendimento_ia'),
           status: l.status === 'converted' ? 'converted' : 'in_conversation',
           pipelineStage: stage,
-          trackingSource: nativeSource || (isOutreachCompany ? 'mineracao_prospeccao' : undefined),
+          trackingSource: resolvedSource || (isOutreachCompany ? 'mineracao_prospeccao' : undefined),
           utmMedium: l.utm_medium,
           utmCampaign: l.utm_campaign,
           utmContent: l.utm_content,
           utmTerm: l.utm_term,
+          googleClickId: l.gclid,
+          googleGbraid: l.gbraid,
+          googleWbraid: l.wbraid,
           responsibleAgent: l.ai_agent || scope.company.agentDisplayName || undefined,
           followUpDate: l.follow_up_date ? new Date(l.follow_up_date) : undefined,
           followUpNote: l.follow_up_note,

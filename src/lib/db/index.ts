@@ -250,6 +250,12 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_ads_account_id text`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS mining_tags jsonb`,
           client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS meta_pixel_id text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS ga4_enabled boolean NOT NULL DEFAULT false`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS ga4_measurement_id text`,
+          client`ALTER TABLE settings ADD COLUMN IF NOT EXISTS ga4_api_secret text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS google_click_id text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS google_gbraid text`,
+          client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS google_wbraid text`,
 
           // ─── Nome de persona do bot no Inbox (22/09/2026) ──────────────────────
           // Ver comentário completo em src/lib/db/schema.ts (companies.agentDisplayName)
@@ -472,6 +478,24 @@ export function ensureSchema(client: any): Promise<void> {
               UNIQUE (company_id, event_id)
             )
           `,
+          client`
+            CREATE TABLE IF NOT EXISTS ga4_conversion_events (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              lead_id INTEGER REFERENCES recovery_leads(id) ON DELETE SET NULL,
+              event_id TEXT NOT NULL,
+              event_name TEXT NOT NULL,
+              measurement_id TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              http_status INTEGER,
+              ga4_response JSONB,
+              error_message TEXT,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              created_at TIMESTAMP DEFAULT NOW(),
+              sent_at TIMESTAMP
+            )
+          `,
+          client`CREATE UNIQUE INDEX IF NOT EXISTS ga4_conversion_events_company_event_unique ON ga4_conversion_events (company_id, event_id)`,
 
           // ─── Cursores de sync incremental Agents/CRM (22/09/2026) ─────────
           // Guarda uma linha por empresa + fonte + schema/chave da fonte. Usado

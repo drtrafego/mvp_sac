@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto'
 import { db } from '@/lib/db'
 import { metaConversionEvents, settings } from '@/lib/db/schema'
 import { isUniqueViolation } from '@/lib/webhook-dedup'
+import { sendGa4Conversion } from '@/lib/ga4-conversions-sender'
 
 const GRAPH_VERSION = (process.env.META_GRAPH_VERSION || 'v21.0').trim()
 const GRAPH_HOST = 'https://graph.facebook.com'
@@ -286,7 +287,7 @@ export function buildCapiPayload(params: {
  * meio), e o uniqueIndex(companyId, eventId) garante que o mesmo evento de
  * negócio nunca é mandado duas vezes, mesmo em retry futuro.
  */
-export async function sendConversionEvent(params: SendConversionEventParams): Promise<SendConversionEventResult> {
+async function sendMetaConversionEvent(params: SendConversionEventParams): Promise<SendConversionEventResult> {
   try {
     const eventTime = params.eventTime ?? new Date()
     const phone = params.phone ?? null
@@ -378,4 +379,32 @@ export async function sendConversionEvent(params: SendConversionEventParams): Pr
     // "nunca lança exceção pro chamador" é o contrato desta função.
     return { ok: false, error: err instanceof Error ? err.message.slice(0, 300) : 'falha inesperada no envio de conversão' }
   }
+}
+
+/**
+ * Dispara Meta e GA4 em paralelo. O resultado retornado continua sendo o da
+ * Meta para preservar o contrato dos callers; o GA4 tem log e idempotência
+ * próprios e nunca bloqueia o atendimento. O Google Ads importa o key event
+ * do GA4 manualmente depois, sem uma segunda conversão direta.
+ */
+export async function sendConversionEvent(params: SendConversionEventParams): Promise<SendConversionEventResult> {
+  const [metaResult] = await Promise.all([
+    sendMetaConversionEvent(params),
+    sendGa4Conversion({
+      companyId: params.companyId,
+      leadId: params.leadId,
+      eventId: params.eventId,
+      eventName: params.eventName,
+      eventTime: params.eventTime,
+      value: params.value,
+      currency: params.currency,
+      transactionId: params.transactionId,
+      productId: params.productId,
+      productName: params.productName,
+      email: params.email,
+      phone: params.phone,
+      rawPayload: params.rawPayload,
+    }),
+  ])
+  return metaResult
 }

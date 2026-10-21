@@ -80,6 +80,12 @@ export const settings = pgTable('settings', {
   // Nulo = envio de conversão desligado para esta empresa. Ver
   // src/lib/meta-conversions-api.ts.
   metaPixelId: text('meta_pixel_id'),
+  // Google Analytics 4 Measurement Protocol. O evento confirmado entra no
+  // GA4 e depois é importado manualmente no Google Ads como conversão.
+  // Measurement ID é público; API Secret é mascarado nas respostas de settings.
+  ga4Enabled: boolean('ga4_enabled').notNull().default(false),
+  ga4MeasurementId: text('ga4_measurement_id'),
+  ga4ApiSecret: text('ga4_api_secret'),
   uazapiBaseUrl: text('uazapi_base_url'),
   uazapiInstanceToken: text('uazapi_instance_token'),
   notificationPhone: text('notification_phone'),
@@ -331,6 +337,11 @@ export const recoveryLeads = pgTable('recovery_leads', {
   metaCampaignId: text('meta_campaign_id'),
   metaAdsetId: text('meta_adset_id'),
   metaAdId: text('meta_ad_id'),
+  // Click identifiers podem chegar do site/CRM e são repassados como
+  // parâmetros de atribuição no evento do GA4.
+  googleClickId: text('google_click_id'),
+  googleGbraid: text('google_gbraid'),
+  googleWbraid: text('google_wbraid'),
 
   // Afiliado
   affiliateCode: text('affiliate_code'),
@@ -732,6 +743,27 @@ export const metaConversionEvents = pgTable('meta_conversion_events', {
   sentAt: timestamp('sent_at'),
 }, (table) => [
   uniqueIndex('meta_conversion_events_company_event_unique').on(table.companyId, table.eventId),
+])
+
+// ─── Log de envio de eventos GA4 Measurement Protocol ────────────────────────
+// Um evento de negócio pode ser enviado para Meta e GA4 em paralelo. A tabela
+// própria evita misturar estados/erros das duas APIs e garante idempotência.
+export const ga4ConversionEvents = pgTable('ga4_conversion_events', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'set null' }),
+  eventId: text('event_id').notNull(),
+  eventName: text('event_name').notNull(),
+  measurementId: text('measurement_id').notNull(),
+  status: text('status').default('pending').notNull(), // pending | sent | failed | skipped
+  httpStatus: integer('http_status'),
+  ga4Response: jsonb('ga4_response'),
+  errorMessage: text('error_message'),
+  attempts: integer('attempts').default(0).notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  sentAt: timestamp('sent_at'),
+}, (table) => [
+  uniqueIndex('ga4_conversion_events_company_event_unique').on(table.companyId, table.eventId),
 ])
 
 // ─── Membros da empresa ───────────────────────────────────────────────────────
