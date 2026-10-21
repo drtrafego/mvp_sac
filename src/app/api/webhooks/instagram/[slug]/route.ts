@@ -16,6 +16,7 @@ import { fetchInstagramUserProfile } from "@/lib/instagram"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
+import { persistInstagramInboundWithTags, InstagramInboundPersistenceError, isInstagramStoryReply } from "@/lib/instagram-inbound-tags"
 
 
 function instagramDebugPayload(opts: {
@@ -438,9 +439,15 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             }
 
             try {
-              await db.insert(whatsappMessages).values({
+              if (!lead?.id) throw new InstagramInboundPersistenceError('lead ausente')
+              await persistInstagramInboundWithTags({
                 companyId: company.id,
-                leadId: lead?.id ?? null,
+                leadId: lead.id,
+                text: inboundText,
+                isStoryReply: isInstagramStoryReply(message),
+                message: {
+                companyId: company.id,
+                leadId: lead.id,
                 phone: igPhone,
                 channel: 'instagram',
                 direction: 'inbound',
@@ -448,6 +455,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 messageType: 'text',
                 sentBy: 'user',
                 externalId: message?.mid ?? null,
+                },
               })
             } catch (err) {
               // Segunda camada (índice único parcial): corrida entre duas
@@ -458,6 +466,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 console.log(`[Instagram Webhook] corrida no insert (unique violation), slug=${slug} mid=${message?.mid}, tratando como já processado`)
                 continue
               }
+              if (err instanceof InstagramInboundPersistenceError) throw err
               throw err
             }
 
@@ -499,6 +508,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           } catch (err) {
             await markInstagramItemLog({ processed: false, errorMessage: err instanceof Error ? err.message : String(err), decision: 'error_processing_item' })
             console.error("[Instagram Webhook] Erro ao gravar mensagem:", err)
+            if (err instanceof InstagramInboundPersistenceError) throw err
           }
         } else {
           await markInstagramItemLog({ processed: false, skipReason: 'sem sender ou sem texto processável', decision: 'skip_no_sender_or_text' })

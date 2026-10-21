@@ -110,8 +110,22 @@
     {
       "idx": 15,
       "version": "7",
+      "when": 1795158000000,
+      "tag": "0033_instagram_automation_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
       "when": 1795158000001,
       "tag": "0034_meta_message_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1796153200000,
+      "tag": "0035_instagram_inbox_placement",
       "breakpoints": true
     }
   ]

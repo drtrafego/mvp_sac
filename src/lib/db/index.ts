@@ -815,6 +815,31 @@ export function ensureSchema(client: any): Promise<void> {
           console.error('[DB Schema Sync Error] Falha ao criar a tabela lead_tags ou seus índices:', message)
         }
 
+        try {
+          await client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS auto_tag TEXT`
+          await client`
+            CREATE TABLE IF NOT EXISTS instagram_inbound_tag_rules (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              trigger TEXT NOT NULL CHECK (trigger IN ('direct', 'story_reply')),
+              keywords TEXT,
+              match_type TEXT NOT NULL DEFAULT 'contains' CHECK (match_type IN ('contains', 'exact', 'any')),
+              tag TEXT NOT NULL,
+              is_active BOOLEAN NOT NULL DEFAULT true,
+              created_at TIMESTAMP DEFAULT NOW(),
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `
+          await client`
+            CREATE INDEX IF NOT EXISTS instagram_inbound_tag_rules_company_trigger_idx
+            ON instagram_inbound_tag_rules (company_id, trigger)
+          `
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[DB Schema Sync Error] Falha ao criar regras de tag inbound do Instagram:', message)
+        }
+
         // ─── Idempotência contra reentrega de webhook da Meta (20/09/2026, ────
         // ampliado 21/09/2026 pra incluir company_id, achado do QA 2ª rodada)
         // Fora do Promise.allSettled acima de propósito: aquele array nunca

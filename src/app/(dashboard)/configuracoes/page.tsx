@@ -74,6 +74,7 @@ interface SettingsData {
   instagramVerifyToken: string
   instagramPageId: string
   instagramAppSecret: string
+  instagramInboxPlacement: 'general' | 'exclusive'
   sidebarConfig?: {
     showVisaoGeral?: boolean
     showConversas?: boolean
@@ -147,6 +148,7 @@ const defaults: SettingsData = {
   instagramVerifyToken: '',
   instagramPageId: '',
   instagramAppSecret: '',
+  instagramInboxPlacement: 'general',
 }
 
 function SecretInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
@@ -1002,6 +1004,7 @@ export default function ConfiguracoesPage() {
         instagramVerifyToken: data.instagramVerifyToken ?? '',
         instagramPageId: data.instagramPageId ?? '',
         instagramAppSecret: data.instagramAppSecret ?? '',
+        instagramInboxPlacement: data.instagramInboxPlacement === 'exclusive' ? 'exclusive' : 'general',
         sidebarConfig: data.sidebarConfig ?? null,
       })
   }, [])
@@ -1732,6 +1735,30 @@ export default function ConfiguracoesPage() {
         </div>
 
         <WebhookUrlBox url={instagramWebhookUrl} label="URL do Webhook (configurar no Meta Developers > Instagram Webhook)" />
+
+        <div className="space-y-1.5 rounded-[var(--r-md)] border border-line-subtle bg-surface-inset p-3.5 max-w-[var(--w-form)]">
+            <Label htmlFor="instagram-inbox-placement">Onde mostrar as conversas do Instagram</Label>
+            <Select
+              value={form.instagramInboxPlacement}
+              onValueChange={value => {
+                if (value === 'general' || value === 'exclusive') {
+                  setForm(current => ({ ...current, instagramInboxPlacement: value }))
+                }
+              }}
+              items={{ general: 'Caixa geral e Instagram', exclusive: 'Somente área Instagram' }}
+            >
+              <SelectTrigger id="instagram-inbox-placement" className="focus-ring h-11 lg:h-9 bg-surface-base border-line-subtle max-w-[var(--w-form)]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-surface-overlay border-line-subtle">
+                <SelectItem value="general">Caixa geral e Instagram</SelectItem>
+                <SelectItem value="exclusive">Somente área Instagram</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-micro text-fg-subtle">
+              Esta escolha só altera a visualização. Nenhuma conversa ou histórico é movido ou removido.
+            </p>
+        </div>
 
         <div className="space-y-1.5">
           <Label>@ Usuário do Instagram</Label>

@@ -15,7 +15,6 @@ import {
   UserCog,
   CalendarDays,
   ChevronUp,
-  Database,
   Pencil,
   Zap,
   FileText,
@@ -27,6 +26,7 @@ import {
   MessageSquare,
   ChevronDown,
   UserCheck,
+  ListTodo,
 } from 'lucide-react'
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
@@ -37,6 +37,7 @@ import { cn } from '@/lib/utils'
 import { buildContextPatch, canStartComposerIntent, contextFromLead, draftAfterAccepted, fillReplyTemplate, mergeContextDraft, unresolvedReplyVariables, upsertInboxMessages, type ComposerIntent, type SacContextDraft } from './sac-inbox-state'
 import type { EmailEngagement } from '@/lib/email-engagement'
 import { attentionMessageReferenceHref, isAttentionReturnHref, persistedSacContextSummary, type ConversationBaseHref, type ConversationReturnHref } from '@/lib/sac-attention-navigation'
+import type { InboxThreadChannel } from '@/lib/inbox-messages'
 
 const ACTIVE_CHAT_POLL_MS = 5_000
 const DEFAULT_PIPELINE_COLUMNS = [
@@ -134,6 +135,8 @@ export function ChatWindow({
   conversationHref,
   initialContextOpen = false,
   highlightMessageId,
+  threadChannel,
+  availableThreadChannels,
 }: {
   lead: ChatLead
   initialMessages: InboxMessage[]
@@ -143,6 +146,8 @@ export function ChatWindow({
   conversationHref?: ConversationBaseHref
   initialContextOpen?: boolean
   highlightMessageId?: number | null
+  threadChannel: InboxThreadChannel
+  availableThreadChannels: InboxThreadChannel[]
 }) {
   const [messages, setMessages] = useState<InboxMessage[]>(initialMessages)
   const [text, setText] = useState('')
@@ -183,6 +188,7 @@ export function ChatWindow({
   const [isEditingContext, setIsEditingContext] = useState(false)
   const [savingContext, setSavingContext] = useState(false)
   const [claiming, setClaiming] = useState(false)
+  const [sendingToAttention, setSendingToAttention] = useState(false)
   const [pipelineColumns, setPipelineColumns] = useState<Array<{ id: string; label: string }> | null>(null)
   const [historyMode, setHistoryMode] = useState(Boolean(highlightMessageId))
   const highlightedOnceRef = useRef(false)
@@ -252,8 +258,8 @@ export function ChatWindow({
         sources: data.sources || [],
         missingInfo: data.missingInfo || [],
       })
-    } catch (err: any) {
-      setCopilotError(err.message || 'Erro ao gerar sugestão do Copiloto.')
+    } catch (err: unknown) {
+      setCopilotError(err instanceof Error ? err.message : 'Erro ao gerar sugestão do Copiloto.')
     } finally {
       setCopilotLoading(false)
     }
@@ -292,7 +298,9 @@ export function ChatWindow({
     async (silent = false) => {
       if (!silent) setRefreshing(true)
       try {
-        const res = await fetch(`/api/inbox/${lead.id}${historyMode ? `?aroundMessageId=${highlightMessageId}` : ''}`, { cache: 'no-store' })
+        const params = new URLSearchParams({ thread: threadChannel })
+        if (historyMode && highlightMessageId) params.set('aroundMessageId', String(highlightMessageId))
+        const res = await fetch(`/api/inbox/${lead.id}?${params.toString()}`, { cache: 'no-store' })
         if (res.ok) {
           const data = await res.json()
           if (data.messages) {
@@ -316,7 +324,7 @@ export function ChatWindow({
         if (!silent) setRefreshing(false)
       }
     },
-    [lead.id, historyMode, highlightMessageId, hydrateContext, reconcileSendOutcome]
+    [lead.id, historyMode, highlightMessageId, threadChannel, hydrateContext, reconcileSendOutcome]
   )
 
   useEffect(() => {
@@ -399,7 +407,8 @@ export function ChatWindow({
     loadingHistoryRef.current = true
     setLoadingHistory(true)
     try {
-      const res = await fetch(`/api/inbox/${lead.id}?before=${encodeURIComponent(historyCursor)}`, { cache: 'no-store' })
+      const params = new URLSearchParams({ before: historyCursor, thread: threadChannel })
+      const res = await fetch(`/api/inbox/${lead.id}?${params.toString()}`, { cache: 'no-store' })
       if (!res.ok) return
       const data = await res.json()
       const older = (data.messages || []) as InboxMessage[]
@@ -418,7 +427,7 @@ export function ChatWindow({
       loadingHistoryRef.current = false
       setLoadingHistory(false)
     }
-  }, [hasMoreHistory, historyCursor, lead.id])
+  }, [hasMoreHistory, historyCursor, lead.id, threadChannel])
 
   const handleMessagesScroll = useCallback(() => {
     const container = messagesContainerRef.current
@@ -629,7 +638,7 @@ export function ChatWindow({
 
   async function returnToCurrentHistory() {
     try {
-      const response = await fetch(`/api/inbox/${lead.id}`, { cache: 'no-store' })
+      const response = await fetch(`/api/inbox/${lead.id}?thread=${encodeURIComponent(threadChannel)}`, { cache: 'no-store' })
       if (!response.ok) throw new Error('Não foi possível carregar a conversa atual.')
       const data = await response.json()
       shouldScrollToBottomRef.current = true
@@ -671,6 +680,44 @@ export function ChatWindow({
       setContextError(error instanceof Error ? error.message : 'Erro de conexão ao assumir o atendimento.')
     } finally {
       setClaiming(false)
+    }
+  }
+
+  async function handleSendToAttention() {
+    if (sendingToAttention || savingContext || sacCaseState === 'transbordo' || sacCaseState === 'em_atendimento') return
+    const previousState = contextDraftRef.current.sacCaseState
+    setSendingToAttention(true)
+    setContextError(null)
+    editContextField('sacCaseState', 'transbordo')
+    try {
+      const saved = await saveContextFields(new Set(['sacCaseState']))
+      if (!saved) {
+        contextDraftRef.current = { ...contextDraftRef.current, sacCaseState: previousState }
+        dirtyContextRef.current.delete('sacCaseState')
+        setContextDraft(contextDraftRef.current)
+        return
+      }
+
+      // A handoff must stop the bot while the conversation waits in the human queue.
+      // Claiming later also keeps this paused, so the lead cannot receive an AI reply
+      // between the handoff and the operator taking ownership.
+      if (!botPaused) {
+        const pauseResponse = await fetch(`/api/inbox/${lead.id}/pause`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paused: true }),
+        })
+        const pauseData = await pauseResponse.json().catch(() => ({}))
+        if (!pauseResponse.ok) throw new Error(pauseData.error || 'O atendimento foi enviado para a fila, mas não foi possível pausar o bot.')
+        setBotPaused(Boolean(pauseData.botPaused))
+      }
+
+      setPauseToast('Enviado para Atender agora. O bot ficará pausado até alguém assumir.')
+      setTimeout(() => setPauseToast(null), 4500)
+    } catch (error) {
+      setContextError(error instanceof Error ? error.message : 'Não foi possível enviar para Atender agora.')
+    } finally {
+      setSendingToAttention(false)
     }
   }
 
@@ -752,7 +799,7 @@ export function ChatWindow({
     try {
       const response = await fetch(`/api/inbox/${lead.id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-Request-Id': intent.clientRequestId },
-        body: JSON.stringify({ content: intent.content, clientRequestId: intent.clientRequestId }),
+        body: JSON.stringify({ content: intent.content, clientRequestId: intent.clientRequestId, threadChannel }),
       })
       const data = await response.json().catch(() => ({}))
       const message = data.message ?? (Number.isInteger(data.id) ? data : null)
@@ -808,15 +855,30 @@ export function ChatWindow({
     .some(field => contextDraft[field] !== savedContext[field])
   const fromAttention = isAttentionReturnHref(backHref)
   const openContextPanel = () => { setShowDetails(true); setSidePanelTab('context') }
+  const threadHref = (channel: InboxThreadChannel) => {
+    const params = new URLSearchParams({ thread: channel })
+    if (fromAttention) {
+      params.set('from', 'attention')
+      params.set('context', '1')
+      if (backHref.includes('?')) {
+        const returnQuery = new URLSearchParams(backHref.split('?')[1])
+        params.set('attentionView', returnQuery.get('view') || 'all')
+        params.set('attentionPage', returnQuery.get('page') || '1')
+      }
+    }
+    return `${conversationBaseHref}/${lead.id}?${params.toString()}`
+  }
 
   const channelLabel =
-    lead.channel === 'instagram' || lead.phone.startsWith('ig_')
+    threadChannel === 'instagram'
       ? 'Instagram Direct'
-      : lead.channel === 'email'
+      : threadChannel === 'email'
         ? 'E-mail'
-        : lead.channel === 'mineracao'
-          ? 'Mineração'
-          : 'WhatsApp'
+        : 'WhatsApp'
+
+  const threadLabel = (channel: InboxThreadChannel) => (
+    channel === 'instagram' ? 'Instagram' : channel === 'email' ? 'E-mail' : 'WhatsApp'
+  )
 
   return (
     <div className="flex flex-1 h-full w-full overflow-hidden bg-surface-base relative">
@@ -876,7 +938,7 @@ export function ChatWindow({
                   </button>
                 )}
                 <div className="studio-chat-badges flex items-center gap-1.5">
-                  <ChannelBadge channel={lead.channel} />
+                  <ChannelBadge channel={threadChannel} />
                   <PlatformBadge platform={lead.platform || lead.trackingSource} eventType={lead.eventType} />
                   <EmailEngagementBadge engagement={lead.emailEngagement} />
                 </div>
@@ -890,6 +952,27 @@ export function ChatWindow({
                 {lead.phone}
                 {lead.productName ? <span className="text-fg-muted font-sans font-medium"> · {lead.productName}</span> : null}
               </p>
+              {availableThreadChannels.length > 1 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1" aria-label="Conversas por canal">
+                  <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-fg-faint">Conversas:</span>
+                  {availableThreadChannels.map(channel => (
+                    <Link
+                      key={channel}
+                      href={threadHref(channel)}
+                      scroll={false}
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
+                        channel === threadChannel
+                          ? 'border-brand-solid/40 bg-brand-glow text-brand-ink'
+                          : 'border-line-subtle bg-surface-inset text-fg-muted hover:text-fg',
+                      )}
+                    >
+                      <ChannelIcon channel={channel} size={10} />
+                      {threadLabel(channel)}
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -1341,6 +1424,21 @@ export function ChatWindow({
                     Assumir Atendimento
                   </button>
                 )}
+                {sacCaseState === 'transbordo' ? (
+                  <div className="mt-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-500">
+                    Este atendimento está na fila <strong>Atender agora</strong> e aguarda um responsável.
+                  </div>
+                ) : sacCaseState !== 'em_atendimento' && !humanOwner ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleSendToAttention()}
+                    disabled={sendingToAttention || savingContext}
+                    className="w-full mt-1 py-1.5 px-3 rounded-lg border border-brand-solid/40 bg-brand-glow hover:bg-brand-solid/15 text-brand-ink text-micro font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {sendingToAttention ? <Loader2 size={12} className="animate-spin" /> : <ListTodo size={12} />}
+                    Enviar para Atender agora
+                  </button>
+                ) : null}
               </div>
 
               {/* Card de Contexto e Próxima Ação */}

@@ -3,24 +3,22 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { db } from '@/lib/db'
-import { whatsappMessages, recoveryLeads, sacAuditEvents, companyMembers } from '@/lib/db/schema'
+import { recoveryLeads, sacAuditEvents, companyMembers } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
-import { sendWhatsAppMessage } from '@/lib/whatsapp'
-import { sendInstagramMessage } from '@/lib/instagram'
-import { sendBrevoEmail } from '@/lib/email/brevo'
 import { sendOutboundForLead } from '@/lib/outbound-send'
 import { requireCompany, requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
 import { parseSacObject, parsePositiveId, parseExpectedVersion, validateSacContextFields, sacEpisodeForState, SacInputError } from '@/lib/sac-access'
-import { markLeadContacted } from '@/lib/leads'
 import { getEmailEngagement } from '@/lib/email-engagement'
 import {
   decodeMessageCursor,
   INBOX_MESSAGE_PAGE_SIZE,
   INBOX_MESSAGE_PAGE_SIZE_MAX,
+  INBOX_THREAD_CHANNELS,
   loadInboxMessagePage,
+  normalizeInboxThreadChannel,
 } from '@/lib/inbox-messages'
 import { parseIntegerQuery } from '@/lib/request-validation'
-import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
+import type { LeadDeliveryChannel } from '@/lib/lead-delivery-channel'
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init)
   response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
@@ -51,6 +49,10 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   if (before && !decodeMessageCursor(before)) {
     return noStoreJson({ error: 'Cursor inválido.' }, { status: 400 })
   }
+  const threadChannel = normalizeInboxThreadChannel(searchParams.get('thread'))
+  if (searchParams.has('thread') && !threadChannel) {
+    return noStoreJson({ error: `thread deve ser um destes canais: ${INBOX_THREAD_CHANNELS.join(', ')}.` }, { status: 400 })
+  }
 
   const company = await requireCompany()
 
@@ -76,6 +78,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     before,
     limit: parsedLimit.value,
     aroundMessageId: aroundMessageId && !isNaN(aroundMessageId) ? aroundMessageId : null,
+    threadChannel,
   })
   const messages = messagePage.messages
 
@@ -181,10 +184,18 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   if (body.messageType != null && typeof body.messageType !== 'string') {
     return noStoreJson({ error: 'O campo messageType deve ser um texto.' }, { status: 400 })
   }
+  if (body.threadChannel != null && typeof body.threadChannel !== 'string') {
+    return noStoreJson({ error: 'O campo threadChannel deve ser um texto.' }, { status: 400 })
+  }
 
   const content = typeof body.content === 'string' ? body.content : ''
   const mediaUrl = typeof body.mediaUrl === 'string' ? body.mediaUrl : undefined
   const messageType = typeof body.messageType === 'string' ? body.messageType : undefined
+  const rawThreadChannel = typeof body.threadChannel === 'string' ? body.threadChannel : null
+  const channelOverride = rawThreadChannel ? normalizeInboxThreadChannel(rawThreadChannel) : null
+  if (rawThreadChannel && !channelOverride) {
+    return noStoreJson({ error: `threadChannel deve ser um destes canais: ${INBOX_THREAD_CHANNELS.join(', ')}.` }, { status: 400 })
+  }
   const clientRequestId =
     (typeof body.clientRequestId === 'string' && body.clientRequestId.trim()) ||
     req.headers.get('x-client-request-id')?.trim() ||
@@ -202,6 +213,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     messageType,
     clientRequestId,
     sentBy: 'human',
+    channelOverride: channelOverride as LeadDeliveryChannel | null,
   })
 
   if (!sendResult.ok) {

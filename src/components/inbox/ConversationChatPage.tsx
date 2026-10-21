@@ -1,11 +1,11 @@
 import { notFound } from 'next/navigation'
 import { and, desc, eq, or, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { appointmentMirror, companyMembers, gramadoReservations, recoveryLeads } from '@/lib/db/schema'
+import { appointmentMirror, companyMembers, gramadoReservations, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { requireCompany } from '@/lib/auth'
 import { getEmailEngagement } from '@/lib/email-engagement'
-import { loadInboxMessagePage } from '@/lib/inbox-messages'
-import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
+import { loadInboxMessagePage, normalizeInboxThreadChannel, type InboxThreadChannel } from '@/lib/inbox-messages'
+import { isInstagramDelivery, resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
 import { ChatWindow } from '@/components/inbox/ChatWindow'
 import { attentionConversationNavigation } from '@/lib/sac-attention-navigation'
 
@@ -35,6 +35,8 @@ export async function ConversationChatPage({
   const rawAround = Array.isArray(sParams.aroundMessageId) ? sParams.aroundMessageId[0] : sParams.aroundMessageId
   const parsedAround = rawAround && /^\d+$/.test(rawAround) ? Number(rawAround) : null
   const validAround = parsedAround && Number.isSafeInteger(parsedAround) && parsedAround > 0 ? parsedAround : null
+  const rawThread = Array.isArray(sParams.thread) ? sParams.thread[0] : sParams.thread
+  const requestedThread = normalizeInboxThreadChannel(rawThread)
 
   const company = await requireCompany()
   const [lead] = await db
@@ -47,6 +49,23 @@ export async function ConversationChatPage({
 
   const cleanPhone = (lead.phone || '').replace(/\D/g, '')
   const last9 = cleanPhone.length >= 9 ? cleanPhone.slice(-9) : cleanPhone
+  const messageParticipants = or(
+    eq(whatsappMessages.leadId, id),
+    eq(whatsappMessages.phone, lead.phone),
+    cleanPhone && cleanPhone !== lead.phone ? eq(whatsappMessages.phone, cleanPhone) : undefined,
+  )!
+
+  const messageChannels = await db
+    .selectDistinct({ channel: whatsappMessages.channel })
+    .from(whatsappMessages)
+    .where(and(eq(whatsappMessages.companyId, company.id), messageParticipants))
+  const availableThreadChannels = [...new Set([
+    resolveLeadDeliveryChannel(lead),
+    ...messageChannels.map(row => normalizeInboxThreadChannel(row.channel)).filter((channel): channel is InboxThreadChannel => channel !== null),
+  ])]
+  const threadChannel = requestedThread && availableThreadChannels.includes(requestedThread)
+    ? requestedThread
+    : availableThreadChannels[0]
 
   const [messagePage, appointments, reservations, ownerRows] = await Promise.all([
     loadInboxMessagePage({
@@ -54,6 +73,7 @@ export async function ConversationChatPage({
       leadId: id,
       phone: lead.phone,
       aroundMessageId: validAround,
+      threadChannel,
     }),
     cleanPhone
       ? db
@@ -94,11 +114,13 @@ export async function ConversationChatPage({
 
   return (
     <ChatWindow
-      key={`${id}:${validAround ?? 'current'}:${navigation.initialContextOpen ? 'context' : 'chat'}:${navigation.fromAttention ? 'attention' : 'inbox'}`}
+      key={`${id}:${threadChannel}:${validAround ?? 'current'}:${navigation.initialContextOpen ? 'context' : 'chat'}:${navigation.fromAttention ? 'attention' : 'inbox'}`}
       highlightMessageId={validAround}
       backHref={navigation.backHref}
       conversationHref={navigation.conversationHref}
       initialContextOpen={navigation.initialContextOpen}
+      threadChannel={threadChannel}
+      availableThreadChannels={availableThreadChannels}
       lead={{
         id: lead.id,
         phone: lead.phone,

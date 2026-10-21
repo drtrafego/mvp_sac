@@ -17,6 +17,7 @@ import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { AmbiguousCredentialError } from "@/lib/instagram-webhook-errors"
+import { persistInstagramInboundWithTags, InstagramInboundPersistenceError, isInstagramStoryReply } from "@/lib/instagram-inbound-tags"
 
 
 // Resolve a empresa dona de um pageId (Instagram Account ID ou Page ID) e,
@@ -526,9 +527,15 @@ export async function POST(req: NextRequest) {
                 }
 
                 try {
-                  await db.insert(whatsappMessages).values({
+                  if (!lead?.id) throw new InstagramInboundPersistenceError('lead ausente')
+                  await persistInstagramInboundWithTags({
                     companyId,
-                    leadId: lead?.id ?? null,
+                    leadId: lead.id,
+                    text: inboundText,
+                    isStoryReply: isInstagramStoryReply(message),
+                    message: {
+                    companyId,
+                    leadId: lead.id,
                     phone: igPhone,
                     channel: 'instagram',
                     direction: 'inbound',
@@ -536,6 +543,7 @@ export async function POST(req: NextRequest) {
                     messageType: 'text',
                     sentBy: 'user',
                     externalId: message?.mid ?? null,
+                    },
                   })
                 } catch (err) {
                   // Segunda camada (índice único parcial): corrida entre duas
@@ -546,6 +554,7 @@ export async function POST(req: NextRequest) {
                     console.log(`[Instagram Webhook Global] corrida no insert (unique violation), mid=${message?.mid}, tratando como já processado`)
                     continue
                   }
+                  if (err instanceof InstagramInboundPersistenceError) throw err
                   throw err
                 }
 
@@ -593,6 +602,7 @@ export async function POST(req: NextRequest) {
               } catch (itemErr) {
                 await markInstagramItemLog({ processed: false, errorMessage: itemErr instanceof Error ? itemErr.message : String(itemErr), decision: 'error_processing_item' })
                 console.error(`[Instagram Webhook Global] Erro ao processar mensagem (mid=${message?.mid}):`, itemErr)
+                if (itemErr instanceof InstagramInboundPersistenceError) throw itemErr
               }
             } else {
               await markInstagramItemLog({ processed: false, skipReason: 'sem sender ou sem texto processável', decision: 'skip_no_sender_or_text' })
@@ -627,11 +637,15 @@ export async function POST(req: NextRequest) {
         }
         } catch (entryErr) {
           console.error(`[Instagram Webhook Global] Erro ao processar entry (pageId=${(entry as Record<string, unknown>)?.id}):`, entryErr)
+          if (entryErr instanceof InstagramInboundPersistenceError) throw entryErr
         }
       }
     }
   } catch (err) {
     console.error('[Global Instagram Webhook Error]:', err)
+    if (err instanceof InstagramInboundPersistenceError) {
+      return NextResponse.json({ error: 'instagram_inbound_persistence_failed' }, { status: 500 })
+    }
   }
 
   return NextResponse.json({ success: true })

@@ -102,7 +102,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
         kiwify: kiwifyEnabled && hasKiwify,
         greenn: greennEnabled && hasGreenn,
         zouti: zoutiEnabled && hasZouti,
-        instagram: hasInstagram || sidebarConfig?.showInstagram === true,
+        instagram: hasInstagram,
         instagramCommentAutomation: activeCommentAutomations.length > 0,
         mineracao: hasMineracao,
       },
@@ -111,7 +111,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
   } catch {
     return {
       activeConnections: {
-        hotmart: true,
+        hotmart: false,
         kiwify: false,
         greenn: false,
         zouti: false,

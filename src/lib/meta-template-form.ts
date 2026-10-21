@@ -23,6 +23,10 @@ function values(value: string): string[] {
   return value.split(/[\n,;]/).map(item => item.trim()).filter(Boolean)
 }
 
+export function templateVariableNumbers(text: string): number[] {
+  return [...new Set(Array.from(text.matchAll(/\{\{\s*(\d+)\s*\}\}/g), match => Number(match[1])))].sort((a, b) => a - b)
+}
+
 function highestVariable(text: string): number {
   return Math.max(0, ...Array.from(text.matchAll(/\{\{\s*(\d+)\s*\}\}/g), match => Number(match[1])))
 }

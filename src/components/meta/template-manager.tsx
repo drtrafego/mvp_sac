@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
   formToMetaTemplateComponents,
+  templateVariableNumbers,
   type MetaButtonType,
   type MetaHeaderType,
   type MetaTemplateFormButton,
@@ -23,14 +24,16 @@ export function TemplateManager() {
   const [category, setCategory] = useState('UTILITY')
   const [language, setLanguage] = useState('pt_BR')
   const [body, setBody] = useState('')
-  const [bodyExamples, setBodyExamples] = useState('')
+  const [bodyExamples, setBodyExamples] = useState<string[]>([])
   const [headerType, setHeaderType] = useState<MetaHeaderType>('none')
   const [headerText, setHeaderText] = useState('')
-  const [headerExample, setHeaderExample] = useState('')
+  const [headerExamples, setHeaderExamples] = useState<string[]>([])
   const [footer, setFooter] = useState('')
   const [buttons, setButtons] = useState<MetaTemplateFormButton[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const bodyVariableNumbers = templateVariableNumbers(body)
+  const headerVariableNumbers = headerType === 'text' ? templateVariableNumbers(headerText) : []
 
   async function load() {
     const response = await fetch('/api/meta/templates/manage', { cache: 'no-store' })
@@ -46,10 +49,10 @@ export function TemplateManager() {
   function resetForm() {
     setName('')
     setBody('')
-    setBodyExamples('')
+    setBodyExamples([])
     setHeaderType('none')
     setHeaderText('')
-    setHeaderExample('')
+    setHeaderExamples([])
     setFooter('')
     setButtons([])
   }
@@ -57,7 +60,7 @@ export function TemplateManager() {
   async function create(submitImmediately: boolean) {
     let components: unknown[]
     try {
-      components = formToMetaTemplateComponents({ body, bodyExamples, headerType, headerText, headerExample, footer, buttons })
+      components = formToMetaTemplateComponents({ body, bodyExamples: bodyExamples.join('\n'), headerType, headerText, headerExample: headerExamples.join('\n'), footer, buttons })
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Revise os campos do template.')
       return
@@ -126,13 +129,13 @@ export function TemplateManager() {
       <legend className="px-1 text-sm font-semibold">Cabeçalho, opcional</legend>
       <div className="grid gap-3 md:grid-cols-2"><div className="space-y-2"><Label htmlFor="header-type">Tipo</Label><select id="header-type" className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" value={headerType} onChange={event => setHeaderType(event.target.value as MetaHeaderType)}><option value="none">Sem cabeçalho</option><option value="text">Texto</option></select><p className="text-xs text-fg-muted">Cabeçalhos de mídia estarão disponíveis quando o envio de arquivo estiver integrado.</p></div>
       {headerType === 'text' && <div className="space-y-2"><Label htmlFor="header-text">Texto do cabeçalho</Label><Input id="header-text" value={headerText} onChange={event => setHeaderText(event.target.value)} maxLength={60} placeholder="Olá, {{1}}" /></div>}
-      {headerType === 'text' && <div className="space-y-2"><Label htmlFor="header-example">Exemplo das variáveis, separado por vírgula</Label><Input id="header-example" value={headerExample} onChange={event => setHeaderExample(event.target.value)} placeholder="Gastão" /></div>}</div>
+      {headerType === 'text' && <div className="space-y-2 md:col-span-2"><p className="text-xs text-fg-muted">Use `{'{{1}}'}` no texto para criar um espaço. A Meta preenche esse espaço quando a mensagem é enviada; o exemplo serve só para validar o template e não é enviado ao cliente.</p>{headerVariableNumbers.length > 0 ? <div className="grid gap-3 sm:grid-cols-2">{headerVariableNumbers.map((variable, index) => <div key={variable} className="space-y-1"><Label htmlFor={`header-example-${variable}`}>{`O que entra em {{${variable}}}?`}</Label><Input id={`header-example-${variable}`} value={headerExamples[index] ?? ''} onChange={event => setHeaderExamples(current => { const next = [...current]; next[index] = event.target.value; return next })} placeholder={index === 0 ? 'Ex.: Gastão' : 'Ex.: terça-feira às 14h'} /></div>)}</div> : <p className="text-xs text-fg-muted">Quando o texto tiver `{'{{1}}'}`, o campo para o exemplo aparecerá aqui.</p>}</div>}</div>
     </fieldset>
 
     <fieldset className="rounded-xl border border-line-subtle p-4 space-y-3">
       <legend className="px-1 text-sm font-semibold">Corpo da mensagem</legend>
       <div className="space-y-2"><Label htmlFor="template-body">Mensagem</Label><Textarea id="template-body" value={body} onChange={event => setBody(event.target.value)} maxLength={1024} className="min-h-32" placeholder="Olá, {{1}}. Seu atendimento está confirmado para {{2}}." /></div>
-      <div className="space-y-2"><Label htmlFor="body-examples">Exemplos das variáveis</Label><Input id="body-examples" value={bodyExamples} onChange={event => setBodyExamples(event.target.value)} placeholder="Gastão, terça-feira às 14h" /><p className="text-xs text-fg-muted">Use vírgula, ponto e vírgula ou uma linha para separar os exemplos na ordem de cada {'{{variável}}'}.</p></div>
+      <div className="space-y-2"><p className="text-xs text-fg-muted">Os trechos `{'{{1}}'}`, `{'{{2}}'}` são espaços que serão preenchidos automaticamente com os dados do atendimento. Informe um exemplo real para cada espaço; esses exemplos ajudam a Meta a validar o formato e não são enviados ao cliente.</p>{bodyVariableNumbers.length > 0 ? <div className="grid gap-3 sm:grid-cols-2">{bodyVariableNumbers.map((variable, index) => <div key={variable} className="space-y-1"><Label htmlFor={`body-example-${variable}`}>{`O que entra em {{${variable}}}?`}</Label><Input id={`body-example-${variable}`} value={bodyExamples[index] ?? ''} onChange={event => setBodyExamples(current => { const next = [...current]; next[index] = event.target.value; return next })} placeholder={index === 0 ? 'Ex.: Gastão' : 'Ex.: terça-feira às 14h'} /></div>)}</div> : <p className="text-xs text-fg-muted">Se a mensagem não tiver `{'{{1}}'}`, nenhum exemplo é necessário.</p>}</div>
     </fieldset>
 
     <fieldset className="rounded-xl border border-line-subtle p-4 space-y-3">

@@ -7,6 +7,7 @@ import { roleSatisfies } from '@/lib/company-role'
 import { maskSettingsRow, shouldWriteSettingsField } from '@/lib/settings-mask'
 import { parseAgentDisplayName } from '@/lib/agent-display-name'
 import { parseSacObject, getCompanyPipelineStageIds, SacInputError } from '@/lib/sac-access'
+import { isInstagramInboxPlacement } from '@/lib/instagram-inbox-placement'
 
 /**
  * Token da barreira de webhooks, devolvido SÓ para admin.
@@ -58,6 +59,7 @@ const WRITABLE_SETTING_FIELDS = [
   ['instagramVerifyToken', 'string'],
   ['instagramPageId', 'string'],
   ['instagramAppSecret', 'string'],
+  ['instagramInboxPlacement', 'string'],
   ['sidebarConfig', 'present'],
   ['sacFollowupStageIds', 'present'],
 ] as const
@@ -125,6 +127,7 @@ export async function GET(): Promise<NextResponse> {
       instagramVerifyToken: '',
       instagramPageId: '',
       instagramAppSecret: '',
+      instagramInboxPlacement: 'general',
     })
   }
 
@@ -152,6 +155,9 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
   let body: Record<string, unknown>
   try {
     body = parseSacObject(await req.json().catch(() => null))
+    if (body.instagramInboxPlacement !== undefined && !isInstagramInboxPlacement(body.instagramInboxPlacement)) {
+      throw new SacInputError('A posição da caixa do Instagram é inválida.')
+    }
     if (body.sacFollowupStageIds !== undefined) {
       const ids = body.sacFollowupStageIds
       if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) throw new SacInputError('Etapas de acompanhamento inválidas.')

@@ -17,6 +17,21 @@ export class AuthError extends Error {
   }
 }
 
+type CurrentUser = {
+  id: string
+  primaryEmail?: string | null
+  displayName?: string | null
+  primaryEmailVerified?: boolean
+  isAdmin: boolean
+  companyId?: number
+}
+
+export function explicitAgentCompanyId(user: Pick<CurrentUser, 'companyId'>): number | null {
+  return typeof user.companyId === 'number' && Number.isSafeInteger(user.companyId) && user.companyId > 0
+    ? user.companyId
+    : null
+}
+
 export function unauthorizedResponse() {
   return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
 }
@@ -52,6 +67,7 @@ export async function getCurrentUser() {
           displayName: verified.displayName,
           isAdmin: verified.isAdmin,
           primaryEmailVerified: true,
+          companyId: verified.companyId,
         }
       }
     }
@@ -72,6 +88,12 @@ export async function getCurrentUser() {
 export async function getCurrentCompany() {
   const user = await getCurrentUser()
   if (!user) return null
+
+  const agentCompanyId = explicitAgentCompanyId(user)
+  if (agentCompanyId !== null) {
+    const [company] = await db.select().from(companies).where(eq(companies.id, agentCompanyId)).limit(1)
+    return company ?? null
+  }
 
   const isAdmin = user.isAdmin || (user.primaryEmailVerified && checkIsAdmin(user.primaryEmail))
 
@@ -410,4 +432,3 @@ export async function requireSacActor() {
   }
   return { ...access, memberId, actorId: user.id, actorName: user.displayName || user.primaryEmail || 'Atendente' }
 }
-

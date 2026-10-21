@@ -3,7 +3,9 @@ export const maxDuration = 60
 
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import { drizzle as postgresDrizzle } from 'drizzle-orm/postgres-js'
 import { db } from '@/lib/db'
+import * as schema from '@/lib/db/schema'
 import { agendaBlockedDates, companies, massDispatchPhoneCooldowns, messageJobs, nativeAvailabilitySchedules, recoveryLeads, sequenceMessages, settings, whatsappMessages } from '@/lib/db/schema'
 import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
@@ -86,7 +88,7 @@ function interpolate(text: string | null | undefined, lead: {
     .replace(/\{afiliado\}/gi, lead.affiliateCode ?? '')
 }
 
-async function recordJobOutcome(jobId: number, result: DispatchOutcome, metaPhoneNumberId?: string | null): Promise<void> {
+async function recordJobOutcome(jobId: number, result: DispatchOutcome, metaPhoneNumberId?: string | null, transactionExecutor: any = db): Promise<void> {
   if (result.status === 'sent') {
     await db.update(messageJobs).set({
       status: 'sent', sentAt: result.sentAt, externalWamid: result.externalWamid,
@@ -98,7 +100,7 @@ async function recordJobOutcome(jobId: number, result: DispatchOutcome, metaPhon
       deliveryStatus: 'accepted_unconfirmed', error: result.error, processingStartedAt: null,
     }).where(eq(messageJobs.id, jobId))
   } else if (result.status === 'rate_limited') {
-    await db.transaction(async tx => {
+    await transactionExecutor.transaction(async (tx: any) => {
       await tx.update(messageJobs).set({
         status: 'pending', scheduledFor: result.retryAt, error: result.error,
         retryCount: sql`${messageJobs.retryCount} + 1`, processingStartedAt: null,
@@ -154,17 +156,26 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    return await runDispatchPendingJobs()
+    return await runDispatchPendingJobs(lockClient)
   } finally {
     await releaseCronDispatchLock(lockClient)
   }
 }
 
-async function runDispatchPendingJobs(): Promise<NextResponse> {
+async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
+  // O cliente principal usa neon-http, que não implementa transactions.
+  // Este cliente postgres-js é a mesma conexão que mantém o advisory lock,
+  // então a seleção e a marcação dos jobs continuam atômicas e serializadas.
+  const transactionalDb: any = typeof lockClient === 'function'
+    ? postgresDrizzle(lockClient, { schema })
+    : db
   const now = new Date()
   const staleProcessingBefore = new Date(now.getTime() - processingLeaseTimeoutMs())
+  // Colunas de timestamp tipadas continuam recebendo Date; o SQL cru abaixo
+  // usa a string ISO porque o postgres-js não aceita Date nesse bind direto.
+  const nowIso = now.toISOString()
   // Ordena por prioridade do lead (desc) para processar cartao_recusado antes de boleto/carrinho
-  const pendingJobs = await db.transaction(async tx => {
+  const pendingJobs: any[] = await transactionalDb.transaction(async (tx: any) => {
     const stale = await tx.update(messageJobs).set({
       status: 'failed',
       error: 'Job ficou em processing além do lease; revisão manual necessária para evitar reenvio duplicado',
@@ -174,7 +185,7 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
       lte(messageJobs.processingStartedAt, staleProcessingBefore),
     )).returning({ id: messageJobs.id })
     if (stale.length > 0) {
-      console.error('[cron] ALERTA: jobs processing órfãos sinalizados para revisão manual', { jobIds: stale.map(row => row.id) })
+      console.error('[cron] ALERTA: jobs processing órfãos sinalizados para revisão manual', { jobIds: stale.map((row: { id: number }) => row.id) })
     }
     const rows = await tx
       .select({
@@ -203,21 +214,21 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
           SELECT 1
           FROM mass_dispatch_phone_cooldowns c
           WHERE c.meta_phone_number_id = ${settings.metaPhoneNumberId}
-            AND c.cooldown_until > ${now}
+            AND c.cooldown_until > ${nowIso}
         )`
       ))
       .orderBy(desc(recoveryLeads.priority))
       .limit(MAX_JOBS_PER_RUN)
-      .for('update', { skipLocked: true })
-    const ids = rows.map(row => row.job.id)
+      .for('update', { of: messageJobs, skipLocked: true })
+    const ids = rows.map((row: any) => row.job.id)
     if (ids.length > 0) {
       await tx.update(messageJobs).set({ status: 'processing', processingStartedAt: now }).where(inArray(messageJobs.id, ids))
     }
     return rows
   })
 
-  const backlogEligibleRows = pendingJobs.filter(row => row.job.messageOrder != null && row.job.massDispatchBatchId == null)
-  const selection = firstDueJobPerLead(backlogEligibleRows.map(row => ({
+  const backlogEligibleRows = pendingJobs.filter((row: any) => row.job.messageOrder != null && row.job.massDispatchBatchId == null)
+  const selection = firstDueJobPerLead(backlogEligibleRows.map((row: any) => ({
     id: row.job.id,
     leadId: row.job.leadId,
     messageOrder: row.job.messageOrder,
@@ -231,15 +242,15 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
       processingStartedAt: null,
     }).where(inArray(messageJobs.id, deferredBacklogIds))
   }
-  const runnableJobs = pendingJobs.filter(row => !deferredBacklogIdSet.has(row.job.id))
+  const runnableJobs = pendingJobs.filter((row: any) => !deferredBacklogIdSet.has(row.job.id))
 
   // Janela de 24h da Meta: precisa da última mensagem INBOUND de cada lead
   // do batch (sem isso, mensagem livre pra contato frio fora da janela é
   // recusada pela Meta, ou pior, aceita por engano em algum canal). Um único
   // round-trip pro batch inteiro, igual ao padrão de src/app/api/inbox/route.ts.
-  const jobLeadIds = [...new Set(runnableJobs.map(p => p.job.leadId).filter((id): id is number => id != null))]
-  const jobPhones = [...new Set(runnableJobs.map(p => p.leadPhone).filter((p): p is string => Boolean(p)))]
-  const companyIds = [...new Set(runnableJobs.map(p => p.companyId))]
+  const jobLeadIds = [...new Set(runnableJobs.map((p: any) => p.job.leadId).filter((id): id is number => id != null))]
+  const jobPhones = [...new Set(runnableJobs.map((p: any) => p.leadPhone).filter((p): p is string => Boolean(p)))]
+  const companyIds = [...new Set(runnableJobs.map((p: any) => p.companyId))]
 
   const inboundMessages = jobLeadIds.length > 0
     ? await db
@@ -501,9 +512,9 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
             type: 'text',
             content: interpolate(job.upsellContent, lead),
           }, companyId),
-          result => recordJobOutcome(job.id, result, metaPhoneNumberId),
+          result => recordJobOutcome(job.id, result, metaPhoneNumberId, transactionalDb),
           undefined,
-          result => recordJobOutcome(job.id, result, metaPhoneNumberId),
+          result => recordJobOutcome(job.id, result, metaPhoneNumberId, transactionalDb),
           job.retryCount,
         )
         if (outcome.status === 'rate_limited' && metaPhoneNumberId) cooldownsByPhone.set(metaPhoneNumberId, outcome.retryAt)
@@ -595,9 +606,9 @@ async function runDispatchPendingJobs(): Promise<NextResponse> {
           templateLanguage: message.templateLanguage ?? undefined,
           templateVariableValues,
         }, companyId),
-        result => recordJobOutcome(job.id, result, metaPhoneNumberId),
+        result => recordJobOutcome(job.id, result, metaPhoneNumberId, transactionalDb),
         undefined,
-        result => recordJobOutcome(job.id, result, metaPhoneNumberId),
+        result => recordJobOutcome(job.id, result, metaPhoneNumberId, transactionalDb),
         job.retryCount,
       )
       if (outcome.status === 'rate_limited' && metaPhoneNumberId) cooldownsByPhone.set(metaPhoneNumberId, outcome.retryAt)

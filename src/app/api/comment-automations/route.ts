@@ -2,18 +2,20 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { instagramCommentAutomations } from '@/lib/db/schema'
 import { eq, desc } from 'drizzle-orm'
-import { requireCompany, AuthError } from '@/lib/auth'
+import { requireCompanyRole, AuthError, ForbiddenError, forbiddenResponse } from '@/lib/auth'
 import { findInvalidOptionalTextField } from '@/lib/request-validation'
+import { MAX_TAG_LENGTH, normalizeTag } from '@/lib/lead-tags'
 
 function isUnauthorizedError(error: unknown): boolean {
   return error instanceof AuthError || (
     typeof error === 'object' && error !== null && 'status' in error && error.status === 401
   )
 }
+function isForbiddenError(error: unknown): boolean { return error instanceof ForbiddenError || (typeof error === 'object' && error !== null && 'status' in error && error.status === 403) }
 
 export async function GET() {
   try {
-    const company = await requireCompany()
+    const { company } = await requireCompanyRole('admin')
     const rules = await db
       .select()
       .from(instagramCommentAutomations)
@@ -25,6 +27,7 @@ export async function GET() {
     if (isUnauthorizedError(err)) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
+    if (isForbiddenError(err)) return forbiddenResponse()
     console.error('[Comment Automations GET Error]:', err)
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 })
   }
@@ -32,7 +35,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const company = await requireCompany()
+    const { company } = await requireCompanyRole('admin')
     const parsedBody: unknown = await req.json().catch(() => null)
     if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
       return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
@@ -53,6 +56,7 @@ export async function POST(req: NextRequest) {
       activeHoursEnd,
       isActive = true,
       requireFollowCheck = false,
+      autoTag,
     } = body
 
     if (!name || typeof name !== 'string' || !name.trim()) {
@@ -71,6 +75,7 @@ export async function POST(req: NextRequest) {
       ['publicReply', publicReply],
       ['activeHoursStart', activeHoursStart],
       ['activeHoursEnd', activeHoursEnd],
+      ['autoTag', autoTag],
     ] as const
     const invalidTextField = findInvalidOptionalTextField(optionalTextFields)
     if (invalidTextField) {
@@ -78,6 +83,11 @@ export async function POST(req: NextRequest) {
         { error: `O campo ${invalidTextField} deve ser um texto.` },
         { status: 400 },
       )
+    }
+    const rawAutoTag = typeof autoTag === 'string' ? autoTag.trim() : ''
+    const normalizedAutoTag = rawAutoTag ? normalizeTag(rawAutoTag) : null
+    if (rawAutoTag.length > MAX_TAG_LENGTH) {
+      return NextResponse.json({ error: `A tag pode ter no máximo ${MAX_TAG_LENGTH} caracteres.` }, { status: 400 })
     }
 
     const [created] = await db
@@ -97,6 +107,7 @@ export async function POST(req: NextRequest) {
         activeHoursEnd: typeof activeHoursEnd === 'string' ? activeHoursEnd.trim() || null : null,
         isActive: Boolean(isActive),
         requireFollowCheck: Boolean(requireFollowCheck),
+        autoTag: normalizedAutoTag || null,
       })
       .returning()
 
@@ -105,6 +116,7 @@ export async function POST(req: NextRequest) {
     if (isUnauthorizedError(err)) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
+    if (isForbiddenError(err)) return forbiddenResponse()
     console.error('[Comment Automations POST Error]:', err)
     return NextResponse.json({ error: 'Erro interno ao criar automação' }, { status: 500 })
   }

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formToMetaTemplateComponents } from '../src/lib/meta-template-form'
+import { formToMetaTemplateComponents, templateVariableNumbers } from '../src/lib/meta-template-form'
 import { validateMetaTemplateComponents } from '../src/lib/meta-template-validation'
 
 test('formulário visual monta o payload Meta com variáveis, cabeçalho de texto e botões', () => {
@@ -56,12 +56,19 @@ test('formulário exige exemplos suficientes para as variáveis', () => {
   }), /E\.164/)
 })
 
+test('identifica cada espaço variável uma única vez e em ordem', () => {
+  assert.deepEqual(templateVariableNumbers('Olá {{2}}, {{1}} e {{2}}.'), [1, 2])
+})
+
 test('tela expõe controles visuais e não expõe editor JSON', () => {
   const source = readFileSync(path.resolve(__dirname, '../src/components/meta/template-manager.tsx'), 'utf8')
   assert.match(source, /Corpo da mensagem/)
   assert.match(source, /Cabeçalho, opcional/)
   assert.match(source, /Botões, opcional/)
   assert.match(source, /Cabeçalhos de mídia estarão disponíveis/)
+  assert.match(source, /O que entra em \{\{/)
+  assert.match(source, /não é enviado ao cliente/)
+  assert.doesNotMatch(source, /separado por vírgula/)
   assert.doesNotMatch(source, /Componentes Meta, JSON/)
   assert.doesNotMatch(source, /JSON\.parse/)
   assert.doesNotMatch(source, /<option value="image">/)

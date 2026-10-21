@@ -5,6 +5,7 @@ import {
   recoveryLeads,
   settings,
   whatsappMessages,
+  leadTags,
 } from '@/lib/db/schema'
 import {
   sendInstagramPrivateReply,
@@ -16,6 +17,7 @@ import {
 import { generateAndSendAiReply } from '@/lib/ai-reply'
 import { eq, and, gte, sql } from 'drizzle-orm'
 import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
+import { normalizeTag } from '@/lib/lead-tags'
 
 export interface CommentEventData {
   companyId: number
@@ -293,7 +295,7 @@ export async function processInstagramComment(event: CommentEventData) {
     let [lead] = await db
       .select()
       .from(recoveryLeads)
-      .where(eq(recoveryLeads.phone, igPhone))
+      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, igPhone)))
       .limit(1)
 
     if (!lead) {
@@ -347,6 +349,17 @@ export async function processInstagramComment(event: CommentEventData) {
       }
 
       await db.update(recoveryLeads).set(updateSet).where(eq(recoveryLeads.id, lead.id))
+    }
+
+    // A regra já foi casada e a conversa foi materializada no SAC. O índice
+    // único de lead_tags torna reentregas da Meta e corridas inofensivas.
+    if (matchedRule.autoTag && lead?.id) {
+      await db.insert(leadTags).values({
+        leadId: lead.id,
+        tag: normalizeTag(matchedRule.autoTag),
+        scopeChannel: 'instagram',
+        createdBy: 'automation:instagram:comment',
+      }).onConflictDoNothing()
     }
 
     // Grava a mensagem enviada (pergunta intermediária ou dmMessage direto,
