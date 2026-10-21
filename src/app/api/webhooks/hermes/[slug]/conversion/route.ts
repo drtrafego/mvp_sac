@@ -110,7 +110,7 @@ import { companies, metaConversionEvents, recoveryLeads, webhookReceived } from 
 import { formatBrazilianPhone } from '@/lib/whatsapp'
 import { checkHermesWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
-import { scheduleEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
+import { META_EVENT_NAMES, scheduleEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 
 // Janela de reaproveitamento de evento pendente/enviado quando o event_id
 // cai no fallback não determinístico (ver resolveEventTime() e FIX 2 dentro
@@ -122,6 +122,17 @@ const RECENT_EVENT_REUSE_WINDOW_MS = 15 * 60 * 1000
 type HermesConversionPayload = {
   phone?: string
   nome?: string
+  email?: string
+  cidade?: string
+  city?: string
+  estado?: string
+  state?: string
+  pais?: string
+  country?: string
+  cep?: string
+  zipcode?: string
+  cpf?: string
+  cpfCnpj?: string
   valor?: number | null
   dataReserva?: string
   horario?: string
@@ -362,7 +373,7 @@ export async function POST(
       .set({
         pipelineStage: action === 'cancelled' ? 'perdido' : 'agendado',
         status: action === 'cancelled' ? 'cancelled' : 'completed',
-        firstContactAt: sql`coalesce(${recoveryLeads.firstContactAt}, ${eventTime})`,
+        firstContactAt: sql`coalesce(${recoveryLeads.firstContactAt}, ${eventTime.toISOString()})`,
         updatedAt: new Date(),
       })
       .where(
@@ -400,7 +411,7 @@ export async function POST(
         and(
           eq(metaConversionEvents.companyId, company.id),
           eq(metaConversionEvents.leadId, leadId),
-          eq(metaConversionEvents.eventName, 'Schedule'),
+          eq(metaConversionEvents.eventName, META_EVENT_NAMES.schedule),
           inArray(metaConversionEvents.status, ['pending', 'sent']),
           gte(metaConversionEvents.createdAt, new Date(Date.now() - RECENT_EVENT_REUSE_WINDOW_MS)),
         ),
@@ -420,13 +431,38 @@ export async function POST(
   // src/lib/meta-conversions-api.ts). skipEventDispatch (FIX 2) pula o
   // envio quando é retry do mesmo evento não determinístico já em voo.
   if (!skipEventDispatch) {
+    // Reaproveita os dados já guardados no CRM quando o bot só envia telefone
+    // e nome. Assim o evento Schedule ganha mais chaves de correspondência
+    // sem exigir uma mudança imediata em todos os bots Hermes.
+    const [leadForConversion] = await db
+      .select({
+        name: recoveryLeads.name,
+        email: recoveryLeads.email,
+        cpfCnpj: recoveryLeads.cpfCnpj,
+        city: recoveryLeads.city,
+        state: recoveryLeads.state,
+        country: recoveryLeads.country,
+        zipcode: recoveryLeads.zipcode,
+      })
+      .from(recoveryLeads)
+      .where(and(eq(recoveryLeads.id, leadId), eq(recoveryLeads.companyId, company.id)))
+      .limit(1)
+
     after(() =>
       sendConversionEvent({
         companyId: company.id,
         leadId,
-        eventName: 'Schedule',
+        eventName: META_EVENT_NAMES.schedule,
         eventId,
         phone,
+        email: leadForConversion?.email ?? body.email ?? null,
+        name: leadForConversion?.name ?? body.nome ?? null,
+        city: leadForConversion?.city ?? body.cidade ?? body.city ?? null,
+        state: leadForConversion?.state ?? body.estado ?? body.state ?? null,
+        country: leadForConversion?.country ?? body.pais ?? body.country ?? null,
+        zipcode: leadForConversion?.zipcode ?? body.cep ?? body.zipcode ?? null,
+        externalId: leadForConversion?.cpfCnpj ?? body.cpf ?? body.cpfCnpj ?? null,
+        rawPayload: body,
         value: body.valor ?? null,
         currency: 'BRL',
         eventTime,

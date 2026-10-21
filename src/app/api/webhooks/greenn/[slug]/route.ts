@@ -6,7 +6,7 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
-import { purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
+import { META_EVENT_NAMES, purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 
 type SaleMeta = { meta_key?: string; meta_value?: string }
 
@@ -328,10 +328,21 @@ export async function POST(
       sendConversionEvent({
         companyId: company.id,
         leadId: lead.id,
-        eventName: 'Purchase',
+        eventName: META_EVENT_NAMES.purchase,
         eventId: purchaseEventId(lead.transactionId || `greenn_${lead.id}`),
         phone: lead.phone,
         email: lead.email,
+        name: lead.name,
+        city: lead.city,
+        state: lead.state,
+        country: lead.country,
+        zipcode: lead.zipcode,
+        externalId: lead.cpfCnpj,
+        rawPayload: lead.rawPayload,
+        productId: lead.productId,
+        productName: lead.productName,
+        transactionId: lead.transactionId,
+        eventTime: lead.approvedDate ?? lead.orderDate ?? undefined,
         value: lead.productValue != null ? lead.productValue / 100 : null,
         currency: 'BRL',
       }).catch((err) => console.error('[meta-capi] erro no after() do webhook Greenn:', err)),

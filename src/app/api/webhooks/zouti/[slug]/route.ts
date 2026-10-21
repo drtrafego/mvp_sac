@@ -7,7 +7,7 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
-import { purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
+import { META_EVENT_NAMES, purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 
 // ─── Tipos do payload Zouti ──────────────────────────────────────────────────
 // Fonte: https://ajuda.zouti.com.br/pt-br/articles/9740950-como-configurar-webhook
@@ -547,10 +547,21 @@ export async function POST(
       sendConversionEvent({
         companyId: company.id,
         leadId: lead.id,
-        eventName: 'Purchase',
+        eventName: META_EVENT_NAMES.purchase,
         eventId: purchaseEventId(transactionId || `zouti_${lead.id}`),
         phone,
         email: customer?.email ?? null,
+        name: customer?.name ?? null,
+        city: customer?.city ?? null,
+        state: customer?.state ?? null,
+        country: customer?.country ?? null,
+        zipcode: customer?.zipcode ?? null,
+        externalId: customer?.document ?? null,
+        rawPayload: body,
+        productId,
+        productName,
+        transactionId,
+        eventTime: parseDate(body.updated_at ?? body.created_at) ?? undefined,
         value: productValue != null ? productValue / 100 : null,
         currency: 'BRL',
       }).catch((err) => console.error('[meta-capi] erro no after() do webhook Zouti:', err)),

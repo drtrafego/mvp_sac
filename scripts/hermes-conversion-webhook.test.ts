@@ -167,6 +167,7 @@ async function main() {
 
   mock.module('@/lib/meta-conversions-api', {
     namedExports: {
+      META_EVENT_NAMES: { purchase: 'Purchase', schedule: 'Schedule' },
       scheduleEventId: realScheduleEventId,
       sendConversionEvent: async (params: SendConversionCall) => {
         sendConversionCalls.push(params)
@@ -284,6 +285,14 @@ async function main() {
       assert.equal(call.companyId, company.id)
       assert.equal(call.eventName, 'Schedule')
       assert.equal(call.phone, '5511988887777') // formatBrazilianPhone: DDI 55 + nono dígito
+      assert.equal(call.name, 'Hóspede de Teste')
+      assert.deepEqual(call.rawPayload, {
+        phone,
+        nome: 'Hóspede de Teste',
+        valor: 250.5,
+        dataReserva: '2026-09-25',
+        horario: '20:00',
+      })
       assert.equal(call.value, 250.5)
       assert.equal(call.currency, 'BRL')
       assert.equal(typeof call.leadId, 'number')

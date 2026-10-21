@@ -8,16 +8,13 @@
  * qualquer empresa que preencher settings.metaPixelId + metaAdsAccessToken
  * ganha o envio automaticamente, igual fetchAdAttribution já faz hoje.
  *
- * Hoje (21/09/2026) só os 4 webhooks de checkout (Hotmart, Greenn, Zouti,
- * Kiwify) chamam sendConversionEvent(), com eventName: 'Purchase'. O Gramado
- * Plazza (e qualquer cliente que confirma por reserva/agendamento, não por
- * checkout) ainda NÃO chama esta função: depende da sincronização de
- * conversas do Gramado (ainda não construída) trazer um sinal estruturado de
- * "reserva confirmada" pro SAC — ver operacao/meta-conversions-api-20260921.md,
- * seção 1.2. A função já está pronta para esse uso (eventName: 'Schedule'),
- * só falta ligar quando aquele sinal existir. Não adicionar nenhum
- * `if (slug === 'gramado')`: o desenho é "liga sozinho quando a empresa
- * configura o pixel", igual ads-attribution.ts.
+ * Os 4 webhooks de checkout (Hotmart, Greenn, Zouti e Kiwify) usam o evento
+ * padrão `Purchase`. Reservas confirmadas pelo Hermes (Gramado e futuros
+ * clientes do mesmo tipo) usam o evento padrão `Schedule`, que a interface
+ * da Meta costuma traduzir como "Programar". O nome é padronizado por tipo
+ * de conversão, não por cliente: não trocamos uma reserva por `Purchase`
+ * só para deixar todos os rótulos iguais, pois isso piora a semântica da
+ * otimização e da qualidade do evento.
  */
 
 import { and, eq, sql } from 'drizzle-orm'
@@ -30,7 +27,12 @@ const GRAPH_VERSION = (process.env.META_GRAPH_VERSION || 'v21.0').trim()
 const GRAPH_HOST = 'https://graph.facebook.com'
 const REQUEST_TIMEOUT_MS = 15000
 
-export type MetaConversionEventName = 'Purchase' | 'Schedule'
+export const META_EVENT_NAMES = {
+  purchase: 'Purchase',
+  schedule: 'Schedule',
+} as const
+
+export type MetaConversionEventName = (typeof META_EVENT_NAMES)[keyof typeof META_EVENT_NAMES]
 
 export interface SendConversionEventParams {
   companyId: number
@@ -40,6 +42,19 @@ export interface SendConversionEventParams {
   eventId: string
   phone?: string | null
   email?: string | null
+  /** Dados de correspondência adicionais aceitos pela CAPI. */
+  name?: string | null
+  city?: string | null
+  state?: string | null
+  country?: string | null
+  zipcode?: string | null
+  /** Identificador estável do cliente, como CPF/CNPJ normalizado. */
+  externalId?: string | null
+  /** Payload original do provedor, usado apenas para extrair fbc/fbp/IP. */
+  rawPayload?: unknown
+  productId?: string | null
+  productName?: string | null
+  transactionId?: string | null
   /** Em REAIS, não centavos (a CAPI não usa centavos). */
   value?: number | null
   currency?: string
@@ -71,6 +86,64 @@ function sha256Hex(v: string): string {
   return createHash('sha256').update(v).digest('hex')
 }
 
+function normalizeText(v: string | null | undefined): string | null {
+  const normalized = (v || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+  return normalized || null
+}
+
+function hashText(v: string | null | undefined): string | null {
+  const normalized = normalizeText(v)
+  return normalized ? sha256Hex(normalized) : null
+}
+
+function hashDigits(v: string | null | undefined): string | null {
+  const digits = (v || '').replace(/\D/g, '')
+  return digits ? sha256Hex(digits) : null
+}
+
+function firstPayloadValue(payload: unknown, keys: string[], depth = 0): string | null {
+  if (depth > 5 || payload == null) return null
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = firstPayloadValue(item, keys, depth + 1)
+      if (found) return found
+    }
+    return null
+  }
+  if (typeof payload !== 'object') return null
+  const object = payload as Record<string, unknown>
+  for (const [key, value] of Object.entries(object)) {
+    if (keys.includes(key.toLowerCase()) && typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+  for (const value of Object.values(object)) {
+    const found = firstPayloadValue(value, keys, depth + 1)
+    if (found) return found
+  }
+  return null
+}
+
+function extractRawAttribution(payload: unknown): {
+  fbc: string | null
+  fbp: string | null
+  ctwaClid: string | null
+  clientIpAddress: string | null
+  clientUserAgent: string | null
+} {
+  return {
+    fbc: firstPayloadValue(payload, ['fbc']),
+    fbp: firstPayloadValue(payload, ['fbp']),
+    ctwaClid: firstPayloadValue(payload, ['ctwa_clid', 'ctwaclid']),
+    clientIpAddress: firstPayloadValue(payload, ['client_ip_address', 'ip_address', 'ip']),
+    clientUserAgent: firstPayloadValue(payload, ['client_user_agent', 'user_agent', 'useragent']),
+  }
+}
+
 /** E-mail: lowercase + trim antes de hashear, exigência da própria Meta. */
 export function hashEmail(email: string | null | undefined): string | null {
   const v = (email || '').trim().toLowerCase()
@@ -95,8 +168,30 @@ export interface CapiEventPayload {
   event_time: number
   event_id: string
   action_source: 'system_generated'
-  user_data: { ph?: string[]; em?: string[] }
-  custom_data?: { value: number; currency: string }
+  user_data: {
+    ph?: string[]
+    em?: string[]
+    fn?: string[]
+    ln?: string[]
+    ct?: string[]
+    st?: string[]
+    zp?: string[]
+    country?: string[]
+    external_id?: string[]
+    fbc?: string
+    fbp?: string
+    ctwa_clid?: string
+    client_ip_address?: string
+    client_user_agent?: string
+  }
+  custom_data?: {
+    value?: number
+    currency?: string
+    order_id?: string
+    content_ids?: string[]
+    content_name?: string
+    content_type?: string
+  }
 }
 
 export interface CapiPayload {
@@ -118,14 +213,45 @@ export function buildCapiPayload(params: {
   eventTime: Date
   phone?: string | null
   email?: string | null
+  name?: string | null
+  city?: string | null
+  state?: string | null
+  country?: string | null
+  zipcode?: string | null
+  externalId?: string | null
+  rawPayload?: unknown
+  productId?: string | null
+  productName?: string | null
+  transactionId?: string | null
   value?: number | null
   currency?: string
 }): CapiPayload {
   const userData: CapiEventPayload['user_data'] = {}
   const ph = hashPhone(params.phone)
   const em = hashEmail(params.email)
+  const nameParts = (params.name || '').trim().split(/\s+/).filter(Boolean)
+  const fn = hashText(nameParts[0])
+  const ln = hashText(nameParts.length > 1 ? nameParts.slice(1).join(' ') : null)
+  const ct = hashText(params.city)
+  const st = hashText(params.state)
+  const zp = hashDigits(params.zipcode)
+  const country = hashText(params.country)
+  const externalId = hashDigits(params.externalId) ?? hashText(params.externalId)
+  const rawAttribution = extractRawAttribution(params.rawPayload)
   if (ph) userData.ph = [ph]
   if (em) userData.em = [em]
+  if (fn) userData.fn = [fn]
+  if (ln) userData.ln = [ln]
+  if (ct) userData.ct = [ct]
+  if (st) userData.st = [st]
+  if (zp) userData.zp = [zp]
+  if (country) userData.country = [country]
+  if (externalId) userData.external_id = [externalId]
+  if (rawAttribution.fbc) userData.fbc = rawAttribution.fbc
+  if (rawAttribution.fbp) userData.fbp = rawAttribution.fbp
+  if (rawAttribution.ctwaClid) userData.ctwa_clid = rawAttribution.ctwaClid
+  if (rawAttribution.clientIpAddress) userData.client_ip_address = rawAttribution.clientIpAddress
+  if (rawAttribution.clientUserAgent) userData.client_user_agent = rawAttribution.clientUserAgent
 
   const entry: CapiEventPayload = {
     event_name: params.eventName,
@@ -134,11 +260,18 @@ export function buildCapiPayload(params: {
     action_source: 'system_generated',
     user_data: userData,
   }
+  const customData: NonNullable<CapiEventPayload['custom_data']> = {}
   // Só entra quando existir valor real: reserva sem transação financeira
   // direta (Gramado) não tem custom_data.value, e a Meta não exige em todo evento.
   if (params.value != null) {
-    entry.custom_data = { value: params.value, currency: params.currency || 'BRL' }
+    customData.value = params.value
+    customData.currency = params.currency || 'BRL'
   }
+  if (params.transactionId) customData.order_id = params.transactionId
+  if (params.productId) customData.content_ids = [params.productId]
+  if (params.productName) customData.content_name = params.productName
+  if (params.productId || params.productName) customData.content_type = 'product'
+  if (Object.keys(customData).length > 0) entry.custom_data = customData
   return { data: [entry] }
 }
 
@@ -192,6 +325,16 @@ export async function sendConversionEvent(params: SendConversionEventParams): Pr
       eventTime,
       phone,
       email,
+      name: params.name,
+      city: params.city,
+      state: params.state,
+      country: params.country,
+      zipcode: params.zipcode,
+      externalId: params.externalId,
+      rawPayload: params.rawPayload,
+      productId: params.productId,
+      productName: params.productName,
+      transactionId: params.transactionId,
       value: params.value ?? null,
       currency: params.currency ?? 'BRL',
     })
