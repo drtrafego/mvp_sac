@@ -1635,7 +1635,7 @@ export default function ConfiguracoesPage() {
         </div>
         <Separator className="bg-line-subtle" />
         <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
-          Envia as conversões confirmadas do SAC para o GA4: <strong>purchase</strong> para vendas e <strong>generate_lead</strong> para reservas. Depois de o evento aparecer no GA4, marque-o como evento principal e importe-o no Google Ads. O Google Ads começa a contar somente a partir da importação, sem backfill; a conversão importada nasce como Secundária e precisa ser marcada como Primária para entrar nos lances.
+          Envia reservas confirmadas do SAC para o GA4 como <strong>generate_lead</strong>. As compras permanecem nos gateways de pagamento e não são reenviadas pelo SAC. Depois de o evento aparecer no GA4, marque-o como evento principal e importe-o no Google Ads. O Google Ads começa a contar somente a partir da importação, sem backfill; a conversão importada nasce como Secundária e precisa ser marcada como Primária para entrar nos lances.
         </p>
         <div className="flex items-center gap-3">
           <Switch checked={form.ga4Enabled} onCheckedChange={v => set('ga4Enabled', v)} />

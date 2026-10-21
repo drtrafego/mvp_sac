@@ -170,6 +170,9 @@ export async function sendGa4Conversion(
   options: { debug?: boolean } = {},
 ): Promise<SendGa4ConversionResult> {
   try {
+    if (params.eventName === 'Purchase') {
+      return { ok: false, skipped: true, error: 'Purchase não é enviado pelo SAC; a compra já é registrada pelo gateway' }
+    }
     const [config] = await db.select().from(settings).where(eq(settings.companyId, params.companyId))
     if (!config?.ga4Enabled) return { ok: false, skipped: true, error: 'GA4 Measurement Protocol desativado para a empresa' }
 

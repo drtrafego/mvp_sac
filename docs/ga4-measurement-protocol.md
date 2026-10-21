@@ -6,9 +6,11 @@ empresa, configurados em **Configurações → Google Analytics 4**.
 
 ## Eventos enviados
 
-- `purchase`: vendas aprovadas da Hotmart, Greenn, Kiwify e Zouti.
 - `generate_lead`: reservas/agendamentos confirmados pelo Hermes, como o Dr.
   Lucas.
+
+As compras aprovadas não são reenviadas pelo SAC: Hotmart, Greenn, Kiwify e
+Zouti já registram essas conversões nos próprios sistemas.
 
 Cada evento leva um `client_id` determinístico, `event_id` para deduplicação,
 horário em microssegundos e, quando disponíveis, valor, moeda, transação,

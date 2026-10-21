@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived } from '@/lib/db/schema'
 import { db } from '@/lib/db'
@@ -7,7 +7,6 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
-import { META_EVENT_NAMES, purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 import {
   isFunilCursosTrigger,
   createInitialFunilCursosState,
@@ -760,36 +759,6 @@ export async function POST(
           }
         }
       }
-    }
-
-    // Meta Conversions API: evento Purchase fire-and-forget (after(), mesmo
-    // padrão do webhook WhatsApp). onConflictDoNothing() já devolveu cedo
-    // (outcome 'duplicate') em caso de reenvio da mesma transação, então este
-    // ponto só roda para venda NOVA.
-    if (mappedType === 'compra_aprovada') {
-      after(() =>
-        sendConversionEvent({
-          companyId: company.id,
-          leadId,
-          eventName: META_EVENT_NAMES.purchase,
-          eventId: purchaseEventId(draft.transactionId || `kiwify_${leadId}`),
-          phone: draft.phone,
-          email: draft.email,
-          name: draft.name,
-          city: draft.city,
-          state: draft.state,
-          country: draft.country,
-          zipcode: draft.zipcode,
-          externalId: draft.cpfCnpj,
-          rawPayload: item,
-          productId: draft.productId,
-          productName: draft.productName,
-          transactionId: draft.transactionId,
-          eventTime: draft.approvedDate ?? draft.orderDate ?? undefined,
-          value: draft.productValue != null ? draft.productValue / 100 : null,
-          currency: 'BRL',
-        }).catch((err) => console.error('[meta-capi] erro no after() do webhook Kiwify:', err)),
-      )
     }
 
     const isRecovery = RECOVERY_TYPES.includes(mappedType)

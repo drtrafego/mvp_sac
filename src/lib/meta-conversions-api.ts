@@ -8,13 +8,10 @@
  * qualquer empresa que preencher settings.metaPixelId + metaAdsAccessToken
  * ganha o envio automaticamente, igual fetchAdAttribution já faz hoje.
  *
- * Os 4 webhooks de checkout (Hotmart, Greenn, Zouti e Kiwify) usam o evento
- * padrão `Purchase`. Reservas confirmadas pelo Hermes (Gramado e futuros
- * clientes do mesmo tipo) usam o evento padrão `Schedule`, que a interface
- * da Meta costuma traduzir como "Programar". O nome é padronizado por tipo
- * de conversão, não por cliente: não trocamos uma reserva por `Purchase`
- * só para deixar todos os rótulos iguais, pois isso piora a semântica da
- * otimização e da qualidade do evento.
+ * As vendas dos gateways não são reenviadas como conversão: Hotmart, Greenn,
+ * Zouti e Kiwify já registram a compra nos próprios sistemas. O único evento
+ * operacional enviado pelo SAC é `Schedule`, para reservas confirmadas pelo
+ * Hermes (Gramado e futuros clientes do mesmo tipo).
  */
 
 import { and, eq, sql } from 'drizzle-orm'
@@ -388,6 +385,9 @@ async function sendMetaConversionEvent(params: SendConversionEventParams): Promi
  * do GA4 manualmente depois, sem uma segunda conversão direta.
  */
 export async function sendConversionEvent(params: SendConversionEventParams): Promise<SendConversionEventResult> {
+  if (params.eventName === META_EVENT_NAMES.purchase) {
+    return { ok: false, error: 'Purchase não é enviado pelo SAC; a compra já é registrada pelo gateway' }
+  }
   const [metaResult] = await Promise.all([
     sendMetaConversionEvent(params),
     sendGa4Conversion({

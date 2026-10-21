@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { db } from '@/lib/db'
 import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived } from '@/lib/db/schema'
@@ -7,7 +7,6 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
-import { META_EVENT_NAMES, purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 
 // ─── Tipos do payload Zouti ──────────────────────────────────────────────────
 // Fonte: https://ajuda.zouti.com.br/pt-br/articles/9740950-como-configurar-webhook
@@ -536,36 +535,6 @@ export async function POST(
           .where(eq(recoveryLeads.id, leadId))
       }
     }
-  }
-
-  // Meta Conversions API: evento Purchase fire-and-forget (after(), mesmo
-  // padrão do webhook WhatsApp). O guard `!lead.wasInserted` acima já
-  // devolveu cedo no merge do segundo webhook PAID da mesma venda (ord_/pmt_),
-  // então este ponto só roda uma vez por venda, nunca duplica no Meta.
-  if (mappedType === 'compra_aprovada') {
-    after(() =>
-      sendConversionEvent({
-        companyId: company.id,
-        leadId: lead.id,
-        eventName: META_EVENT_NAMES.purchase,
-        eventId: purchaseEventId(transactionId || `zouti_${lead.id}`),
-        phone,
-        email: customer?.email ?? null,
-        name: customer?.name ?? null,
-        city: customer?.city ?? null,
-        state: customer?.state ?? null,
-        country: customer?.country ?? null,
-        zipcode: customer?.zipcode ?? null,
-        externalId: customer?.document ?? null,
-        rawPayload: body,
-        productId,
-        productName,
-        transactionId,
-        eventTime: parseDate(body.updated_at ?? body.created_at) ?? undefined,
-        value: productValue != null ? productValue / 100 : null,
-        currency: 'BRL',
-      }).catch((err) => console.error('[meta-capi] erro no after() do webhook Zouti:', err)),
-    )
   }
 
   const RECOVERY_TYPES = ['boleto', 'pix', 'carrinho_abandonado', 'cartao_recusado']

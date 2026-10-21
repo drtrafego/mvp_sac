@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived } from '@/lib/db/schema'
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
@@ -6,7 +6,6 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
-import { META_EVENT_NAMES, purchaseEventId, sendConversionEvent } from '@/lib/meta-conversions-api'
 
 type SaleMeta = { meta_key?: string; meta_value?: string }
 
@@ -318,35 +317,6 @@ export async function POST(
           .where(eq(recoveryLeads.id, leadId))
       }
     }
-  }
-
-  // Meta Conversions API: evento Purchase fire-and-forget (after(), mesmo
-  // padrão do webhook WhatsApp). onConflictDoNothing() já fez `if (!lead)
-  // return` mais acima em caso de retry da Greenn, então só roda para venda NOVA.
-  if (mappedType === 'compra_aprovada') {
-    after(() =>
-      sendConversionEvent({
-        companyId: company.id,
-        leadId: lead.id,
-        eventName: META_EVENT_NAMES.purchase,
-        eventId: purchaseEventId(lead.transactionId || `greenn_${lead.id}`),
-        phone: lead.phone,
-        email: lead.email,
-        name: lead.name,
-        city: lead.city,
-        state: lead.state,
-        country: lead.country,
-        zipcode: lead.zipcode,
-        externalId: lead.cpfCnpj,
-        rawPayload: lead.rawPayload,
-        productId: lead.productId,
-        productName: lead.productName,
-        transactionId: lead.transactionId,
-        eventTime: lead.approvedDate ?? lead.orderDate ?? undefined,
-        value: lead.productValue != null ? lead.productValue / 100 : null,
-        currency: 'BRL',
-      }).catch((err) => console.error('[meta-capi] erro no after() do webhook Greenn:', err)),
-    )
   }
 
   const RECOVERY_TYPES = ['boleto', 'pix', 'carrinho_abandonado', 'cartao_recusado']
