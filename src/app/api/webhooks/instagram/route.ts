@@ -17,7 +17,7 @@ import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { AmbiguousCredentialError } from "@/lib/instagram-webhook-errors"
-import { persistInstagramInboundWithTags, InstagramInboundPersistenceError, isInstagramStoryReply } from "@/lib/instagram-inbound-tags"
+import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
 
 
 // Resolve a empresa dona de um pageId (Instagram Account ID ou Page ID) e,
@@ -251,6 +251,8 @@ export async function POST(req: NextRequest) {
               is_echo?: boolean
               attachments?: Array<{ type?: string; payload?: Record<string, unknown> }>
               referral?: Record<string, unknown>
+              reply_to?: Record<string, unknown>
+              is_story_reply?: boolean
             } | undefined
             const recipient = item.recipient as { id?: string } | undefined
 
@@ -386,6 +388,13 @@ export async function POST(req: NextRequest) {
             }
 
             if (hasOnlyIgnoredShare) {
+              if (sender?.id && isInstagramStoryReply(message)) {
+                await captureInstagramInboundInteraction({
+                  companyId,
+                  instagramUserId: sender.id,
+                  interaction: 'story_reply',
+                })
+              }
               const types = attachmentTypes.join(', ')
               await markInstagramItemLog({ processed: false, skipReason: `anexo/partilha ignorado para IA (types=${types})`, decision: 'skip_attachment_share' })
               console.log(`[Instagram Webhook Global] anexo/partilha ignorado para IA (types=${types}), mid=${message?.mid}`)
@@ -526,6 +535,8 @@ export async function POST(req: NextRequest) {
                   }).onConflictDoNothing()
                 }
 
+                await applyInstagramInboundTag(lead?.id, isInstagramStoryReply(message) ? 'story_reply' : 'direct')
+
                 try {
                   if (!lead?.id) throw new InstagramInboundPersistenceError('lead ausente')
                   await persistInstagramInboundWithTags({
@@ -623,6 +634,12 @@ export async function POST(req: NextRequest) {
               const mediaId = mediaObj?.id || (val.media_id as string) || ''
 
               if (commentId && commenterId && commentText) {
+                await captureInstagramInboundInteraction({
+                  companyId,
+                  instagramUserId: commenterId,
+                  username: commenterUsername,
+                  interaction: 'comment',
+                })
                 await processInstagramComment({
                   companyId,
                   commentId,
@@ -631,6 +648,19 @@ export async function POST(req: NextRequest) {
                   mediaId,
                   commentText,
                 }).catch(err => console.error('[Comment-to-DM Webhook Global Error]:', err))
+              }
+            }
+
+            if (change.field === 'message_reactions' && change.value) {
+              const val = change.value as Record<string, unknown>
+              const sender = val.sender as { id?: string; username?: string } | undefined
+              if (sender?.id && sender.id !== pageId && isInstagramStoryReaction(val)) {
+                await captureInstagramInboundInteraction({
+                  companyId,
+                  instagramUserId: sender.id,
+                  username: sender.username,
+                  interaction: 'story_reaction',
+                })
               }
             }
           }

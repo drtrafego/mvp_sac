@@ -24,23 +24,25 @@ const db = {
       where: async () => [platformOnlyLead],
     }),
   }),
-  insert: () => ({
-    values: () => ({
-      returning: async () => [{
-        id: 501,
-        phone: platformOnlyLead.phone,
-        channel: 'whatsapp',
-        direction: 'outbound',
-        content: 'Resposta QA',
-        messageType: 'text',
-        mediaUrl: null,
-        sentBy: 'human',
-        createdAt: new Date('2026-09-30T12:00:00.000Z'),
-      }],
-    }),
-  }),
+  insert: () => {
+    const returning = async () => [{
+      id: 501,
+      phone: platformOnlyLead.phone,
+      channel: 'whatsapp',
+      direction: 'outbound',
+      content: 'Resposta QA',
+      messageType: 'text',
+      mediaUrl: null,
+      sentBy: 'human',
+      createdAt: new Date('2026-09-30T12:00:00.000Z'),
+    }]
+    const values = () => ({ returning, onConflictDoNothing: () => ({ returning }) })
+    return { values }
+  },
   update: () => ({
-    set: () => ({ where: async () => [] }),
+    set: (patch: Record<string, unknown>) => ({
+      where: () => ({ returning: async () => [{ id: 501, phone: platformOnlyLead.phone, channel: 'whatsapp', direction: 'outbound', content: 'Resposta QA', messageType: 'text', mediaUrl: null, sentBy: 'human', sendState: 'accepted', ...patch }] }),
+    }),
   }),
 }
 
@@ -72,6 +74,7 @@ mock.module('@/lib/inbox-messages', {
     INBOX_MESSAGE_PAGE_SIZE: 50,
     INBOX_MESSAGE_PAGE_SIZE_MAX: 100,
     loadInboxMessagePage: async () => ({ messages: [], hasMore: false, nextCursor: null }),
+    normalizeInboxThreadChannel: (value: string | null | undefined) => value === 'whatsapp' || value === 'instagram' || value === 'email' ? value : null,
   },
 })
 mock.module('@/components/inbox/ChatWindow', {
