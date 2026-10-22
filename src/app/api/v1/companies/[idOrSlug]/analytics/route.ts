@@ -7,7 +7,7 @@ import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq, and, count, sql, gte, lte } from 'drizzle-orm'
 import { dashboardLeadStatsSelect, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
 import { calculateConversionRate } from '@/lib/dashboard/conversion-rate'
-import { dateKeyForAnalytics, gramadoFirstInboundAtSql, gramadoMessageCountSql, gramadoReservationInPeriodSql, gramadoUtcTimestampSql } from '@/lib/dashboard/gramado-conversion'
+import { dateKeyForAnalytics, gramadoInboundConversationInPeriodSql, gramadoMessageCountSql, gramadoReservationInPeriodSql } from '@/lib/dashboard/gramado-conversion'
 import { resolveAnalyticsPeriod } from '@/lib/analytics-period'
 import { loadAgentMetrics } from '@/lib/agent-metrics'
 
@@ -65,8 +65,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
           .from(recoveryLeads)
           .where(and(
             eq(recoveryLeads.companyId, cid),
-            sql`${gramadoFirstInboundAtSql} >= ${gramadoUtcTimestampSql(gramadoFromDateIso)}`,
-            sql`${gramadoFirstInboundAtSql} <= ${gramadoUtcTimestampSql(gramadoToDateIso)}`,
+            gramadoInboundConversationInPeriodSql(gramadoFromDateIso, gramadoToDateIso),
           ))
       : Promise.resolve([{ total: 0, converteu: 0, avancou: 0 }]),
 

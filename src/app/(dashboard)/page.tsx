@@ -45,7 +45,7 @@ import { cn } from '@/lib/utils'
 import { dashboardLeadStatsSelect, gramadoDashboardCardCounts, resolveDashboardBusinessModel, dashboardBusinessWonSql } from '@/lib/dashboard/lead-stats'
 import { GRAMADO_VALID_RESERVATION_STATUSES } from '@/lib/dashboard/gramado-reservations'
 import { calculateConversionRate } from '@/lib/dashboard/conversion-rate'
-import { gramadoFirstInboundAtSql, gramadoMessageCountSql, gramadoReservationInPeriodSql, gramadoUtcTimestampSql } from '@/lib/dashboard/gramado-conversion'
+import { gramadoInboundConversationInPeriodSql, gramadoMessageCountSql, gramadoReservationInPeriodSql } from '@/lib/dashboard/gramado-conversion'
 import { hasDashboardOrigin, loadDashboardOriginPills } from '@/lib/dashboard/origin-pills'
 import { inferPipelineStage } from '@/lib/pipeline-stage'
 import { loadAgentMetrics } from '@/lib/agent-metrics'
@@ -163,8 +163,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           .where(
             and(
               eq(recoveryLeads.companyId, cid),
-              sql`${gramadoFirstInboundAtSql} >= ${gramadoUtcTimestampSql(fromDateIso)}`,
-              sql`${gramadoFirstInboundAtSql} <= ${gramadoUtcTimestampSql(toDateIso)}`,
+              gramadoInboundConversationInPeriodSql(fromDateIso, toDateIso),
               sourceFilter,
             ),
           )
@@ -226,8 +225,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           .from(recoveryLeads)
           .where(and(
             eq(recoveryLeads.companyId, cid),
-            sql`${gramadoFirstInboundAtSql} >= ${gramadoUtcTimestampSql(fromDateIso)}`,
-            sql`${gramadoFirstInboundAtSql} <= ${gramadoUtcTimestampSql(toDateIso)}`,
+            gramadoInboundConversationInPeriodSql(fromDateIso, toDateIso),
             sourceFilter,
           ))
           .groupBy(sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`)

@@ -17,6 +17,24 @@ export const gramadoMessageCountSql = sql`(
 )`
 
 /**
+ * A Gramado conversation is active in the period when it has at least one
+ * inbound message in that BRT interval. This intentionally does not require
+ * the first inbound message to be inside the interval: returning customers
+ * still represent real traffic and must remain in the conversion denominator.
+ */
+export function gramadoInboundConversationInPeriodSql(from: string, to: string): SQL {
+  return sql`exists (
+    select 1
+    from ${whatsappMessages} wm
+    where wm.company_id = ${recoveryLeads.companyId}
+      and wm.lead_id = ${recoveryLeads.id}
+      and wm.direction = 'inbound'
+      and wm.created_at >= ${gramadoUtcTimestampSql(from)}
+      and wm.created_at <= ${gramadoUtcTimestampSql(to)}
+  )`
+}
+
+/**
  * `created_at` is a timestamp without time zone, but the SAC stores its
  * values in UTC. Convert the BRT boundary to a UTC timestamp without time
  * zone explicitly so the comparison does not depend on the database session
