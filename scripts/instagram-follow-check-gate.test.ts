@@ -307,6 +307,94 @@ async function main() {
       assert.equal(msg.content, automation.dmMessage)
     })
 
+    await test('filtro por mídia e palavra, repetição e comentários manuais bloqueados nunca enviam uma segunda Private Reply', async () => {
+      // Isola a regra deste cenário: a automação global do caso (a) não pode
+      // mascarar o resultado do filtro por mídia.
+      await testDb
+        .update(schema.instagramCommentAutomations)
+        .set({ isActive: false })
+        .where(eq(schema.instagramCommentAutomations.companyId, company.id))
+
+      const [automation] = await testDb
+        .insert(schema.instagramCommentAutomations)
+        .values({
+          companyId: company.id,
+          name: '2213 somente no post certo',
+          mediaId: 'media_2213',
+          keywords: '2213',
+          matchType: 'exact',
+          dmMessage: 'Entrega 2213',
+          isActive: true,
+          requireFollowCheck: false,
+        })
+        .returning()
+
+      const callsBefore = privateReplyCalls.length
+      const outroPost = await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_2213_outro_post',
+        commenterId: 'commenter_2213_outro_post',
+        mediaId: 'media_errada',
+        commentText: '2213',
+      })
+      assert.equal(outroPost.reason, 'no_matching_post_rule')
+      assert.equal(privateReplyCalls.length, callsBefore)
+
+      const outraPalavra = await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_2213_outra_palavra',
+        commenterId: 'commenter_2213_outra_palavra',
+        mediaId: 'media_2213',
+        commentText: '2214',
+      })
+      assert.equal(outraPalavra.reason, 'no_keyword_matched')
+      assert.equal(privateReplyCalls.length, callsBefore)
+
+      const enviado = await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_2213_novo',
+        commenterId: 'commenter_2213_novo',
+        mediaId: 'media_2213',
+        commentText: '2213',
+      })
+      assert.equal(enviado.status, 'sent')
+      assert.equal(privateReplyCalls.length, callsBefore + 1)
+      assert.equal(privateReplyCalls.at(-1)?.text, automation.dmMessage)
+
+      const repetido = await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_2213_novo',
+        commenterId: 'commenter_2213_novo',
+        mediaId: 'media_2213',
+        commentText: '2213',
+      })
+      assert.equal(repetido.reason, 'comment_already_processed')
+      assert.equal(privateReplyCalls.length, callsBefore + 1)
+
+      await testDb.insert(schema.instagramCommentLogs).values({
+        companyId: company.id,
+        automationId: automation.id,
+        commentId: 'comment_2213_manual',
+        commenterId: 'manual:comment_2213_manual',
+        mediaId: 'media_2213',
+        status: 'skipped',
+        errorMessage: 'Comentário já respondido manualmente antes da ativação da automação.',
+      })
+      const manual = await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_2213_manual',
+        commenterId: 'commenter_2213_manual',
+        mediaId: 'media_2213',
+        commentText: '2213',
+      })
+      assert.equal(manual.reason, 'comment_already_processed')
+      assert.equal(privateReplyCalls.length, callsBefore + 1)
+
+      // Os cenários históricos abaixo contam as chamadas acumuladas desde (a).
+      // Este cenário é isolado e não pode alterar essa premissa.
+      privateReplyCalls.length = callsBefore
+    })
+
     // ── (b) automação COM requireFollowCheck: pergunta intermediária, não o dmMessage ─
     let automationComFlagId: number
     let commenterComFlag: string

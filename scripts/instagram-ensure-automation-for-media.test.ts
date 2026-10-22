@@ -262,6 +262,46 @@ async function main() {
       assert.equal(rows[0].matchType, 'exact', 'campo opcional ausente não deve alterar o match type existente')
     })
 
+    await test('semeia comentários já respondidos manualmente sem duplicar nem enviá-los', async () => {
+      const manualCommentIds = ['comment-manual-1', 'comment-manual-2', 'comment-manual-3']
+      const response = await POST(
+        request(companyA.slug, masterKey, {
+          media_id: 'media-123',
+          keyword: 'NOVA TRILHA',
+          dm_message: 'Novo texto literal, sem normalização.  ',
+          manual_comment_ids: manualCommentIds,
+        }),
+        { params: Promise.resolve({ idOrSlug: companyA.slug }) },
+      )
+      assert.equal(response.status, 200)
+
+      const logs = await testDb
+        .select()
+        .from(schema.instagramCommentLogs)
+        .where(eq(schema.instagramCommentLogs.companyId, companyA.id))
+      assert.equal(logs.length, 3)
+      assert.deepEqual(new Set(logs.map((log) => log.commentId)), new Set(manualCommentIds))
+      assert.ok(logs.every((log) => log.status === 'skipped'))
+      assert.ok(logs.every((log) => log.errorMessage === 'Comentário já respondido manualmente antes da ativação da automação.'))
+
+      const retry = await POST(
+        request(companyA.slug, masterKey, {
+          media_id: 'media-123',
+          keyword: 'NOVA TRILHA',
+          dm_message: 'Novo texto literal, sem normalização.  ',
+          manual_comment_ids: manualCommentIds,
+        }),
+        { params: Promise.resolve({ idOrSlug: companyA.slug }) },
+      )
+      assert.equal(retry.status, 200)
+
+      const [logCount] = await testDb
+        .select({ value: count() })
+        .from(schema.instagramCommentLogs)
+        .where(eq(schema.instagramCommentLogs.companyId, companyA.id))
+      assert.equal(logCount.value, 3, 'retry não pode duplicar exclusões manuais')
+    })
+
     await test('duas chamadas concorrentes para o mesmo media_id criam apenas uma linha', async () => {
       const mediaId = 'media-race-condition'
       const [firstResponse, secondResponse] = await Promise.all([
