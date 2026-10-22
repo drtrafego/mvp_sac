@@ -4,7 +4,7 @@ import { DashboardFocus } from '@/components/dashboard/dashboard-focus'
 import { PageHeader } from '@/components/ui/page-header'
 import Link from 'next/link'
 import { db } from '@/lib/db'
-import { recoveryLeads, messageJobs, gramadoReservations, whatsappMessages } from '@/lib/db/schema'
+import { recoveryLeads, messageJobs, gramadoReservations } from '@/lib/db/schema'
 import { eq, count, and, desc, sql, gte, lte, isNull, isNotNull, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import {
@@ -44,6 +44,8 @@ import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
 import { dashboardLeadStatsSelect, gramadoDashboardCardCounts, resolveDashboardBusinessModel, dashboardBusinessWonSql } from '@/lib/dashboard/lead-stats'
 import { GRAMADO_VALID_RESERVATION_STATUSES } from '@/lib/dashboard/gramado-reservations'
+import { calculateConversionRate } from '@/lib/dashboard/conversion-rate'
+import { gramadoFirstInboundAtSql, gramadoMessageCountSql, gramadoReservationInPeriodSql, gramadoUtcTimestampSql } from '@/lib/dashboard/gramado-conversion'
 import { hasDashboardOrigin, loadDashboardOriginPills } from '@/lib/dashboard/origin-pills'
 import { inferPipelineStage } from '@/lib/pipeline-stage'
 import { loadAgentMetrics } from '@/lib/agent-metrics'
@@ -74,6 +76,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const { from, to } = resolvePeriod(params)
   const fromDate = new Date(`${from}T00:00:00-03:00`)
   const toDate = new Date(`${to}T23:59:59.999-03:00`)
+  const fromDateIso = fromDate.toISOString()
+  const toDateIso = toDate.toISOString()
 
   const currentSource = params.source?.trim() || null
   const sourceFilter = currentSource ? sql`(${recoveryLeads.trackingSource} ILIKE ${'%' + currentSource + '%'} OR ${recoveryLeads.platform} ILIKE ${'%' + currentSource + '%'})` : undefined
@@ -91,20 +95,6 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const isInfoproduto = businessModel === 'infoproduto'
 
   const notContactedWhere = and(baseWhere, isNull(recoveryLeads.firstContactAt), sql`not ${dashboardBusinessWonSql(businessModel)}`)
-  const gramadoFirstInboundAtSql = sql`(
-    select min(${whatsappMessages.createdAt})
-    from ${whatsappMessages}
-    where ${whatsappMessages.companyId} = ${recoveryLeads.companyId}
-      and ${whatsappMessages.leadId} = ${recoveryLeads.id}
-      and ${whatsappMessages.direction} = 'inbound'
-  )`
-  const gramadoMessageCountSql = sql`(
-    select count(*)
-    from ${whatsappMessages}
-    where ${whatsappMessages.companyId} = ${recoveryLeads.companyId}
-      and ${whatsappMessages.leadId} = ${recoveryLeads.id}
-  )`
-
   const rangeDurationMs = toDate.getTime() - fromDate.getTime()
   const prevFrom = new Date(fromDate.getTime() - rangeDurationMs)
 
@@ -164,20 +154,21 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     isGramado
       ? db
           .select({
-            total: sql<number>`cast(count(*) as int)`,
-            respondeu: sql<number>`cast(count(*) as int)`,
-            avancou: sql<number>`cast(count(*) filter (where ${gramadoMessageCountSql} >= 4) as int)`,
+            total: sql<number>`cast(count(distinct ${recoveryLeads.id}) as int)`,
+            respondeu: sql<number>`cast(count(distinct ${recoveryLeads.id}) as int)`,
+            avancou: sql<number>`cast(count(distinct ${recoveryLeads.id}) filter (where ${gramadoMessageCountSql} >= 4) as int)`,
+            converteu: sql<number>`cast(count(distinct ${recoveryLeads.id}) filter (where ${gramadoReservationInPeriodSql(from, to)}) as int)`,
           })
           .from(recoveryLeads)
           .where(
             and(
               eq(recoveryLeads.companyId, cid),
-              sql`${gramadoFirstInboundAtSql} >= ${fromDate}`,
-              sql`${gramadoFirstInboundAtSql} <= ${toDate}`,
+              sql`${gramadoFirstInboundAtSql} >= ${gramadoUtcTimestampSql(fromDateIso)}`,
+              sql`${gramadoFirstInboundAtSql} <= ${gramadoUtcTimestampSql(toDateIso)}`,
               sourceFilter,
             ),
           )
-      : Promise.resolve([{ total: 0, respondeu: 0, avancou: 0 }]),
+      : Promise.resolve([{ total: 0, respondeu: 0, avancou: 0, converteu: 0 }]),
 
     db
       .select({
@@ -235,8 +226,8 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           .from(recoveryLeads)
           .where(and(
             eq(recoveryLeads.companyId, cid),
-            sql`${gramadoFirstInboundAtSql} >= ${fromDate}`,
-            sql`${gramadoFirstInboundAtSql} <= ${toDate}`,
+            sql`${gramadoFirstInboundAtSql} >= ${gramadoUtcTimestampSql(fromDateIso)}`,
+            sql`${gramadoFirstInboundAtSql} <= ${gramadoUtcTimestampSql(toDateIso)}`,
             sourceFilter,
           ))
           .groupBy(sql`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, ''), 'Direto / Orgânico')`)
@@ -300,6 +291,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const gramadoReservasCount = Number(gramadoReservationStats?.totalReservas ?? 0)
   const gramadoPessoasCount = Number(gramadoReservationStats?.totalPessoas ?? 0)
   const agendamentosCount = isGramado ? gramadoReservasCount : fechadosCount
+  const agendamentoConversionCount = isGramado
+    ? Number(gramadoConversationStats?.converteu ?? 0)
+    : agendamentosCount
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
   const qualificadosCount = leadStats?.qualificadosTotal ?? 0
   const gramadoCardCounts = gramadoDashboardCardCounts(leadStats)
@@ -310,11 +304,11 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   // do Hermes (quem agendou/reservou dividido por quem iniciou conversa no
   // periodo). Uma unica formula, reutilizada no card de agendamento abaixo e
   // nos KPIs adaptativos, para nunca divergir do numero mostrado ao Gastao.
-  const agendamentoConversionRate = total > 0 ? ((agendamentosCount / total) * 100).toFixed(1) : '0.0'
+  const agendamentoConversionRate = calculateConversionRate(agendamentoConversionCount, total)
 
   const recoveredCount = checkoutStats?.recoveredCount ?? 0
   const recoveryTotal = (checkoutStats?.boleto ?? 0) + (checkoutStats?.pix ?? 0) + (checkoutStats?.carrinho ?? 0) + (checkoutStats?.cartao ?? 0)
-  const conversionRate = recoveryTotal > 0 ? ((recoveredCount / recoveryTotal) * 100).toFixed(1) : '0.0'
+  const conversionRate = calculateConversionRate(recoveredCount, recoveryTotal)
 
   // Venda direta: compra aprovada que nunca passou por um evento de
   // recuperacao (boleto pendente, pix, carrinho abandonado, cartao recusado)
@@ -391,34 +385,31 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   // 3. Definir os 4 KPIS de Apoio adaptativos
   let kpis = []
   if (isGramado) {
-    const convRate = total > 0 ? ((gramadoReservasCount / total) * 100).toFixed(1) : '0.0'
     kpis = [
       { label: 'Reservas Fechadas', value: String(gramadoReservasCount), icon: CheckCircle2, hint: 'mesas confirmadas' },
       { label: 'Pessoas / Lugares', value: String(gramadoPessoasCount), icon: Users, hint: 'pessoas nas reservas' },
-      { label: 'Taxa de Fechamento', value: `${convRate}%`, icon: TrendingUp, hint: 'de conversas em reservas' },
+      { label: 'Taxa de Fechamento', value: agendamentoConversionRate.label, icon: TrendingUp, hint: 'de conversas em reservas' },
       { label: 'Atendimentos', value: String(total), icon: MessageSquare, hint: 'contatos no WhatsApp' },
     ]
   } else if (isLucas) {
-    const convRate = total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'
     kpis = [
       { label: 'Consultas Agendadas', value: String(fechadosCount), icon: Calendar, hint: 'procedimentos marcados' },
       { label: 'Aguardando Contato', value: String(leadStats?.aguardandoAbordagem ?? 0), icon: Clock, hint: 'fila de primeiro contato' },
-      { label: 'Taxa de Agendamento', value: `${convRate}%`, icon: TrendingUp, hint: 'conversão de agendamentos' },
+      { label: 'Taxa de Agendamento', value: agendamentoConversionRate.label, icon: TrendingUp, hint: 'conversão de agendamentos' },
       { label: 'Atendimentos IA', value: String(jobStats?.sent || total), icon: MessageSquare, hint: 'mensagens da IA médica' },
     ]
   } else if (isAgencia) {
-    const convRate = total > 0 ? ((fechadosCount / total) * 100).toFixed(1) : '0.0'
     kpis = [
       { label: 'Contratos Fechados', value: String(fechadosCount), icon: CheckCircle2, hint: 'clientes convertidos' },
       { label: 'Aguardando Abordagem', value: String(leadStats?.aguardandoAbordagem ?? 0), icon: Clock, hint: 'leads minerados/novos' },
-      { label: 'Taxa Comercial', value: `${convRate}%`, icon: TrendingUp, hint: 'conversão do funil' },
+      { label: 'Taxa Comercial', value: agendamentoConversionRate.label, icon: TrendingUp, hint: 'conversão do funil' },
       { label: 'Leads Captados', value: String(total), icon: Users, hint: 'mineração + tráfego' },
     ]
   } else {
     kpis = [
       { label: 'Receita Total', value: formatBRL(totalApprovedValueCents), icon: DollarSign, hint: 'direta + recuperada' },
       { label: 'Vendas', value: String(checkoutApprovedCount), icon: Users, hint: 'compras aprovadas no período' },
-      { label: 'Conversão', value: `${conversionRate}%`, icon: TrendingUp, hint: 'de leads recuperados' },
+      { label: 'Conversão', value: conversionRate.label, icon: TrendingUp, hint: 'de leads recuperados' },
       { label: 'Mensagens', value: String(jobStats?.sent ?? 0), icon: MessageSquare, hint: 'WhatsApp enviadas' },
     ]
   }
@@ -807,9 +798,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 <TrendingUp size={13} className="text-brand-ink shrink-0" />
               </div>
               <div className="mt-3">
-                <p className="num text-metric text-brand-ink">{agendamentoConversionRate}%</p>
+                <p className="num text-metric text-brand-ink">{agendamentoConversionRate.label}</p>
                 <p className="text-micro text-fg-faint mt-1">
-                  {agendamentosCount} {agendamentoLabel.toLowerCase()} de {total} conversas iniciadas
+                  {isGramado ? `${agendamentoConversionCount} conversas convertidas de ${total} conversas iniciadas` : `${agendamentosCount} ${agendamentoLabel.toLowerCase()} de ${total} conversas iniciadas`}
                 </p>
               </div>
             </div>
@@ -971,9 +962,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </div>
             <div className="mt-2">
               <span className="num text-metric-sm font-bold text-fg block">
-                {isInfoproduto ? conversionRate : (total > 0 ? ((agendamentosCount / total) * 100).toFixed(1) : '0.0')}%
+                {isInfoproduto ? conversionRate.label : agendamentoConversionRate.label}
               </span>
-              <span className="text-[11px] text-fg-faint mt-0.5 block">{isInfoproduto ? `${recoveredCount} recuperadas de ${recoveryTotal} oportunidades` : `${agendamentosCount} fechados de ${total} contatos`}</span>
+              <span className="text-[11px] text-fg-faint mt-0.5 block">{isInfoproduto ? `${recoveredCount} recuperadas de ${recoveryTotal} oportunidades` : isGramado ? `${agendamentoConversionCount} conversas convertidas de ${total} contatos` : `${agendamentosCount} fechados de ${total} contatos`}</span>
             </div>
           </div>
 
