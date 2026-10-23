@@ -167,7 +167,7 @@ test('sendInstagramMessage prioriza instagramAccountId sobre instagramPageId', a
   )
 })
 
-test('sendInstagramPrivateReply faz fallback para instagramPageId quando instagramAccountId estiver ausente', async () => {
+test('sendInstagramPrivateReply ignora Page ID e usa o contexto /me no Direct', async () => {
   const { sendInstagramPrivateReply } = await import('../src/lib/instagram')
 
   fetchCalls.length = 0
@@ -188,8 +188,8 @@ test('sendInstagramPrivateReply faz fallback para instagramPageId quando instagr
   assert.equal(fetchCalls.length, 1)
   assert.equal(
     fetchCalls[0].url,
-    'https://graph.instagram.com/v21.0/fb_page_888888/messages',
-    'Deveria fazer fallback para instagramPageId quando instagramAccountId for nulo'
+    'https://graph.instagram.com/v21.0/me/messages',
+    'Direct não pode usar instagramPageId como identificador de transporte'
   )
 })
 

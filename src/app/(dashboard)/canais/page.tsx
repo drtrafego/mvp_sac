@@ -8,6 +8,7 @@ import { requireCompany } from '@/lib/auth'
 import { Radio, MessageSquare, Settings, Mail } from 'lucide-react'
 import Link from 'next/link'
 import { aggregateChannelSendMetrics } from '@/lib/channel-send-metrics'
+import { hasInstagramCredentials } from '@/lib/company-sidebar'
 
 function InstagramIcon({ size = 18, className = '' }: { size?: number; className?: string }) {
   return (
@@ -39,7 +40,7 @@ export default async function CanaisPage() {
   const leadCounts = new Map(channelLeadStats.map(row => [row.channel, row.total]))
   const hasMeta = !!(companySettings?.metaPhoneNumberId && companySettings?.metaAccessToken)
   const hasUazapi = !!(companySettings?.uazapiInstanceToken && companySettings?.uazapiBaseUrl)
-  const hasInstagram = !!(companySettings?.instagramAccountId || (companySettings?.metaAccessToken && companySettings?.instagramUsername))
+  const hasInstagram = hasInstagramCredentials(companySettings)
   const hasBrevo = !!(companySettings?.brevoApiKey && companySettings?.brevoSenderEmail)
   const whatsappConfigured = companySettings?.whatsappProvider === 'meta' ? hasMeta : companySettings?.whatsappProvider === 'uazapi' ? hasUazapi : false
   const canais = [

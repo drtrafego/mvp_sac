@@ -4,7 +4,7 @@ import { companies, settings, agentActivityLogs } from '@/lib/db/schema'
 import { eq, or } from 'drizzle-orm'
 import { getCurrentCompany, getCurrentUser } from '@/lib/auth'
 
-export type AgentIdentifier = 'bia' | 'luana' | 'renato' | 'publicador' | 'master' | 'admin' | 'humano'
+export type AgentIdentifier = 'bia' | 'luana' | 'renato' | 'publicador' | 'master' | 'admin' | 'humano' | 'flavio-otoni'
 export type AgentDisplayName = 'Bia' | 'Luana' | 'Renato' | 'Publicador' | 'Master' | 'Administrador' | 'Humano'
 
 export interface AgentAuthContext {
@@ -16,6 +16,8 @@ export interface AgentAuthContext {
   agentId: AgentIdentifier
   agentName: AgentDisplayName
   managerName?: 'Amanda' | 'Gastão' | null
+  /** Perfil dedicado, sem acesso a rotas fora da allowlist do tenant. */
+  restrictedProfile?: 'flavio-otoni'
 }
 
 export function getAgentManager(agent: string | null | undefined): 'Amanda' | 'Gastão' | null {
@@ -36,7 +38,7 @@ export async function logAgentActivity(params: {
   action: string
   entityType: string
   entityId?: string | null
-  details?: Record<string, any>
+  details?: object
 }) {
   try {
     await db.insert(agentActivityLogs).values({
@@ -74,12 +76,12 @@ export async function authenticateAgentRequest(
   }
 
   let isAgentApiKey = false
-  let isMasterKey = false
   let isAdmin = false
   let isSuperAdmin = false
   let agentId: AgentIdentifier = 'humano'
   let agentName: AgentDisplayName = 'Humano'
   let matchedCompany: typeof companies.$inferSelect | null = null
+  let restrictedProfile: 'flavio-otoni' | undefined
 
   // 1. Validação Criptográfica / Estrita da Chave de API
   if (providedKey) {
@@ -89,12 +91,22 @@ export async function authenticateAgentRequest(
     const envBiaKey = process.env.SAC_AGENT_BIA_KEY?.trim()
     const envLuanaKey = process.env.SAC_AGENT_LUANA_KEY?.trim()
     const envRenatoKey = process.env.SAC_AGENT_RENATO_KEY?.trim()
+    const envFlavioKey = process.env.SAC_AGENT_FLAVIO_OTONI_KEY?.trim()
 
     // 1.1 Chave Mestra Global (só via variável de ambiente — a lista fixa de
     // chaves hardcoded que existia aqui foi removida: eram segredos previsíveis
     // e ficaram expostas no repositório público)
-    if (envMasterKey && providedKey === envMasterKey) {
-      isMasterKey = true
+    if (envFlavioKey && providedKey === envFlavioKey) {
+      const [flavio] = await db.select().from(companies).where(eq(companies.id, 25394)).limit(1)
+      if (!flavio || flavio.slug !== 'flavio-otoni') {
+        return { error: NextResponse.json({ error: 'Tenant Flávio Otoni não está provisionado.', code: 'TENANT_NOT_READY' }, { status: 503 }) }
+      }
+      matchedCompany = flavio
+      restrictedProfile = 'flavio-otoni'
+      isAgentApiKey = true
+      agentId = 'flavio-otoni'
+      agentName = 'Humano'
+    } else if (envMasterKey && providedKey === envMasterKey) {
       isAdmin = true
       isSuperAdmin = true
       agentId = (agentHeader as AgentIdentifier) || 'master'
@@ -299,6 +311,23 @@ export async function authenticateAgentRequest(
     }
   }
 
+  // A credencial dedicada do Flávio não pode ser usada como chave administrativa
+  // nem para explorar qualquer outra rota do aplicativo. O prefixo da rota é
+  // validado aqui, antes de qualquer handler consultar dados.
+  if (restrictedProfile && finalCompany) {
+    const path = new URL(req.url).pathname
+    const allowed = [
+      `/api/v1/companies/${finalCompany.id}`,
+      `/api/v1/companies/${finalCompany.slug}`,
+    ]
+    const base = allowed.find((value) => path === value || path.startsWith(`${value}/`))
+    const allowedSuffixes = ['/agent-capabilities', '/analytics', '/conversations', '/leads', '/pipeline', '/agenda', '/followups', '/channels', '/templates', '/audit', '/approved-replies']
+    const legacyApprovedReplies = path === '/api/approved-replies' || path.startsWith('/api/approved-replies/')
+    if ((!base || !allowedSuffixes.some((suffix) => path === `${base}${suffix}` || path.startsWith(`${base}${suffix}/`))) && !legacyApprovedReplies) {
+      return { error: NextResponse.json({ error: 'Operação fora do escopo autorizado para este agente.', code: 'SCOPE_DENIED' }, { status: 403 }) }
+    }
+  }
+
   if (!finalCompany) {
     return {
       error: NextResponse.json(
@@ -359,6 +388,7 @@ export async function authenticateAgentRequest(
       agentId,
       agentName,
       managerName: getAgentManager(agentName),
+      restrictedProfile,
     },
   }
 }

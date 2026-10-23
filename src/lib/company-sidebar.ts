@@ -18,11 +18,16 @@ type InstagramCredentialFields = Pick<
   'instagramAccountId' | 'instagramPageId' | 'instagramAccessToken' | 'metaAccessToken'
 >
 
-/** Credenciais mínimas para receber/identificar a conta e enviar Direct. */
+/** Credenciais mínimas do transporte Instagram Login / Instagram Direct. */
 export function hasInstagramCredentials(row: InstagramCredentialFields | null | undefined): boolean {
-  const accountId = row?.instagramAccountId?.trim() || row?.instagramPageId?.trim()
-  const accessToken = row?.instagramAccessToken?.trim() || row?.metaAccessToken?.trim()
+  const accountId = row?.instagramAccountId?.trim()
+  const accessToken = row?.instagramAccessToken?.trim()
   return Boolean(accountId && accessToken)
+}
+
+/** Credenciais de uma automação que realmente chama a Page/Graph API. */
+export function hasInstagramPageCredentials(row: InstagramCredentialFields | null | undefined): boolean {
+  return Boolean(row?.instagramPageId?.trim() && row?.metaAccessToken?.trim())
 }
 
 // Extraído de (dashboard)/layout.tsx (era função local `getCompanySidebarData`,
@@ -102,7 +107,9 @@ export async function getCompanySidebarData(companyId: number): Promise<{
         kiwify: kiwifyEnabled && hasKiwify,
         greenn: greennEnabled && hasGreenn,
         zouti: zoutiEnabled && hasZouti,
-        instagram: hasInstagram || sidebarConfig?.showInstagram === true,
+        // Visibilidade do menu nunca transforma uma configuração visual em
+        // conexão operacional. A flag da sidebar só pode esconder o Direct.
+        instagram: hasInstagram,
         instagramCommentAutomation: activeCommentAutomations.length > 0,
         mineracao: hasMineracao,
       },
@@ -111,7 +118,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
   } catch {
     return {
       activeConnections: {
-        hotmart: true,
+        hotmart: false,
         kiwify: false,
         greenn: false,
         zouti: false,

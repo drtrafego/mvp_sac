@@ -26,17 +26,34 @@ const db = {
   insert: () => ({
     values: (values: Record<string, unknown>) => {
       persistedMessages.push(values)
-      return {
+      const result = {
+        onConflictDoNothing: () => result,
         returning: async () => [{
           id: 503,
           ...values,
           createdAt: new Date('2026-09-30T12:00:00.000Z'),
         }],
       }
+      return result
     },
   }),
   update: () => ({
-    set: () => ({ where: async () => [] }),
+    set: () => ({
+      where: () => ({
+        returning: async () => [{
+          id: 503,
+          phone: instagramLead.phone,
+          channel: 'instagram',
+          direction: 'outbound',
+          content: 'Resposta Direct via API v1',
+          messageType: 'text',
+          mediaUrl: null,
+          sentBy: 'bot',
+          sendState: 'accepted',
+          createdAt: new Date('2026-09-30T12:00:00.000Z'),
+        }],
+      }),
+    }),
   }),
 }
 

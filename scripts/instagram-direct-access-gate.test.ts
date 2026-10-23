@@ -8,6 +8,7 @@ const settingsWithoutCredentials = {
   instagramAccessToken: null,
   metaAccessToken: null,
   instagramUsername: '@historico',
+  sidebarConfig: { showInstagram: true },
 }
 
 const historicalInstagramLead = {
@@ -19,6 +20,7 @@ const db = {
   select: () => ({
     from: (table: unknown) => ({
       where: () => {
+        if (failSidebarLookup) throw new Error('banco indisponível')
         if (table === schema.settings) return Promise.resolve([settingsWithoutCredentials])
         if (table === schema.recoveryLeads) return { limit: async () => [historicalInstagramLead] }
         if (table === schema.instagramCommentAutomations) return { limit: async () => [] }
@@ -29,6 +31,7 @@ const db = {
 }
 
 let inboxLoads = 0
+let failSidebarLookup = false
 
 mock.module('@/lib/db', { namedExports: { db } })
 mock.module('@/lib/auth', { namedExports: { requireCompany: async () => ({ id: 88 }) } })
@@ -52,7 +55,7 @@ mock.module('next/navigation', {
 })
 
 async function main() {
-  const { getCompanySidebarData, hasInstagramCredentials } = await import('../src/lib/company-sidebar')
+  const { getCompanySidebarData, hasInstagramCredentials, hasInstagramPageCredentials } = await import('../src/lib/company-sidebar')
   const { default: InstagramLayout } = await import('../src/app/(dashboard)/instagram/layout')
 
   await test('B2: histórico Instagram sem credencial não ativa conexão nem acessa /instagram', async () => {
@@ -92,7 +95,36 @@ async function main() {
       instagramPageId: 'page-id',
       instagramAccessToken: null,
       metaAccessToken: 'meta-token',
+    }), false)
+    assert.equal(hasInstagramPageCredentials({
+      instagramAccountId: null,
+      instagramPageId: null,
+      instagramAccessToken: null,
+      metaAccessToken: 'meta-token',
+    }), false)
+    assert.equal(hasInstagramPageCredentials({
+      instagramAccountId: null,
+      instagramPageId: 'page-id',
+      instagramAccessToken: null,
+      metaAccessToken: 'meta-token',
     }), true)
+  })
+
+  await test('preferência visual não reativa Instagram sem conexão operacional', async () => {
+    const sidebar = await getCompanySidebarData(88)
+    assert.equal(sidebar.sidebarConfig?.showInstagram, true)
+    assert.equal(sidebar.activeConnections.instagram, false)
+  })
+
+  await test('falha ao consultar configurações fecha canais, inclusive Hotmart', async () => {
+    failSidebarLookup = true
+    try {
+      const sidebar = await getCompanySidebarData(88)
+      assert.equal(sidebar.activeConnections.hotmart, false)
+      assert.equal(sidebar.activeConnections.instagram, false)
+    } finally {
+      failSidebarLookup = false
+    }
   })
 }
 

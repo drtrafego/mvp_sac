@@ -423,6 +423,15 @@ export const recoveryLeads = pgTable('recovery_leads', {
   // contatado, e por isso não entra nas contagens principais do dashboard.
   firstContactAt: timestamp('first_contact_at'),
 
+  // Primeiro inbound real do contato. É uma métrica diferente de
+  // firstContactAt: campanhas e respostas do bot podem abrir uma conversa,
+  // mas só esta data prova quando a pessoa falou pela primeira vez. Os três
+  // campos são imutáveis depois da primeira gravação para a série diária não
+  // mudar quando o lead troca de canal ou de agente.
+  firstHumanMessageAt: timestamp('first_human_message_at', { withTimezone: true }),
+  firstHumanMessageChannel: text('first_human_message_channel'),
+  firstHumanMessageAgentKey: text('first_human_message_agent_key'),
+
   // Estado de agendamento da IA (Fase 1, espelha o state.json por lead que o
   // receiver.py da Nina já mantém): { eventId?, start?, end?, nome?, email?,
   // pendingStart?, pendingEnd?, pendingNome? }. É o que permite RESCHEDULE/CANCEL
@@ -530,6 +539,8 @@ export const recoveryLeads = pgTable('recovery_leads', {
   index('recovery_leads_company_activity_idx')
     .on(table.companyId, sql`COALESCE(${table.lastActionAt}, ${table.updatedAt}, ${table.createdAt}) DESC`, table.id),
   index('recovery_leads_company_paused_idx').on(table.companyId, table.botPaused),
+  index('recovery_leads_first_human_message_daily_idx')
+    .on(table.companyId, table.firstHumanMessageAt, table.firstHumanMessageChannel, table.firstHumanMessageAgentKey),
 ])
 
 // ─── Tags livres de lead (25/09/2026, pedido do Gastão via Renato) ──────────
@@ -950,6 +961,8 @@ export const sacApprovedReplies = pgTable('sac_approved_replies', {
   variables: jsonb('variables').$type<string[]>(),
   approvalState: text('approval_state').default('draft').notNull(), // 'draft' | 'approved' | 'deprecated'
   version: integer('version').default(1).notNull(),
+  // Chave de retry do adaptador de agente, única dentro do tenant.
+  idempotencyKey: text('idempotency_key'),
   approvedBy: text('approved_by'),
   approvedAt: timestamp('approved_at'),
   createdAt: timestamp('created_at').defaultNow(),
@@ -959,6 +972,35 @@ export const sacApprovedReplies = pgTable('sac_approved_replies', {
   uniqueIndex('sac_approved_replies_company_shortcut_unique')
     .on(table.companyId, table.shortcut)
     .where(sql`${table.shortcut} is not null`),
+  uniqueIndex('sac_approved_replies_company_idempotency_unique')
+    .on(table.companyId, table.idempotencyKey)
+    .where(sql`${table.idempotencyKey} is not null`),
+])
+
+// Templates WhatsApp criados e acompanhados pelo SAC. O conteúdo fica no banco
+// antes de qualquer chamada à Meta, para que submissões, recusas e sincronizações
+// tenham trilha auditável por empresa.
+export const metaMessageTemplates = pgTable('meta_message_templates', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  name: text('name').notNull(),
+  language: text('language').notNull().default('pt_BR'),
+  category: text('category').notNull(),
+  components: jsonb('components').$type<unknown[]>().notNull(),
+  status: text('status').notNull().default('DRAFT'),
+  metaTemplateId: text('meta_template_id'),
+  rejectionReason: text('rejection_reason'),
+  lastMetaResponse: jsonb('last_meta_response'),
+  requestCount: integer('request_count').notNull().default(0),
+  createdBy: text('created_by'),
+  submittedBy: text('submitted_by'),
+  submittedAt: timestamp('submitted_at'),
+  syncedAt: timestamp('synced_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, table => [
+  uniqueIndex('meta_message_templates_company_name_language_unique').on(table.companyId, table.name, table.language),
+  index('meta_message_templates_company_status_updated_idx').on(table.companyId, table.status, table.updatedAt),
 ])
 
 // ─── SAC Lote 1: Pendências internas das 3 regras prontas ───────────────────

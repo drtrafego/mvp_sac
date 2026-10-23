@@ -22,7 +22,7 @@ export async function sendInstagramMessage({
 }: SendInstagramMessageOptions): Promise<{ ok: boolean; messageId?: string; error?: string; uncertain?: boolean; isTimeout?: boolean }> {
   const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
 
-  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  const token = config?.instagramAccessToken
   if (!token) {
     return { ok: false, error: 'Token de acesso do Instagram não configurado nas Configurações da empresa.' }
   }
@@ -48,8 +48,8 @@ export async function sendInstagramMessage({
   }
 
   try {
-    const pageId = config?.instagramAccountId || config?.instagramPageId || 'me'
-    const res = await fetch(`https://graph.instagram.com/v21.0/${pageId}/messages`, {
+    const accountId = config?.instagramAccountId || 'me'
+    const res = await fetch(`https://graph.instagram.com/v21.0/${accountId}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -90,15 +90,15 @@ export async function sendInstagramPrivateReply({
   companyId: number
 }): Promise<{ ok: boolean; messageId?: string; error?: string }> {
   const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
-  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  const token = config?.instagramAccessToken
   if (!token) {
     return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
   }
 
-  const pageId = config?.instagramAccountId || config?.instagramPageId || 'me'
+  const accountId = config?.instagramAccountId || 'me'
 
   try {
-    const res = await fetch(`https://graph.instagram.com/v21.0/${pageId}/messages`, {
+    const res = await fetch(`https://graph.instagram.com/v21.0/${accountId}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -143,7 +143,7 @@ export async function checkInstagramUserFollowsBusiness({
   companyId: number
 }): Promise<{ ok: boolean; follows?: boolean; error?: string }> {
   const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
-  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  const token = config?.instagramAccessToken
   if (!token) {
     return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
   }
@@ -183,7 +183,7 @@ export async function fetchInstagramUserProfile({
   companyId: number
 }): Promise<{ ok: boolean; name?: string; username?: string; error?: string }> {
   const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
-  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  const token = config?.instagramAccessToken
   if (!token) {
     return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
   }
@@ -232,7 +232,7 @@ export async function replyInstagramCommentPublic({
   companyId: number
 }): Promise<{ ok: boolean; replyId?: string; error?: string }> {
   const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
-  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  const token = config?.instagramAccessToken
   if (!token) {
     return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
   }
@@ -277,7 +277,7 @@ export async function hideInstagramComment({
   hide?: boolean
 }): Promise<{ ok: boolean; error?: string }> {
   const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
-  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  const token = config?.instagramAccessToken
   if (!token) {
     return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
   }
@@ -324,12 +324,12 @@ export async function getInstagramRecentMedia(
   limit = 25
 ): Promise<{ ok: boolean; media: InstagramMediaItem[]; error?: string }> {
   const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
-  const token = config?.instagramAccessToken || config?.metaAccessToken || process.env.META_ACCESS_TOKEN
+  const token = config?.instagramAccessToken
   if (!token) {
     return { ok: false, media: [], error: 'Token de acesso do Instagram não configurado.' }
   }
 
-  const accountId = config?.instagramAccountId || config?.instagramPageId || 'me'
+  const accountId = config?.instagramAccountId || 'me'
 
   try {
     const url = `https://graph.instagram.com/v21.0/${accountId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp&limit=${limit}`

@@ -25,22 +25,41 @@ const db = {
     }),
   }),
   insert: () => ({
-    values: () => ({
-      returning: async () => [{
-        id: 501,
-        phone: platformOnlyLead.phone,
-        channel: 'whatsapp',
-        direction: 'outbound',
-        content: 'Resposta QA',
-        messageType: 'text',
-        mediaUrl: null,
-        sentBy: 'human',
-        createdAt: new Date('2026-09-30T12:00:00.000Z'),
-      }],
-    }),
+    values: () => {
+      const result = {
+        onConflictDoNothing: () => result,
+        returning: async () => [{
+          id: 501,
+          phone: platformOnlyLead.phone,
+          channel: 'whatsapp',
+          direction: 'outbound',
+          content: 'Resposta QA',
+          messageType: 'text',
+          mediaUrl: null,
+          sentBy: 'human',
+          createdAt: new Date('2026-09-30T12:00:00.000Z'),
+        }],
+      }
+      return result
+    },
   }),
   update: () => ({
-    set: () => ({ where: async () => [] }),
+    set: () => ({
+      where: () => ({
+        returning: async () => [{
+          id: 501,
+          phone: platformOnlyLead.phone,
+          channel: 'whatsapp',
+          direction: 'outbound',
+          content: 'Resposta QA',
+          messageType: 'text',
+          mediaUrl: null,
+          sentBy: 'human',
+          sendState: 'accepted',
+          createdAt: new Date('2026-09-30T12:00:00.000Z'),
+        }],
+      }),
+    }),
   }),
 }
 
