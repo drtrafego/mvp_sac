@@ -183,7 +183,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
     }).where(and(
       eq(messageJobs.status, 'processing'),
       lte(messageJobs.processingStartedAt, staleProcessingBefore),
-    )).returning({ id: messageJobs.id })
+    )).returning()
     if (stale.length > 0) {
       console.error('[cron] ALERTA: jobs processing órfãos sinalizados para revisão manual', { jobIds: stale.map((row: { id: number }) => row.id) })
     }
