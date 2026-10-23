@@ -15,7 +15,7 @@ export interface ActiveConnectionsData {
 
 type InstagramCredentialFields = Pick<
   typeof settings.$inferSelect,
-  'instagramAccountId' | 'instagramPageId' | 'instagramAccessToken' | 'metaAccessToken'
+  'instagramAccountId' | 'instagramAccessToken' | 'facebookPageId' | 'facebookPageToken'
 >
 
 /** Credenciais mínimas do transporte Instagram Login / Instagram Direct. */
@@ -25,18 +25,18 @@ export function hasInstagramCredentials(row: InstagramCredentialFields | null | 
   return Boolean(accountId && accessToken)
 }
 
-/** Credenciais de uma automação que realmente chama a Page/Graph API. */
-export function hasInstagramPageCredentials(row: InstagramCredentialFields | null | undefined): boolean {
-  return Boolean(row?.instagramPageId?.trim() && row?.metaAccessToken?.trim())
+/** Credenciais de uma automação que realmente chama a Página/Graph API. */
+export function hasFacebookPageCredentials(row: InstagramCredentialFields | null | undefined): boolean {
+  return Boolean(row?.facebookPageId?.trim() && row?.facebookPageToken?.trim())
 }
 
-export function getInstagramPageCredentialError(row: InstagramCredentialFields | null | undefined): string | null {
-  const hasPageId = Boolean(row?.instagramPageId?.trim())
-  const hasMetaToken = Boolean(row?.metaAccessToken?.trim())
-  if (hasPageId && hasMetaToken) return null
-  if (!hasPageId && !hasMetaToken) return 'Página exige Page ID e Meta Access Token.'
-  if (!hasPageId) return 'Página exige Page ID.'
-  return 'Página exige Meta Access Token.'
+export function getFacebookPageCredentialError(row: InstagramCredentialFields | null | undefined): string | null {
+  const hasPageId = Boolean(row?.facebookPageId?.trim())
+  const hasPageToken = Boolean(row?.facebookPageToken?.trim())
+  if (hasPageId && hasPageToken) return null
+  if (!hasPageId && !hasPageToken) return 'Página do Facebook exige Page ID e Page Token.'
+  if (!hasPageId) return 'Página do Facebook exige Page ID.'
+  return 'Página do Facebook exige Page Token.'
 }
 
 // Extraído de (dashboard)/layout.tsx (era função local `getCompanySidebarData`,

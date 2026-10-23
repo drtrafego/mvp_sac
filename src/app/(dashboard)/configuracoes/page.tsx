@@ -75,7 +75,8 @@ interface SettingsData {
   instagramAccountId: string
   instagramAccessToken: string
   instagramVerifyToken: string
-  instagramPageId: string
+  facebookPageId: string
+  facebookPageToken: string
   instagramAppSecret: string
   sidebarConfig?: {
     showVisaoGeral?: boolean
@@ -151,7 +152,8 @@ const defaults: SettingsData = {
   instagramAccountId: '',
   instagramAccessToken: '',
   instagramVerifyToken: '',
-  instagramPageId: '',
+  facebookPageId: '',
+  facebookPageToken: '',
   instagramAppSecret: '',
 }
 
@@ -958,7 +960,7 @@ export default function ConfiguracoesPage() {
   const metaWebhookUrl = slug ? `${origin}/api/webhooks/whatsapp` : null
   // Instagram usa o endpoint GLOBAL (igual ao WhatsApp), nunca o por-slug: a Meta permite
   // só UMA URL de webhook por App, e é o endpoint global que resolve a empresa pelo
-  // instagramAccountId/instagramPageId do payload e já dispara a resposta automática da IA.
+  // instagramAccountId do payload e já dispara a resposta automática da IA.
   const instagramWebhookUrl = slug ? `${origin}/api/webhooks/instagram` : null
 
   const loadSettings = useCallback(async () => {
@@ -1002,7 +1004,8 @@ export default function ConfiguracoesPage() {
         instagramAccountId: data.instagramAccountId ?? '',
         instagramAccessToken: data.instagramAccessToken ?? '',
         instagramVerifyToken: data.instagramVerifyToken ?? '',
-        instagramPageId: data.instagramPageId ?? '',
+        facebookPageId: data.facebookPageId ?? '',
+        facebookPageToken: data.facebookPageToken ?? '',
         instagramAppSecret: data.instagramAppSecret ?? '',
         sidebarConfig: data.sidebarConfig ?? null,
       })
@@ -1836,13 +1839,13 @@ export default function ConfiguracoesPage() {
         </div>
         <Separator className="bg-line-subtle" />
         <p className="text-micro text-fg-muted max-w-[var(--w-form)]">
-          Esta seção é independente do Instagram Direct. A Página só fica disponível quando os dois campos abaixo estiverem preenchidos: Page ID e Access Token da Meta.
+          Esta seção é independente do Instagram Direct. A Página só fica disponível quando os dois campos abaixo estiverem preenchidos: Page ID e Page Token.
         </p>
         <div className="space-y-1.5">
           <Label>Page ID</Label>
           <Input
-            value={form.instagramPageId}
-            onChange={e => set('instagramPageId', e.target.value)}
+            value={form.facebookPageId}
+            onChange={e => set('facebookPageId', e.target.value)}
             placeholder="100234567890123"
             className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
           />
@@ -1851,12 +1854,17 @@ export default function ConfiguracoesPage() {
           </p>
         </div>
         <div className="space-y-1.5">
-          <Label>Meta Access Token da Página</Label>
-          <SecretInput value={form.metaAccessToken} onChange={v => set('metaAccessToken', v)} placeholder="EAAxxxxxxx..." />
+          <Label>Page Token</Label>
+          <SecretInput value={form.facebookPageToken} onChange={v => set('facebookPageToken', v)} placeholder="EAAxxxxxxx..." />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
-            Token da Meta correspondente à Página. A ausência deste token bloqueia a Página com erro claro e não afeta o Direct.
+            Token da Página do Facebook/Meta. A ausência deste token bloqueia a Página com erro claro e não afeta o Direct nem o WhatsApp.
           </p>
         </div>
+        {Boolean(form.facebookPageId.trim()) !== Boolean(form.facebookPageToken.trim()) && (
+          <p className="text-micro text-rose-400 max-w-[var(--w-form)]">
+            Preencha Page ID e Page Token juntos para habilitar a Página do Facebook.
+          </p>
+        )}
       </section>
 
       <div className="pt-2 flex items-center gap-3">

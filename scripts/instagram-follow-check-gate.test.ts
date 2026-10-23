@@ -168,7 +168,7 @@ async function main() {
     instagramUsername: 'contaoficial',
     instagramAccessToken: 'fake-ig-token',
     instagramAccountId: 'ACCOUNT_TESTE_123',
-    instagramPageId: 'PAGE_TESTE_123',
+    facebookPageId: 'PAGE_TESTE_123',
     instagramAppSecret: APP_SECRET,
   })
 

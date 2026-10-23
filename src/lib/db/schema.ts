@@ -98,7 +98,9 @@ export const settings = pgTable('settings', {
   instagramAccountId: text('instagram_account_id'),
   instagramAccessToken: text('instagram_access_token'),
   instagramVerifyToken: text('instagram_verify_token'),
-  instagramPageId: text('instagram_page_id'),
+  // Página do Facebook/Meta, independente do transporte Instagram Direct.
+  facebookPageId: text('facebook_page_id'),
+  facebookPageToken: text('facebook_page_token'),
   // ‼️ 23/09/2026: o app do Instagram (Instagram API with Instagram Login,
   // sem Página do Facebook) tem App ID e App Secret PRÓPRIOS, diferentes do
   // app principal usado pro WhatsApp. O webhook estava usando metaAppSecret
@@ -145,7 +147,7 @@ export const settings = pgTable('settings', {
   uniqueIndex('settings_meta_phone_number_id_unique').on(table.metaPhoneNumberId),
   uniqueIndex('settings_uazapi_instance_token_unique').on(table.uazapiInstanceToken),
   uniqueIndex('settings_instagram_account_id_unique').on(table.instagramAccountId),
-  uniqueIndex('settings_instagram_page_id_unique').on(table.instagramPageId),
+  uniqueIndex('settings_facebook_page_id_unique').on(table.facebookPageId),
 ])
 
 // ─── Cursores de sincronização incremental dos Agents/CRM ───────────────────

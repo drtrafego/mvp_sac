@@ -4,9 +4,9 @@ import * as schema from '../src/lib/db/schema'
 
 const settingsWithoutCredentials = {
   instagramAccountId: null,
-  instagramPageId: null,
+  facebookPageId: null,
   instagramAccessToken: null,
-  metaAccessToken: null,
+  facebookPageToken: null,
   instagramUsername: '@historico',
   sidebarConfig: { showInstagram: true },
 }
@@ -55,7 +55,7 @@ mock.module('next/navigation', {
 })
 
 async function main() {
-  const { getCompanySidebarData, hasInstagramCredentials, hasInstagramPageCredentials, getInstagramPageCredentialError } = await import('../src/lib/company-sidebar')
+  const { getCompanySidebarData, hasInstagramCredentials, hasFacebookPageCredentials, getFacebookPageCredentialError } = await import('../src/lib/company-sidebar')
   const { default: InstagramLayout } = await import('../src/app/(dashboard)/instagram/layout')
 
   await test('B2: histórico Instagram sem credencial não ativa conexão nem acessa /instagram', async () => {
@@ -74,43 +74,43 @@ async function main() {
     assert.equal(hasInstagramCredentials(settingsWithoutCredentials), false)
     assert.equal(hasInstagramCredentials({
       instagramAccountId: 'ig-account',
-      instagramPageId: null,
+      facebookPageId: null,
       instagramAccessToken: null,
-      metaAccessToken: null,
+      facebookPageToken: null,
     }), false)
     assert.equal(hasInstagramCredentials({
       instagramAccountId: null,
-      instagramPageId: null,
+      facebookPageId: null,
       instagramAccessToken: 'token-sem-conta',
-      metaAccessToken: null,
+      facebookPageToken: null,
     }), false)
     assert.equal(hasInstagramCredentials({
       instagramAccountId: 'ig-account',
-      instagramPageId: null,
+      facebookPageId: null,
       instagramAccessToken: 'ig-token',
-      metaAccessToken: null,
+      facebookPageToken: null,
     }), true)
     assert.equal(hasInstagramCredentials({
       instagramAccountId: null,
-      instagramPageId: 'page-id',
+      facebookPageId: 'page-id',
       instagramAccessToken: null,
-      metaAccessToken: 'meta-token',
+      facebookPageToken: 'page-token',
     }), false)
-    assert.equal(hasInstagramPageCredentials({
+    assert.equal(hasFacebookPageCredentials({
       instagramAccountId: null,
-      instagramPageId: null,
+      facebookPageId: null,
       instagramAccessToken: null,
-      metaAccessToken: 'meta-token',
+      facebookPageToken: 'page-token',
     }), false)
-    assert.equal(hasInstagramPageCredentials({
+    assert.equal(hasFacebookPageCredentials({
       instagramAccountId: null,
-      instagramPageId: 'page-id',
+      facebookPageId: 'page-id',
       instagramAccessToken: null,
-      metaAccessToken: 'meta-token',
+      facebookPageToken: 'page-token',
     }), true)
-    assert.equal(getInstagramPageCredentialError({ instagramAccountId: null, instagramAccessToken: null, instagramPageId: null, metaAccessToken: null }), 'Página exige Page ID e Meta Access Token.')
-    assert.equal(getInstagramPageCredentialError({ instagramAccountId: null, instagramAccessToken: null, instagramPageId: 'page-id', metaAccessToken: null }), 'Página exige Meta Access Token.')
-    assert.equal(getInstagramPageCredentialError({ instagramAccountId: null, instagramAccessToken: null, instagramPageId: 'page-id', metaAccessToken: 'meta-token' }), null)
+    assert.equal(getFacebookPageCredentialError({ instagramAccountId: null, instagramAccessToken: null, facebookPageId: null, facebookPageToken: null }), 'Página do Facebook exige Page ID e Page Token.')
+    assert.equal(getFacebookPageCredentialError({ instagramAccountId: null, instagramAccessToken: null, facebookPageId: 'page-id', facebookPageToken: null }), 'Página do Facebook exige Page Token.')
+    assert.equal(getFacebookPageCredentialError({ instagramAccountId: null, instagramAccessToken: null, facebookPageId: 'page-id', facebookPageToken: 'page-token' }), null)
   })
 
   await test('preferência visual não reativa Instagram sem conexão operacional', async () => {

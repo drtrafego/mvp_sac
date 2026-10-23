@@ -48,6 +48,7 @@ const SETTINGS_SECRET_FIELDS = [
   'brevoApiKey',
   'instagramAccessToken',
   'instagramAppSecret',
+  'facebookPageToken',
   'supabaseDatabaseUrl',
   'agentBiaApiKey',
   'agentLuanaApiKey',

@@ -16,6 +16,14 @@ function hasFilledValue(value: unknown): boolean {
   return typeof value === 'string' ? value.trim().length > 0 : Boolean(value)
 }
 
+function facebookPagePairError(body: Record<string, unknown>): string | null {
+  const hasPageId = hasFilledValue(body.facebookPageId)
+  const hasPageToken = hasFilledValue(body.facebookPageToken)
+  if (body.facebookPageId === undefined && body.facebookPageToken === undefined) return null
+  if (hasPageId === hasPageToken) return null
+  return 'Página do Facebook exige Page ID e Page Token preenchidos juntos.'
+}
+
 export async function GET(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { idOrSlug } = await params
   const { error, context } = await authenticateAgentRequest(req, idOrSlug)
@@ -56,6 +64,8 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     return NextResponse.json({ error: 'O corpo da requisição deve ser um objeto JSON.' }, { status: 400 })
   }
   const body = parsedBody as Record<string, unknown>
+  const pagePairError = facebookPagePairError(body)
+  if (pagePairError) return NextResponse.json({ error: pagePairError }, { status: 400 })
   let agentDisplayName: string | undefined
   try {
     agentDisplayName = parseAgentDisplayName(body.agentDisplayName)
@@ -88,7 +98,8 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       'instagramAccountId',
       'instagramAccessToken',
       'instagramVerifyToken',
-      'instagramPageId',
+      'facebookPageId',
+      'facebookPageToken',
       'supabaseDatabaseUrl',
       'agentBiaApiKey',
       'agentLuanaApiKey',

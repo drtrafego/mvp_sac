@@ -3,7 +3,7 @@
 //
 // Contexto do bug:
 // sendInstagramPrivateReply e sendInstagramMessage usavam o Facebook Page ID
-// (instagram_page_id) ANTES do Instagram Account ID (instagram_account_id).
+// (facebook_page_id) era usado por engano antes do Instagram Account ID (instagram_account_id).
 // Comentários nativos do Instagram pertencem à conta do Instagram, não à Page do
 // Facebook conectada — gerando erro na Meta:
 // "Unsupported post request. Object with ID '...' does not exist..."
@@ -22,7 +22,7 @@ import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import * as schema from '../src/lib/db/schema'
 
-const CONTAINER_NAME = 'instagram_page_id_priority_test'
+const CONTAINER_NAME = 'facebook_page_id_priority_test'
 
 function dockerAvailable(): boolean {
   const r = spawnSync('docker', ['info'], { stdio: 'ignore' })
@@ -86,7 +86,7 @@ async function startDisposablePostgres(): Promise<{ url: string; stop: () => voi
 let testSettingsRow: any = {
   companyId: 1,
   instagramAccountId: 'ig_acc_999999',
-  instagramPageId: 'fb_page_888888',
+  facebookPageId: 'fb_page_888888',
   instagramAccessToken: 'fake_token_123',
 }
 
@@ -115,14 +115,14 @@ globalThis.fetch = async (url: string | URL | Request, options?: any) => {
   } as any
 }
 
-test('sendInstagramPrivateReply prioriza instagramAccountId sobre instagramPageId', async () => {
+test('sendInstagramPrivateReply ignora facebookPageId e usa instagramAccountId', async () => {
   const { sendInstagramPrivateReply } = await import('../src/lib/instagram')
 
   fetchCalls.length = 0
   testSettingsRow = {
     companyId: 1,
     instagramAccountId: 'ig_acc_999999',
-    instagramPageId: 'fb_page_888888',
+    facebookPageId: 'fb_page_888888',
     instagramAccessToken: 'fake_token_123',
   }
 
@@ -137,18 +137,18 @@ test('sendInstagramPrivateReply prioriza instagramAccountId sobre instagramPageI
   assert.equal(
     fetchCalls[0].url,
     'https://graph.instagram.com/v21.0/ig_acc_999999/messages',
-    'Deveria chamar a URL com instagramAccountId e NÃO instagramPageId'
+    'Deveria chamar a URL com instagramAccountId e NÃO facebookPageId'
   )
 })
 
-test('sendInstagramMessage prioriza instagramAccountId sobre instagramPageId', async () => {
+test('sendInstagramMessage ignora facebookPageId e usa instagramAccountId', async () => {
   const { sendInstagramMessage } = await import('../src/lib/instagram')
 
   fetchCalls.length = 0
   testSettingsRow = {
     companyId: 1,
     instagramAccountId: 'ig_acc_999999',
-    instagramPageId: 'fb_page_888888',
+    facebookPageId: 'fb_page_888888',
     instagramAccessToken: 'fake_token_123',
   }
 
@@ -163,7 +163,7 @@ test('sendInstagramMessage prioriza instagramAccountId sobre instagramPageId', a
   assert.equal(
     fetchCalls[0].url,
     'https://graph.instagram.com/v21.0/ig_acc_999999/messages',
-    'Deveria chamar a URL com instagramAccountId e NÃO instagramPageId'
+    'Deveria chamar a URL com instagramAccountId e NÃO facebookPageId'
   )
 })
 
@@ -174,7 +174,7 @@ test('sendInstagramPrivateReply bloqueia sem Instagram Account ID mesmo com Page
   testSettingsRow = {
     companyId: 1,
     instagramAccountId: null,
-    instagramPageId: 'fb_page_888888',
+    facebookPageId: 'fb_page_888888',
     instagramAccessToken: 'fake_token_123',
   }
 
@@ -196,7 +196,7 @@ test('sendInstagramMessage bloqueia quando o par do Direct estiver incompleto', 
   testSettingsRow = {
     companyId: 1,
     instagramAccountId: null,
-    instagramPageId: null,
+    facebookPageId: null,
     instagramAccessToken: 'fake_token_123',
   }
 

@@ -59,8 +59,9 @@ const WRITABLE_SETTING_FIELDS = [
   ['instagramAccountId', 'string'],
   ['instagramAccessToken', 'string'],
   ['instagramVerifyToken', 'string'],
-  ['instagramPageId', 'string'],
   ['instagramAppSecret', 'string'],
+  ['facebookPageId', 'string'],
+  ['facebookPageToken', 'string'],
   ['sidebarConfig', 'present'],
   ['sacFollowupStageIds', 'present'],
 ] as const
@@ -80,6 +81,13 @@ function buildWritableSettingsFields(body: Record<string, unknown>): Record<stri
   }
 
   return writableFields
+}
+
+function facebookPagePairError(body: Record<string, unknown>): string | null {
+  const hasPageId = typeof body.facebookPageId === 'string' && body.facebookPageId.trim().length > 0
+  const hasPageToken = typeof body.facebookPageToken === 'string' && body.facebookPageToken.trim().length > 0
+  if (hasPageId === hasPageToken) return null
+  return 'Página do Facebook exige Page ID e Page Token preenchidos juntos.'
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -129,8 +137,9 @@ export async function GET(): Promise<NextResponse> {
       instagramAccountId: '',
       instagramAccessToken: '',
       instagramVerifyToken: '',
-      instagramPageId: '',
       instagramAppSecret: '',
+      facebookPageId: '',
+      facebookPageToken: '',
     })
   }
 
@@ -148,7 +157,7 @@ export async function GET(): Promise<NextResponse> {
     instagramUsername: row.instagramUsername ?? '',
     instagramAccountId: row.instagramAccountId ?? '',
     instagramVerifyToken: row.instagramVerifyToken ?? '',
-    instagramPageId: row.instagramPageId ?? '',
+    facebookPageId: row.facebookPageId ?? '',
     sidebarConfig: row.sidebarConfig ?? null,
   })
 }
@@ -169,6 +178,9 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Configuração inválida.' }, { status: 400 })
   }
+
+  const pagePairError = facebookPagePairError(body)
+  if (pagePairError) return NextResponse.json({ error: pagePairError }, { status: 400 })
 
   // SAC Lote 1, 5.5: credenciais, integrações e nome do bot são
   // configurações administrativas. Um membro comum só pode alterar o preset
