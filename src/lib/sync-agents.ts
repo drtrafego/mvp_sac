@@ -2,7 +2,7 @@ import { db } from '@/lib/db'
 import { appointmentMirror, companies, settings, syncCursors, recoveryLeads, whatsappMessages, gramadoReservations } from '@/lib/db/schema'
 import { queryAgentsDb, getAgentsDbUrl } from '@/lib/db/agents-db'
 import { eq, and, sql, type SQL } from 'drizzle-orm'
-import { backfillFirstContactFromMessages } from '@/lib/leads'
+import { backfillFirstContactFromMessages, backfillFirstHumanMessageFromMessages } from '@/lib/leads'
 import {
   contactExactKey,
   readUniqueLeadLookup,
@@ -2305,8 +2305,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   // quem está nulo), então não sobrescreve leads já marcados.
   try {
     await backfillFirstContactFromMessages()
+    await backfillFirstHumanMessageFromMessages()
   } catch (backfillErr) {
-    details.push(`Aviso no backfill de first_contact_at: ${String(backfillErr)}`)
+    details.push(`Aviso no backfill de métricas de primeira mensagem: ${String(backfillErr)}`)
   }
 
   return {

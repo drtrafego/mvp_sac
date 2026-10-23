@@ -25,6 +25,7 @@
     "test:agenda-google-calendar-sync": "tsx --experimental-test-module-mocks --test scripts/agenda-google-calendar-sync.test.ts",
     "test:native-availability-sync": "tsx --experimental-test-module-mocks scripts/native-availability-sync.test.ts",
     "test:dashboard-lead-stats": "tsx scripts/dashboard-lead-stats.test.ts",
+    "test:recovery-leads-first-human-schema": "tsx --test scripts/recovery-leads-first-human-schema.test.ts",
     "test:dashboard-origin-pills": "tsx scripts/dashboard-origin-pills.test.ts",
     "test:analytics-period": "tsx --test scripts/analytics-period.test.ts",
     "test:analytics-route-agent-metrics": "node --experimental-test-module-mocks --import tsx --test --test-concurrency=1 scripts/analytics-route-agent-metrics.test.ts",

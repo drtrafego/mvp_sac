@@ -167,6 +167,15 @@ export function ensureSchema(client: any): Promise<void> {
   if (!_migrationPromise) {
     _migrationPromise = (async () => {
       try {
+        // O dashboard usa SELECT * em recovery_leads. Essas colunas precisam
+        // existir antes de qualquer query do request; mantê-las fora do lote
+        // best-effort evita que um erro não relacionado deixe o app consultar
+        // um schema parcial e repetir SQLSTATE 42703.
+        await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS first_human_message_at timestamptz`
+        await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS first_human_message_channel text`
+        await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS first_human_message_agent_key text`
+        await client`CREATE INDEX IF NOT EXISTS recovery_leads_first_human_message_daily_idx ON recovery_leads (company_id, first_human_message_at, first_human_message_channel, first_human_message_agent_key)`
+
         await Promise.allSettled([
           // recovery_leads
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS channel text DEFAULT 'whatsapp'`,

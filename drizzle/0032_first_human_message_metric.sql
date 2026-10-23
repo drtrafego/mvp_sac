@@ -30,16 +30,18 @@ SET
     'unassigned'
   )
 FROM (
-  SELECT DISTINCT ON (lead_id)
+  SELECT DISTINCT ON (lead_id, company_id)
     lead_id,
+    company_id,
     created_at,
     channel
   FROM whatsapp_messages
   WHERE lead_id IS NOT NULL
     AND direction = 'inbound'
-  ORDER BY lead_id, created_at ASC, id ASC
+  ORDER BY lead_id, company_id, created_at ASC, id ASC
 ) AS inbound
 WHERE lead.id = inbound.lead_id
+  AND lead.company_id = inbound.company_id
   AND lead.first_human_message_at IS NULL;
 
 -- Cobre toda escrita futura na camada compartilhada, inclusive integrações
@@ -61,6 +63,7 @@ BEGIN
         'unassigned'
       )
     WHERE id = NEW.lead_id
+      AND company_id = NEW.company_id
       AND first_human_message_at IS NULL;
   END IF;
   RETURN NEW;

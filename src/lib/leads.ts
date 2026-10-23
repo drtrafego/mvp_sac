@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
-import { eq, and, isNull, inArray, sql } from 'drizzle-orm'
+import { eq, and, isNull, sql } from 'drizzle-orm'
 
 /**
  * Marca a primeira abordagem real de um lead (mensagem de verdade, inbound ou
@@ -52,5 +52,40 @@ export async function backfillFirstContactFromMessages(leadIds?: number[]): Prom
       group by lead_id
     ) wm
     where rl.id = wm.lead_id and rl.first_contact_at is null
+  `)
+}
+
+/**
+ * Preenche a primeira mensagem inbound histórica sem permitir que uma linha
+ * de mensagem de outro tenant marque o lead. O sync chama esta rotina depois
+ * de importar o histórico e o valor só é escrito quando ainda está nulo.
+ */
+export async function backfillFirstHumanMessageFromMessages(leadIds?: number[]): Promise<void> {
+  if (leadIds && leadIds.length === 0) return
+
+  const leadFilter = leadIds && leadIds.length > 0
+    ? sql`and lead_id = any(${leadIds})`
+    : sql``
+
+  await db.execute(sql`
+    update recovery_leads rl
+    set
+      first_human_message_at = inbound.created_at AT TIME ZONE 'UTC',
+      first_human_message_channel = inbound.channel,
+      first_human_message_agent_key = coalesce(
+        (select ai_agent_key from settings where company_id = rl.company_id limit 1),
+        (select slug from companies where id = rl.company_id limit 1),
+        'unassigned'
+      )
+    from (
+      select distinct on (lead_id, company_id)
+        lead_id, company_id, created_at, channel
+      from whatsapp_messages
+      where lead_id is not null and direction = 'inbound' ${leadFilter}
+      order by lead_id, company_id, created_at asc, id asc
+    ) inbound
+    where rl.id = inbound.lead_id
+      and rl.company_id = inbound.company_id
+      and rl.first_human_message_at is null
   `)
 }
