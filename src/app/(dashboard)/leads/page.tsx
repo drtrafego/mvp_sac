@@ -1,8 +1,8 @@
 'use client'
 
 import { PageHeader } from '@/components/ui/page-header'
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Search,
   RefreshCw,
@@ -21,6 +21,7 @@ import {
   Layers,
   CheckCircle2,
   Users,
+  Send,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -28,6 +29,8 @@ import { Button } from '@/components/ui/button'
 import { ImportLeadsModal } from '@/components/leads/ImportLeadsModal'
 import { AddLeadModal } from '@/components/leads/AddLeadModal'
 import { EditLeadModal, type LeadForEdit } from '@/components/leads/EditLeadModal'
+import { TemplateSelector, type TemplateSelection } from '@/components/leads/TemplateSelector'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { MobileRowCard } from '@/components/ui/mobile-row-card'
 import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
@@ -150,6 +153,7 @@ const SELECT_HEIGHT = 'data-[size=default]:h-[var(--control-lg)] lg:data-[size=d
 const FIELD_SKIN = 'bg-surface-inset dark:bg-surface-inset border-line-subtle focus-visible:ring-0 focus-visible:border-line-default'
 
 const COLUMNS: { label: string; className?: string }[] = [
+  { label: 'Selecionar', className: 'w-12' },
   { label: 'Nome / Cliente', className: 'w-[260px]' },
   { label: 'Telefone / WhatsApp' },
   { label: 'Produto / Oferta', className: 'w-[220px]' },
@@ -204,6 +208,7 @@ function WhatsAppGlyph({ size = 14 }: { size?: number }) {
 const PAGE_SIZE = 50
 
 export default function LeadsPage() {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const initialStatus = searchParams.get('status') || 'all'
   const sourceParam = searchParams.get('source') || ''
@@ -244,6 +249,11 @@ export default function LeadsPage() {
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [selectedLeadForEdit, setSelectedLeadForEdit] = useState<LeadForEdit | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [selectedLeadIds, setSelectedLeadIds] = useState<number[]>([])
+  const [selectAllFilter, setSelectAllFilter] = useState(false)
+  const [dispatchOpen, setDispatchOpen] = useState(false)
+  const [templateSelection, setTemplateSelection] = useState<TemplateSelection | null>(null)
+  const [creatingDispatch, setCreatingDispatch] = useState(false)
 
   const { from, to } = resolvePeriod({
     from: searchParams.get('from') ?? undefined,
@@ -339,8 +349,43 @@ export default function LeadsPage() {
     to,
   ])
 
+  const dispatchFilter = useMemo(() => ({
+    search: debouncedSearch || undefined, event_type: eventType !== 'all' ? eventType : undefined,
+    status: status !== 'all' ? status : undefined, source: sourceParam || undefined,
+    product: productFilter !== 'all' ? productFilter : undefined, platform: platformFilter !== 'all' ? platformFilter : undefined,
+    payment_type: paymentFilter !== 'all' ? paymentFilter : undefined, tag: debouncedTag || undefined,
+    is_sale: isSaleFilter !== 'all' ? isSaleFilter : undefined,
+    has_phone: hasFilter === 'has_phone' || undefined, has_email: hasFilter === 'has_email' || undefined,
+    has_tags: hasFilter === 'has_tags' || undefined, min_value: minValue || undefined, max_value: maxValue || undefined,
+    transaction_id: transactionIdFilter || undefined, from, to,
+  }), [debouncedSearch, eventType, status, sourceParam, productFilter, platformFilter, paymentFilter, debouncedTag, isSaleFilter, hasFilter, minValue, maxValue, transactionIdFilter, from, to])
+
+  const toggleLead = (id: number) => {
+    setSelectAllFilter(false)
+    setSelectedLeadIds(previous => previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id])
+  }
+  const togglePage = () => {
+    const ids = leads.map(lead => lead.id)
+    setSelectAllFilter(false)
+    setSelectedLeadIds(previous => ids.every(id => previous.includes(id)) ? previous.filter(id => !ids.includes(id)) : [...new Set([...previous, ...ids])])
+  }
+  const clearSelection = () => { setSelectedLeadIds([]); setSelectAllFilter(false) }
+  const selectionCount = selectAllFilter ? 'Todos os leads filtrados' : `${selectedLeadIds.length} selecionado${selectedLeadIds.length === 1 ? '' : 's'}`
+  const handleTemplateChange = useCallback((selection: TemplateSelection | null) => setTemplateSelection(selection), [])
+  const createDispatch = async () => {
+    if (!templateSelection || (!selectAllFilter && !selectedLeadIds.length)) return
+    setCreatingDispatch(true)
+    try {
+      const response = await fetch('/api/leads/dispatch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: selectAllFilter ? 'filter' : 'ids', leadIds: selectAllFilter ? undefined : selectedLeadIds, filter: selectAllFilter ? dispatchFilter : undefined, template: templateSelection }) })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Não foi possível criar o lote.')
+      router.push(`/disparo-em-massa?batchId=${data.batchId}`)
+    } catch (error) { alert(error instanceof Error ? error.message : 'Não foi possível criar o lote.') } finally { setCreatingDispatch(false) }
+  }
+
   useEffect(() => {
-    fetchLeads(page)
+    const timer = window.setTimeout(() => { void fetchLeads(page) }, 0)
+    return () => window.clearTimeout(timer)
   }, [fetchLeads, page])
 
   function handlePage(dir: number) {
@@ -737,6 +782,7 @@ export default function LeadsPage() {
             const evLabel = eventLabels[lead.eventType] ?? lead.eventType
             return (
               <div key={lead.id} className="rounded-xl border border-line-subtle bg-surface-panel p-3 space-y-2 shadow-xs">
+                <label className="flex items-center gap-2 text-micro text-fg-muted cursor-pointer"><input type="checkbox" checked={selectAllFilter || selectedLeadIds.includes(lead.id)} onChange={() => toggleLead(lead.id)} className="accent-cyan-500" />Selecionar para disparo</label>
                 <MobileRowCard
                   title={lead.name ?? 'Cliente'}
                   subtitle={lead.phone}
@@ -795,6 +841,12 @@ export default function LeadsPage() {
 
       {/* Tabela Desktop */}
       <div className="hidden lg:block panel overflow-hidden">
+        {!loading && leads.length > 0 && leads.every(lead => selectedLeadIds.includes(lead.id)) && !selectAllFilter && (
+          <div className="flex items-center justify-between gap-3 border-b border-cyan-500/30 bg-cyan-500/5 px-4 py-2 text-micro text-cyan-200">
+            <span>Todos os {leads.length} leads desta página estão selecionados?</span>
+            <Button variant="ghost" size="sm" onClick={() => { setSelectAllFilter(true); setSelectedLeadIds([]) }} className="text-cyan-300 hover:text-cyan-100">Selecionar todos os leads que correspondem ao filtro</Button>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-body">
             <thead>
@@ -807,7 +859,7 @@ export default function LeadsPage() {
                       col.className
                     )}
                   >
-                    {col.label}
+                    {col.label === 'Selecionar' ? <input type="checkbox" aria-label="Selecionar todos os leads desta página" checked={leads.length > 0 && leads.every(lead => selectedLeadIds.includes(lead.id)) && !selectAllFilter} onChange={togglePage} className="accent-cyan-500" /> : col.label}
                   </th>
                 ))}
               </tr>
@@ -840,6 +892,7 @@ export default function LeadsPage() {
                         isRecovered && 'bg-st-positivo/5'
                       )}
                     >
+                      <td className="px-4 py-3"><input type="checkbox" aria-label={`Selecionar ${lead.name ?? lead.phone}`} checked={selectAllFilter || selectedLeadIds.includes(lead.id)} onChange={() => toggleLead(lead.id)} className="accent-cyan-500" /></td>
                       <td className="px-4 py-3 max-w-[260px]">
                         <p className="font-semibold text-fg truncate">{lead.name ?? 'Cliente'}</p>
                         {lead.email && <p className="text-micro text-fg-subtle truncate">{lead.email}</p>}
@@ -956,6 +1009,17 @@ export default function LeadsPage() {
         onOpenChange={setEditModalOpen}
         onSuccess={() => fetchLeads(page)}
       />
+
+      <Dialog open={dispatchOpen} onOpenChange={setDispatchOpen}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto bg-surface-panel border-line-subtle">
+          <DialogHeader><DialogTitle>Disparar template aprovado</DialogTitle></DialogHeader>
+          <p className="text-body text-fg-muted">Destinatários: <strong className="text-fg">{selectionCount}</strong>. O lote será criado como rascunho para sua revisão final.</p>
+          <TemplateSelector lead={Object.fromEntries(Object.entries(leads.find(lead => selectedLeadIds.includes(lead.id)) ?? leads[0] ?? {}).map(([key, value]) => [key, value == null ? '' : String(value)]))} onChange={handleTemplateChange} />
+          <div className="flex justify-end gap-2 border-t border-line-subtle pt-4"><Button variant="outline" onClick={() => setDispatchOpen(false)}>Cancelar</Button><Button disabled={!templateSelection || creatingDispatch} onClick={() => void createDispatch()} className="gap-2 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={15} />{creatingDispatch ? 'Criando lote...' : 'Criar Lote e Revisar'}</Button></div>
+        </DialogContent>
+      </Dialog>
+
+      {(selectAllFilter || selectedLeadIds.length > 0) && <div className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-line-subtle bg-surface-overlay px-4 py-3 shadow-xl"><span className="text-body font-semibold text-fg">{selectionCount}</span><Button size="sm" onClick={() => setDispatchOpen(true)} className="gap-1.5 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={14} />Disparar Template</Button><Button size="sm" variant="ghost" onClick={clearSelection}>Limpar seleção</Button></div>}
     </div>
   )
 }

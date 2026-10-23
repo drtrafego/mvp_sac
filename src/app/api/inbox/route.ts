@@ -3,7 +3,11 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { requireCompany } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { settings } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 import { decodeInboxCursor, INBOX_PAGE_SIZE, loadInboxPage } from '@/lib/inbox-conversations'
+import { includesInstagramInGeneral } from '@/lib/instagram-inbox-placement'
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init)
   response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
@@ -24,6 +28,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   const requestedLimit = Number(searchParams.get('limit') || INBOX_PAGE_SIZE)
+  const [companySettings] = await db
+    .select({ instagramInboxPlacement: settings.instagramInboxPlacement })
+    .from(settings)
+    .where(eq(settings.companyId, company.id))
+    .limit(1)
   const page = await loadInboxPage({
     companyId: company.id,
     channel: searchParams.get('channel'),
@@ -32,6 +41,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     query: searchParams.get('q'),
     cursor,
     limit: Number.isFinite(requestedLimit) ? requestedLimit : INBOX_PAGE_SIZE,
+    includeInstagramInGeneral: includesInstagramInGeneral(companySettings?.instagramInboxPlacement),
   })
 
   return noStoreJson(page)

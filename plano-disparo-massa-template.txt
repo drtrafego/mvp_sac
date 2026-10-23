@@ -1,0 +1,365 @@
+PLANO DE ARQUITETURA: DISPARO EM MASSA COM TEMPLATE META NO MESMO FLUXO DO CSV
+
+1. DECISÃO EXECUTIVA
+
+Recomendação: tornar o template escolhido uma configuração própria e imutável do lote de disparo em massa. O fluxo não deve criar nem alterar uma recovery_sequence nos bastidores.
+
+Hoje mass_dispatch_batches guarda empresa, arquivo, event_type, origem, status e contagem, mas não guarda template. Tanto o preview quanto o enfileiramento usam event_type para localizar uma recovery_sequence ativa e suas sequence_messages. Portanto, o schema atual não suporta um template direto no lote antes da criação dos message_jobs.
+
+Embora message_jobs.message_snapshot já comporte templateName, templateLanguage e templateVariablesMap, esse snapshot só nasce na confirmação. Ele não resolve a persistência da seleção enquanto o lote ainda está em draft, nem permite reconstruir o preview com segurança. É necessária uma migração pequena em mass_dispatch_batches.
+
+A solução proposta preserva o fluxo atual para lotes legados baseados em sequência, mas todos os lotes novos criados pelo modal usam a origem direct_template. Na confirmação, um job por destinatário recebe o snapshot imutável do template escolhido. Alterações posteriores na Meta ou em sequências não mudam jobs já confirmados.
+
+2. ESCOPO FUNCIONAL
+
+Problema resolvido: o usuário importa o CSV, mapeia colunas, seleciona um template aprovado, informa de onde vem cada variável, revisa a mensagem e confirma o disparo sem visitar Recuperação.
+
+Happy path:
+
+1. O usuário sobe o CSV.
+2. Mapeia telefone, nome, email, produto, valor e demais colunas.
+3. Marca Preparar disparo em massa.
+4. Avança para Configurar mensagem.
+5. O sistema carrega somente templates APPROVED da WABA da empresa.
+6. O usuário seleciona o par nome e idioma.
+7. O sistema lê os placeholders reais do BODY e cria exatamente um campo por posição, sem exibir cinco posições fixas.
+8. Para cada posição, o usuário escolhe um campo conhecido do lead ou digita um valor fixo.
+9. O sistema mostra uma prévia com dados da primeira linha válida e avisa valores vazios.
+10. Ao confirmar a configuração, a importação cria os leads, o lote draft, os destinatários e salva a configuração do template no próprio lote.
+11. O preview final é carregado a partir do lote, exibe template, idioma, variáveis e quantidade real de destinatários.
+12. A confirmação revalida o template na Meta, compara o preview aprovado e enfileira um job por destinatário.
+
+Critérios de aceite:
+
+1. Nenhuma sequência prévia é necessária para um lote criado no novo fluxo.
+2. O usuário não consegue avançar sem telefone, template aprovado e todas as variáveis obrigatórias mapeadas.
+3. Um template sem variáveis pode ser confirmado com mapa vazio.
+4. Nome e idioma identificam a seleção. Templates homônimos em idiomas diferentes não podem ser confundidos.
+5. O backend rejeita template removido, pausado ou não aprovado entre seleção e confirmação.
+6. O preview aprovado pelo usuário é exatamente o snapshot usado nos jobs.
+7. Duplo clique ou duas requisições concorrentes não duplicam o disparo.
+8. Empresas sem Meta Cloud API configurada recebem erro antes da importação em massa, sem criar lote inútil.
+9. A importação simples, sem disparo, continua inalterada.
+10. Lotes draft antigos baseados em sequência continuam abrindo e confirmando durante a transição.
+
+Fora do escopo recomendado para a primeira entrega:
+
+1. Criar ou submeter templates novos à Meta.
+2. Sequência com várias mensagens e atrasos. O fluxo direto configura uma única mensagem template por CSV.
+3. Template com mídia dinâmica no HEADER, botão com URL dinâmica ou código de cupom. O remetente atual só monta parâmetros de texto do BODY.
+4. Agendamento de data e hora pelo modal.
+5. Editor livre do texto aprovado. O texto é somente leitura porque a Meta aprova conteúdo e estrutura.
+
+3. DIAGNÓSTICO DO CÓDIGO ATUAL
+
+ImportLeadsModal.tsx tem os estados upload, mapping, importing, result, preview e queued. A configuração de disparo ainda pede um tipo de evento. handleImport envia defaultEventType e createMassDispatch para POST /api/leads/import. Depois da importação, GET /api/leads/import/[batchId]/dispatch monta o preview e POST na mesma rota confirma.
+
+POST /api/leads/import cria mass_dispatch_batches com event_type, inclui destinatários não pausados e atualiza recipient_count. Não valida configuração Meta nem limita explicitamente items.length.
+
+GET e POST /api/leads/import/[batchId]/dispatch usam event_type e product_filter para localizar uma recovery_sequence ativa. A confirmação exige que todas as mensagens sejam template e consulta novamente a Meta. queueMassDispatchBatch repete essa consulta no SQL, compara o preview e copia cada sequence_message para message_jobs.message_snapshot.
+
+GET /api/meta/templates já é multiempresa, exige WABA ID e token, pagina a Graph API e devolve somente status APPROVED. Pode ser reutilizado.
+
+sequence-page.tsx já contém seleção por nome e idioma, mas a implementação de variáveis é apenas cinco inputs livres e não deriva a quantidade real do template. Copiar esse bloco literalmente perpetuaria validação fraca. A lógica comum deve ser extraída e melhorada.
+
+O cron já interpola {nome}, {primeiro_nome}, {email}, {telefone}, {produto}, {transacao}, {cpf}, {cidade}, {estado}, {valor}, {parcelas}, {forma_pagamento}, {boleto_codigo}, {boleto_url}, {boleto_validade}, {pix_codigo}, {pix_validade}, {link_checkout} e {afiliado}. Essa lista deve existir em um módulo compartilhado para UI, validação e worker não divergirem.
+
+4. MODELAGEM DE DADOS
+
+Adicionar uma migração Drizzle para mass_dispatch_batches com:
+
+dispatch_source: text, não nulo, default 'sequence'. Valores aceitos pela aplicação: sequence e direct_template.
+
+template_name: text, nulo para lote legado.
+
+template_language: text, nulo para lote legado.
+
+template_variables_map: jsonb, nulo para lote legado. Formato inicial: objeto cujas chaves são posições numéricas do BODY e cujos valores são expressões suportadas, por exemplo {"1":"{primeiro_nome}","2":"{produto}"} ou texto fixo.
+
+template_snapshot: jsonb, nulo para lote legado. Guardar somente metadados necessários à auditoria e ao preview, por exemplo name, language, category, bodyText, bodyVariableIndexes e componentShape. Não guardar token, WABA ID nem resposta inteira da Graph API.
+
+updated_at: timestamp, recomendável para auditoria do draft. created_at e confirmed_at já existem.
+
+event_type pode permanecer not null nesta entrega para compatibilidade. Para lote direct_template, usar um valor neutro e documentado, por exemplo mass_dispatch, ou manter o evento escolhido apenas como classificação opcional. A recomendação é deixar de exibir evento como requisito no novo fluxo e usar mass_dispatch internamente. Em uma migração posterior, event_type pode se tornar nulo se nenhuma consulta operacional ainda depender dele.
+
+Não criar recovery_sequence nem sequence_message temporárias. Isso poluiria a configuração de Recuperação, disputaria a restrição única company_id mais event_type, permitiria que outro usuário alterasse o conteúdo do lote e faria uma mensagem única parecer uma automação permanente.
+
+Índices: os acessos são por id mais company_id, já cobertos pelo identificador primário seguido da checagem de tenant. Não é necessário índice novo para template_name no MVP. Adicionar constraint de consistência é desejável se a política de migração permitir: direct_template exige template_name, template_language, template_variables_map e template_snapshot não nulos.
+
+Observação crítica sobre idempotência: o índice atual de message_jobs inclui message_id, que será nulo em jobs diretos. PostgreSQL considera valores nulos distintos, portanto esse índice não impede duplicatas para template direto. Criar índice único parcial sobre mass_dispatch_batch_id e lead_id quando mass_dispatch_batch_id não é nulo, ou alterar o índice para usar coalesce(message_id, 0). A primeira opção expressa melhor a regra de um job direto por lead e lote. Se for necessário preservar múltiplas mensagens por lote legado, criar o índice parcial somente para jobs cujo snapshot contenha uma marca source = direct_template, ou adicionar dispatch_item_key ao job. Para este caso, a recomendação mais limpa é adicionar message_key text ao lote ou job e usar unique(batch_id, lead_id, message_key), com valor template:1 no fluxo direto e sequence:<message_id> no legado.
+
+5. CONTRATOS E VALIDAÇÃO
+
+Criar schemas Zod compartilhados, por exemplo src/lib/validations/mass-dispatch.ts.
+
+MassDispatchTemplateSelection:
+
+templateName: string não vazia e com limite defensivo.
+
+templateLanguage: string não vazia.
+
+templateVariablesMap: Record<string, string>, somente chaves inteiras positivas e contíguas a partir de 1.
+
+templateSnapshot: objeto limitado aos campos permitidos pelo servidor. Idealmente o cliente não é autoridade para o snapshot; o servidor localiza novamente o template na Meta e constrói o snapshot canônico.
+
+Modificar POST /api/leads/import para aceitar massDispatchTemplate quando createMassDispatch for true. Remover defaultEventType como requisito do novo modo direto, mantendo aceitação para clientes legados. Antes de gravar qualquer lead:
+
+1. Validar o corpo inteiro com Zod.
+2. Aplicar limite de linhas no servidor.
+3. Carregar settings da empresa e exigir provider meta, WABA ID, phone number ID e access token.
+4. Chamar listMetaTemplates.
+5. Localizar correspondência exata por name e language.
+6. Extrair a estrutura real de variáveis do BODY.
+7. Rejeitar posições faltantes, extras, não contíguas ou valores vazios.
+8. Rejeitar, no MVP, componentes dinâmicos que o sendMetaTemplate atual não sabe enviar.
+9. Criar o snapshot canônico no servidor e persistir tudo no lote.
+
+Para evitar importar parcialmente centenas de leads e só depois descobrir configuração inválida, essa precondição precisa ocorrer antes da criação do batch e do loop de itens.
+
+GET /api/meta/templates pode continuar como rota de leitura. Recomendações de melhoria: devolver uma DTO normalizada com bodyText, bodyVariableIndexes e unsupportedDynamicComponents, em vez de obrigar dois componentes de tela a interpretar components: unknown[]. Manter a resposta bruta apenas se já houver consumidor externo.
+
+Não é obrigatória uma nova rota. A menor solução coerente é:
+
+GET /api/meta/templates para seleção.
+
+POST /api/leads/import para validar e persistir importação mais template no draft.
+
+GET /api/leads/import/[batchId]/dispatch para preview.
+
+POST /api/leads/import/[batchId]/dispatch para confirmação e fila.
+
+Uma rota de preflight, por exemplo POST /api/meta/templates/validate, é opcional. Ela melhora a resposta imediata antes de importar, mas não substitui a validação no POST de importação nem na confirmação. Para o MVP, evitar a rota nova: a lista normalizada já permite validação de interface, e o servidor valida autoritativamente ao importar.
+
+6. ALTERAÇÕES NO FRONTEND
+
+Alterar a máquina de estados para upload, mapping, template, importing, result, preview e queued. O passo template só aparece quando createMassDispatch for true. Importação simples segue de mapping para importing.
+
+No passo mapping:
+
+1. Manter todo o mapeamento existente.
+2. Substituir a seleção obrigatória de evento por um resumo Preparar disparo em massa.
+3. O botão passa a dizer Continuar para mensagem quando marcado.
+4. Validar telefone e restrição de closed_sale antes de avançar.
+5. Não importar ainda.
+
+No novo passo template:
+
+1. Carregar /api/meta/templates ao entrar no passo, ou antecipadamente quando o checkbox for marcado.
+2. Exibir loading, retry, erro de credenciais e estado sem templates aprovados.
+3. Selecionar pelo identificador composto name::language.
+4. Renderizar nome, idioma, categoria e BODY aprovado em modo somente leitura.
+5. Detectar exatamente as posições {{1}}, {{2}} e seguintes no componente BODY.
+6. Para cada posição, oferecer seletor de campo do lead com as expressões suportadas pelo worker e opção Valor fixo.
+7. Limpar ou reconciliar o mapa quando o usuário troca de template. Nunca carregar silenciosamente posições do template anterior.
+8. Exibir preview usando a primeira linha válida do CSV e fallback real do sistema, como Cliente para nome ausente.
+9. Destacar variáveis que produzirão string vazia em algumas linhas e mostrar quantidade afetada.
+10. Bloquear avanço se uma posição obrigatória não estiver mapeada.
+11. Exibir aviso claro e bloquear templates com HEADER ou BUTTON dinâmicos enquanto não houver suporte no remetente.
+
+Extrair componentes e utilitários reutilizáveis em vez de copiar JSX de sequence-page.tsx:
+
+MetaTemplatePicker: seleção, estados de carregamento e resumo.
+
+TemplateVariableMapper: deriva posições e edita o mapa.
+
+TemplatePreview: interpola uma amostra de forma visual.
+
+meta-template-utils.ts: chave composta, extração de BODY, detecção de placeholders, detecção de componentes dinâmicos não suportados.
+
+lead-template-variables.ts: catálogo de variáveis, labels e interpolação compartilhada. O cron deve usar a mesma função pura, reduzindo divergência.
+
+Depois, adaptar sequence-page.tsx para usar os mesmos componentes. Isso não precisa bloquear o MVP se aumentar demais o risco visual, mas as funções de parsing e validação devem ser compartilhadas desde o início.
+
+handleImport deve incluir massDispatchTemplate no JSON. Em caso de erro, voltar ao passo template quando a causa for configuração Meta e ao mapping quando a causa for dados do CSV. Trocar alert por mensagem inline é recomendado, mas não é pré requisito arquitetural.
+
+O preview final deve mostrar uma mensagem por destinatário, nome, idioma, BODY aprovado, mapeamento das variáveis, uma amostra resolvida, recipientCount e totalJobs. Não mostrar event_type como se ainda escolhesse uma sequência.
+
+7. ALTERAÇÕES NO BACKEND DE PREVIEW E FILA
+
+loadPreview deve ramificar por dispatch_source:
+
+Para sequence: manter a consulta atual, garantindo compatibilidade com drafts existentes.
+
+Para direct_template: ler destinatários elegíveis do lote e construir uma única DispatchPreviewMessage sintética a partir dos campos do batch. Não consultar recovery_sequences nem sequence_messages. recipientCount deve excluir bot_paused e leads que já tenham job pendente ou em processamento conforme a política atual.
+
+O tipo DispatchPreviewMessage precisa deixar de exigir um id numérico de sequence_message. Usar messageKey string é mais seguro. No modo direto, messageKey é template:1; no legado, sequence:<id>.
+
+queueMassDispatchBatch deve ser dividido internamente em duas estratégias pequenas, preservando uma única transação, advisory lock, cálculo de uso em 24 horas, claim atômico do draft e criação de jobs:
+
+queueSequenceMassDispatchBatch mantém o SQL atual.
+
+queueDirectTemplateMassDispatchBatch seleciona destinatários do lote, cria message_snapshot direto e grava message_id nulo.
+
+O snapshot direto deve conter messageType template, templateName, templateLanguage, templateVariablesMap, templateSnapshot resumido e source direct_template. O cron já usa message_snapshot para lotes e não relê a mensagem viva, portanto a maior parte do envio permanece compatível.
+
+Na confirmação POST:
+
+1. Exigir confirm true e previewMessages.
+2. Recarregar o preview autoritativo.
+3. Comparar versão canônica estável com o preview aprovado.
+4. Exigir status draft e destinatários elegíveis.
+5. Revalidar settings e template Meta por nome mais idioma, não apenas por nome.
+6. Revalidar formato e quantidade de variáveis contra os componentes atuais.
+7. Se o conteúdo ou a estrutura mudou na Meta, devolver 409 e exigir novo preview.
+8. Executar a fila atômica e respeitar o limite diário.
+
+isApprovedTemplateOnlySequence pode permanecer para legado, mas o fluxo direto merece uma validação específica. O Set atual usa somente template.name e pode aceitar indevidamente uma variante de idioma inexistente. Corrigir para chave name::language em ambos os fluxos.
+
+8. RISCOS E EDGE CASES
+
+Template perde aprovação entre seleção e confirmação: revalidar na importação e na confirmação. Responder 409, manter o lote draft e permitir escolher outro template.
+
+Meta indisponível: falhar fechado. Não enfileirar. Na tela, oferecer Tentar novamente. Nunca usar cache antigo como prova de aprovação na confirmação.
+
+Empresa sem Meta Cloud API: bloquear ao carregar templates e novamente no servidor. Exigir provider meta, WABA ID, phone number ID e token. Redigir token em toda mensagem de erro e log.
+
+Variáveis faltantes: derivar posições do template real, exigir sequência contígua e mapa completo. Não aceitar mapa apenas porque há algum valor.
+
+Variáveis extras: rejeitar para não mascarar template trocado.
+
+Dados ausentes em algumas linhas: a configuração pode estar formalmente completa, mas {email} pode resolver vazio. Antes de importar, calcular incidência no CSV. Recomendação: bloquear quando qualquer destinatário produz valor vazio, ou permitir somente com confirmação explícita e fallback informado. Para reduzir falhas Meta, o MVP deve bloquear e pedir campo alternativo ou valor fixo.
+
+Templates com variável em HEADER ou BUTTON: o sendMetaTemplate atual envia somente BODY text parameters. Bloquear esses templates no MVP com explicação. Só liberar após estender o modelo de mapa para componentType, componentIndex e parameterIndex e criar payload Meta correspondente.
+
+Templates com posições fora de ordem ou repetidas: normalizar a lista única ordenada e exigir 1 até N. Se a Meta retornar estrutura incompatível, bloquear.
+
+Idioma: validar par name e language em toda etapa. Não assumir pt_BR.
+
+Limite de destinatários: hoje não há teto explícito de items no endpoint, apenas limite técnico diário padrão de 1000 jobs. Adicionar MAX_MASS_IMPORT_ROWS configurável e validar antes de processar. O preview deve mostrar solicitado, elegível e capacidade restante. A confirmação continua sendo a autoridade transacional contra concorrência.
+
+CSV grande e timeout: o POST atual processa linhas sequencialmente e faz várias consultas por lead. Definir inicialmente um teto compatível com o tempo observado. Se a necessidade real superar esse teto, a evolução correta é import assíncrono, não aumentar indefinidamente o body e o timeout.
+
+Importação parcialmente concluída: o loop atual tolera falhas por lead. A configuração do template deve ser validada antes do loop. Manter contadores de skipped, tagFailed e dispatchRecipientFailed. Um lote com zero destinatários não pode ser confirmado.
+
+Leads duplicados no CSV: a restrição batch mais lead já deduplica destinatários. O preview deve usar recipientCount real, não linhas do CSV.
+
+Lead com bot pausado: continuar excluindo da associação e da elegibilidade, informando a diferença entre importados e destinatários.
+
+Concorrência e duplo clique: manter claim status draft para queued dentro da mesma transação e advisory lock por phone number ID. Corrigir a unicidade dos jobs diretos conforme a seção de schema.
+
+Mudança no draft: template não deve ser editável após queued. Se no futuro houver edição de draft, atualizar updated_at, invalidar qualquer preview no cliente e exigir nova confirmação.
+
+Segurança multiempresa: toda leitura e mutação de batch deve combinar batch id e company id. O template só pode vir das credenciais da empresa autenticada. Nunca aceitar WABA ID enviado pelo navegador.
+
+Injeção e conteúdo arbitrário: aceitar apenas tokens do catálogo ou valor fixo com tamanho máximo. Não executar sintaxe genérica. A interpolação é substituição de tokens conhecidos.
+
+Privacidade: a amostra de preview fica apenas no cliente ou é produzida para a sessão autenticada. Não logar linhas do CSV, telefones, emails, tokens ou valores resolvidos.
+
+9. ORDEM DE IMPLEMENTAÇÃO
+
+Fase 1, contrato e funções puras, complexidade média:
+
+1. Criar DTOs e schemas Zod.
+2. Extrair parser de templates Meta e catálogo de variáveis.
+3. Criar testes unitários para BODY sem variável, uma variável, várias, lacunas, idioma, header dinâmico e botão dinâmico.
+
+Fase 2, persistência, complexidade média:
+
+1. Criar migração dos campos do batch e estratégia de unicidade do job direto.
+2. Atualizar schema Drizzle.
+3. Garantir default sequence para registros existentes.
+4. Testar rollback lógico e leitura de lote legado.
+
+Fase 3, API de importação, complexidade média:
+
+1. Normalizar GET /api/meta/templates.
+2. Validar massDispatchTemplate antes de qualquer escrita.
+3. Aplicar limite de linhas.
+4. Persistir configuração canônica no batch.
+5. Manter contrato legado temporariamente.
+
+Fase 4, preview e fila direta, complexidade alta:
+
+1. Ramificar loadPreview por dispatch_source.
+2. Implementar queueDirectTemplateMassDispatchBatch com claim, limite diário, snapshot e idempotência.
+3. Revalidar template por nome e idioma na confirmação.
+4. Preservar queueSequenceMassDispatchBatch para drafts antigos.
+5. Testar concorrência, preview alterado, limite diário e template desaprovado.
+
+Fase 5, frontend, complexidade média a alta:
+
+1. Criar o novo step template.
+2. Integrar picker, mapper e preview por linha de amostra.
+3. Ajustar navegação, resetModal, mensagens de erro e payload.
+4. Atualizar preview final e remover evento obrigatório do novo fluxo.
+5. Adaptar a UI de Recuperação às utilidades compartilhadas, ao menos o parser e a chave nome mais idioma.
+
+Fase 6, qualidade e liberação, complexidade média:
+
+1. Testes de API com tenant A tentando batch do tenant B.
+2. Testes do happy path completo até message_snapshot.
+3. Testes com credenciais ausentes, Meta 502, template removido, variável vazia, CSV duplicado e bot pausado.
+4. Teste de dois POST simultâneos de confirmação.
+5. Conferir o payload gerado para sendMetaTemplate em ambiente controlado.
+6. Liberar com telemetria de lotes draft, queued, jobs failed e motivo de falha.
+7. Depois de uma janela de transição sem drafts legados, avaliar remoção do caminho por sequência no modal. Não remover o conceito de sequência da Recuperação, que continua válido para automações recorrentes.
+
+10. ESTRATÉGIA DE TESTES
+
+Testes unitários:
+
+1. Extração dos placeholders do componente BODY.
+2. Detecção de componentes não suportados.
+3. Validação Zod do mapa completo e contíguo.
+4. Interpolação de todos os tokens suportados.
+5. Serialização estável do preview.
+
+Testes de integração de API:
+
+1. Import direto cria batch com snapshot canônico e destinatários.
+2. Import sem configuração Meta não grava batch nem leads quando o modo massa está ativo.
+3. Preview direto não consulta sequência.
+4. Confirmação grava um job por lead, message_id nulo e snapshot correto.
+5. Repetição da confirmação não cria jobs adicionais.
+6. Mudança de template entre preview e confirmação devolve 409.
+7. Lote legado ainda usa a sequência.
+8. Limite diário concorrente não é ultrapassado.
+
+Teste ponta a ponta:
+
+1. CSV com nome, telefone e produto.
+2. Seleção de template de duas variáveis.
+3. Mapeamento {primeiro_nome} e {produto}.
+4. Preview com valores reais.
+5. Importação, confirmação e inspeção do job.
+6. Execução controlada do worker e verificação do payload Meta.
+
+11. OBSERVABILIDADE E OPERAÇÃO
+
+Registrar eventos estruturados sem PII: companyId, batchId, dispatchSource, templateName, templateLanguage, recipientCount, jobsCreated, status e código de erro.
+
+Separar motivos de bloqueio: meta_not_configured, template_not_found, template_not_approved, template_shape_changed, variables_incomplete, unsupported_component, recipient_limit e daily_limit.
+
+Métricas de sucesso:
+
+1. Percentual de lotes criados sem visita prévia à Recuperação.
+2. Tempo entre upload e confirmação.
+3. Taxa de abandono no passo de template.
+4. Taxa de falha por variável vazia.
+5. Taxa de confirmação bem sucedida.
+6. Jobs failed por rejeição da Meta.
+
+12. COMPLEXIDADE E ESTIMATIVA
+
+Complexidade geral: média a alta. A interface é relativamente direta; o cuidado maior está na persistência imutável, idempotência, validação da estrutura Meta e compatibilidade com lotes legados.
+
+Estimativa para uma pessoa familiarizada com o projeto:
+
+1. Contratos, parser e testes: 0,5 a 1 dia.
+2. Migração e persistência: 0,5 dia.
+3. API de importação e normalização Meta: 0,5 a 1 dia.
+4. Preview e fila direta com testes transacionais: 1,5 a 2 dias.
+5. Novo step e componentes de UI: 1 a 1,5 dia.
+6. Testes ponta a ponta, correções e rollout: 1 a 1,5 dia.
+
+Total recomendado: 5 a 7 dias úteis para entrega segura. Um corte acelerado de 3 a 4 dias é possível bloqueando templates com qualquer componente dinâmico fora do BODY, mantendo alertas existentes e adiando a refatoração visual da tela de Recuperação. Não é recomendável cortar a migração, a revalidação na confirmação, a correção de idempotência nem os testes de concorrência.
+
+13. TRADE OFFS E RECOMENDAÇÃO FINAL
+
+Opção A, salvar template no próprio lote. Vantagens: corresponde ao conceito de campanha pontual, preview estável, auditoria clara, nenhuma dependência da Recuperação. Custo: migração e uma ramificação na fila. Recomendada.
+
+Opção B, criar uma sequência temporária para cada CSV. Vantagem: reaproveita a consulta atual. Problemas: conflita com a unicidade por evento, polui a tela de Recuperação, mistura automação permanente com campanha pontual e aumenta o risco de alteração acidental. Não recomendada.
+
+Opção C, mandar a configuração apenas no POST de confirmação e depender de message_snapshot. Vantagem: evita migração. Problemas: o draft não consegue reconstruir o preview, refresh perde configuração, auditoria fica incompleta e o cliente vira autoridade sobre conteúdo crítico. Não recomendada.
+
+Decisão final: implementar a Opção A, com um único template BODY por lote no MVP, snapshot canônico no batch, snapshot imutável no job, validação Meta na importação e na confirmação, e compatibilidade temporária para lotes legados por sequência.

@@ -1,0 +1,52 @@
+🧪 QA REVIEW, Disparo em massa com template Meta direto
+
+RESULTADO: ❌ REPROVADO
+
+PROBLEMAS ENCONTRADOS
+
+🔴 CRÍTICO
+1. [drizzle/meta/_journal.json: fim do arquivo], a migration 0032 não está registrada no journal do Drizzle. O journal termina em 0023, portanto `drizzle migrate` não descobrirá nem aplicará `0032_mass_dispatch_direct_template.sql`. Em produção, o código passará a ler e gravar colunas que não existem, e o índice de idempotência tampouco será criado.
+   Fix: gerar a migration com `drizzle-kit generate` ou registrar 0032 no `_journal.json` e atualizar o snapshot meta correspondente. Validar em um banco limpo com `migrate()` antes do deploy.
+
+2. [src/lib/meta-template-utils.ts:40-47; src/lib/whatsapp/meta.ts:119-140], templates com HEADER de mídia dinâmica não são bloqueados. `hasUnsupportedDynamicComponents` procura somente `{{n}}`; um componente Meta típico `{ type: 'HEADER', format: 'IMAGE' }` não contém placeholder e passa. Porém o remetente monta exclusivamente parâmetros `body` de texto, sem parâmetro de header, logo os jobs são enfileirados e falham na Meta.
+   Fix: considerar não suportado todo HEADER cujo `format` não seja TEXT sem parâmetros, além de HEADER text com placeholder. Cobrir também formatos DOCUMENT, VIDEO e LOCATION e testar que importação e confirmação retornam 409 antes de criar/enfileirar o lote.
+
+3. [src/app/api/leads/import/[batchId]/dispatch/route.ts:218-227], a confirmação consulta a Meta, mas só compara nome, idioma e índices das variáveis. Se o BODY ou demais estrutura do template mudar entre importação e confirmação, o lote é enfileirado apesar de o conteúdo efetivo aprovado pelo usuário ter mudado. O snapshot gravado não é confrontado com o snapshot canônico recém-consultado.
+   Fix: comparar canonicamente o snapshot persistido com `buildCanonicalSnapshot(matchingDirectTemplate)` incluindo `bodyText`, índices, categoria e a forma dos componentes suportados. Se diferir, responder 409 e manter o lote em draft para novo preview.
+
+🟡 MÉDIO
+1. [src/components/leads/ImportLeadsModal.tsx:286-294, 1152-1155, 1168; src/app/api/leads/import/route.ts:185-195], o sistema detecta valores vazios nas linhas do CSV, mas apenas exibe aviso e ainda habilita “Importar e Preparar Disparo”. O backend só valida a presença das chaves do mapa, não o valor que cada lead resolverá. Templates com `{email}`, `{produto}`, etc. podem gerar jobs com parâmetros vazios e falhar ou enviar conteúdo inválido.
+   Fix: bloquear o botão quando `rowsWithEmptyTemplateVariables > 0` e repetir a validação autoritativa no POST de importação, antes de criar o lote ou qualquer lead. Se a política desejar permitir fallback, implementá-lo explicitamente e mostrá-lo no preview.
+
+2. [src/lib/lead-template-variables.ts:45-70; src/app/api/cron/route.ts:43-87, 570-576], a nova interpolação "compartilhada" não é usada pelo executor real. O preview chama `interpolateVariable`, enquanto o cron chama sua própria `interpolate`. Isso já produz divergência para valores fixos que contêm tokens: o preview mostra literalmente `"{nome}"`, mas o cron o substitui pelo nome do lead. Formatações de moeda e data também são implementadas em dois lugares com tipos distintos.
+   Fix: extrair um resolvedor único, com contrato que distinga token suportado de valor fixo literal, e usá-lo tanto no modal quanto no cron. Adicionar teste de paridade preview versus payload Meta para token, valor fixo com chaves, moeda, data e campo ausente.
+
+3. [src/lib/mass-dispatch.ts:31-39; src/app/api/leads/import/[batchId]/dispatch/route.ts:195-232], a validação de lotes legados continua aprovando templates por nome somente. Dois idiomas do mesmo nome podem ter status/estrutura diferentes; o lote legado pode ser confirmado e falhar no envio com o idioma não aprovado. O próprio plano exige chave composta `name::language` também para esse caminho.
+   Fix: mudar `isApprovedTemplateOnlySequence` para validar `metaTemplateKey(templateName, templateLanguage)` e fornecer um `Set` de chaves nome+idioma. Cobrir lote `dispatch_source='sequence'` com mesmo nome em idiomas distintos.
+
+4. [src/app/api/leads/import/route.ts:109-111, 222-383], não há limite de linhas no servidor. Um cliente autenticado pode enviar CSV com volume arbitrário e disparar processamento sequencial, múltiplas consultas por linha e timeout, apesar do plano exigir `MAX_MASS_IMPORT_ROWS` antes de qualquer escrita.
+   Fix: definir limite configurável e rejeitar `items.length` acima dele antes da validação Meta e criação do batch. Exibir o mesmo limite no modal.
+
+5. [src/components/leads/ImportLeadsModal.tsx:215-219], lint falha por chamar uma função que atualiza state dentro de `useEffect` (`react-hooks/set-state-in-effect`). Isso deixa o gate de lint vermelho e pode causar renderizações em cascata ao entrar no step template.
+   Fix: disparar o carregamento diretamente na transição para o step template, ou adaptar o efeito a um fluxo assíncrono que cumpra a regra configurada. Rodar lint até ficar limpo.
+
+🔵 BAIXO
+1. [scripts/mass-dispatch-flow.test.ts:335-383], não há cobertura automatizada do novo caminho `direct_template`, nem dos bloqueios de template dinâmico, mudança de BODY, idioma, mapa vazio/extra e concorrência com o índice parcial. A suíte atual testa o caminho de sequência e falha em dois cenários de importação que esperam 200 mas recebem 400 porque enviam `createMassDispatch` sem evento ou template.
+   Fix: ajustar os fixtures legados para fornecer `defaultEventType` quando exercitam sequência e adicionar testes de rota/SQL para o fluxo direto, incluindo dois POSTs concorrentes e o payload enviado ao cron.
+
+VERIFICAÇÕES POSITIVAS
+
+- Multiempresa: as leituras e mutações do batch combinam `batchId` e `companyId`; a seleção Meta usa exclusivamente as credenciais de `settings` da empresa autenticada. Não encontrei passagem de WABA ou token pelo cliente.
+- Token: as rotas novas não devolvem token. A rota de listagem existente redige token antes de responder. Não encontrei log novo que o interpolasse diretamente.
+- Idempotência: `message_jobs_direct_template_unique` tem sintaxe PostgreSQL válida. O predicado do `ON CONFLICT (mass_dispatch_batch_id, lead_id) WHERE mass_dispatch_batch_id IS NOT NULL AND message_id IS NULL` corresponde ao índice parcial, e o claim de `draft` dentro da transação impede a segunda confirmação de criar jobs.
+- Compatibilidade de schema: `dispatch_source` tem default `sequence`, portanto lotes existentes permanecem no caminho legado quando a migration for efetivamente aplicada.
+- CSV vazio é rejeitado antes de criar lote; template sem variável aceita mapa vazio; leads com `bot_paused` são excluídos no preview e na fila.
+
+TYPECHECK: ✅ `./node_modules/.bin/tsc --noEmit` passou sem erros.
+LINT: ❌ 1 erro no escopo revisado, `ImportLeadsModal.tsx:217`, regra `react-hooks/set-state-in-effect`.
+TESTES: ❌ `npm run test:mass-dispatch`: 13 testes do primeiro bloco passaram, mas 2 testes em `scripts/mass-dispatch-flow.test.ts` falharam com `400 !== 200`; os demais subtestes posteriores não foram executados devido à interrupção da cadeia `&&`.
+SECURITY: ❌ ver críticos 1 e 2. O isolamento multiempresa e o não vazamento direto de token passaram na revisão estática.
+
+CONCLUSÃO
+
+Não liberar. Corrigir primeiro a publicação efetiva da migration, o bloqueio de HEADER de mídia e a revalidação completa do snapshot Meta. Depois fechar as validações de dados por destinatário, unificar a interpolação, restaurar a suíte verde e adicionar cobertura específica para o novo fluxo.

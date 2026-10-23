@@ -113,7 +113,7 @@ export async function validateSacContextFields(
   if ((allowed.has('pipelineStage') && body.pipelineStage !== undefined) || (allowed.has('status') && body.status !== undefined)) {
     const stages = await getCompanyPipelineStageIds(lead.companyId)
     if (allowed.has('pipelineStage') && body.pipelineStage !== undefined) {
-      if (typeof body.pipelineStage !== 'string' || !stages.includes(body.pipelineStage)) throw new SacInputError('Etapa não existe no pipeline desta empresa.')
+      if (typeof body.pipelineStage !== 'string' || !stages.includes(body.pipelineStage)) throw new SacInputError('Etapa não existe no CRM desta empresa.')
       update.pipelineStage = body.pipelineStage
     }
     if (allowed.has('status') && body.status !== undefined) {

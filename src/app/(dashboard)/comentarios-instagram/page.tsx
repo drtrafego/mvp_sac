@@ -49,6 +49,7 @@ interface AutomationRule {
   activeHoursEnd: string | null
   isActive: boolean
   requireFollowCheck: boolean
+  autoTag: string | null
   totalTriggered: number
   createdAt: string
 }
@@ -79,9 +80,19 @@ interface MediaItem {
   timestamp?: string
 }
 
+interface InboundTagRule {
+  id: number
+  name: string
+  trigger: 'direct' | 'story_reply'
+  keywords: string | null
+  tag: string
+  isActive: boolean
+}
+
 export default function ComentariosInstagramPage() {
   const [activeTab, setActiveTab] = useState<'regras' | 'logs'>('regras')
   const [rules, setRules] = useState<AutomationRule[]>([])
+  const [inboundTagRules, setInboundTagRules] = useState<InboundTagRule[]>([])
   const [logs, setLogs] = useState<CommentLog[]>([])
   const [recentMedia, setRecentMedia] = useState<MediaItem[]>([])
   const [loadingMedia, setLoadingMedia] = useState(false)
@@ -103,13 +114,19 @@ export default function ComentariosInstagramPage() {
   const [formHoursStart, setFormHoursStart] = useState('')
   const [formHoursEnd, setFormHoursEnd] = useState('')
   const [formRequireFollowCheck, setFormRequireFollowCheck] = useState(false)
+  const [formAutoTag, setFormAutoTag] = useState('')
+  const [inboundRuleName, setInboundRuleName] = useState('')
+  const [inboundRuleTag, setInboundRuleTag] = useState('')
+  const [inboundRuleKeywords, setInboundRuleKeywords] = useState('')
+  const [inboundRuleTrigger, setInboundRuleTrigger] = useState<'direct' | 'story_reply'>('direct')
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [rulesRes, logsRes] = await Promise.all([
+      const [rulesRes, logsRes, inboundRulesRes] = await Promise.all([
         fetch('/api/comment-automations'),
         fetch('/api/comment-automations/all/logs'),
+        fetch('/api/instagram-tag-rules'),
       ])
 
       if (rulesRes.ok) {
@@ -120,6 +137,10 @@ export default function ComentariosInstagramPage() {
       if (logsRes.ok) {
         const logsData = await logsRes.json()
         setLogs(logsData.logs || [])
+      }
+      if (inboundRulesRes.ok) {
+        const inboundRulesData = await inboundRulesRes.json()
+        setInboundTagRules(inboundRulesData.rules || [])
       }
     } catch (err) {
       console.error('Erro ao carregar dados:', err)
@@ -162,6 +183,7 @@ export default function ComentariosInstagramPage() {
     setFormHoursStart('')
     setFormHoursEnd('')
     setFormRequireFollowCheck(false)
+    setFormAutoTag('')
     setActionError(null)
     setIsModalOpen(true)
     loadMedia()
@@ -189,6 +211,7 @@ export default function ComentariosInstagramPage() {
     setFormHoursStart(rule.activeHoursStart || '')
     setFormHoursEnd(rule.activeHoursEnd || '')
     setFormRequireFollowCheck(rule.requireFollowCheck)
+    setFormAutoTag(rule.autoTag || '')
     setActionError(null)
     setIsModalOpen(true)
     loadMedia()
@@ -252,6 +275,7 @@ export default function ComentariosInstagramPage() {
       activeHoursStart: formHoursStart.trim() || null,
       activeHoursEnd: formHoursEnd.trim() || null,
       requireFollowCheck: formRequireFollowCheck,
+      autoTag: formAutoTag.trim() || null,
     }
 
     try {
@@ -287,6 +311,22 @@ export default function ComentariosInstagramPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const createInboundTagRule = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!inboundRuleName.trim() || !inboundRuleTag.trim()) return
+    const res = await fetch('/api/instagram-tag-rules', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: inboundRuleName.trim(), tag: inboundRuleTag.trim(), keywords: inboundRuleKeywords.trim() || null, trigger: inboundRuleTrigger }),
+    })
+    if (!res.ok) { const data = await res.json(); setActionError(data.error || 'Não foi possível salvar a regra de tag.'); return }
+    setInboundRuleName(''); setInboundRuleTag(''); setInboundRuleKeywords(''); await loadData()
+  }
+
+  const deleteInboundTagRule = async (id: number) => {
+    const res = await fetch(`/api/instagram-tag-rules/${id}`, { method: 'DELETE' })
+    if (res.ok) setInboundTagRules(current => current.filter(rule => rule.id !== id))
   }
 
   // Métricas
@@ -370,6 +410,22 @@ export default function ComentariosInstagramPage() {
           </div>
         </div>
       </div>
+
+      <section className="card bg-surface-raised border border-line-subtle p-5 rounded-2xl space-y-4">
+        <div>
+          <h2 className="text-sm font-black text-fg">Tags por Direct e resposta de Story</h2>
+          <p className="text-xs text-fg-muted mt-1">A regra de Story só roda se o payload recebido identificar uma resposta a Story. Reações não são capturadas por esta integração.</p>
+        </div>
+        <form onSubmit={createInboundTagRule} className="grid grid-cols-1 md:grid-cols-4 gap-2">
+          <input value={inboundRuleName} onChange={e => setInboundRuleName(e.target.value)} required placeholder="Nome da regra" className="px-3 py-2 rounded-xl bg-surface-base border border-line-subtle text-fg text-xs" />
+          <select value={inboundRuleTrigger} onChange={e => setInboundRuleTrigger(e.target.value as 'direct' | 'story_reply')} className="px-3 py-2 rounded-xl bg-surface-base border border-line-subtle text-fg text-xs">
+            <option value="direct">Mensagem no Direct</option><option value="story_reply">Resposta de Story</option>
+          </select>
+          <input value={inboundRuleKeywords} onChange={e => setInboundRuleKeywords(e.target.value)} placeholder="Palavras, opcional" className="px-3 py-2 rounded-xl bg-surface-base border border-line-subtle text-fg text-xs" />
+          <div className="flex gap-2"><input value={inboundRuleTag} onChange={e => setInboundRuleTag(e.target.value)} required maxLength={50} placeholder="Tag" className="min-w-0 flex-1 px-3 py-2 rounded-xl bg-surface-base border border-line-subtle text-fg text-xs" /><button className="btn btn-primary px-3 rounded-xl text-xs font-bold">Salvar</button></div>
+        </form>
+        {inboundTagRules.length > 0 && <div className="flex flex-wrap gap-2">{inboundTagRules.map(rule => <span key={rule.id} className="inline-flex items-center gap-2 rounded-lg border border-line-subtle px-2.5 py-1 text-[11px] text-fg-muted">{rule.trigger === 'story_reply' ? 'Story' : 'Direct'}: <strong className="text-fg">{rule.tag}</strong>{rule.keywords ? `, ${rule.keywords}` : ''}<button type="button" onClick={() => deleteInboundTagRule(rule.id)} aria-label={`Excluir ${rule.name}`} className="text-rose-400 hover:text-rose-300"><X size={12} /></button></span>)}</div>}
+      </section>
 
       {/* Tabs */}
       <div className="flex items-center gap-2 border-b border-line-subtle pb-2">
@@ -782,6 +838,20 @@ export default function ComentariosInstagramPage() {
                     ? 'Disparará a DM para qualquer comentário recebido no post.'
                     : 'A busca não diferencia maiúsculas de minúsculas nem acentos (ex: "quero" aciona "QUERO").'}
                 </span>
+              </div>
+
+              {/* Mensagem da DM */}
+              <div>
+                <label className="block text-micro font-bold text-fg mb-1">Tag automática no SAC</label>
+                <input
+                  type="text"
+                  value={formAutoTag}
+                  onChange={e => setFormAutoTag(e.target.value)}
+                  maxLength={50}
+                  placeholder="Ex: comentou_e-book"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-surface-base border border-line-subtle text-fg text-xs focus:border-brand-solid outline-none"
+                />
+                <span className="text-[10px] text-fg-subtle mt-1 block">Opcional. Aplica esta tag ao lead quando a regra de comentário for acionada.</span>
               </div>
 
               {/* Mensagem da DM */}

@@ -106,6 +106,8 @@ export const settings = pgTable('settings', {
   // do Instagram, e por isso rejeitava com 401 TODO evento real da Meta
   // (confirmado ao vivo: 401 no exato segundo que uma mensagem real chegou).
   instagramAppSecret: text('instagram_app_secret'),
+  // Escolhe apenas a visualização do Direct. Nenhum histórico é movido ou removido.
+  instagramInboxPlacement: text('instagram_inbox_placement').notNull().default('general'),
   // Supabase (Centralização dos Agentes IA)
   supabaseDatabaseUrl: text('supabase_database_url'),
   // Credenciais & Segurança dos Agentes IA (Bia - Amanda & Luana - Gastão)
@@ -593,8 +595,14 @@ export const massDispatchBatches = pgTable('mass_dispatch_batches', {
   trackingSource: text('tracking_source').notNull(),
   status: text('status').notNull().default('draft'),
   recipientCount: integer('recipient_count').notNull().default(0),
+  dispatchSource: text('dispatch_source').notNull().default('sequence'),
+  templateName: text('template_name'),
+  templateLanguage: text('template_language'),
+  templateVariablesMap: jsonb('template_variables_map'),
+  templateSnapshot: jsonb('template_snapshot'),
   confirmedAt: timestamp('confirmed_at'),
   createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at'),
 })
 
 export const massDispatchRecipients = pgTable('mass_dispatch_recipients', {
@@ -824,6 +832,9 @@ export const instagramCommentAutomations = pgTable('instagram_comment_automation
   // verdade, e o bot pegou a mentira): tem que ser verificação real via API,
   // nunca um botão de honra sem checagem.
   requireFollowCheck: boolean('require_follow_check').default(false),
+  // Tag local aplicada ao lead quando esta regra de comentário for acionada.
+  // A tag nunca é enviada à Meta e mantém o escopo do canal Instagram.
+  autoTag: text('auto_tag'),
   totalTriggered: integer('total_triggered').default(0),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
@@ -906,6 +917,24 @@ export const followupConfig = pgTable('followup_config', {
   stepsByOrigin: jsonb('steps_by_origin'),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
+
+// Regras locais para eventos inbound que não são comentários. `story_reply`
+// só é avaliado quando o payload recebido identifica inequivocamente que a
+// mensagem responde a um Story. Não habilita nem presume captura de reações.
+export const instagramInboundTagRules = pgTable('instagram_inbound_tag_rules', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  name: text('name').notNull(),
+  trigger: text('trigger').notNull(), // 'direct' | 'story_reply'
+  keywords: text('keywords'),
+  matchType: text('match_type').default('contains').notNull(),
+  tag: text('tag').notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (table) => [
+  index('instagram_inbound_tag_rules_company_trigger_idx').on(table.companyId, table.trigger),
+])
 
 export const followupSent = pgTable('followup_sent', {
   id: text('id').primaryKey(),

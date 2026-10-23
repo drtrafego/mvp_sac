@@ -16,6 +16,7 @@ mockModule(localRequire.resolve('server-only'), {})
 mockModule('@/stack', { stackServerApp: null })
 mockModule('next/headers', {
   cookies: async () => ({ get: (name: string) => name === 'agent_auth_session' ? { value: 'signed-session' } : undefined }),
+  headers: async () => ({ get: () => null }),
 })
 mockModule('@/lib/agent-session', {
   verifyAgentSessionCookie: async () => ({

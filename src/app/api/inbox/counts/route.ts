@@ -3,11 +3,12 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { db } from '@/lib/db'
-import { recoveryLeads } from '@/lib/db/schema'
-import { and, eq, sql } from 'drizzle-orm'
+import { recoveryLeads, settings } from '@/lib/db/schema'
+import { and, eq, not, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
 import { isDirectOrganicSourceFilter, normalizeInboxSourceFilter } from '@/lib/inbox-source-filter'
+import { includesInstagramInGeneral } from '@/lib/instagram-inbox-placement'
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init)
   response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const sourceFilter = normalizeInboxSourceFilter(searchParams.get('source'))
 
   const instagramCond = channelWhereCondition('instagram')!
+  const instagramDirectCond = channelWhereCondition('instagram_direct')!
   const emailCond = channelWhereCondition('email')!
   const mineracaoCond = channelWhereCondition('mineracao')!
   const anuncioCond = channelWhereCondition('anuncio')!
@@ -46,7 +48,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       ? sql<boolean>`coalesce(nullif(${recoveryLeads.trackingSource}, ''), nullif(${recoveryLeads.platform}, '')) is null`
       : sql<boolean>`(${recoveryLeads.trackingSource} ILIKE ${'%' + sourceFilter + '%'} OR ${recoveryLeads.platform} ILIKE ${'%' + sourceFilter + '%'})`
     : undefined
+  const [companySettings] = await db
+    .select({ instagramInboxPlacement: settings.instagramInboxPlacement })
+    .from(settings)
+    .where(eq(settings.companyId, company.id))
+    .limit(1)
   const whereConditions = [eq(recoveryLeads.companyId, company.id)]
+  if (!includesInstagramInGeneral(companySettings?.instagramInboxPlacement)) {
+    whereConditions.push(not(instagramDirectCond))
+  }
   if (sourceCondition) whereConditions.push(sourceCondition)
 
   const [row] = await db

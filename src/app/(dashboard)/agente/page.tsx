@@ -94,7 +94,7 @@ export default async function AgentePage() {
           <h2 className="text-h2 text-fg">Follow-up</h2>
         </div>
         <p className="text-body text-fg-muted">
-          Status real da régua de recuperação automática e dos lembretes manuais do Pipeline. O conteúdo das
+          Status real da régua de recuperação automática e dos lembretes manuais do CRM. O conteúdo das
           mensagens é gerenciado pela integração oficial, não por aqui.
         </p>
 
@@ -113,7 +113,7 @@ export default async function AgentePage() {
           </div>
           <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
             <p className="text-h2 text-fg num">{reminderStats?.total ?? 0}</p>
-            <p className="text-micro text-fg-subtle mt-0.5">Retornos agendados no Pipeline (a partir de hoje)</p>
+            <p className="text-micro text-fg-subtle mt-0.5">Retornos agendados no CRM (a partir de hoje)</p>
           </div>
         </div>
 
@@ -128,7 +128,7 @@ export default async function AgentePage() {
             href="/pipeline"
             className="focus-ring inline-flex items-center gap-1.5 text-body text-fg-subtle hover:text-fg hover:underline sm:ml-auto"
           >
-            <Columns3 size={14} /> Ver lembretes no Pipeline
+            <Columns3 size={14} /> Ver lembretes no CRM
           </Link>
         </div>
       </section>

@@ -4,6 +4,12 @@ import { whatsappMessages } from '@/lib/db/schema'
 
 export const INBOX_MESSAGE_PAGE_SIZE = 75
 export const INBOX_MESSAGE_PAGE_SIZE_MAX = 100
+export const INBOX_THREAD_CHANNELS = ['whatsapp', 'instagram', 'email'] as const
+export type InboxThreadChannel = typeof INBOX_THREAD_CHANNELS[number]
+
+export function normalizeInboxThreadChannel(value: string | null | undefined): InboxThreadChannel | null {
+  return INBOX_THREAD_CHANNELS.includes(value as InboxThreadChannel) ? value as InboxThreadChannel : null
+}
 
 type MessageCursor = { at: string; id: number }
 
@@ -14,6 +20,7 @@ export interface InboxMessagePageOptions {
   before?: string | null
   limit?: number
   aroundMessageId?: number | null
+  threadChannel?: InboxThreadChannel | null
 }
 
 export interface InboxMessageRow {
@@ -67,13 +74,16 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
     options.phone ? eq(whatsappMessages.phone, options.phone) : undefined,
     cleanPhone && cleanPhone !== options.phone ? eq(whatsappMessages.phone, cleanPhone) : undefined,
   )!
+  const threadCondition = options.threadChannel
+    ? sql`coalesce(${whatsappMessages.channel}, 'whatsapp') = ${options.threadChannel}`
+    : undefined
 
   // SAC Lote 1: Se solicitado salto direto para uma mensagem de busca, carregar uma janela centrada nela
   if (options.aroundMessageId && !cursor) {
     const [target] = await db
       .select({ id: whatsappMessages.id, createdAt: whatsappMessages.createdAt })
       .from(whatsappMessages)
-      .where(and(eq(whatsappMessages.id, options.aroundMessageId), eq(whatsappMessages.companyId, options.companyId), participants))
+      .where(and(eq(whatsappMessages.id, options.aroundMessageId), eq(whatsappMessages.companyId, options.companyId), participants, threadCondition))
 
     if (target) {
       const half = Math.floor(limit / 2)
@@ -102,6 +112,7 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
           and(
             eq(whatsappMessages.companyId, options.companyId),
             participants,
+            threadCondition,
             or(
               sql`${messageAt} < ${targetDate.toISOString()}::timestamp`,
               and(sql`${messageAt} = ${targetDate.toISOString()}::timestamp`, sql`${whatsappMessages.id} <= ${target.id}`)
@@ -137,6 +148,7 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
           and(
             eq(whatsappMessages.companyId, options.companyId),
             participants,
+            threadCondition,
             or(
               sql`${messageAt} > ${targetDate.toISOString()}::timestamp`,
               and(sql`${messageAt} = ${targetDate.toISOString()}::timestamp`, sql`${whatsappMessages.id} > ${target.id}`)
@@ -175,7 +187,7 @@ export async function loadInboxMessagePage(options: InboxMessagePageOptions): Pr
     }
   }
 
-  const conditions = [eq(whatsappMessages.companyId, options.companyId), participants]
+  const conditions = [eq(whatsappMessages.companyId, options.companyId), participants, threadCondition]
   if (cursor) {
     conditions.push(or(
       sql`${messageAt} < ${cursor.at}::timestamp`,

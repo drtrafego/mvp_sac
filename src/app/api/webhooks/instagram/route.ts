@@ -17,6 +17,7 @@ import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { AmbiguousCredentialError } from "@/lib/instagram-webhook-errors"
+import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
 
 
 // Resolve a empresa dona de um pageId (Instagram Account ID ou Page ID) e,
@@ -250,6 +251,8 @@ export async function POST(req: NextRequest) {
               is_echo?: boolean
               attachments?: Array<{ type?: string; payload?: Record<string, unknown> }>
               referral?: Record<string, unknown>
+              reply_to?: Record<string, unknown>
+              is_story_reply?: boolean
             } | undefined
             const recipient = item.recipient as { id?: string } | undefined
 
@@ -385,6 +388,13 @@ export async function POST(req: NextRequest) {
             }
 
             if (hasOnlyIgnoredShare) {
+              if (sender?.id && isInstagramStoryReply(message)) {
+                await captureInstagramInboundInteraction({
+                  companyId,
+                  instagramUserId: sender.id,
+                  interaction: 'story_reply',
+                })
+              }
               const types = attachmentTypes.join(', ')
               await markInstagramItemLog({ processed: false, skipReason: `anexo/partilha ignorado para IA (types=${types})`, decision: 'skip_attachment_share' })
               console.log(`[Instagram Webhook Global] anexo/partilha ignorado para IA (types=${types}), mid=${message?.mid}`)
@@ -436,6 +446,20 @@ export async function POST(req: NextRequest) {
                   }
                 }
 
+                // Antes do insert, checar se canal instagram esta pausado nesta empresa
+                const [channelPauseCheck] = await db
+                  .select({ id: recoveryLeads.id })
+                  .from(recoveryLeads)
+                  .where(
+                    and(
+                      eq(recoveryLeads.companyId, companyId),
+                      eq(recoveryLeads.botPaused, true),
+                      eq(recoveryLeads.botPausedChannel, 'instagram')
+                    )
+                  )
+                  .limit(1)
+                const isChannelPaused = !!channelPauseCheck
+
                 // Upsert atômico: SELECT-então-INSERT deixava uma janela de
                 // corrida entre duas requisições concorrentes com o mesmo
                 // telefone novo, e cada uma criava um lead próprio (provado
@@ -454,6 +478,14 @@ export async function POST(req: NextRequest) {
                     name: leadName,
                     status: 'in_conversation',
                     trackingSource,
+                    ...(isChannelPaused
+                      ? {
+                          botPaused: true,
+                          botPausedAt: new Date(),
+                          botPausedBy: 'auto (canal pausado)',
+                          botPausedChannel: 'instagram',
+                        }
+                      : {}),
                     ...(metaAdId ? { metaAdId: String(metaAdId) } : {}),
                     ...(adName ? { adName: String(adName) } : {}),
                     ...(metaCampaignId ? { metaCampaignId: String(metaCampaignId) } : {}),
@@ -503,10 +535,18 @@ export async function POST(req: NextRequest) {
                   }).onConflictDoNothing()
                 }
 
+                await applyInstagramInboundTag(lead?.id, isInstagramStoryReply(message) ? 'story_reply' : 'direct')
+
                 try {
-                  await db.insert(whatsappMessages).values({
+                  if (!lead?.id) throw new InstagramInboundPersistenceError('lead ausente')
+                  await persistInstagramInboundWithTags({
                     companyId,
-                    leadId: lead?.id ?? null,
+                    leadId: lead.id,
+                    text: inboundText,
+                    isStoryReply: isInstagramStoryReply(message),
+                    message: {
+                    companyId,
+                    leadId: lead.id,
                     phone: igPhone,
                     channel: 'instagram',
                     direction: 'inbound',
@@ -514,6 +554,7 @@ export async function POST(req: NextRequest) {
                     messageType: 'text',
                     sentBy: 'user',
                     externalId: message?.mid ?? null,
+                    },
                   })
                 } catch (err) {
                   // Segunda camada (índice único parcial): corrida entre duas
@@ -524,6 +565,7 @@ export async function POST(req: NextRequest) {
                     console.log(`[Instagram Webhook Global] corrida no insert (unique violation), mid=${message?.mid}, tratando como já processado`)
                     continue
                   }
+                  if (err instanceof InstagramInboundPersistenceError) throw err
                   throw err
                 }
 
@@ -571,6 +613,7 @@ export async function POST(req: NextRequest) {
               } catch (itemErr) {
                 await markInstagramItemLog({ processed: false, errorMessage: itemErr instanceof Error ? itemErr.message : String(itemErr), decision: 'error_processing_item' })
                 console.error(`[Instagram Webhook Global] Erro ao processar mensagem (mid=${message?.mid}):`, itemErr)
+                if (itemErr instanceof InstagramInboundPersistenceError) throw itemErr
               }
             } else {
               await markInstagramItemLog({ processed: false, skipReason: 'sem sender ou sem texto processável', decision: 'skip_no_sender_or_text' })
@@ -591,6 +634,12 @@ export async function POST(req: NextRequest) {
               const mediaId = mediaObj?.id || (val.media_id as string) || ''
 
               if (commentId && commenterId && commentText) {
+                await captureInstagramInboundInteraction({
+                  companyId,
+                  instagramUserId: commenterId,
+                  username: commenterUsername,
+                  interaction: 'comment',
+                })
                 await processInstagramComment({
                   companyId,
                   commentId,
@@ -601,15 +650,32 @@ export async function POST(req: NextRequest) {
                 }).catch(err => console.error('[Comment-to-DM Webhook Global Error]:', err))
               }
             }
+
+            if (change.field === 'message_reactions' && change.value) {
+              const val = change.value as Record<string, unknown>
+              const sender = val.sender as { id?: string; username?: string } | undefined
+              if (sender?.id && sender.id !== pageId && isInstagramStoryReaction(val)) {
+                await captureInstagramInboundInteraction({
+                  companyId,
+                  instagramUserId: sender.id,
+                  username: sender.username,
+                  interaction: 'story_reaction',
+                })
+              }
+            }
           }
         }
         } catch (entryErr) {
           console.error(`[Instagram Webhook Global] Erro ao processar entry (pageId=${(entry as Record<string, unknown>)?.id}):`, entryErr)
+          if (entryErr instanceof InstagramInboundPersistenceError) throw entryErr
         }
       }
     }
   } catch (err) {
     console.error('[Global Instagram Webhook Error]:', err)
+    if (err instanceof InstagramInboundPersistenceError) {
+      return NextResponse.json({ error: 'instagram_inbound_persistence_failed' }, { status: 500 })
+    }
   }
 
   return NextResponse.json({ success: true })

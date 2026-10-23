@@ -2,9 +2,9 @@ import 'server-only'
 import { stackServerApp } from '@/stack'
 import { db } from '@/lib/db'
 import { companies, companyMembers } from '@/lib/db/schema'
-import { eq, sql, and, isNull } from 'drizzle-orm'
+import { eq, sql, and, isNull, or } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { verifyAgentSessionCookie } from '@/lib/agent-session'
 import { resolveCompanyRole, roleSatisfies, type CompanyRole } from '@/lib/company-role'
 import { canAcceptMemberInvite, normalizeMemberEmail } from '@/lib/member-invite-policy'
@@ -17,11 +17,33 @@ export class AuthError extends Error {
   }
 }
 
+type CurrentUser = {
+  id: string
+  primaryEmail?: string | null
+  displayName?: string | null
+  primaryEmailVerified?: boolean
+  isAdmin: boolean
+  companyId?: number
+}
+
+export function explicitAgentCompanyId(user: Pick<CurrentUser, 'companyId'>): number | null {
+  return typeof user.companyId === 'number' && Number.isSafeInteger(user.companyId) && user.companyId > 0
+    ? user.companyId
+    : null
+}
+
 export function unauthorizedResponse() {
   return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
 }
 
-const ADMIN_EMAILS_DEFAULT = ['dr.trafego@gmail.com', 'amandafelixgolden@gmail.com', 'agente.ia@casaldotrafego.com']
+const ADMIN_EMAILS_DEFAULT = [
+  'dr.trafego@gmail.com',
+  'amandafelixgolden@gmail.com',
+  'agente.ia@casaldotrafego.com',
+  'luana@casaldotrafego.com',
+  'renato@casaldotrafego.com',
+  'bia@casaldotrafego.com',
+]
 
 export function checkIsAdmin(email: string | null | undefined): boolean {
   if (!email) return false
@@ -45,6 +67,7 @@ export async function getCurrentUser() {
           displayName: verified.displayName,
           isAdmin: verified.isAdmin,
           primaryEmailVerified: true,
+          companyId: verified.companyId,
         }
       }
     }
@@ -66,10 +89,52 @@ export async function getCurrentCompany() {
   const user = await getCurrentUser()
   if (!user) return null
 
+  const agentCompanyId = explicitAgentCompanyId(user)
+  if (agentCompanyId !== null) {
+    const [company] = await db.select().from(companies).where(eq(companies.id, agentCompanyId)).limit(1)
+    return company ?? null
+  }
+
   const isAdmin = user.isAdmin || (user.primaryEmailVerified && checkIsAdmin(user.primaryEmail))
 
   if (isAdmin) {
+    if (user.primaryEmail && user.id) {
+      const cleanUserEmail = user.primaryEmail.toLowerCase().trim()
+      await db
+        .update(companyMembers)
+        .set({ stackAuthUserId: user.id, status: 'ativo', updatedAt: new Date() })
+        .where(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`)
+    }
+
     const cookieStore = await cookies()
+    let targetSlug: string | undefined
+    try {
+      const headerStore = await headers()
+      targetSlug = headerStore.get('x-company-slug') ?? undefined
+    } catch {
+      // fora de request context
+    }
+    if (!targetSlug) {
+      targetSlug = cookieStore.get('admin_viewing_slug')?.value
+    }
+
+    if (targetSlug) {
+      const cleanSlug = targetSlug.toLowerCase().trim()
+      const [companyBySlug] = await db
+        .select()
+        .from(companies)
+        .where(
+          or(
+            sql`lower(trim(${companies.slug})) = ${cleanSlug}`,
+            sql`replace(lower(trim(${companies.slug})), 'nn', 'n') = replace(${cleanSlug}, 'nn', 'n')`,
+            sql`lower(trim(${companies.name})) = ${cleanSlug}`
+          )
+        )
+        .limit(1)
+
+      if (companyBySlug) return companyBySlug
+    }
+
     const viewingId = cookieStore.get('admin_viewing')?.value
     if (viewingId) {
       const [company] = await db
@@ -175,6 +240,29 @@ export async function getCurrentCompany() {
       .from(companies)
       .where(eq(companies.id, activeMembership.companyId))
     if (memberCompany) return memberCompany
+  }
+
+  // 2.1. Reconhecer diretamente por email em companyMembers (membros ativos sincronizados pelo portal ou cadastrados previamente)
+  if (user.primaryEmail) {
+    const cleanUserEmail = user.primaryEmail.toLowerCase().trim()
+    const [memberByEmail] = await db
+      .select()
+      .from(companyMembers)
+      .where(and(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`, eq(companyMembers.status, 'ativo')))
+
+    if (memberByEmail) {
+      if (memberByEmail.stackAuthUserId !== user.id) {
+        await db
+          .update(companyMembers)
+          .set({ stackAuthUserId: user.id, updatedAt: new Date() })
+          .where(and(sql`lower(trim(${companyMembers.email})) = ${cleanUserEmail}`, eq(companyMembers.status, 'ativo')))
+      }
+      const [memberCompany] = await db
+        .select()
+        .from(companies)
+        .where(eq(companies.id, memberByEmail.companyId))
+      if (memberCompany) return memberCompany
+    }
   }
 
   // 3. Reconhecer pelo e-mail: se o e-mail do usuário foi cadastrado como membro em Configurações > Equipe
@@ -344,4 +432,3 @@ export async function requireSacActor() {
   }
   return { ...access, memberId, actorId: user.id, actorName: user.displayName || user.primaryEmail || 'Atendente' }
 }
-

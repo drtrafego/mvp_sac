@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin, unauthorizedResponse } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { companies, settings } from '@/lib/db/schema'
+import { companies, settings, companyMembers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { randomBytes } from 'crypto'
 
@@ -54,6 +54,25 @@ export async function POST(req: NextRequest) {
 
   // Cria settings vazio para a empresa
   await db.insert(settings).values({ companyId: company.id }).onConflictDoNothing()
+
+  // Garante administradores e bots vinculados como ativos na nova empresa
+  const defaultAdmins = [
+    { email: 'dr.trafego@gmail.com', name: 'Dr. Tráfego' },
+    { email: 'amandafelixgolden@gmail.com', name: 'Amanda Felix' },
+    { email: 'agente.ia@casaldotrafego.com', name: 'Agente IA' },
+    { email: 'luana@casaldotrafego.com', name: 'Luana' },
+    { email: 'renato@casaldotrafego.com', name: 'Renato' },
+    { email: 'bia@casaldotrafego.com', name: 'Bia' },
+  ]
+  for (const adm of defaultAdmins) {
+    await db.insert(companyMembers).values({
+      companyId: company.id,
+      email: adm.email,
+      name: adm.name,
+      role: 'admin',
+      status: 'ativo',
+    }).onConflictDoNothing()
+  }
 
   return NextResponse.json(company, { status: 201 })
 }

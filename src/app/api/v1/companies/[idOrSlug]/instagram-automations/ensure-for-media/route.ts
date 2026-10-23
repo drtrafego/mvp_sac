@@ -2,13 +2,14 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { instagramCommentAutomations } from '@/lib/db/schema'
+import { instagramCommentAutomations, instagramCommentLogs } from '@/lib/db/schema'
 import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { and, eq, sql } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
 const MATCH_TYPES = ['contains', 'exact', 'any'] as const
+const MAX_MANUAL_COMMENT_IDS = 100
 
 function isFilledString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
@@ -66,6 +67,17 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         { status: 400 },
       )
     }
+    if (
+      body.manual_comment_ids !== undefined &&
+      (!Array.isArray(body.manual_comment_ids) ||
+        body.manual_comment_ids.length > MAX_MANUAL_COMMENT_IDS ||
+        body.manual_comment_ids.some((value) => !isFilledString(value)))
+    ) {
+      return NextResponse.json(
+        { error: `O campo manual_comment_ids deve ser uma lista de até ${MAX_MANUAL_COMMENT_IDS} IDs de comentário preenchidos.` },
+        { status: 400 },
+      )
+    }
 
     const companyId = context.company.id
     const mediaId = (body.media_id as string).trim()
@@ -75,11 +87,13 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     const suppliedName = body.name as string | undefined
     const suppliedMediaUrl = body.media_url as string | undefined
     const suppliedMatchType = body.match_type as typeof MATCH_TYPES[number] | undefined
+    const manualCommentIds = body.manual_comment_ids === undefined
+      ? []
+      : [...new Set((body.manual_comment_ids as string[]).map((value) => value.trim()))]
 
     const updateData: Partial<typeof instagramCommentAutomations.$inferInsert> = {
       keywords: keyword,
       dmMessage,
-      isActive: true,
       updatedAt: new Date(),
     }
     if (suppliedName !== undefined) updateData.name = suppliedName.trim()
@@ -124,6 +138,25 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       result = { automation: updatedAutomation, created: false }
     }
 
+    // Comentários respondidos manualmente antes da regra entrar no ar não podem
+    // receber uma Private Reply retrospectiva caso a Meta reenvie o webhook.
+    // O processador consulta esta mesma tabela por company_id + comment_id antes
+    // de qualquer chamada à Graph API. A origem manual fica auditável no log e o
+    // ON CONFLICT torna uma repetição deste ensure segura.
+    if (manualCommentIds.length > 0) {
+      await db.insert(instagramCommentLogs).values(
+        manualCommentIds.map((commentId) => ({
+          companyId,
+          automationId: result.automation.id,
+          commentId,
+          commenterId: `manual:${commentId}`,
+          mediaId,
+          status: 'skipped',
+          errorMessage: 'Comentário já respondido manualmente antes da ativação da automação.',
+        })),
+      ).onConflictDoNothing()
+    }
+
     await logAgentActivity({
       companyId,
       agentName: context.agentName,
@@ -131,7 +164,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       action: 'ensure_instagram_automation',
       entityType: 'instagram_comment_automation',
       entityId: String(result.automation.id),
-      details: { mediaId, created: result.created },
+      details: { mediaId, created: result.created, manuallyExcludedCommentCount: manualCommentIds.length },
     })
 
     const { automation } = result

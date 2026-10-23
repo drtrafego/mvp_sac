@@ -22,6 +22,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import type { MetaTemplate } from '@/lib/whatsapp/meta'
+import { extractBodyPlaceholders, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
+import { SUPPORTED_VARIABLES, interpolateVariable } from '@/lib/lead-template-variables'
+import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 
 interface ImportLeadsModalProps {
   open: boolean
@@ -127,7 +131,7 @@ function splitTags(value: string): string[] {
 }
 
 export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsModalProps) {
-  const [step, setStep] = useState<'upload' | 'mapping' | 'importing' | 'result' | 'preview' | 'queued'>('upload')
+  const [step, setStep] = useState<'upload' | 'mapping' | 'template' | 'importing' | 'result' | 'preview' | 'queued'>('upload')
   const [fileName, setFileName] = useState('')
   const [parsedData, setParsedData] = useState<{ headers: string[]; rows: string[][] }>({ headers: [], rows: [] })
   
@@ -156,6 +160,12 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
   const [defaultProductValue, setDefaultProductValue] = useState('')
   const [batchTag, setBatchTag] = useState('')
   const [tagScopeChannel, setTagScopeChannel] = useState('')
+  const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([])
+  const [metaTemplatesLoading, setMetaTemplatesLoading] = useState(false)
+  const [metaTemplatesError, setMetaTemplatesError] = useState('')
+  const [selectedTemplateName, setSelectedTemplateName] = useState('')
+  const [selectedTemplateLanguage, setSelectedTemplateLanguage] = useState('')
+  const [templateVariablesMap, setTemplateVariablesMap] = useState<Record<string, string>>({})
 
   // Resultados
   const [importResult, setImportResult] = useState<{
@@ -173,13 +183,35 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     recipientCount: number
     messageCount: number
     totalJobs: number
-    messages: { id: number; order: number; delayMinutes: number; messageType: string; content: string; templateName: string | null }[]
+    messages: { id: number; order: number; delayMinutes: number; messageType: string; content: string; templateName: string | null; templateLanguage?: string | null; templateVariablesMap?: Record<string, string> | null }[]
   } | null>(null)
   const [dispatchConfirmed, setDispatchConfirmed] = useState(false)
   const [jobsCreated, setJobsCreated] = useState(0)
   const [isProcessing, setIsProcessing] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const loadMetaTemplates = async () => {
+    setMetaTemplatesLoading(true)
+    setMetaTemplatesError('')
+    try {
+      const response = await fetch('/api/meta/templates')
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const message = typeof data.error === 'string' ? data.error : 'Não foi possível carregar os templates aprovados.'
+        setMetaTemplatesError(/WABA|Access Token|configur/i.test(message)
+          ? 'Sua empresa não tem Meta Cloud API configurada'
+          : message)
+        return
+      }
+      setMetaTemplates(Array.isArray(data) ? data : [])
+    } catch {
+      setMetaTemplatesError('Não foi possível carregar os templates aprovados. Tente novamente.')
+    } finally {
+      setMetaTemplatesLoading(false)
+    }
+  }
+
 
   const importStats = useMemo(() => {
     const indexOf = (column: string) => column ? parsedData.headers.indexOf(column) : -1
@@ -200,6 +232,76 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       sourceCount: sourceValues.size,
     }
   }, [parsedData.headers, parsedData.rows, phoneCol, phoneFallbackCol, sourceCol, tagsCol])
+
+  const selectedTemplate = useMemo(() => metaTemplates.find(template =>
+    metaTemplateKey(template.name, template.language) === metaTemplateKey(selectedTemplateName, selectedTemplateLanguage)
+  ) ?? null, [metaTemplates, selectedTemplateName, selectedTemplateLanguage])
+  const templatePlaceholders = useMemo(() => selectedTemplate ? extractBodyPlaceholders(selectedTemplate.components ?? []) : [], [selectedTemplate])
+  const templateHasUnsupportedComponents = selectedTemplate ? hasUnsupportedDynamicComponents(selectedTemplate.components ?? []) : false
+  const selectedTemplateBody = useMemo(() => {
+    const body = selectedTemplate?.components.find(component =>
+      component !== null && typeof component === 'object' && !Array.isArray(component)
+        && String((component as Record<string, unknown>).type ?? '').toUpperCase() === 'BODY'
+    ) as Record<string, unknown> | undefined
+    return typeof body?.text === 'string' ? body.text : ''
+  }, [selectedTemplate])
+
+  const csvLeads = useMemo(() => {
+    const indexOf = (column: string) => column ? parsedData.headers.indexOf(column) : -1
+    const phoneIdx = indexOf(phoneCol)
+    const phoneFallbackIdx = indexOf(phoneFallbackCol)
+    const nameIdx = indexOf(nameCol)
+    const lastNameIdx = indexOf(lastNameCol)
+    const emailIdx = indexOf(emailCol)
+    const productIdx = indexOf(productCol)
+    const valueIdx = indexOf(valueCol)
+    return parsedData.rows
+      .map(row => ({
+        phone: row[phoneIdx] || (phoneFallbackIdx >= 0 ? row[phoneFallbackIdx] : '') || '',
+        name: [nameIdx >= 0 ? row[nameIdx] : '', lastNameIdx >= 0 ? row[lastNameIdx] : ''].filter(Boolean).join(' '),
+        email: emailIdx >= 0 ? row[emailIdx] || '' : '',
+        productName: productIdx >= 0 ? row[productIdx] || defaultProduct : defaultProduct,
+        productValue: valueIdx >= 0 ? row[valueIdx] || defaultProductValue : defaultProductValue,
+      }))
+      .filter(lead => lead.phone.trim().length > 0)
+  }, [parsedData, phoneCol, phoneFallbackCol, nameCol, lastNameCol, emailCol, productCol, valueCol, defaultProduct, defaultProductValue])
+
+  const templatePreviewText = useMemo(() => {
+    if (!selectedTemplate) return ''
+    const lead = csvLeads[0] ?? {}
+    return selectedTemplateBody.replace(/\{\{\s*(\d+)\s*\}\}/g, (_, index: string) => {
+      const source = templateVariablesMap[index]
+      if (!source) return `{{${index}}}`
+      return SUPPORTED_VARIABLES.some(variable => variable.token === source)
+        ? interpolateVariable(source, lead)
+        : source
+    })
+  }, [selectedTemplate, selectedTemplateBody, csvLeads, templateVariablesMap])
+
+  const rowsWithEmptyTemplateVariables = useMemo(() => {
+    if (!templatePlaceholders.length) return 0
+    return csvLeads.filter(lead => templatePlaceholders.some(index => {
+      const source = templateVariablesMap[String(index)]
+      return Boolean(source) && SUPPORTED_VARIABLES.some(variable => variable.token === source) && !interpolateVariable(source, lead)
+    })).length
+  }, [csvLeads, templatePlaceholders, templateVariablesMap])
+
+  const hasCompleteTemplateMapping = templatePlaceholders.every(index => Boolean(templateVariablesMap[String(index)]?.trim()))
+
+  const continueToTemplate = () => {
+    if (!phoneCol) {
+      alert('Por favor, selecione a coluna correspondente ao Telefone / WhatsApp.')
+      return
+    }
+    if (recordType === 'closed_sale') {
+      alert('Venda fechada não entra em disparo de recuperação. Desmarque o disparo em massa para continuar.')
+      return
+    }
+    setStep('template')
+    if (metaTemplates.length === 0 && !metaTemplatesLoading && !metaTemplatesError) {
+      void loadMetaTemplates()
+    }
+  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -235,8 +337,16 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       alert('Por favor, selecione a coluna correspondente ao Telefone / WhatsApp.')
       return
     }
-    if (createMassDispatch && !defaultEventType) {
-      alert('Selecione o tipo de evento da sequência para preparar o disparo em massa.')
+    if (createMassDispatch && (!selectedTemplate || !hasCompleteTemplateMapping || templateHasUnsupportedComponents)) {
+      alert('Selecione um template aprovado e mapeie todas as suas variáveis antes de importar.')
+      return
+    }
+    if (createMassDispatch && !MassDispatchTemplateSelection.safeParse({
+      templateName: selectedTemplateName,
+      templateLanguage: selectedTemplateLanguage,
+      templateVariablesMap,
+    }).success) {
+      alert('Revise o mapeamento das variáveis do template.')
       return
     }
     if (recordType === 'closed_sale' && createMassDispatch) {
@@ -265,9 +375,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       email: emailIdx >= 0 ? row[emailIdx] : undefined,
       productName: productIdx >= 0 && row[productIdx] ? row[productIdx] : defaultProduct,
       productValue: valueIdx >= 0 && row[valueIdx] ? row[valueIdx] : defaultProductValue || undefined,
-      eventType: recordType === 'closed_sale'
-        ? 'compra_aprovada'
-        : createMassDispatch && defaultEventType ? defaultEventType : undefined,
+      eventType: recordType === 'closed_sale' ? 'compra_aprovada' : undefined,
       recordType,
       platform: recordPlatform,
       trackingSource: sourceIdx >= 0 && row[sourceIdx]?.trim() ? row[sourceIdx].trim() : defaultSource,
@@ -285,12 +393,17 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items,
-          defaultEventType: createMassDispatch ? defaultEventType : undefined,
+          defaultEventType: !createMassDispatch ? defaultEventType || undefined : undefined,
           defaultSource,
           recordType,
           platform: recordPlatform,
           fileName,
           createMassDispatch,
+          massDispatchTemplate: createMassDispatch ? {
+            templateName: selectedTemplateName,
+            templateLanguage: selectedTemplateLanguage,
+            templateVariablesMap,
+          } : undefined,
           tag: batchTag.trim() || undefined,
           scopeChannel: batchTag.trim() && tagScopeChannel ? tagScopeChannel : undefined,
         }),
@@ -299,7 +412,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}))
         alert(`Erro na importação: ${errData.error || 'Falha ao processar planilha no servidor.'}`)
-        setStep('mapping')
+        setStep(createMassDispatch ? 'template' : 'mapping')
         return
       }
 
@@ -309,7 +422,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       onSuccess()
     } catch {
       alert('Erro ao processar importação. Tente novamente.')
-      setStep('mapping')
+      setStep(createMassDispatch ? 'template' : 'mapping')
     } finally {
       setIsProcessing(false)
     }
@@ -374,6 +487,12 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     setCreateMassDispatch(false)
     setBatchTag('')
     setTagScopeChannel('')
+    setMetaTemplates([])
+    setMetaTemplatesLoading(false)
+    setMetaTemplatesError('')
+    setSelectedTemplateName('')
+    setSelectedTemplateLanguage('')
+    setTemplateVariablesMap({})
     setImportResult(null)
     setDispatchPreview(null)
     setDispatchConfirmed(false)
@@ -853,34 +972,30 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               {createMassDispatch && (
                 <div className="rounded-[var(--r-md)] border border-cyan-500/30 bg-cyan-500/5 p-3 space-y-2">
                   <span className="text-micro font-bold text-cyan-300 block">Configuração do disparo em massa</span>
-                  <label className="text-micro font-bold text-fg block">Tipo de evento da sequência *</label>
+                  <p className="text-micro text-fg-subtle">
+                    Na próxima etapa você selecionará o template aprovado e mapeará as variáveis da mensagem. Nenhuma sequência prévia é necessária.
+                  </p>
+                </div>
+              )}
+
+              {!createMassDispatch && (
+                <div className="rounded-[var(--r-md)] border border-line-subtle bg-surface-inset p-3 space-y-2">
+                  <label className="text-micro font-bold text-fg block">Tipo de evento padrão, opcional</label>
                   <Select
                     value={defaultEventType || '__none__'}
-                    onValueChange={v => setDefaultEventType(!v || v === '__none__' ? '' : v)}
-                    items={{
-                      __none__: 'Selecione o evento da sequência...',
-                      carrinho_abandonado: 'Carrinho Abandonado (Recuperação)',
-                      boleto: 'Boleto Bancário',
-                      pix: 'Pix Gerado Pendente',
-                      cartao_recusado: 'Cartão de Crédito Recusado',
-                      compra_aprovada: 'Compra Aprovada (Onboarding/Upsell)',
-                    }}
+                    onValueChange={value => setDefaultEventType(!value || value === '__none__' ? '' : value)}
+                    items={{ __none__: 'Não classificar por evento', carrinho_abandonado: 'Carrinho Abandonado', boleto: 'Boleto Bancário', pix: 'Pix Gerado Pendente', cartao_recusado: 'Cartão de Crédito Recusado', compra_aprovada: 'Compra Aprovada' }}
                   >
-                    <SelectTrigger className={cn(FIELD, CONTROL_H, 'text-body', !defaultEventType && 'border-rose-500/50')}>
-                      <SelectValue placeholder="Selecione o evento da sequência..." />
-                    </SelectTrigger>
+                    <SelectTrigger className={cn(FIELD, CONTROL_H, 'text-body')}><SelectValue placeholder="Não classificar por evento" /></SelectTrigger>
                     <SelectContent className="bg-surface-overlay text-fg border border-line-subtle">
-                      <SelectItem value="__none__">Selecione o evento da sequência...</SelectItem>
-                      <SelectItem value="carrinho_abandonado">Carrinho Abandonado (Recuperação)</SelectItem>
+                      <SelectItem value="__none__">Não classificar por evento</SelectItem>
+                      <SelectItem value="carrinho_abandonado">Carrinho Abandonado</SelectItem>
                       <SelectItem value="boleto">Boleto Bancário</SelectItem>
                       <SelectItem value="pix">Pix Gerado Pendente</SelectItem>
                       <SelectItem value="cartao_recusado">Cartão de Crédito Recusado</SelectItem>
-                      <SelectItem value="compra_aprovada">Compra Aprovada (Onboarding/Upsell)</SelectItem>
+                      <SelectItem value="compra_aprovada">Compra Aprovada</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className="text-micro text-fg-subtle">
-                    Este evento só será usado para montar o lote e localizar a sequência. Sem disparo em massa, a importação não recebe evento específico.
-                  </p>
                 </div>
               )}
             </div>
@@ -935,11 +1050,121 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                 <ArrowLeft size={14} className="mr-1.5" /> Voltar
               </Button>
               <Button
-                onClick={handleImport}
+                onClick={createMassDispatch ? continueToTemplate : handleImport}
                 disabled={!phoneCol || isProcessing}
                 className={cn(CONTROL_H, 'px-6 bg-cyan-500 hover:bg-cyan-400 text-black font-bold')}
               >
-                Importar {importStats.phoneRows} Contato{importStats.phoneRows === 1 ? '' : 's'}
+                {createMassDispatch ? 'Continuar para mensagem' : `Importar ${importStats.phoneRows} Contato${importStats.phoneRows === 1 ? '' : 's'}`}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === 'template' && (
+          <div className="space-y-5 pt-2">
+            <div>
+              <span className="text-label uppercase text-fg-subtle font-bold block">Configurar mensagem aprovada</span>
+              <p className="text-micro text-fg-subtle mt-1">Escolha um template aprovado pela Meta e informe a origem de cada variável do BODY.</p>
+            </div>
+
+            {metaTemplatesLoading && (
+              <div className="rounded-[var(--r-md)] border border-line-subtle bg-surface-inset p-5 text-center text-body text-fg-muted">Carregando templates aprovados...</div>
+            )}
+
+            {!metaTemplatesLoading && metaTemplatesError && (
+              <div className="rounded-[var(--r-md)] border border-rose-500/40 bg-rose-500/10 p-4 space-y-3">
+                <p className="text-body text-rose-300">{metaTemplatesError}</p>
+                <Button variant="outline" onClick={() => void loadMetaTemplates()} className={cn(CONTROL_H, 'px-4')}>Tentar novamente</Button>
+              </div>
+            )}
+
+            {!metaTemplatesLoading && !metaTemplatesError && metaTemplates.length === 0 && (
+              <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-4 text-body text-amber-300">Não há templates aprovados disponíveis nesta conta Meta.</div>
+            )}
+
+            {!metaTemplatesLoading && !metaTemplatesError && metaTemplates.length > 0 && (
+              <>
+                <div className="space-y-1">
+                  <label className="text-micro font-bold text-fg">Template aprovado *</label>
+                  <Select
+                    value={selectedTemplate ? metaTemplateKey(selectedTemplate.name, selectedTemplate.language) : '__none__'}
+                    onValueChange={value => {
+                      const template = metaTemplates.find(candidate => metaTemplateKey(candidate.name, candidate.language) === value)
+                      setSelectedTemplateName(template?.name ?? '')
+                      setSelectedTemplateLanguage(template?.language ?? '')
+                      setTemplateVariablesMap({})
+                    }}
+                    items={{ __none__: 'Selecione o template...', ...Object.fromEntries(metaTemplates.map(template => [metaTemplateKey(template.name, template.language), `${template.name} (${template.language})`])) }}
+                  >
+                    <SelectTrigger className={cn(FIELD, CONTROL_H, 'text-body', !selectedTemplate && 'border-rose-500/50')}><SelectValue placeholder="Selecione o template..." /></SelectTrigger>
+                    <SelectContent className="bg-surface-overlay text-fg max-h-56 border border-line-subtle">
+                      <SelectItem value="__none__">Selecione o template...</SelectItem>
+                      {metaTemplates.map(template => <SelectItem key={metaTemplateKey(template.name, template.language)} value={metaTemplateKey(template.name, template.language)}>{template.name} ({template.language})</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {selectedTemplate && (
+                  <div className="space-y-4">
+                    <div className="rounded-[var(--r-md)] border border-line-subtle bg-surface-inset p-4">
+                      <p className="text-micro font-bold text-cyan-300">{selectedTemplate.name} · {selectedTemplate.language} · {selectedTemplate.category}</p>
+                      <p className="mt-2 whitespace-pre-wrap rounded-[var(--r-sm)] bg-black/35 p-3 font-mono text-micro text-fg" aria-readonly="true">
+                        {selectedTemplateBody || '(Template sem texto no BODY)'}
+                      </p>
+                    </div>
+
+                    {templateHasUnsupportedComponents ? (
+                      <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-body text-amber-300">
+                        Este template usa componentes dinâmicos no cabeçalho ou botões que ainda não são suportados.
+                      </div>
+                    ) : templatePlaceholders.map(index => {
+                      const currentValue = templateVariablesMap[String(index)] ?? ''
+                      const isFixed = Boolean(currentValue) && !SUPPORTED_VARIABLES.some(variable => variable.token === currentValue)
+                      return (
+                        <div key={index} className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-[var(--r-md)] border border-line-subtle bg-surface-panel p-3">
+                          <div className="space-y-1">
+                            <label className="text-micro font-bold text-fg">Variável {'{{'}{index}{'}}'} *</label>
+                            <Select
+                              value={isFixed ? '__fixed__' : currentValue || '__none__'}
+                              onValueChange={value => setTemplateVariablesMap(previous => {
+                                const next = { ...previous }
+                                if (!value || value === '__none__') delete next[String(index)]
+                                else next[String(index)] = value === '__fixed__' ? ' ' : value
+                                return next
+                              })}
+                              items={{ __none__: 'Selecione a origem...', ...Object.fromEntries(SUPPORTED_VARIABLES.map(variable => [variable.token, variable.label])), __fixed__: 'Valor fixo' }}
+                            >
+                              <SelectTrigger className={cn(FIELD, CONTROL_H, 'text-body', !currentValue && 'border-rose-500/50')}><SelectValue placeholder="Selecione a origem..." /></SelectTrigger>
+                              <SelectContent className="bg-surface-overlay text-fg max-h-56 border border-line-subtle">
+                                <SelectItem value="__none__">Selecione a origem...</SelectItem>
+                                {SUPPORTED_VARIABLES.map(variable => <SelectItem key={variable.token} value={variable.token}>{variable.label}</SelectItem>)}
+                                <SelectItem value="__fixed__">Valor fixo</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {isFixed && <div className="space-y-1"><label className="text-micro font-bold text-fg">Valor fixo</label><Input value={currentValue} onChange={event => setTemplateVariablesMap(previous => ({ ...previous, [String(index)]: event.target.value }))} className={cn(FIELD, CONTROL_H, 'text-body')} /></div>}
+                        </div>
+                      )
+                    })}
+
+                    {rowsWithEmptyTemplateVariables > 0 && (
+                      <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-micro text-amber-300">
+                        {rowsWithEmptyTemplateVariables} linha(s) com telefone teriam valor vazio em alguma variável selecionada.
+                      </div>
+                    )}
+                    <div className="rounded-[var(--r-md)] border border-cyan-500/30 bg-cyan-500/5 p-3">
+                      <p className="text-micro font-bold text-cyan-300">Prévia com a primeira linha do CSV</p>
+                      <p className="mt-2 whitespace-pre-wrap text-body text-fg">{templatePreviewText || '(sem conteúdo)'}</p>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="flex justify-between gap-2 pt-3 border-t border-line-subtle">
+              <Button variant="ghost" onClick={() => setStep('mapping')} className={cn(CONTROL_H, 'px-4')}><ArrowLeft size={14} className="mr-1.5" /> Voltar</Button>
+              <Button onClick={handleImport} disabled={!selectedTemplate || !hasCompleteTemplateMapping || templateHasUnsupportedComponents || rowsWithEmptyTemplateVariables > 0 || isProcessing} className={cn(CONTROL_H, 'px-5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold')}>
+                Importar e Preparar Disparo
               </Button>
             </div>
           </div>
@@ -968,7 +1193,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               <p className="text-h2 text-fg font-bold">
                 {importResult.tagFailed > 0 || importResult.dispatchRecipientFailed > 0 ? 'Importação concluída com ressalvas' : 'Importação Concluída com Sucesso!'}
               </p>
-              <p className="text-micro text-fg-muted">Os contatos já estão disponíveis no painel de Leads, Pipeline e Origens.</p>
+              <p className="text-micro text-fg-muted">Os contatos já estão disponíveis no painel de Leads, CRM e Origens.</p>
             </div>
 
             <div className="grid grid-cols-3 gap-3">
@@ -1043,6 +1268,22 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               </p>
             </div>
 
+            {selectedTemplate && (
+              <div className="rounded-[var(--r-md)] border border-cyan-500/30 bg-cyan-500/5 p-4 space-y-3">
+                <div>
+                  <p className="text-micro font-bold text-cyan-300">Template aprovado</p>
+                  <p className="text-body text-fg">{selectedTemplate.name} · {selectedTemplate.language}</p>
+                </div>
+                <p className="whitespace-pre-wrap rounded-[var(--r-sm)] bg-black/35 p-3 font-mono text-micro text-fg">{templatePreviewText}</p>
+                {templatePlaceholders.length > 0 && (
+                  <div className="text-micro text-fg-muted space-y-1">
+                    {templatePlaceholders.map(index => <p key={index}>Variável {'{{'}{index}{'}}'}: <span className="text-fg">{templateVariablesMap[String(index)] || 'Não mapeada'}</span></p>)}
+                  </div>
+                )}
+                <p className="text-micro text-fg-muted">{dispatchPreview.recipientCount} destinatários elegíveis.</p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <span className="text-label uppercase text-fg-subtle font-bold">Mensagens que serão enviadas</span>
               {dispatchPreview.messages.length === 0 ? (
@@ -1055,7 +1296,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                     Mensagem {message.order} · {message.messageType === 'template' ? `Template ${message.templateName || ''}` : message.messageType}
                     {message.delayMinutes > 0 ? ` · após ${message.delayMinutes} min` : ' · imediata'}
                   </p>
-                  <p className="text-body text-fg-muted mt-2 whitespace-pre-wrap">{message.content || '(conteúdo definido pelo template)'}</p>
+                  <p className="text-body text-fg-muted mt-2 whitespace-pre-wrap">{message.content || (message.templateName ? 'Conteúdo aprovado exibido acima.' : '(conteúdo definido pelo template)')}</p>
                 </div>
               ))}
             </div>

@@ -41,7 +41,7 @@ interface EndpointDoc {
 const ENDPOINTS: EndpointDoc[] = [
   {
     id: 'create-lead',
-    title: 'Criar Lead no Pipeline com Atribuição de Tráfego & Follow-up',
+    title: 'Criar Lead no CRM com Atribuição de Tráfego & Follow-up',
     method: 'POST',
     path: '/api/v1/companies/:idOrSlug/leads',
     category: 'leads',
@@ -100,7 +100,7 @@ const ENDPOINTS: EndpointDoc[] = [
     method: 'PATCH',
     path: '/api/v1/companies/:idOrSlug/leads/:leadId',
     category: 'leads',
-    description: 'Atualiza o estágio do pipeline, remarca lembrete de contato e registra a autoria da alteração no log de auditoria.',
+    description: 'Atualiza a etapa do CRM, remarca lembrete de contato e registra a autoria da alteração no log de auditoria.',
     headers: [
       { name: 'Authorization', required: true, description: 'Bearer <CHAVE_LUANA_OU_RENATO>' },
       { name: 'Content-Type', required: true, description: 'application/json' },
@@ -187,7 +187,7 @@ const ENDPOINTS: EndpointDoc[] = [
   },
   {
     id: 'list-leads',
-    title: 'Listar e Filtrar Leads no Pipeline',
+    title: 'Listar e Filtrar Leads no CRM',
     method: 'GET',
     path: '/api/v1/companies/:idOrSlug/leads?stage=qualificado&limit=50',
     category: 'leads',

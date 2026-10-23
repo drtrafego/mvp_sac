@@ -6,6 +6,8 @@ import { recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq, and, count, sql, gte, lte } from 'drizzle-orm'
 import { dashboardLeadStatsSelect, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
+import { calculateConversionRate } from '@/lib/dashboard/conversion-rate'
+import { dateKeyForAnalytics, gramadoInboundConversationInPeriodSql, gramadoMessageCountSql, gramadoReservationInPeriodSql } from '@/lib/dashboard/gramado-conversion'
 import { resolveAnalyticsPeriod } from '@/lib/analytics-period'
 import { loadAgentMetrics } from '@/lib/agent-metrics'
 
@@ -25,6 +27,12 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     return NextResponse.json({ error: period.error, code: 'INVALID_PERIOD' }, { status: 400 })
   }
   const { fromDate, toDate } = period
+  const gramadoFromKey = dateKeyForAnalytics(fromDate, from)
+  const gramadoToKey = dateKeyForAnalytics(toDate, to)
+  const gramadoFromDate = new Date(`${gramadoFromKey}T00:00:00-03:00`)
+  const gramadoToDate = new Date(`${gramadoToKey}T23:59:59.999-03:00`)
+  const gramadoFromDateIso = gramadoFromDate.toISOString()
+  const gramadoToDateIso = gramadoToDate.toISOString()
 
   const cid = context.company.id
   const baseWhere = and(
@@ -38,7 +46,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   const isLucas = businessModel === 'lucas'
   const isAgencia = businessModel === 'agencia'
 
-  const [[leadStats], [jobStats], agentMetrics] = await Promise.all([
+  const [[leadStats], [gramadoConversationStats], [jobStats], agentMetrics] = await Promise.all([
     db
       .select({
         ...dashboardLeadStatsSelect(businessModel),
@@ -46,6 +54,20 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       })
       .from(recoveryLeads)
       .where(baseWhere),
+
+    isGramado
+      ? db
+          .select({
+            total: sql<number>`cast(count(distinct ${recoveryLeads.id}) as int)`,
+            converteu: sql<number>`cast(count(distinct ${recoveryLeads.id}) filter (where ${gramadoReservationInPeriodSql(gramadoFromKey, gramadoToKey)}) as int)`,
+            avancou: sql<number>`cast(count(distinct ${recoveryLeads.id}) filter (where ${gramadoMessageCountSql} >= 4) as int)`,
+          })
+          .from(recoveryLeads)
+          .where(and(
+            eq(recoveryLeads.companyId, cid),
+            gramadoInboundConversationInPeriodSql(gramadoFromDateIso, gramadoToDateIso),
+          ))
+      : Promise.resolve([{ total: 0, converteu: 0, avancou: 0 }]),
 
     db
       .select({
@@ -60,10 +82,10 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
     loadAgentMetrics(cid, fromDate, toDate),
   ])
 
-  const total = leadStats?.total ?? 0
-  const fechados = leadStats?.fechadosTotal ?? 0
+  const total = isGramado ? Number(gramadoConversationStats?.total ?? 0) : (leadStats?.total ?? 0)
+  const fechados = isGramado ? Number(gramadoConversationStats?.converteu ?? 0) : (leadStats?.fechadosTotal ?? 0)
   const valorFechadoCents = Number(leadStats?.valorFechadoCents ?? 0)
-  const conversionRate = total > 0 ? ((fechados / total) * 100).toFixed(1) : '0.0'
+  const conversionRate = calculateConversionRate(fechados, total)
 
   let modelMetrics = {}
   if (isGramado) {
@@ -72,14 +94,14 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       reservasConfirmadas: fechados,
       pessoasEstimadas: fechados * 3,
       consumoEstimadoCents: valorFechadoCents > 0 ? valorFechadoCents : fechados * 18000,
-      taxaConversaoReservas: `${conversionRate}%`,
+      taxaConversaoReservas: conversionRate.label,
     }
   } else if (isLucas) {
     modelMetrics = {
       model: 'clinica_agendamentos',
       consultasAgendadas: fechados,
       novosPacientes: total,
-      taxaAgendamento: `${conversionRate}%`,
+      taxaAgendamento: conversionRate.label,
     }
   } else if (isAgencia) {
     modelMetrics = {
@@ -87,21 +109,24 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       contratosFechados: fechados,
       valorContratosCents: valorFechadoCents,
       propostasAndamento: leadStats?.qualificadosTotal ?? 0,
-      taxaConversaoComercial: `${conversionRate}%`,
+      taxaConversaoComercial: conversionRate.label,
     }
   } else {
     modelMetrics = {
       model: 'infoprodutos_recuperacao',
       vendasRecuperadas: fechados,
       valorRecuperadoCents: valorFechadoCents,
-      taxaConversao: `${conversionRate}%`,
+      taxaConversao: conversionRate.label,
     }
   }
 
   return NextResponse.json({
     ok: true,
     company: { id: context.company.id, slug: context.company.slug, name: context.company.name },
-    period: { from: fromDate.toISOString(), to: toDate.toISOString() },
+    period: {
+      from: isGramado ? gramadoFromDateIso : fromDate.toISOString(),
+      to: isGramado ? gramadoToDateIso : toDate.toISOString(),
+    },
     totalLeads: total,
     closingStats: modelMetrics,
     outbox: jobStats || { sent: 0, pending: 0, failed: 0 },

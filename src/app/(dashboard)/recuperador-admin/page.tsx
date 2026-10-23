@@ -423,7 +423,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           <div>
             <h2 className="text-h2 text-fg flex items-center gap-2">
               <Columns3 size={18} className="text-brand-ink" />
-              Pipeline de Atendimento (Kanban)
+              CRM de Atendimento (Kanban)
             </h2>
             <p className="text-micro text-fg-subtle">
               Arraste os contatos entre as etapas do funil de atendimento e recuperação dos agentes.

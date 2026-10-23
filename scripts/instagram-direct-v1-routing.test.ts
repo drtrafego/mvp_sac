@@ -26,19 +26,17 @@ const db = {
   insert: () => ({
     values: (values: Record<string, unknown>) => {
       persistedMessages.push(values)
-      const result = {
-        onConflictDoNothing: () => result,
-        returning: async () => [{
-          id: 503,
-          ...values,
-          createdAt: new Date('2026-09-30T12:00:00.000Z'),
-        }],
-      }
+      const returning = async () => [{
+        id: 503,
+        ...values,
+        createdAt: new Date('2026-09-30T12:00:00.000Z'),
+      }]
+      const result = { onConflictDoNothing: () => result, returning }
       return result
     },
   }),
   update: () => ({
-    set: () => ({
+    set: (patch: Record<string, unknown> = {}) => ({
       where: () => ({
         returning: async () => [{
           id: 503,
@@ -51,6 +49,7 @@ const db = {
           sentBy: 'bot',
           sendState: 'accepted',
           createdAt: new Date('2026-09-30T12:00:00.000Z'),
+          ...patch,
         }],
       }),
     }),

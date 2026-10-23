@@ -77,6 +77,7 @@ interface SettingsData {
   instagramVerifyToken: string
   instagramPageId: string
   instagramAppSecret: string
+  instagramInboxPlacement: 'general' | 'exclusive'
   sidebarConfig?: {
     showVisaoGeral?: boolean
     showConversas?: boolean
@@ -153,6 +154,7 @@ const defaults: SettingsData = {
   instagramVerifyToken: '',
   instagramPageId: '',
   instagramAppSecret: '',
+  instagramInboxPlacement: 'general',
 }
 
 function SecretInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
@@ -551,6 +553,13 @@ function PausarTudoSection({ slug }: { slug: string }) {
   const activeCount = counts ? counts.total - counts.paused : 0
   const wa = channelCounts?.whatsapp || { total: 0, active: 0, paused: 0, pausedByChannel: 0, pausedIndividually: 0 }
   const ig = channelCounts?.instagram || { total: 0, active: 0, paused: 0, pausedByChannel: 0, pausedIndividually: 0 }
+  const instagramOperationalStatus = ig.total === 0
+    ? 'Sem conversas'
+    : ig.active === 0
+      ? 'Bot pausado'
+      : ig.paused === 0
+        ? 'Bot ativo'
+        : 'Pausa parcial'
 
   const targetTitle =
     confirmTarget === 'all'
@@ -629,11 +638,11 @@ function PausarTudoSection({ slug }: { slug: string }) {
         <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
+              <span className={`w-2.5 h-2.5 rounded-full ${ig.active === 0 ? 'bg-st-atencao' : 'bg-emerald-500'}`} />
               <h3 className="text-body font-semibold text-fg">Instagram</h3>
             </div>
-            <span className="text-micro text-fg-subtle">
-              Total: {loadingCounts ? '—' : ig.total}
+            <span className={`text-micro font-semibold ${ig.active === 0 ? 'text-st-atencao' : 'text-st-positivo'}`}>
+              {loadingCounts ? 'Verificando…' : instagramOperationalStatus}
             </span>
           </div>
 
@@ -1004,6 +1013,7 @@ export default function ConfiguracoesPage() {
         instagramVerifyToken: data.instagramVerifyToken ?? '',
         instagramPageId: data.instagramPageId ?? '',
         instagramAppSecret: data.instagramAppSecret ?? '',
+        instagramInboxPlacement: data.instagramInboxPlacement === 'exclusive' ? 'exclusive' : 'general',
         sidebarConfig: data.sidebarConfig ?? null,
       })
   }, [])
@@ -1226,7 +1236,7 @@ export default function ConfiguracoesPage() {
                 {[
                   { key: 'showVisaoGeral', label: 'Visão Geral (Dashboard)' },
                   { key: 'showConversas', label: 'Conversas (Inbox / WhatsApp Direct)' },
-                  { key: 'showPipeline', label: 'Pipeline (Kanban de Vendas)' },
+                  { key: 'showPipeline', label: 'CRM (Kanban de Vendas)' },
                   { key: 'showLeads', label: 'Leads Recentes (Tabela & Filtros)' },
                 ].map(({ key, label }) => {
                   const cfg = form.sidebarConfig ?? {}
@@ -1762,6 +1772,30 @@ export default function ConfiguracoesPage() {
         </div>
 
         <WebhookUrlBox url={instagramWebhookUrl} label="URL do Webhook (configurar no Meta Developers > Instagram Webhook)" />
+
+        <div className="space-y-1.5 rounded-[var(--r-md)] border border-line-subtle bg-surface-inset p-3.5 max-w-[var(--w-form)]">
+            <Label htmlFor="instagram-inbox-placement">Onde mostrar as conversas do Instagram</Label>
+            <Select
+              value={form.instagramInboxPlacement}
+              onValueChange={value => {
+                if (value === 'general' || value === 'exclusive') {
+                  setForm(current => ({ ...current, instagramInboxPlacement: value }))
+                }
+              }}
+              items={{ general: 'Caixa geral e Instagram', exclusive: 'Somente área Instagram' }}
+            >
+              <SelectTrigger id="instagram-inbox-placement" className="focus-ring h-11 lg:h-9 bg-surface-base border-line-subtle max-w-[var(--w-form)]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-surface-overlay border-line-subtle">
+                <SelectItem value="general">Caixa geral e Instagram</SelectItem>
+                <SelectItem value="exclusive">Somente área Instagram</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-micro text-fg-subtle">
+              Esta escolha só altera a visualização. Nenhuma conversa ou histórico é movido ou removido.
+            </p>
+        </div>
 
         <div className="space-y-1.5">
           <Label>@ Usuário do Instagram</Label>

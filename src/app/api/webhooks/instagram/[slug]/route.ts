@@ -16,6 +16,7 @@ import { fetchInstagramUserProfile } from "@/lib/instagram"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
+import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
 
 
 function instagramDebugPayload(opts: {
@@ -138,22 +139,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "invalid_signature" }, { status: 401 })
   }
 
-  try {
-    await db.insert(webhookReceived).values({
-      companyId: company.id,
-      slug,
-      source: "instagram",
-      event: (rawBody.object as string) || "instagram_direct",
-      processed: true,
-      rawBody,
-      headers: headersObj,
-    })
-  } catch (err) {
-    console.error("[Instagram Webhook] Erro ao registrar webhook_received:", err)
-  }
-
   if (rawBody.object === "instagram" && Array.isArray(rawBody.entry)) {
     for (const entry of rawBody.entry as Record<string, unknown>[]) {
+      const pageId = (entry.id as string) || ''
+      if (!isInstagramEntryForCompany(pageId, companySettingsForSecret ?? {})) {
+        console.warn(`[Instagram Webhook] entry recusado: id não pertence à empresa do slug=${slug}, entry.id=${pageId || '(ausente)'}`)
+        continue
+      }
       const messagingList = (entry.messaging as Record<string, unknown>[]) ?? []
       for (const item of messagingList) {
         const sender = item.sender as { id?: string } | undefined
@@ -163,6 +155,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           is_echo?: boolean
           attachments?: Array<{ type?: string; payload?: Record<string, unknown> }>
           referral?: Record<string, unknown>
+          reply_to?: Record<string, unknown>
+          is_story_reply?: boolean
         } | undefined
         const recipient = item.recipient as { id?: string } | undefined
         const ownAccountIds = [companySettingsForSecret?.instagramAccountId, companySettingsForSecret?.instagramPageId].filter(Boolean)
@@ -298,6 +292,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         }
 
         if (hasOnlyIgnoredShare) {
+          if (sender?.id && isInstagramStoryReply(message)) {
+            await captureInstagramInboundInteraction({
+              companyId: company.id,
+              instagramUserId: sender.id,
+              interaction: 'story_reply',
+            })
+          }
           const types = attachmentTypes.join(', ')
           await markInstagramItemLog({ processed: false, skipReason: `anexo/partilha ignorado para IA (types=${types})`, decision: 'skip_attachment_share' })
           console.log(`[Instagram Webhook] anexo/partilha ignorado para IA (types=${types}), slug=${slug}, mid=${message?.mid}`)
@@ -349,6 +350,20 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               }
             }
 
+            // Antes do insert, checar se canal instagram esta pausado nesta empresa
+            const [channelPauseCheck] = await db
+              .select({ id: recoveryLeads.id })
+              .from(recoveryLeads)
+              .where(
+                and(
+                  eq(recoveryLeads.companyId, company.id),
+                  eq(recoveryLeads.botPaused, true),
+                  eq(recoveryLeads.botPausedChannel, 'instagram')
+                )
+              )
+              .limit(1)
+            const isChannelPaused = !!channelPauseCheck
+
             // Upsert atômico: SELECT-então-INSERT deixava uma janela de
             // corrida entre duas requisições concorrentes com o mesmo
             // telefone novo, e cada uma criava um lead próprio (provado
@@ -367,6 +382,14 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 name: leadName,
                 status: 'in_conversation',
                 trackingSource,
+                ...(isChannelPaused
+                  ? {
+                      botPaused: true,
+                      botPausedAt: new Date(),
+                      botPausedBy: 'auto (canal pausado)',
+                      botPausedChannel: 'instagram',
+                    }
+                  : {}),
                 ...(metaAdId ? { metaAdId: String(metaAdId) } : {}),
                 ...(adName ? { adName: String(adName) } : {}),
                 ...(metaCampaignId ? { metaCampaignId: String(metaCampaignId) } : {}),
@@ -415,10 +438,18 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               }).onConflictDoNothing()
             }
 
+            await applyInstagramInboundTag(lead?.id, isInstagramStoryReply(message) ? 'story_reply' : 'direct')
+
             try {
-              await db.insert(whatsappMessages).values({
+              if (!lead?.id) throw new InstagramInboundPersistenceError('lead ausente')
+              await persistInstagramInboundWithTags({
                 companyId: company.id,
-                leadId: lead?.id ?? null,
+                leadId: lead.id,
+                text: inboundText,
+                isStoryReply: isInstagramStoryReply(message),
+                message: {
+                companyId: company.id,
+                leadId: lead.id,
                 phone: igPhone,
                 channel: 'instagram',
                 direction: 'inbound',
@@ -426,6 +457,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 messageType: 'text',
                 sentBy: 'user',
                 externalId: message?.mid ?? null,
+                },
               })
             } catch (err) {
               // Segunda camada (índice único parcial): corrida entre duas
@@ -436,6 +468,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 console.log(`[Instagram Webhook] corrida no insert (unique violation), slug=${slug} mid=${message?.mid}, tratando como já processado`)
                 continue
               }
+              if (err instanceof InstagramInboundPersistenceError) throw err
               throw err
             }
 
@@ -477,6 +510,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           } catch (err) {
             await markInstagramItemLog({ processed: false, errorMessage: err instanceof Error ? err.message : String(err), decision: 'error_processing_item' })
             console.error("[Instagram Webhook] Erro ao gravar mensagem:", err)
+            if (err instanceof InstagramInboundPersistenceError) throw err
           }
         } else {
           await markInstagramItemLog({ processed: false, skipReason: 'sem sender ou sem texto processável', decision: 'skip_no_sender_or_text' })
@@ -497,6 +531,12 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           const mediaId = mediaObj?.id || (val.media_id as string) || ''
 
           if (commentId && commenterId && commentText) {
+            await captureInstagramInboundInteraction({
+              companyId: company.id,
+              instagramUserId: commenterId,
+              username: commenterUsername,
+              interaction: 'comment',
+            })
             await processInstagramComment({
               companyId: company.id,
               commentId,
@@ -505,6 +545,19 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               mediaId,
               commentText,
             }).catch(err => console.error(`[Comment-to-DM Webhook ${slug} Error]:`, err))
+          }
+        }
+
+        if (change.field === 'message_reactions' && change.value) {
+          const val = change.value as Record<string, unknown>
+          const sender = val.sender as { id?: string; username?: string } | undefined
+          if (sender?.id && sender.id !== pageId && isInstagramStoryReaction(val)) {
+            await captureInstagramInboundInteraction({
+              companyId: company.id,
+              instagramUserId: sender.id,
+              username: sender.username,
+              interaction: 'story_reaction',
+            })
           }
         }
       }

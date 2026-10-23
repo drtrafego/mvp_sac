@@ -94,7 +94,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
       {/* Cabeçalho do Pipeline */}
       <PageHeader
         icon={<Columns3 size={22} />}
-        title="Pipeline de Atendimento & Vendas"
+        title="CRM de Atendimento & Vendas"
         description="Quadro Kanban com etapas personalizadas, lembretes de follow-up e origem das campanhas."
         eyebrow={<>
           <div className="flex items-center gap-2 mb-1">

@@ -208,6 +208,19 @@ test('SAC: handlers reais com PostgreSQL PGlite', async (suite) => {
     assert.equal(assigned.stackAuthUserId, 'u-platform'); assert.equal(assigned.companyId, 1)
     assert.equal(assigned.status, 'ativo')
   })
+  await suite.test('contas de bots da plataforma (luana, renato, bia) são reconhecidas como platform_admin', async () => {
+    for (const email of ['luana@casaldotrafego.com', 'renato@casaldotrafego.com', 'bia@casaldotrafego.com', 'agente.ia@casaldotrafego.com']) {
+      assert.equal(auth.checkIsAdmin(email), true)
+      await reset('u-bot')
+      session = { ...session, primaryEmail: email, primaryEmailVerified: true }
+      sessionCookies.admin_viewing = '2'
+      const currentUser = await auth.getCurrentUser()
+      assert.equal(currentUser?.isAdmin, true)
+      const access = await auth.getCompanyAccess()
+      assert.equal(access.role, 'platform_admin')
+      assert.equal(access.company.id, 2)
+    }
+  })
   await suite.test('claim deriva membro e auditoria da sessão; JSON forjado não troca autor', async () => {
     await reset()
     const response = await claim.POST(request('/api/inbox/100/claim', 'POST', { memberId: 20, memberName: 'Admin forjado', expectedContextVersion: 1 }), leadParams())

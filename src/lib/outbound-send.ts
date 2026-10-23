@@ -5,7 +5,7 @@ import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { sendBrevoEmail } from '@/lib/email/brevo'
 import { markLeadContacted } from '@/lib/leads'
-import { resolveLeadDeliveryChannel } from '@/lib/lead-delivery-channel'
+import { resolveLeadDeliveryChannel, type LeadDeliveryChannel } from '@/lib/lead-delivery-channel'
 import { eq, and } from 'drizzle-orm'
 
 type MessageRow = typeof whatsappMessages.$inferSelect
@@ -20,6 +20,8 @@ export interface OutboundSendInput {
   senderName?: string | null
   agentId?: string | null
   subject?: string | null
+  /** Explicit channel selected from a channel-specific conversation thread. */
+  channelOverride?: LeadDeliveryChannel | null
   beforeTransport?: () => Promise<boolean>
 }
 
@@ -107,7 +109,7 @@ function replay(row: MessageRow): OutboundSendResult {
 /** Reuse a failed intent with an atomic claim; never replay pending/uncertain transports. */
 export function createOutboundSender({ store, transport }: OutboundSendDependencies) {
   return async function send(input: OutboundSendInput): Promise<OutboundSendResult> {
-    const channel = resolveLeadDeliveryChannel(input.lead)
+    const channel = input.channelOverride || resolveLeadDeliveryChannel(input.lead)
     if (input.lead.companyId !== input.companyId) return { ok: false, status: 400, message: null, error: 'Empresa do contato incompatível.' }
     if (typeof input.content !== 'string' && input.content != null) return { ok: false, status: 400, message: null, error: 'Conteúdo inválido.' }
     if (!(input.content || '').trim() && !input.mediaUrl) return { ok: false, status: 400, message: null, error: 'Informe texto ou mídia para envio.' }

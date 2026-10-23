@@ -158,3 +158,30 @@ test('rota direta rejeita query token mesmo quando há x-agent-token válido', a
   assert.equal(response.status, 400)
   assert.equal(response.headers.get('set-cookie'), null)
 })
+
+test('rota direta aceita PAINEL_API_TOKEN pelo header x-agent-token', async () => {
+  delete process.env.MASTER_AGENT_TOKEN
+  process.env.PAINEL_API_TOKEN = 'token-painel-teste-hermes'
+  const { proxy } = await import('../src/proxy')
+  const response = await proxy(new NextRequest('https://app.example/atender-agora', {
+    headers: { 'x-agent-token': 'token-painel-teste-hermes' },
+  }))
+
+  assert.equal(response.status, 200)
+  const cookies = response.headers.get('set-cookie') ?? ''
+  assert.match(cookies, /agent_auth_session=/)
+  // Restaura para os demais testes
+  process.env.MASTER_AGENT_TOKEN = 'segredo-de-teste'
+})
+
+test('rota direta aceita token via Authorization: Bearer', async () => {
+  const { proxy } = await import('../src/proxy')
+  const response = await proxy(new NextRequest('https://app.example/inbox', {
+    headers: { 'authorization': 'Bearer segredo-de-teste' },
+  }))
+
+  assert.equal(response.status, 200)
+  const cookies = response.headers.get('set-cookie') ?? ''
+  assert.match(cookies, /agent_auth_session=/)
+})
+

@@ -61,9 +61,10 @@ async function main() {
   const testDb = drizzle(sql, { schema })
 
   try {
-    const [companyA, companyB] = await testDb.insert(schema.companies).values([
+    const [companyA, companyB, gramado] = await testDb.insert(schema.companies).values([
       { name: 'Empresa A', slug: 'empresa-a' },
       { name: 'Empresa B', slug: 'empresa-b' },
+      { name: 'Gramado Plaza', slug: 'gramado-plaza' },
     ]).returning()
 
     await testDb.insert(schema.agentActivityLogs).values([
@@ -125,6 +126,129 @@ async function main() {
 
       assert.equal(response.status, 400)
       assert.equal(body.code, 'INVALID_PERIOD')
+    })
+
+    const [gramadoLead, returningGramadoLead, zeroConversionGramadoLead] = await testDb.insert(schema.recoveryLeads).values([
+      {
+        companyId: gramado.id,
+        platform: 'sac',
+        eventType: 'atendimento_ia',
+        phone: '5554999990001',
+        status: 'in_conversation',
+        createdAt: new Date('2026-10-01T10:00:00.000Z'),
+        updatedAt: new Date('2026-10-01T10:00:00.000Z'),
+      },
+      {
+        companyId: gramado.id,
+        platform: 'hermes',
+        eventType: 'reserva_confirmada',
+        phone: '5554999990002',
+        status: 'completed',
+        firstContactAt: new Date('2026-10-01T11:00:00.000Z'),
+        createdAt: new Date('2026-10-01T11:00:00.000Z'),
+        updatedAt: new Date('2026-10-01T11:00:00.000Z'),
+      },
+      {
+        companyId: gramado.id,
+        platform: 'sac',
+        eventType: 'atendimento_ia',
+        phone: '5554999990003',
+        status: 'in_conversation',
+        createdAt: new Date('2026-09-30T10:00:00.000Z'),
+        updatedAt: new Date('2026-10-01T12:00:00.000Z'),
+      },
+      {
+        companyId: gramado.id,
+        platform: 'sac',
+        eventType: 'atendimento_ia',
+        phone: '5554999990004',
+        status: 'in_conversation',
+        createdAt: new Date('2026-10-02T10:00:00.000Z'),
+        updatedAt: new Date('2026-10-02T10:00:00.000Z'),
+      },
+    ]).returning()
+    await testDb.insert(schema.whatsappMessages).values([
+      {
+        companyId: gramado.id,
+        leadId: gramadoLead.id,
+        phone: gramadoLead.phone,
+        direction: 'inbound',
+        content: 'Quero reservar uma mesa',
+        createdAt: new Date('2026-10-01T10:01:00.000Z'),
+      },
+      {
+        companyId: gramado.id,
+        leadId: returningGramadoLead.id,
+        phone: returningGramadoLead.phone,
+        direction: 'inbound',
+        content: 'Consegui confirmar a data?',
+        createdAt: new Date('2026-09-30T10:01:00.000Z'),
+      },
+      {
+        companyId: gramado.id,
+        leadId: returningGramadoLead.id,
+        phone: returningGramadoLead.phone,
+        direction: 'inbound',
+        content: 'Voltei para reservar',
+        createdAt: new Date('2026-10-01T12:01:00.000Z'),
+      },
+      {
+        companyId: gramado.id,
+        leadId: zeroConversionGramadoLead.id,
+        phone: zeroConversionGramadoLead.phone,
+        direction: 'inbound',
+        content: 'Quero saber o horário',
+        createdAt: new Date('2026-10-02T10:01:00.000Z'),
+      },
+    ])
+    await testDb.insert(schema.gramadoReservations).values([
+      {
+        companyId: gramado.id,
+        leadId: gramadoLead.id,
+        reservaId: 'reserva-1',
+        phoneNorm: gramadoLead.phone,
+        data: '2026-10-01',
+        status: 'compareceu',
+        pessoas: 2,
+      },
+      {
+        companyId: gramado.id,
+        leadId: gramadoLead.id,
+        reservaId: 'reserva-1-ajuste',
+        phoneNorm: gramadoLead.phone,
+        data: '2026-10-01',
+        status: 'compareceu',
+        pessoas: 2,
+      },
+    ])
+
+    await test('analytics do Gramado usa conversas distintas e reserva vinculada, sem passar de 100%', async () => {
+      authenticatedCompany = gramado
+      const response = await analyticsRoute.GET(
+        new NextRequest('http://localhost/api/v1/companies/gramado-plaza/analytics?from=2026-10-01&to=2026-10-01'),
+        { params: Promise.resolve({ idOrSlug: 'gramado-plaza' }) },
+      )
+      const body = await response.json()
+
+      assert.equal(response.status, 200)
+      assert.equal(body.totalLeads, 2)
+      assert.equal(body.period.from, '2026-10-01T03:00:00.000Z')
+      assert.equal(body.period.to, '2026-10-02T02:59:59.999Z')
+      assert.equal(body.closingStats.reservasConfirmadas, 1)
+      assert.equal(body.closingStats.taxaConversaoReservas, '50.0%')
+    })
+
+    await test('analytics do Gramado mostra 0% quando a conversa inbound ativa nao converteu', async () => {
+      const response = await analyticsRoute.GET(
+        new NextRequest('http://localhost/api/v1/companies/gramado-plaza/analytics?from=2026-10-02&to=2026-10-02'),
+        { params: Promise.resolve({ idOrSlug: 'gramado-plaza' }) },
+      )
+      const body = await response.json()
+
+      assert.equal(response.status, 200)
+      assert.equal(body.totalLeads, 1)
+      assert.equal(body.closingStats.reservasConfirmadas, 0)
+      assert.equal(body.closingStats.taxaConversaoReservas, '0.0%')
     })
   } finally {
     await sql.end({ timeout: 2 })

@@ -1,0 +1,13 @@
+{
+  "field": "message_reactions",
+  "value": {
+    "sender": { "id": "17890000001", "username": "cliente" },
+    "message_id": "mid.story.1",
+    "reaction": { "emoji": "❤️" },
+    "message": {
+      "reply_to": {
+        "story": { "id": "story.123" }
+      }
+    }
+  }
+}

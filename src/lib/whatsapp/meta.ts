@@ -9,11 +9,13 @@ export interface ButtonOption {
 }
 
 export interface MetaTemplate {
+  id?: string
   name: string
   status: string
   language: string
   category: string
   components: unknown[]
+  rejected_reason?: string
 }
 
 function normalizePhone(phone: string): string {
@@ -145,9 +147,9 @@ const META_TEMPLATES_MAX_PAGES = 10
 // Lista templates aprovados do WABA, seguindo paginação (paging.next) até esgotar
 // ou até o limite de segurança de páginas, pra não entrar em loop infinito se a
 // Graph API devolver um cursor que não avança.
-export async function listMetaTemplates(wabaId: string, accessToken: string): Promise<MetaTemplate[]> {
+export async function listAllMetaTemplates(wabaId: string, accessToken: string): Promise<MetaTemplate[]> {
   let url: string | undefined =
-    `https://graph.facebook.com/v19.0/${wabaId}/message_templates?fields=name,status,language,category,components&limit=100`
+    `https://graph.facebook.com/v19.0/${wabaId}/message_templates?fields=id,name,status,language,category,components,rejected_reason&limit=100`
 
   const allTemplates: MetaTemplate[] = []
   let page = 0
@@ -170,5 +172,34 @@ export async function listMetaTemplates(wabaId: string, accessToken: string): Pr
     console.warn(`listMetaTemplates: atingiu o teto de ${META_TEMPLATES_MAX_PAGES} páginas para WABA ${wabaId}, resultado pode estar incompleto`)
   }
 
-  return allTemplates.filter(t => t.status === 'APPROVED')
+  return allTemplates
+}
+
+export async function listMetaTemplates(wabaId: string, accessToken: string): Promise<MetaTemplate[]> {
+  return (await listAllMetaTemplates(wabaId, accessToken)).filter(t => t.status === 'APPROVED')
+}
+
+export interface MetaTemplateSubmission {
+  name: string
+  language: string
+  category: string
+  components: unknown[]
+}
+
+export interface MetaTemplateSubmissionResult {
+  id?: string
+  status?: string
+  raw: unknown
+}
+
+export async function submitMetaTemplate(wabaId: string, accessToken: string, template: MetaTemplateSubmission): Promise<MetaTemplateSubmissionResult> {
+  const res = await fetch(`https://graph.facebook.com/v19.0/${wabaId}/message_templates`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: template.name, language: template.language, category: template.category, components: template.components }),
+  })
+  const raw = await res.json().catch(async () => ({ error: await res.text().catch(() => '') }))
+  if (!res.ok) throw new Error(`Meta API erro ${res.status}: ${JSON.stringify(raw)}`)
+  const data = raw as { id?: string; status?: string }
+  return { id: data.id, status: data.status, raw }
 }

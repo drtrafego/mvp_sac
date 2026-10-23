@@ -52,7 +52,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             </main>
           </div>
         </div>
-        <MobileTabBar isAdmin activeConnections={activeConnections} />
+        <MobileTabBar isAdmin activeConnections={activeConnections} sidebarConfig={sidebarConfig} />
       </div>
     )
   }
@@ -75,7 +75,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <Shell>{children}</Shell>
         </main>
       </div>
-      <MobileTabBar activeConnections={activeConnections} />
+      <MobileTabBar activeConnections={activeConnections} sidebarConfig={sidebarConfig} />
     </div>
   )
 }

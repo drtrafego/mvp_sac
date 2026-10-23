@@ -53,6 +53,20 @@ export function filterAvailableNavItems<T extends ConditionalNavigationItem>(
   return items.filter(item => !item.requires || activeConnections?.[item.requires] === true)
 }
 
+export function resolveSidebarVisibility(
+  activeConnections: ActiveConnections | undefined,
+  sidebarConfig: SidebarMenuConfig | null | undefined,
+) {
+  return {
+    hotmart: sidebarConfig?.showHotmart !== undefined ? sidebarConfig.showHotmart : (activeConnections?.hotmart ?? true),
+    kiwify: sidebarConfig?.showKiwify !== undefined ? sidebarConfig.showKiwify : !!activeConnections?.kiwify,
+    greenn: sidebarConfig?.showGreenn !== undefined ? sidebarConfig.showGreenn : !!activeConnections?.greenn,
+    zouti: sidebarConfig?.showZouti !== undefined ? sidebarConfig.showZouti : !!activeConnections?.zouti,
+    instagram: !!activeConnections?.instagram && sidebarConfig?.showInstagram !== false,
+    mineracao: sidebarConfig?.showMineracao !== undefined ? sidebarConfig.showMineracao : !!activeConnections?.mineracao,
+  }
+}
+
 export function MetaInfinityIcon({ size = 15, className = 'text-sky-400' }: { size?: number; className?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={cn('shrink-0', className)}>
@@ -132,7 +146,7 @@ export const atendimentoNav: Array<{
     icon: MessageCircle,
     requires: 'instagramCommentAutomation',
   },
-  { label: 'Pipeline', href: '/pipeline', icon: Columns3 },
+  { label: 'CRM', href: '/pipeline', icon: Columns3 },
   { label: 'Leads Recentes', href: '/leads', icon: Users },
 ]
 
@@ -211,7 +225,7 @@ export const instagramNav: Array<{
 export const mineracaoNav = [
   { label: 'Leads Minerados', href: '/leads?source=mineracao' },
   { label: 'Canais de Mineração', href: '/origens?source=mineracao' },
-  { label: 'Pipeline Prospecção', href: '/pipeline?source=mineracao' },
+  { label: 'CRM Prospecção', href: '/pipeline?source=mineracao' },
 ]
 
 export const ajustesNav = [
@@ -393,15 +407,13 @@ export function SidebarNavContent({
   }
 
   // Filtragem de seções baseada em sidebarConfig ou conexões ativas
-  const showHotmart = sidebarConfig?.showHotmart !== undefined ? sidebarConfig.showHotmart : (activeConnections?.hotmart ?? true)
-  const showKiwify = sidebarConfig?.showKiwify !== undefined ? sidebarConfig.showKiwify : !!activeConnections?.kiwify
-  const showGreenn = sidebarConfig?.showGreenn !== undefined ? sidebarConfig.showGreenn : !!activeConnections?.greenn
-  const showZouti = sidebarConfig?.showZouti !== undefined ? sidebarConfig.showZouti : !!activeConnections?.zouti
-  // Instagram é uma área operacional real: configuração pode ocultá-la, mas
-  // não pode exibi-la para empresa sem conexão ativa. A detecção continua
-  // centralizada em getCompanySidebarData/activeConnections.instagram.
-  const showInstagram = sidebarConfig?.showInstagram === true || (!!activeConnections?.instagram && sidebarConfig?.showInstagram !== false)
-  const showMineracao = sidebarConfig?.showMineracao !== undefined ? sidebarConfig.showMineracao : !!activeConnections?.mineracao
+  const visibility = resolveSidebarVisibility(activeConnections, sidebarConfig)
+  const showHotmart = visibility.hotmart
+  const showKiwify = visibility.kiwify
+  const showGreenn = visibility.greenn
+  const showZouti = visibility.zouti
+  const showInstagram = visibility.instagram
+  const showMineracao = visibility.mineracao
 
   const visibleAtendimentoNav = filterAvailableNavItems(atendimentoNav, activeConnections)
   const visibleInstagramNav = filterAvailableNavItems(instagramNav, activeConnections)

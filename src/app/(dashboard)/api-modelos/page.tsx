@@ -7,6 +7,7 @@ import { settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { AlertCircle, FileCheck } from 'lucide-react'
 import { loadApprovedMetaTemplates } from '@/lib/meta-templates'
+import { TemplateManager } from '@/components/meta/template-manager'
 
 export default async function ApiModelosPage() {
   const company = await requireCompany()
@@ -109,6 +110,7 @@ export default async function ApiModelosPage() {
           </div>
         ))}
       </div>
+      <TemplateManager />
     </div>
   )
 }

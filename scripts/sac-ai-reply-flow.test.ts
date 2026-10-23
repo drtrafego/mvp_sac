@@ -195,5 +195,29 @@ test('agenda real revalida pausa depois de buscar slots e antes de marcar', asyn
   assert.notEqual(result.textoVisivel, 'Marcado')
 })
 
+
+test('Isabela resolve bela sem tocar Nina ou Amanda', async () => {
+  const f = fixture()
+  f.deps.readConfig = async () => ({ companyId: 7, aiSystemPrompt: 'gate', aiAgentKey: 'bela' }) as Awaited<ReturnType<AiReplyDependencies['readConfig']>>
+  f.deps.readCompany = async () => ({ id: 7, slug: 'isabela-fanini' }) as Awaited<ReturnType<AiReplyDependencies['readCompany']>>
+  let resolvedBot = ''
+  let sender = ''
+  f.deps.generate = async opts => {
+    resolvedBot = opts.bot
+    return { ok: true, resposta: { ok: true, status: 'ok', resposta: 'Resposta Bela' } }
+  }
+  const send = f.deps.send
+  f.deps.send = async input => {
+    sender = input.senderName || ''
+    return send(input)
+  }
+
+  await generateAndSendAiReply(20, f.deps)
+
+  assert.equal(resolvedBot, 'bela')
+  assert.equal(sender, 'Bela')
+  assert.equal(f.counts().transportCount, 1)
+})
+
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })

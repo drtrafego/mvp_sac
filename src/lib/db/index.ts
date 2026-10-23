@@ -338,7 +338,7 @@ export function ensureSchema(client: any): Promise<void> {
               AND settings.ai_system_prompt IS NULL
           `,
 
-          // Garante os proprietários como administradores ativos de todas as empresas
+          // Garante os proprietários, robôs e administradores como ativos de todas as empresas
           client`
             INSERT INTO company_members (company_id, email, name, role, status)
             SELECT c.id, 'amandafelixgolden@gmail.com', 'Amanda Felix', 'admin', 'ativo'
@@ -355,6 +355,42 @@ export function ensureSchema(client: any): Promise<void> {
             WHERE NOT EXISTS (
               SELECT 1 FROM company_members cm 
               WHERE cm.company_id = c.id AND cm.email = 'dr.trafego@gmail.com'
+            )
+          `,
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'agente.ia@casaldotrafego.com', 'Agente IA', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'agente.ia@casaldotrafego.com'
+            )
+          `,
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'luana@casaldotrafego.com', 'Luana', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'luana@casaldotrafego.com'
+            )
+          `,
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'renato@casaldotrafego.com', 'Renato', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'renato@casaldotrafego.com'
+            )
+          `,
+          client`
+            INSERT INTO company_members (company_id, email, name, role, status)
+            SELECT c.id, 'bia@casaldotrafego.com', 'Bia', 'admin', 'ativo'
+            FROM companies c
+            WHERE NOT EXISTS (
+              SELECT 1 FROM company_members cm 
+              WHERE cm.company_id = c.id AND cm.email = 'bia@casaldotrafego.com'
             )
           `,
 
@@ -724,6 +760,17 @@ export function ensureSchema(client: any): Promise<void> {
             CREATE UNIQUE INDEX IF NOT EXISTS message_jobs_mass_dispatch_unique
             ON message_jobs (mass_dispatch_batch_id, lead_id, message_id)
           `
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS dispatch_source text NOT NULL DEFAULT 'sequence'`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_name text`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_language text`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_variables_map jsonb`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_snapshot jsonb`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS updated_at timestamp`
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS message_jobs_direct_template_unique
+            ON message_jobs (mass_dispatch_batch_id, lead_id)
+            WHERE mass_dispatch_batch_id IS NOT NULL AND message_id IS NULL
+          `
           await client`
             CREATE TABLE IF NOT EXISTS mass_dispatch_phone_cooldowns (
               meta_phone_number_id TEXT PRIMARY KEY,
@@ -799,6 +846,31 @@ export function ensureSchema(client: any): Promise<void> {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           console.error('[DB Schema Sync Error] Falha ao criar a tabela lead_tags ou seus índices:', message)
+        }
+
+        try {
+          await client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS auto_tag TEXT`
+          await client`
+            CREATE TABLE IF NOT EXISTS instagram_inbound_tag_rules (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              name TEXT NOT NULL,
+              trigger TEXT NOT NULL CHECK (trigger IN ('direct', 'story_reply')),
+              keywords TEXT,
+              match_type TEXT NOT NULL DEFAULT 'contains' CHECK (match_type IN ('contains', 'exact', 'any')),
+              tag TEXT NOT NULL,
+              is_active BOOLEAN NOT NULL DEFAULT true,
+              created_at TIMESTAMP DEFAULT NOW(),
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `
+          await client`
+            CREATE INDEX IF NOT EXISTS instagram_inbound_tag_rules_company_trigger_idx
+            ON instagram_inbound_tag_rules (company_id, trigger)
+          `
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[DB Schema Sync Error] Falha ao criar regras de tag inbound do Instagram:', message)
         }
 
         // ─── Idempotência contra reentrega de webhook da Meta (20/09/2026, ────

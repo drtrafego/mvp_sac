@@ -71,6 +71,10 @@ function cookieHeaderWithAgentSession(request: NextRequest, session: string, com
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  if (pathname === '/RAG-Isabella-Portal-das-Bellas.txt') {
+    return new NextResponse(null, { status: 404 })
+  }
+
   // Permitir arquivos estáticos (css, js, json, svg, png, etc.)
   if (/\.(css|js|json|svg|png|jpg|jpeg|ico|woff|woff2|ttf|eot)$/i.test(pathname)) {
     return NextResponse.next()
@@ -81,6 +85,7 @@ export async function proxy(request: NextRequest) {
   // stack-refresh-<projeto>). Sem isto, só entrava quem já tinha logado direto no
   // SAC antes; os demais caíam na tela de login dentro do iframe, onde o Google
   // é bloqueado. Mesmo receptor do CRM (mvp_crm/src/middleware.ts).
+  const orgParam = request.nextUrl.searchParams.get('org') || request.nextUrl.searchParams.get('company') || request.nextUrl.searchParams.get('slug')
   const stParam = request.nextUrl.searchParams.get('__st')
   if (stParam) {
     try {
@@ -88,6 +93,16 @@ export async function proxy(request: NextRequest) {
       const cleanUrl = new URL(request.url)
       cleanUrl.searchParams.delete('__st')
       const response = NextResponse.redirect(cleanUrl)
+
+      if (orgParam) {
+        response.cookies.set('admin_viewing_slug', orgParam.toLowerCase().trim(), {
+          path: '/',
+          httpOnly: false,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          maxAge: 60 * 60 * 24 * 7,
+        })
+      }
 
       if (typeof decoded.a === 'string') {
         response.cookies.set('stack-access', decoded.a, {
@@ -109,6 +124,10 @@ export async function proxy(request: NextRequest) {
           maxAge: 60 * 60 * 24 * 30,
         })
       }
+      response.headers.set(
+        'Content-Security-Policy',
+        "frame-ancestors 'self' https://cliente.casaldotrafego.com https://clientes.casaldotrafego.com"
+      )
       return response
     } catch (e) {
       console.error('[SSO] __st inválido:', e)
@@ -123,7 +142,9 @@ export async function proxy(request: NextRequest) {
       return NextResponse.json({ error: 'Use x-agent-token ou POST para autenticação de agente.' }, { status: 400 })
     }
 
-    const token = request.headers.get('x-agent-token')
+    const authHeader = request.headers.get('authorization')?.trim()
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null
+    const token = request.headers.get('x-agent-token') ?? bearerToken
     if (token !== null) {
       if (!configuredMasterAgentToken()) {
         return NextResponse.json({ error: 'Login de agente desativado.' }, { status: 503 })
@@ -173,7 +194,16 @@ export async function proxy(request: NextRequest) {
   // Se o usuário possui cookie de sessão de agente válido (assinado e não expirado), permite acesso direto ao painel
   const agentSession = request.cookies.get('agent_auth_session')?.value
   if (agentSession && (await verifyAgentSessionCookie(agentSession))) {
-    return NextResponse.next()
+    const maxAge = AGENT_SESSION_TTL_MS / 1000
+    const response = NextResponse.next()
+    response.cookies.set('agent_auth_session', agentSession, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge,
+    })
+    return response
   }
 
   const stackProjectId = process.env.NEXT_PUBLIC_STACK_PROJECT_ID || process.env.STACK_PROJECT_ID
@@ -188,7 +218,32 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  return NextResponse.next()
+  const requestHeaders = new Headers(request.headers)
+  if (orgParam) {
+    requestHeaders.set('x-company-slug', orgParam.toLowerCase().trim())
+  }
+
+  const response = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  })
+
+  if (orgParam) {
+    response.cookies.set('admin_viewing_slug', orgParam.toLowerCase().trim(), {
+      path: '/',
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 7,
+    })
+  }
+
+  response.headers.set(
+    'Content-Security-Policy',
+    "frame-ancestors 'self' https://cliente.casaldotrafego.com https://clientes.casaldotrafego.com"
+  )
+  return response
 }
 
 export const config = {

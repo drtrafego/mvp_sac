@@ -353,7 +353,7 @@ export function KanbanBoard({
 
   async function handleDeleteStage(stageId: string) {
     if (stages.length <= 1) {
-      alert('Você precisa ter pelo menos uma etapa no pipeline.')
+      alert('Você precisa ter pelo menos uma etapa no CRM.')
       return
     }
     const stageToDelete = stages.find(s => s.id === stageId)
@@ -992,10 +992,10 @@ export function KanbanBoard({
                   </div>
                 </div>
 
-                {/* Linha 4: Etapa do Pipeline */}
+                {/* Linha 4: Etapa do CRM */}
                 <div>
                   <label className="block text-micro font-bold text-fg mb-1">
-                    Etapa do Pipeline
+                    Etapa do CRM
                   </label>
                   <select
                     value={modalStage}
