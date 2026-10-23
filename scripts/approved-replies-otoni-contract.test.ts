@@ -5,6 +5,7 @@ import { test } from 'node:test'
 const route = readFileSync(new URL('../src/app/api/approved-replies/route.ts', import.meta.url), 'utf8')
 const auth = readFileSync(new URL('../src/lib/agent-auth.ts', import.meta.url), 'utf8')
 const migration = readFileSync(new URL('../drizzle/0035_sac_approved_replies_otoni_scope.sql', import.meta.url), 'utf8')
+const rollback = readFileSync(new URL('../drizzle/0035_sac_approved_replies_otoni_scope.rollback.sql', import.meta.url), 'utf8')
 
 test('adaptador Otoni mantém o contrato legado e fixa o tenant', () => {
   assert.match(route, /authenticateAgentRequest\(req, '25394'\)/)
@@ -32,4 +33,6 @@ test('allowlist não transforma o perfil dedicado em administrador', () => {
 test('migração cria idempotência por tenant', () => {
   assert.match(migration, /idempotency_key/)
   assert.match(migration, /company_id, idempotency_key/)
+  assert.match(rollback, /DROP INDEX IF EXISTS sac_approved_replies_company_idempotency_unique/)
+  assert.match(rollback, /DROP COLUMN IF EXISTS idempotency_key/)
 })
