@@ -1790,19 +1790,6 @@ export default function ConfiguracoesPage() {
         </div>
 
         <div className="space-y-1.5">
-          <Label>ID da Página do Facebook (Page ID)</Label>
-          <Input
-            value={form.instagramPageId}
-            onChange={e => set('instagramPageId', e.target.value)}
-            placeholder="100234567890123"
-            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
-          />
-          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
-            ID da Página do Facebook vinculada ao perfil do Instagram.
-          </p>
-        </div>
-
-        <div className="space-y-1.5">
           <Label>Token de Acesso do Instagram (Meta System User Token)</Label>
           <SecretInput
             value={form.instagramAccessToken}
@@ -1810,7 +1797,7 @@ export default function ConfiguracoesPage() {
             placeholder="EAAxxxxxxx..."
           />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
-            Token de acesso permanente com permissões <code className="text-fg font-mono text-[11px]">instagram_manage_messages</code>, <code className="text-fg font-mono text-[11px]">instagram_basic</code> e <code className="text-fg font-mono text-[11px]">pages_manage_metadata</code>. Se não preenchido, usa o Access Token geral da Meta.
+            Token exclusivo da conta do Instagram, com permissões <code className="text-fg font-mono text-[11px]">instagram_manage_messages</code> e <code className="text-fg font-mono text-[11px]">instagram_basic</code>. O Direct não usa credencial de Página como fallback.
           </p>
         </div>
 
@@ -1835,6 +1822,39 @@ export default function ConfiguracoesPage() {
           />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
             Chave secreta do APP DO INSTAGRAM (Meta for Developers &gt; Configurações da API com login empresarial no Instagram &gt; &quot;Chave secreta do app&quot;) — diferente da chave secreta do app principal do WhatsApp. Sem isso, o webhook recebe a mensagem da Meta mas recusa por assinatura inválida (401).
+          </p>
+        </div>
+      </section>
+
+      {/* Página / Meta, separado do transporte Instagram Direct */}
+      <section className="panel space-y-4 p-[var(--space-card)]">
+        <div className="flex items-center gap-2">
+          <h2 className="text-h2 text-fg">Página / Meta</h2>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
+            Credencial da Página
+          </span>
+        </div>
+        <Separator className="bg-line-subtle" />
+        <p className="text-micro text-fg-muted max-w-[var(--w-form)]">
+          Esta seção é independente do Instagram Direct. A Página só fica disponível quando os dois campos abaixo estiverem preenchidos: Page ID e Access Token da Meta.
+        </p>
+        <div className="space-y-1.5">
+          <Label>Page ID</Label>
+          <Input
+            value={form.instagramPageId}
+            onChange={e => set('instagramPageId', e.target.value)}
+            placeholder="100234567890123"
+            className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]"
+          />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Identificador da Página do Facebook usado pelas automações da Página.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Meta Access Token da Página</Label>
+          <SecretInput value={form.metaAccessToken} onChange={v => set('metaAccessToken', v)} placeholder="EAAxxxxxxx..." />
+          <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
+            Token da Meta correspondente à Página. A ausência deste token bloqueia a Página com erro claro e não afeta o Direct.
           </p>
         </div>
       </section>

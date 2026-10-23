@@ -9,7 +9,7 @@
 // "Unsupported post request. Object with ID '...' does not exist..."
 //
 // Correção:
-// const pageId = config?.instagramAccountId || config?.instagramPageId || 'me'
+// o Direct usa somente instagramAccountId + instagramAccessToken.
 //
 // Execução:
 // node --experimental-test-module-mocks --import tsx scripts/instagram-page-id-priority.test.ts
@@ -167,7 +167,7 @@ test('sendInstagramMessage prioriza instagramAccountId sobre instagramPageId', a
   )
 })
 
-test('sendInstagramPrivateReply ignora Page ID e usa o contexto /me no Direct', async () => {
+test('sendInstagramPrivateReply bloqueia sem Instagram Account ID mesmo com Page ID', async () => {
   const { sendInstagramPrivateReply } = await import('../src/lib/instagram')
 
   fetchCalls.length = 0
@@ -184,16 +184,12 @@ test('sendInstagramPrivateReply ignora Page ID e usa o contexto /me no Direct', 
     companyId: 1,
   })
 
-  assert.equal(result.ok, true)
-  assert.equal(fetchCalls.length, 1)
-  assert.equal(
-    fetchCalls[0].url,
-    'https://graph.instagram.com/v21.0/me/messages',
-    'Direct não pode usar instagramPageId como identificador de transporte'
-  )
+  assert.equal(result.ok, false)
+  assert.match(result.error || '', /Instagram Account ID/)
+  assert.equal(fetchCalls.length, 0, 'Direct não pode chamar a API usando Page ID ou /me')
 })
 
-test('sendInstagramMessage faz fallback para "me" quando ambos IDs estiverem ausentes', async () => {
+test('sendInstagramMessage bloqueia quando o par do Direct estiver incompleto', async () => {
   const { sendInstagramMessage } = await import('../src/lib/instagram')
 
   fetchCalls.length = 0
@@ -210,11 +206,7 @@ test('sendInstagramMessage faz fallback para "me" quando ambos IDs estiverem aus
     companyId: 1,
   })
 
-  assert.equal(result.ok, true)
-  assert.equal(fetchCalls.length, 1)
-  assert.equal(
-    fetchCalls[0].url,
-    'https://graph.instagram.com/v21.0/me/messages',
-    'Deveria fazer fallback para "me" quando nenhum ID estiver preenchido'
-  )
+  assert.equal(result.ok, false)
+  assert.match(result.error || '', /Instagram Account ID/)
+  assert.equal(fetchCalls.length, 0)
 })

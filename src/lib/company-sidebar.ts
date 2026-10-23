@@ -30,6 +30,15 @@ export function hasInstagramPageCredentials(row: InstagramCredentialFields | nul
   return Boolean(row?.instagramPageId?.trim() && row?.metaAccessToken?.trim())
 }
 
+export function getInstagramPageCredentialError(row: InstagramCredentialFields | null | undefined): string | null {
+  const hasPageId = Boolean(row?.instagramPageId?.trim())
+  const hasMetaToken = Boolean(row?.metaAccessToken?.trim())
+  if (hasPageId && hasMetaToken) return null
+  if (!hasPageId && !hasMetaToken) return 'Página exige Page ID e Meta Access Token.'
+  if (!hasPageId) return 'Página exige Page ID.'
+  return 'Página exige Meta Access Token.'
+}
+
 // Extraído de (dashboard)/layout.tsx (era função local `getCompanySidebarData`,
 // duplicada implicitamente porque só a Sidebar a usava). A rota dedicada de
 // Instagram e a navegação usam o mesmo activeConnections.instagram; assim a

@@ -19,11 +19,11 @@ import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webho
 import { AmbiguousCredentialError } from "@/lib/instagram-webhook-errors"
 
 
-// Resolve a empresa dona de um pageId (Instagram Account ID ou Page ID) e,
+// Resolve a empresa dona do Instagram Account ID e,
 // junto, o slug dela pra registrar em webhook_received (mesmo padrão de log
 // que a rota [slug] já grava sempre, ver POST abaixo).
-async function resolveCompanyForPageId(pageId: string): Promise<{ companyId: number; slug: string } | null> {
-  const cleanId = pageId ? pageId.trim() : ''
+async function resolveCompanyForInstagramAccountId(accountId: string): Promise<{ companyId: number; slug: string } | null> {
+  const cleanId = accountId ? accountId.trim() : ''
   if (!cleanId) return null
 
   const byAccountId = await db
@@ -38,21 +38,10 @@ async function resolveCompanyForPageId(pageId: string): Promise<{ companyId: num
   }
   if (byAccountId.length === 1) return byAccountId[0]
 
-  const byPageId = await db
-    .select({ companyId: settings.companyId, slug: companies.slug })
-    .from(settings)
-    .innerJoin(companies, eq(companies.id, settings.companyId))
-    .where(eq(settings.instagramPageId, cleanId))
-
-  if (byPageId.length > 1) {
-    console.error(`[Instagram Webhook AMBIGUIDADE CRÍTICA] Múltiplas empresas possuem instagramPageId="${cleanId}". Fail-closed 409.`)
-    throw new AmbiguousCredentialError(`Ambiguous instagramPageId "${cleanId}"`)
-  }
-
-  return byPageId[0] ?? null
+  return null
 }
 
-// Extrai o pageId do primeiro entry, só pra resolver qual empresa validar o
+// Extrai o Instagram Account ID do primeiro entry, só pra resolver qual empresa validar o
 // segredo, ANTES de qualquer outro processamento do payload.
 
 function instagramDebugPayload(opts: {
@@ -100,11 +89,11 @@ function instagramDebugPayload(opts: {
   }
 }
 
-function extractFirstPageIdForSecret(body: Record<string, unknown>): string | null {
+function extractFirstInstagramAccountIdForSecret(body: Record<string, unknown>): string | null {
   if (body.object !== 'instagram' || !Array.isArray(body.entry)) return null
   for (const entry of body.entry as Record<string, unknown>[]) {
-    const pageId = entry.id as string | undefined
-    if (pageId && pageId.trim()) return pageId.trim()
+    const accountId = entry.id as string | undefined
+    if (accountId && accountId.trim()) return accountId.trim()
   }
   return null
 }
@@ -161,10 +150,10 @@ export async function POST(req: NextRequest) {
   // principal da empresa (compat) > secret do app principal global (compat).
   let companySecret: string | null = null
   let companyMetaSecret: string | null = null
-  const pageIdForSecret = extractFirstPageIdForSecret(rawBody)
-  if (pageIdForSecret) {
+  const accountIdForSecret = extractFirstInstagramAccountIdForSecret(rawBody)
+  if (accountIdForSecret) {
     try {
-      const resolvedSecretCompany = await resolveCompanyForPageId(pageIdForSecret)
+      const resolvedSecretCompany = await resolveCompanyForInstagramAccountId(accountIdForSecret)
       if (resolvedSecretCompany) {
         const [row] = await db.select().from(settings).where(eq(settings.companyId, resolvedSecretCompany.companyId))
         companySecret = row?.instagramAppSecret ?? null
@@ -202,7 +191,7 @@ export async function POST(req: NextRequest) {
 
           let resolved: { companyId: number; slug: string } | null = null
           try {
-            resolved = await resolveCompanyForPageId(pageId)
+            resolved = await resolveCompanyForInstagramAccountId(pageId)
           } catch (err) {
             if (err instanceof AmbiguousCredentialError) {
               return NextResponse.json({ error: "Ambiguous tenant configuration" }, { status: 409 })
@@ -224,7 +213,7 @@ export async function POST(req: NextRequest) {
             processed: !!companyId,
             skipReason: companyId
               ? null
-              : `empresa não resolvida pelo instagramAccountId/instagramPageId do payload (pageId=${pageId})`,
+              : `empresa não resolvida pelo instagramAccountId do payload (accountId=${pageId})`,
             rawBody: entry,
             headers: headersObj,
           })
@@ -233,7 +222,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (!companyId) {
-          console.error(`[Instagram Webhook Global] empresa não resolvida pelo instagramAccountId/instagramPageId do payload (pageId=${pageId}), evento descartado`)
+          console.error(`[Instagram Webhook Global] empresa não resolvida pelo instagramAccountId do payload (accountId=${pageId}), evento descartado`)
         }
 
         if (companyId) {

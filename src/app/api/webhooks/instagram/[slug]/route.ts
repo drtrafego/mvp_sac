@@ -165,7 +165,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           referral?: Record<string, unknown>
         } | undefined
         const recipient = item.recipient as { id?: string } | undefined
-        const ownAccountIds = [companySettingsForSecret?.instagramAccountId, companySettingsForSecret?.instagramPageId].filter(Boolean)
+        const ownAccountIds = [companySettingsForSecret?.instagramAccountId].filter(Boolean)
 
         // ‼️ Checagem de anexo/partilha (24/09/2026): quando alguém compartilha post/reel
         // ou manda mídia, a Meta manda `attachments`. Se tiver anexos, ignoramos o processamento

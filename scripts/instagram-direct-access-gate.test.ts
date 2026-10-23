@@ -55,7 +55,7 @@ mock.module('next/navigation', {
 })
 
 async function main() {
-  const { getCompanySidebarData, hasInstagramCredentials, hasInstagramPageCredentials } = await import('../src/lib/company-sidebar')
+  const { getCompanySidebarData, hasInstagramCredentials, hasInstagramPageCredentials, getInstagramPageCredentialError } = await import('../src/lib/company-sidebar')
   const { default: InstagramLayout } = await import('../src/app/(dashboard)/instagram/layout')
 
   await test('B2: histórico Instagram sem credencial não ativa conexão nem acessa /instagram', async () => {
@@ -108,6 +108,9 @@ async function main() {
       instagramAccessToken: null,
       metaAccessToken: 'meta-token',
     }), true)
+    assert.equal(getInstagramPageCredentialError({ instagramAccountId: null, instagramAccessToken: null, instagramPageId: null, metaAccessToken: null }), 'Página exige Page ID e Meta Access Token.')
+    assert.equal(getInstagramPageCredentialError({ instagramAccountId: null, instagramAccessToken: null, instagramPageId: 'page-id', metaAccessToken: null }), 'Página exige Meta Access Token.')
+    assert.equal(getInstagramPageCredentialError({ instagramAccountId: null, instagramAccessToken: null, instagramPageId: 'page-id', metaAccessToken: 'meta-token' }), null)
   })
 
   await test('preferência visual não reativa Instagram sem conexão operacional', async () => {
