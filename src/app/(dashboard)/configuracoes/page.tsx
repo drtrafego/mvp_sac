@@ -47,7 +47,7 @@ const APRENDA_A_USAR_VIDEOS = [
   {
     title: 'Instagram',
     description: 'Aprenda a acompanhar conversas do Instagram Direct, comentários e leads no mesmo fluxo de atendimento.',
-    src: '/videos/sac-instagram-tutorial.mp4',
+    src: '/videos/sac-instagram-automacao-completa.mp4',
   },
   {
     title: 'Canais de vendas',
