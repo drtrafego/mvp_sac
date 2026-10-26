@@ -26,6 +26,7 @@ import {
   Code2,
   MessageCircle,
   ListTodo,
+  PlayCircle,
 } from 'lucide-react'
 import { useUser } from '@stackframe/stack'
 import { cn } from '@/lib/utils'
@@ -234,6 +235,7 @@ export const ajustesNav = [
   { label: 'Documentação API', href: '/api-docs', icon: Code2, key: 'apiDocs' },
   { label: 'Webhooks Log', href: '/webhooks-log', icon: Webhook, key: 'webhooks' },
   { label: 'Biblioteca', href: '/biblioteca', icon: BookOpen, key: 'biblioteca' },
+  { label: 'Aprenda a Usar', href: '/aprenda-a-usar', icon: PlayCircle, key: 'aprenda' },
 ]
 
 export interface SidebarMenuConfig {
@@ -268,6 +270,7 @@ export interface SidebarMenuConfig {
   showConfiguracoes?: boolean
   showWebhooksLog?: boolean
   showBiblioteca?: boolean
+  showAprenda?: boolean
 }
 
 export interface SidebarProps {
@@ -421,6 +424,7 @@ export function SidebarNavContent({
   const showAgente = sidebarConfig?.showAgente !== undefined ? sidebarConfig.showAgente : true
   const showWebhooksLog = sidebarConfig?.showWebhooksLog !== undefined ? sidebarConfig.showWebhooksLog : true
   const showBiblioteca = sidebarConfig?.showBiblioteca !== undefined ? sidebarConfig.showBiblioteca : true
+  const showAprenda = sidebarConfig?.showAprenda !== undefined ? sidebarConfig.showAprenda : true
   const showConfiguracoes = sidebarConfig?.showConfiguracoes !== undefined ? sidebarConfig.showConfiguracoes : true
   const showApiDocs = sidebarConfig?.showApiDocs !== undefined ? sidebarConfig.showApiDocs : true
 
@@ -958,6 +962,7 @@ export function SidebarNavContent({
                 if (item.key === 'apiDocs') return showApiDocs
                 if (item.key === 'webhooks') return showWebhooksLog
                 if (item.key === 'biblioteca') return showBiblioteca
+                if (item.key === 'aprenda') return showAprenda
                 return true
               })
               .map(({ label, href, icon: Icon }) => {
