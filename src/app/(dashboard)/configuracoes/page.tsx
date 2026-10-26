@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,24 @@ const PROVIDER_OPTIONS: Record<string, string> = {
   meta: 'Meta Cloud API (oficial)',
   uazapi: 'UazAPI (não-oficial)',
 }
+
+const APRENDA_A_USAR_VIDEOS = [
+  {
+    title: 'API Oficial do WhatsApp',
+    description: 'Veja como a mensagem chega pelo canal oficial, mantém o histórico no SAC e pode ser encaminhada para atendimento humano quando necessário.',
+    src: '/videos/sac-api-oficial-tutorial-karaoke.mp4',
+  },
+  {
+    title: 'Instagram',
+    description: 'Aprenda a acompanhar conversas do Instagram Direct, comentários e leads no mesmo fluxo de atendimento.',
+    src: '/videos/sac-instagram-tutorial.mp4',
+  },
+  {
+    title: 'Canais de vendas',
+    description: 'Entenda como Hotmart, Kiwify e Greenn viram contexto para a equipe agir dentro do SAC.',
+    src: '/videos/sac-integracoes-kiwify-hotmart-greenn-tutorial-karaoke.mp4',
+  },
+] as const
 
 interface SettingsData {
   companySlug: string
@@ -1560,27 +1579,65 @@ export default function ConfiguracoesPage() {
         <section className="panel space-y-4 p-[var(--space-card)]">
           <h2 className="text-h2 text-fg">Meta Cloud API</h2>
           <Separator className="bg-line-subtle" />
-          <WebhookUrlBox url={metaWebhookUrl} label="URL do Webhook (configurar na Meta)" />
-          <div className="space-y-1.5">
-            <Label>Phone Number ID</Label>
-            <Input value={form.metaPhoneNumberId} onChange={e => set('metaPhoneNumberId', e.target.value)} placeholder="123456789012345" className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]" />
-            <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">Meta Business, WhatsApp, Configuração, Phone Number ID</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Access Token</Label>
-            <SecretInput value={form.metaAccessToken} onChange={v => set('metaAccessToken', v)} placeholder="EAAxxxxxxx..." />
-            <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">Token permanente do System User com permissão whatsapp_business_messaging</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Verify Token (Webhook)</Label>
-            <Input value={form.metaVerifyToken} onChange={e => set('metaVerifyToken', e.target.value)} placeholder="meu_token_secreto" className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]" />
-            <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">Qualquer texto que você escolher. Use o mesmo ao configurar o webhook na Meta.</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>WABA ID (para templates)</Label>
-            <Input value={form.metaWabaId} onChange={e => set('metaWabaId', e.target.value)} placeholder="123456789012345" className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]" />
-            <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">WhatsApp Business Account ID. Necessário para listar e enviar templates aprovados.</p>
-          </div>
+          <Tabs defaultValue="configurar" className="w-full">
+            <TabsList className="w-full justify-start overflow-x-auto bg-surface-inset">
+              <TabsTrigger value="configurar">Configurar Webhook</TabsTrigger>
+              <TabsTrigger value="aprender">Aprenda a Usar</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="configurar" className="mt-5 space-y-4">
+              <WebhookUrlBox url={metaWebhookUrl} label="URL do Webhook (configurar na Meta)" />
+              <div className="space-y-1.5">
+                <Label>Phone Number ID</Label>
+                <Input value={form.metaPhoneNumberId} onChange={e => set('metaPhoneNumberId', e.target.value)} placeholder="123456789012345" className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]" />
+                <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">Meta Business, WhatsApp, Configuração, Phone Number ID</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Access Token</Label>
+                <SecretInput value={form.metaAccessToken} onChange={v => set('metaAccessToken', v)} placeholder="EAAxxxxxxx..." />
+                <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">Token permanente do System User com permissão whatsapp_business_messaging</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Verify Token (Webhook)</Label>
+                <Input value={form.metaVerifyToken} onChange={e => set('metaVerifyToken', e.target.value)} placeholder="meu_token_secreto" className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]" />
+                <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">Qualquer texto que você escolher. Use o mesmo ao configurar o webhook na Meta.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>WABA ID (para templates)</Label>
+                <Input value={form.metaWabaId} onChange={e => set('metaWabaId', e.target.value)} placeholder="123456789012345" className="bg-surface-inset border-line-subtle h-11 lg:h-9 max-w-[var(--w-form)]" />
+                <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">WhatsApp Business Account ID. Necessário para listar e enviar templates aprovados.</p>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="aprender" className="mt-5 space-y-4">
+              <div className="space-y-1">
+                <h3 className="text-body font-semibold text-fg">Aprenda a Usar</h3>
+                <p className="text-micro text-fg-muted max-w-[var(--w-form)]">
+                  Assista aos tutoriais dos canais que conectam sua operação ao SAC.
+                </p>
+              </div>
+              <div className="space-y-6">
+                {APRENDA_A_USAR_VIDEOS.map((video) => (
+                  <article key={video.src} className="space-y-3">
+                    <div className="space-y-1">
+                      <h4 className="text-body font-semibold text-fg">{video.title}</h4>
+                      <p className="text-micro text-fg-muted max-w-[var(--w-form)]">{video.description}</p>
+                    </div>
+                    <video
+                      className="block w-full h-auto rounded-xl border border-line-subtle bg-black object-contain"
+                      controls
+                      playsInline
+                      preload="metadata"
+                      aria-label={`Tutorial de ${video.title} no SAC`}
+                    >
+                      <source src={video.src} type="video/mp4" />
+                      Seu navegador não suporta a reprodução de vídeo.
+                    </video>
+                  </article>
+                ))}
+              </div>
+            </TabsContent>
+          </Tabs>
         </section>
       )}
 
