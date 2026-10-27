@@ -160,6 +160,7 @@ export const analiseNav = [
 ]
 
 export const apiOficialNav = [
+  { label: 'Mensagens', href: '/inbox?channel=whatsapp' },
   { label: 'Mensagens aprovadas', href: '/api-modelos' },
   { label: 'Campanhas ativas', href: '/api-campanhas' },
   { label: 'Disparo em massa', href: '/disparo-em-massa' },
@@ -174,6 +175,7 @@ export const apiOficialNav = [
 // (src/components/recovery/sequence-page.tsx) e filtra via coluna `platform`
 // de recovery_leads (valor exato gravado por cada webhook, não texto livre).
 export const hotmartNav = [
+  { label: 'Mensagens', href: '/inbox?source=hotmart' },
   { label: 'Carrinho abandonado', href: '/carrinho?platform=hotmart' },
   { label: 'Boleto Bancário', href: '/boleto?platform=hotmart' },
   { label: 'Pix Pendente', href: '/pix?platform=hotmart' },
@@ -182,6 +184,7 @@ export const hotmartNav = [
 ]
 
 export const kiwifyNav = [
+  { label: 'Mensagens', href: '/inbox?source=kiwify' },
   { label: 'Carrinho Kiwify', href: '/carrinho?platform=kiwify' },
   { label: 'Boleto Kiwify', href: '/boleto?platform=kiwify' },
   { label: 'Pix Kiwify', href: '/pix?platform=kiwify' },
@@ -190,6 +193,7 @@ export const kiwifyNav = [
 ]
 
 export const greennNav = [
+  { label: 'Mensagens', href: '/inbox?source=greenn' },
   { label: 'Carrinho Greenn', href: '/carrinho?platform=greenn' },
   { label: 'Boleto Greenn', href: '/boleto?platform=greenn' },
   { label: 'Pix Greenn', href: '/pix?platform=greenn' },
@@ -198,6 +202,7 @@ export const greennNav = [
 ]
 
 export const zoutiNav = [
+  { label: 'Mensagens', href: '/inbox?source=zouti' },
   { label: 'Carrinho Zouti', href: '/carrinho?platform=zouti' },
   { label: 'Boleto Zouti', href: '/boleto?platform=zouti' },
   { label: 'Pix Zouti', href: '/pix?platform=zouti' },
@@ -213,6 +218,7 @@ export const instagramNav: Array<{
   href: string
   requires?: NavigationRequirement
 }> = [
+  { label: 'Mensagens', href: '/instagram' },
   {
     label: 'Comentário → DM',
     href: '/comentarios-instagram',
@@ -224,6 +230,7 @@ export const instagramNav: Array<{
 ]
 
 export const mineracaoNav = [
+  { label: 'Mensagens', href: '/inbox?channel=mineracao' },
   { label: 'Leads Minerados', href: '/leads?source=mineracao' },
   { label: 'Canais de Mineração', href: '/origens?source=mineracao' },
   { label: 'CRM Prospecção', href: '/pipeline?source=mineracao' },
