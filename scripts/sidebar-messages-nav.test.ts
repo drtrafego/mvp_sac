@@ -37,3 +37,14 @@ test('a navegação existente do SAC continua preservada', () => {
   assert.ok(sidebar.instagramNav.some(item => item.label === 'Conversas Direct'))
   assert.ok(sidebar.mineracaoNav.some(item => item.label === 'CRM Prospecção'))
 })
+
+test('integração desativada pode expor somente Mensagens por setor', () => {
+  for (const items of [sidebar.hotmartNav, sidebar.greennNav, sidebar.zoutiNav, sidebar.mineracaoNav]) {
+    assert.deepEqual(
+      sidebar.getVisibleChannelNavItems(items, false, true),
+      [items.find(item => item.label === 'Mensagens')],
+    )
+    assert.deepEqual(sidebar.getVisibleChannelNavItems(items, false, false), [])
+    assert.deepEqual(sidebar.getVisibleChannelNavItems(items, true, false), [...items])
+  }
+})

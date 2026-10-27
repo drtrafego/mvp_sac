@@ -68,6 +68,15 @@ export function resolveSidebarVisibility(
   }
 }
 
+export function getVisibleChannelNavItems<T extends { label: string }>(
+  items: readonly T[],
+  showSection: boolean,
+  showMessagesWhenHidden: boolean,
+): T[] {
+  if (showSection) return [...items]
+  return showMessagesWhenHidden ? items.filter(item => item.label === 'Mensagens') : []
+}
+
 export function MetaInfinityIcon({ size = 15, className = 'text-sky-400' }: { size?: number; className?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={cn('shrink-0', className)}>
@@ -271,6 +280,10 @@ export interface SidebarMenuConfig {
   showZouti?: boolean
   showInstagram?: boolean
   showMineracao?: boolean
+  showHotmartMessages?: boolean
+  showGreennMessages?: boolean
+  showZoutiMessages?: boolean
+  showMineracaoMessages?: boolean
 
   // Ajustes
   showAgente?: boolean
@@ -424,6 +437,18 @@ export function SidebarNavContent({
   const showZouti = visibility.zouti
   const showInstagram = visibility.instagram
   const showMineracao = visibility.mineracao
+  const showHotmartMessages = sidebarConfig?.showHotmartMessages === true
+  const showGreennMessages = sidebarConfig?.showGreennMessages === true
+  const showZoutiMessages = sidebarConfig?.showZoutiMessages === true
+  const showMineracaoMessages = sidebarConfig?.showMineracaoMessages === true
+  const showHotmartSection = showHotmart || showHotmartMessages
+  const showGreennSection = showGreenn || showGreennMessages
+  const showZoutiSection = showZouti || showZoutiMessages
+  const showMineracaoSection = showMineracao || showMineracaoMessages
+  const visibleHotmartNav = getVisibleChannelNavItems(hotmartNav, showHotmart, showHotmartMessages)
+  const visibleGreennNav = getVisibleChannelNavItems(greennNav, showGreenn, showGreennMessages)
+  const visibleZoutiNav = getVisibleChannelNavItems(zoutiNav, showZouti, showZoutiMessages)
+  const visibleMineracaoNav = getVisibleChannelNavItems(mineracaoNav, showMineracao, showMineracaoMessages)
 
   const visibleAtendimentoNav = filterAvailableNavItems(atendimentoNav, activeConnections)
   const visibleInstagramNav = filterAvailableNavItems(instagramNav, activeConnections)
@@ -627,7 +652,7 @@ export function SidebarNavContent({
       </div>
 
       {/* 4. SEÇÃO HOTMART (Se ativa) */}
-      {showHotmart && (
+      {showHotmartSection && (
         <div className="space-y-1">
           {!collapsed ? (
             <button
@@ -650,7 +675,7 @@ export function SidebarNavContent({
 
           {(collapsed || sectionsOpen.hotmart) && (
             <div className={cn('space-y-0.5', !collapsed && 'border-l-2 border-orange-500/80 ml-3 pl-2.5')}>
-              {hotmartNav.map(({ label, href }) => {
+              {visibleHotmartNav.map(({ label, href }) => {
                 const active = isActive(href)
                 return (
                   <Link
@@ -733,7 +758,7 @@ export function SidebarNavContent({
       )}
 
       {/* 6. SEÇÃO GREENN (Se ativa) */}
-      {showGreenn && (
+      {showGreennSection && (
         <div className="space-y-1">
           {!collapsed ? (
             <button
@@ -756,7 +781,7 @@ export function SidebarNavContent({
 
           {(collapsed || sectionsOpen.greenn) && (
             <div className={cn('space-y-0.5', !collapsed && 'border-l-2 border-emerald-500/80 ml-3 pl-2.5')}>
-              {greennNav.map(({ label, href }) => {
+              {visibleGreennNav.map(({ label, href }) => {
                 const active = isActive(href)
                 return (
                   <Link
@@ -786,7 +811,7 @@ export function SidebarNavContent({
       )}
 
       {/* 7. SEÇÃO ZOUTI (Se ativa) */}
-      {showZouti && (
+      {showZoutiSection && (
         <div className="space-y-1">
           {!collapsed ? (
             <button
@@ -809,7 +834,7 @@ export function SidebarNavContent({
 
           {(collapsed || sectionsOpen.zouti) && (
             <div className={cn('space-y-0.5', !collapsed && 'border-l-2 border-purple-500/80 ml-3 pl-2.5')}>
-              {zoutiNav.map(({ label, href }) => {
+              {visibleZoutiNav.map(({ label, href }) => {
                 const active = isActive(href)
                 return (
                   <Link
@@ -891,7 +916,7 @@ export function SidebarNavContent({
       )}
 
       {/* 9. SEÇÃO MINERAÇÃO & PROSPECÇÃO (Se ativa) */}
-      {showMineracao && (
+      {showMineracaoSection && (
         <div className="space-y-1">
           {!collapsed ? (
             <button
@@ -914,7 +939,7 @@ export function SidebarNavContent({
 
           {(collapsed || sectionsOpen.mineracao) && (
             <div className={cn('space-y-0.5', !collapsed && 'border-l-2 border-amber-500/80 ml-3 pl-2.5')}>
-              {mineracaoNav.map(({ label, href }) => {
+              {visibleMineracaoNav.map(({ label, href }) => {
                 const active = isActive(href)
                 return (
                   <Link
