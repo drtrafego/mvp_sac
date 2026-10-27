@@ -61,10 +61,11 @@ async function main() {
   const testDb = drizzle(sql, { schema })
 
   try {
-    const [companyA, companyB, gramado] = await testDb.insert(schema.companies).values([
+    const [companyA, companyB, gramado, lucas] = await testDb.insert(schema.companies).values([
       { name: 'Empresa A', slug: 'empresa-a' },
       { name: 'Empresa B', slug: 'empresa-b' },
       { name: 'Gramado Plaza', slug: 'gramado-plaza' },
+      { name: 'Dr. Lucas', slug: 'drlucas' },
     ]).returning()
 
     await testDb.insert(schema.agentActivityLogs).values([
@@ -222,7 +223,7 @@ async function main() {
       },
     ])
 
-    await test('analytics do Gramado usa conversas distintas e reserva vinculada, sem passar de 100%', async () => {
+    await test('analytics do Gramado usa a fonte de reservas do período, sem passar de 100%', async () => {
       authenticatedCompany = gramado
       const response = await analyticsRoute.GET(
         new NextRequest('http://localhost/api/v1/companies/gramado-plaza/analytics?from=2026-10-01&to=2026-10-01'),
@@ -234,8 +235,8 @@ async function main() {
       assert.equal(body.totalLeads, 2)
       assert.equal(body.period.from, '2026-10-01T03:00:00.000Z')
       assert.equal(body.period.to, '2026-10-02T02:59:59.999Z')
-      assert.equal(body.closingStats.reservasConfirmadas, 1)
-      assert.equal(body.closingStats.taxaConversaoReservas, '50.0%')
+      assert.equal(body.closingStats.reservasConfirmadas, 2)
+      assert.equal(body.closingStats.taxaConversaoReservas, '100.0%')
     })
 
     await test('analytics do Gramado mostra 0% quando a conversa inbound ativa nao converteu', async () => {
@@ -249,6 +250,41 @@ async function main() {
       assert.equal(body.totalLeads, 1)
       assert.equal(body.closingStats.reservasConfirmadas, 0)
       assert.equal(body.closingStats.taxaConversaoReservas, '0.0%')
+    })
+
+    const [lucasLead] = await testDb.insert(schema.recoveryLeads).values({
+      companyId: lucas.id,
+      platform: 'sac',
+      eventType: 'atendimento_ia',
+      phone: '5554999990010',
+      status: 'in_conversation',
+      firstContactAt: new Date('2026-10-01T10:00:00.000Z'),
+      createdAt: new Date('2026-09-30T10:00:00.000Z'),
+      updatedAt: new Date('2026-10-01T10:00:00.000Z'),
+    }).returning()
+    await testDb.insert(schema.appointmentMirror).values({
+      companyId: lucas.id,
+      nativeId: 'consulta-1',
+      name: 'Paciente de teste',
+      phone: lucasLead.phone,
+      consultationAt: new Date('2026-10-01T13:00:00.000Z'),
+      status: 'agendado',
+      sourceSyncedAt: new Date('2026-10-02T00:00:00.000Z'),
+    })
+
+    await test('analytics do Dr. Lucas usa a data da consulta operacional por tenant', async () => {
+      authenticatedCompany = lucas
+      const response = await analyticsRoute.GET(
+        new NextRequest('http://localhost/api/v1/companies/drlucas/analytics?from=2026-10-01&to=2026-10-01'),
+        { params: Promise.resolve({ idOrSlug: 'drlucas' }) },
+      )
+      const body = await response.json()
+
+      assert.equal(response.status, 200)
+      assert.equal(body.company.id, lucas.id)
+      assert.equal(body.totalLeads, 1, 'o denominador usa a conversa iniciada no período')
+      assert.equal(body.closingStats.consultasAgendadas, 1)
+      assert.equal(body.closingStats.taxaAgendamento, '100.0%')
     })
   } finally {
     await sql.end({ timeout: 2 })

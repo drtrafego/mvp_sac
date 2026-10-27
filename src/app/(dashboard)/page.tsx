@@ -4,7 +4,7 @@ import { DashboardFocus } from '@/components/dashboard/dashboard-focus'
 import { PageHeader } from '@/components/ui/page-header'
 import Link from 'next/link'
 import { db } from '@/lib/db'
-import { recoveryLeads, messageJobs, gramadoReservations } from '@/lib/db/schema'
+import { appointmentMirror, recoveryLeads, messageJobs, gramadoReservations } from '@/lib/db/schema'
 import { eq, count, and, desc, sql, gte, lte, isNull, isNotNull, inArray } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import {
@@ -114,7 +114,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     return `/inbox?${q.toString()}`
   }
 
-  const [[leadStats], [checkoutStats], [firstContactStats], [gramadoConversationStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, gramadoTrafficBreakdown, checkoutTrafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats], agentMetrics] = await Promise.all([
+  const [[leadStats], [checkoutStats], [firstContactStats], [gramadoConversationStats], [jobStats], recentLeads, [prevStats], trafficBreakdown, gramadoTrafficBreakdown, checkoutTrafficBreakdown, [awaitingStats], originPills, [gramadoReservationStats], [lucasAppointmentStats], agentMetrics] = await Promise.all([
     db
       .select(dashboardLeadStatsSelect(businessModel))
       .from(recoveryLeads)
@@ -276,6 +276,22 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           )
       : Promise.resolve([{ totalReservas: null, totalPessoas: null }]),
 
+    // Dr. Lucas: o evento de conversão é a consulta na agenda nativa. Usar
+    // recovery_leads.created_at perde consultas registradas em outra data;
+    // o período deve usar a data operacional e o tenant autenticado.
+    isLucas
+      ? db
+          .select({ totalAgendamentos: sql<number>`cast(count(*) as int)` })
+          .from(appointmentMirror)
+          .where(and(
+            eq(appointmentMirror.companyId, cid),
+            gte(appointmentMirror.consultationAt, fromDate),
+            lte(appointmentMirror.consultationAt, toDate),
+            isNull(appointmentMirror.cancelledAt),
+            sql`lower(trim(${appointmentMirror.status})) not in ('cancelado', 'cancelada', 'cancelled')`,
+          ))
+      : Promise.resolve([{ totalAgendamentos: null }]),
+
     loadAgentMetrics(cid, fromDate, toDate),
   ])
 
@@ -288,10 +304,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const fechadosCount = leadStats?.fechadosTotal ?? 0
   const gramadoReservasCount = Number(gramadoReservationStats?.totalReservas ?? 0)
   const gramadoPessoasCount = Number(gramadoReservationStats?.totalPessoas ?? 0)
-  const agendamentosCount = isGramado ? gramadoReservasCount : fechadosCount
-  const agendamentoConversionCount = isGramado
-    ? Number(gramadoConversationStats?.converteu ?? 0)
-    : agendamentosCount
+  const lucasAgendamentosCount = Number(lucasAppointmentStats?.totalAgendamentos ?? 0)
+  const agendamentosCount = isGramado ? gramadoReservasCount : isLucas ? lucasAgendamentosCount : fechadosCount
+  const agendamentoConversionCount = agendamentosCount
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
   const qualificadosCount = leadStats?.qualificadosTotal ?? 0
   const gramadoCardCounts = gramadoDashboardCardCounts(leadStats)
