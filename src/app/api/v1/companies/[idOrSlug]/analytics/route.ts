@@ -2,9 +2,10 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoveryLeads, messageJobs } from '@/lib/db/schema'
+import { appointmentMirror, gramadoReservations, recoveryLeads, messageJobs } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
-import { eq, and, count, sql, gte, lte } from 'drizzle-orm'
+import { eq, and, count, sql, gte, lte, inArray, isNull } from 'drizzle-orm'
+import { GRAMADO_VALID_RESERVATION_STATUSES } from '@/lib/dashboard/gramado-reservations'
 import { dashboardLeadStatsSelect, resolveDashboardBusinessModel } from '@/lib/dashboard/lead-stats'
 import { calculateConversionRate } from '@/lib/dashboard/conversion-rate'
 import { dateKeyForAnalytics, gramadoInboundConversationInPeriodSql, gramadoMessageCountSql, gramadoReservationInPeriodSql } from '@/lib/dashboard/gramado-conversion'
@@ -45,15 +46,22 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   const isGramado = businessModel === 'gramado'
   const isLucas = businessModel === 'lucas'
   const isAgencia = businessModel === 'agencia'
+  const leadPeriodWhere = isLucas
+    ? and(
+        eq(recoveryLeads.companyId, cid),
+        gte(recoveryLeads.firstContactAt, fromDate),
+        lte(recoveryLeads.firstContactAt, toDate),
+      )
+    : baseWhere
 
-  const [[leadStats], [gramadoConversationStats], [jobStats], agentMetrics] = await Promise.all([
+  const [[leadStats], [gramadoConversationStats], [gramadoReservationStats], [lucasAppointmentStats], [jobStats], agentMetrics] = await Promise.all([
     db
       .select({
         ...dashboardLeadStatsSelect(businessModel),
         total: count(),
       })
       .from(recoveryLeads)
-      .where(baseWhere),
+      .where(leadPeriodWhere),
 
     isGramado
       ? db
@@ -69,6 +77,31 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
           ))
       : Promise.resolve([{ total: 0, converteu: 0, avancou: 0 }]),
 
+    isGramado
+      ? db
+          .select({ totalReservas: sql<number>`cast(count(*) as int)` })
+          .from(gramadoReservations)
+          .where(and(
+            eq(gramadoReservations.companyId, cid),
+            gte(gramadoReservations.data, gramadoFromKey),
+            lte(gramadoReservations.data, gramadoToKey),
+            inArray(gramadoReservations.status, GRAMADO_VALID_RESERVATION_STATUSES),
+          ))
+      : Promise.resolve([{ totalReservas: 0 }]),
+
+    isLucas
+      ? db
+          .select({ totalAgendamentos: sql<number>`cast(count(*) as int)` })
+          .from(appointmentMirror)
+          .where(and(
+            eq(appointmentMirror.companyId, cid),
+            gte(appointmentMirror.consultationAt, fromDate),
+            lte(appointmentMirror.consultationAt, toDate),
+            isNull(appointmentMirror.cancelledAt),
+            sql`lower(trim(${appointmentMirror.status})) not in ('cancelado', 'cancelada', 'cancelled')`,
+          ))
+      : Promise.resolve([{ totalAgendamentos: 0 }]),
+
     db
       .select({
         pending: sql<number>`cast(count(*) filter (where ${messageJobs.status} = 'pending') as int)`,
@@ -83,7 +116,11 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   ])
 
   const total = isGramado ? Number(gramadoConversationStats?.total ?? 0) : (leadStats?.total ?? 0)
-  const fechados = isGramado ? Number(gramadoConversationStats?.converteu ?? 0) : (leadStats?.fechadosTotal ?? 0)
+  const fechados = isGramado
+    ? Number(gramadoReservationStats?.totalReservas ?? 0)
+    : isLucas
+      ? Number(lucasAppointmentStats?.totalAgendamentos ?? 0)
+      : (leadStats?.fechadosTotal ?? 0)
   const valorFechadoCents = Number(leadStats?.valorFechadoCents ?? 0)
   const conversionRate = calculateConversionRate(fechados, total)
 
