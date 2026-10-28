@@ -4,6 +4,7 @@ import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { channelWhereCondition, normalizePhoneDigits } from '@/lib/inbox-channel-filter'
 import { isDirectOrganicSourceFilter, normalizeInboxSourceFilter } from '@/lib/inbox-source-filter'
 import { getEmailEngagement, type EmailEngagement } from '@/lib/email-engagement'
+import { conversationVisibilityCondition } from '@/lib/inbox-conversation-policy'
 
 export const INBOX_PAGE_SIZE = 75
 export const INBOX_PAGE_SIZE_MAX = 100
@@ -123,6 +124,10 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
         and inbox_unread.direction = 'inbound'
     )`)
   }
+
+  // O contato continua em recovery_leads; só entra na lista de conversas
+  // depois de existir mensagem real.
+  whereConditions.push(conversationVisibilityCondition(options.companyId))
 
   const query = options.query?.trim()
   if (query) {

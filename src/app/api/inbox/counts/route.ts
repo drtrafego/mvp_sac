@@ -8,6 +8,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
 import { isDirectOrganicSourceFilter, normalizeInboxSourceFilter } from '@/lib/inbox-source-filter'
+import { conversationVisibilityCondition } from '@/lib/inbox-conversation-policy'
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init)
   response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
@@ -47,6 +48,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       : sql<boolean>`(${recoveryLeads.trackingSource} ILIKE ${'%' + sourceFilter + '%'} OR ${recoveryLeads.platform} ILIKE ${'%' + sourceFilter + '%'})`
     : undefined
   const whereConditions = [eq(recoveryLeads.companyId, company.id)]
+  whereConditions.push(conversationVisibilityCondition(company.id))
   if (sourceCondition) whereConditions.push(sourceCondition)
 
   const [row] = await db
