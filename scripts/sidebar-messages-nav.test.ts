@@ -40,13 +40,9 @@ test('a navegação existente do SAC continua preservada', () => {
   assert.equal(sidebar.emailNav.length, 1)
 })
 
-test('integração desativada pode expor somente Mensagens por setor', () => {
+test('setor sem capacidade operacional não expõe nem Mensagens nem inbox', () => {
   for (const items of [sidebar.hotmartNav, sidebar.greennNav, sidebar.zoutiNav, sidebar.mineracaoNav]) {
-    assert.deepEqual(
-      sidebar.getVisibleChannelNavItems(items, false, true),
-      [items.find(item => item.label === 'Mensagens')],
-    )
-    assert.deepEqual(sidebar.getVisibleChannelNavItems(items, false, false), [])
-    assert.deepEqual(sidebar.getVisibleChannelNavItems(items, true, false), [...items])
+    assert.deepEqual(sidebar.getVisibleChannelNavItems(items, false), [])
+    assert.deepEqual(sidebar.getVisibleChannelNavItems(items, true), [...items])
   }
 })

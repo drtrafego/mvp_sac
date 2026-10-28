@@ -4,11 +4,14 @@ import { mock, test } from 'node:test'
 import * as schema from '../src/lib/db/schema'
 
 let failSidebarLookup = false
+let hasMineracaoLead = false
 const settingsWithoutInstagramConnection = {
   instagramAccountId: null,
   instagramPageId: null,
   instagramAccessToken: null,
   metaAccessToken: null,
+  brevoApiKey: 'brevo-key',
+  brevoSenderEmail: 'sac@example.com',
   sidebarConfig: { showInstagram: true },
 }
 
@@ -18,7 +21,7 @@ const db = {
       where: () => {
         if (failSidebarLookup) throw new Error('banco indisponível')
         if (table === schema.settings) return Promise.resolve([settingsWithoutInstagramConnection])
-        if (table === schema.recoveryLeads) return { limit: async () => [] }
+        if (table === schema.recoveryLeads) return { limit: async () => hasMineracaoLead ? [{ id: 1 }] : [] }
         if (table === schema.instagramCommentAutomations) return { limit: async () => [] }
         throw new Error('Tabela inesperada')
       },
@@ -40,6 +43,18 @@ test('status operacional não é reativado por configuração visual e fallback 
     assert.equal(fallback.activeConnections.instagram, false)
   } finally {
     failSidebarLookup = false
+  }
+})
+
+test('Brevo não cria Mineração, mas um lead de Mineração real a habilita', async () => {
+  const { getCompanySidebarData } = await import('../src/lib/company-sidebar')
+  assert.equal((await getCompanySidebarData(1)).activeConnections.mineracao, false)
+
+  hasMineracaoLead = true
+  try {
+    assert.equal((await getCompanySidebarData(1)).activeConnections.mineracao, true)
+  } finally {
+    hasMineracaoLead = false
   }
 })
 

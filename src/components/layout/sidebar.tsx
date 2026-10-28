@@ -33,6 +33,7 @@ import { useUser } from '@stackframe/stack'
 import { cn } from '@/lib/utils'
 
 export interface ActiveConnections {
+  whatsappOfficial?: boolean
   hotmart?: boolean
   kiwify?: boolean
   greenn?: boolean
@@ -61,23 +62,22 @@ export function resolveSidebarVisibility(
   sidebarConfig: SidebarMenuConfig | null | undefined,
 ) {
   return {
-    hotmart: sidebarConfig?.showHotmart !== undefined ? sidebarConfig.showHotmart : (activeConnections?.hotmart ?? true),
-    kiwify: sidebarConfig?.showKiwify !== undefined ? sidebarConfig.showKiwify : !!activeConnections?.kiwify,
-    greenn: sidebarConfig?.showGreenn !== undefined ? sidebarConfig.showGreenn : !!activeConnections?.greenn,
-    zouti: sidebarConfig?.showZouti !== undefined ? sidebarConfig.showZouti : !!activeConnections?.zouti,
+    apiOficial: activeConnections?.whatsappOfficial === true && sidebarConfig?.showApiOficial !== false,
+    hotmart: activeConnections?.hotmart === true && sidebarConfig?.showHotmart !== false,
+    kiwify: activeConnections?.kiwify === true && sidebarConfig?.showKiwify !== false,
+    greenn: activeConnections?.greenn === true && sidebarConfig?.showGreenn !== false,
+    zouti: activeConnections?.zouti === true && sidebarConfig?.showZouti !== false,
     instagram: !!activeConnections?.instagram && sidebarConfig?.showInstagram !== false,
     email: !!activeConnections?.email && sidebarConfig?.showEmail !== false,
-    mineracao: sidebarConfig?.showMineracao !== undefined ? sidebarConfig.showMineracao : !!activeConnections?.mineracao,
+    mineracao: activeConnections?.mineracao === true && sidebarConfig?.showMineracao !== false,
   }
 }
 
 export function getVisibleChannelNavItems<T extends { label: string }>(
   items: readonly T[],
   showSection: boolean,
-  showMessagesWhenHidden: boolean,
 ): T[] {
-  if (showSection) return [...items]
-  return showMessagesWhenHidden ? items.filter(item => item.label === 'Mensagens') : []
+  return showSection ? [...items] : []
 }
 
 export function MetaInfinityIcon({ size = 15, className = 'text-sky-400' }: { size?: number; className?: string }) {
@@ -443,6 +443,7 @@ export function SidebarNavContent({
 
   // Filtragem de seções baseada em sidebarConfig ou conexões ativas
   const visibility = resolveSidebarVisibility(activeConnections, sidebarConfig)
+  const showApiOficial = visibility.apiOficial
   const showHotmart = visibility.hotmart
   const showKiwify = visibility.kiwify
   const showGreenn = visibility.greenn
@@ -450,18 +451,10 @@ export function SidebarNavContent({
   const showInstagram = visibility.instagram
   const showEmail = visibility.email
   const showMineracao = visibility.mineracao
-  const showHotmartMessages = sidebarConfig?.showHotmartMessages === true
-  const showGreennMessages = sidebarConfig?.showGreennMessages === true
-  const showZoutiMessages = sidebarConfig?.showZoutiMessages === true
-  const showMineracaoMessages = sidebarConfig?.showMineracaoMessages === true
-  const showHotmartSection = showHotmart || showHotmartMessages
-  const showGreennSection = showGreenn || showGreennMessages
-  const showZoutiSection = showZouti || showZoutiMessages
-  const showMineracaoSection = showMineracao || showMineracaoMessages
-  const visibleHotmartNav = getVisibleChannelNavItems(hotmartNav, showHotmart, showHotmartMessages)
-  const visibleGreennNav = getVisibleChannelNavItems(greennNav, showGreenn, showGreennMessages)
-  const visibleZoutiNav = getVisibleChannelNavItems(zoutiNav, showZouti, showZoutiMessages)
-  const visibleMineracaoNav = getVisibleChannelNavItems(mineracaoNav, showMineracao, showMineracaoMessages)
+  const visibleHotmartNav = getVisibleChannelNavItems(hotmartNav, showHotmart)
+  const visibleGreennNav = getVisibleChannelNavItems(greennNav, showGreenn)
+  const visibleZoutiNav = getVisibleChannelNavItems(zoutiNav, showZouti)
+  const visibleMineracaoNav = getVisibleChannelNavItems(mineracaoNav, showMineracao)
 
   const visibleAtendimentoNav = filterAvailableNavItems(atendimentoNav, activeConnections)
   const visibleInstagramNav = filterAvailableNavItems(instagramNav, activeConnections)
@@ -613,8 +606,8 @@ export function SidebarNavContent({
         )}
       </div>
 
-      {/* 3. SEÇÃO API OFICIAL (META & UAZAPI) - Sempre visível */}
-      <div className="space-y-1">
+      {/* 3. SEÇÃO API OFICIAL (META & UAZAPI) */}
+      {showApiOficial && <div className="space-y-1">
         {!collapsed ? (
           <button
             type="button"
@@ -662,10 +655,10 @@ export function SidebarNavContent({
             })}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* 4. SEÇÃO HOTMART (Se ativa) */}
-      {showHotmartSection && (
+      {showHotmart && (
         <div className="space-y-1">
           {!collapsed ? (
             <button
@@ -771,7 +764,7 @@ export function SidebarNavContent({
       )}
 
       {/* 6. SEÇÃO GREENN (Se ativa) */}
-      {showGreennSection && (
+      {showGreenn && (
         <div className="space-y-1">
           {!collapsed ? (
             <button
@@ -824,7 +817,7 @@ export function SidebarNavContent({
       )}
 
       {/* 7. SEÇÃO ZOUTI (Se ativa) */}
-      {showZoutiSection && (
+      {showZouti && (
         <div className="space-y-1">
           {!collapsed ? (
             <button
@@ -981,7 +974,7 @@ export function SidebarNavContent({
       )}
 
       {/* 10. SEÇÃO MINERAÇÃO & PROSPECÇÃO (Se ativa) */}
-      {showMineracaoSection && (
+      {showMineracao && (
         <div className="space-y-1">
           {!collapsed ? (
             <button

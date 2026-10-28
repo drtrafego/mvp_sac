@@ -29,6 +29,82 @@ test('Instagram só aparece com conexão operacional e a configuração apenas o
   assert.equal(hidden.instagram, false)
 })
 
+test('configuração visual não cria canais nem reativa Mensagens sem capacidade real', () => {
+  const visibility = resolveSidebarVisibility(
+    {
+      whatsappOfficial: false,
+      hotmart: false,
+      kiwify: false,
+      greenn: false,
+      zouti: false,
+      instagram: false,
+      email: false,
+      mineracao: false,
+    },
+    {
+      showApiOficial: true,
+      showHotmart: true,
+      showKiwify: true,
+      showGreenn: true,
+      showZouti: true,
+      showInstagram: true,
+      showEmail: true,
+      showMineracao: true,
+      showHotmartMessages: true,
+      showGreennMessages: true,
+      showZoutiMessages: true,
+      showMineracaoMessages: true,
+    },
+  )
+
+  assert.deepEqual(visibility, {
+    apiOficial: false,
+    hotmart: false,
+    kiwify: false,
+    greenn: false,
+    zouti: false,
+    instagram: false,
+    email: false,
+    mineracao: false,
+  })
+})
+
+test('capacidade real pode ser ocultada pela configuração da empresa', () => {
+  const visibility = resolveSidebarVisibility(
+    {
+      whatsappOfficial: true,
+      hotmart: true,
+      kiwify: true,
+      greenn: true,
+      zouti: true,
+      instagram: true,
+      email: true,
+      mineracao: true,
+    },
+    {
+      showApiOficial: false,
+      showHotmart: false,
+      showKiwify: false,
+      showGreenn: false,
+      showZouti: false,
+      showInstagram: false,
+      showEmail: false,
+      showMineracao: false,
+    },
+  )
+
+  assert.deepEqual(visibility, {
+    apiOficial: false,
+    hotmart: false,
+    kiwify: false,
+    greenn: false,
+    zouti: false,
+    instagram: false,
+    email: false,
+    mineracao: false,
+  })
+})
+
 test('menu móvel e desktop calculam a mesma visibilidade a partir do mesmo contexto', () => {
   const activeConnections = { hotmart: false, kiwify: true, instagram: true }
   const sidebarConfig = { showHotmart: false, showKiwify: true, showInstagram: true }

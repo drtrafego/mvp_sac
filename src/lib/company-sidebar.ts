@@ -1,9 +1,11 @@
 import { db } from '@/lib/db'
 import { settings, recoveryLeads, instagramCommentAutomations } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
+import { channelWhereCondition } from '@/lib/inbox-channel-filter'
 import type { SidebarMenuConfig } from '@/components/layout/sidebar'
 
 export interface ActiveConnectionsData {
+  whatsappOfficial: boolean
   hotmart: boolean
   kiwify: boolean
   greenn: boolean
@@ -40,7 +42,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
   sidebarConfig: SidebarMenuConfig | null
 }> {
   try {
-    const [settingsRows, leadsPlatforms, activeCommentAutomations] = await Promise.all([
+    const [settingsRows, leadsPlatforms, mineracaoLeads, activeCommentAutomations] = await Promise.all([
       db
         .select()
         .from(settings)
@@ -55,6 +57,14 @@ export async function getCompanySidebarData(companyId: number): Promise<{
         .from(recoveryLeads)
         .where(eq(recoveryLeads.companyId, companyId))
         .limit(200),
+      // A lista acima é apenas uma amostra para descobrir integrações de
+      // checkout. Mineração precisa de uma existência real no tenant, sem
+      // depender de Brevo nem dos primeiros 200 leads retornados.
+      db
+        .select({ id: recoveryLeads.id })
+        .from(recoveryLeads)
+        .where(and(eq(recoveryLeads.companyId, companyId), channelWhereCondition('mineracao')))
+        .limit(1),
       // Comentário → DM é uma capacidade própria. Ter credenciais de Direct
       // não significa ter uma regra configurada, e regra pausada não processa
       // comentários (mesma condição usada pelo instagram-comment-processor).
@@ -72,8 +82,6 @@ export async function getCompanySidebarData(companyId: number): Promise<{
     const settingsRow = settingsRows[0]
 
     const platformSet = new Set(leadsPlatforms.map(l => (l.platform || '').toLowerCase()))
-    const sourceSet = new Set(leadsPlatforms.map(l => (l.source || '').toLowerCase()))
-
     const hotmartEnabled = settingsRow?.hotmartEnabled !== false
     const kiwifyEnabled = settingsRow?.kiwifyEnabled !== false
     const greennEnabled = settingsRow?.greennEnabled !== false
@@ -91,10 +99,15 @@ export async function getCompanySidebarData(companyId: number): Promise<{
       (settingsRow?.brevoApiKey && settingsRow?.brevoSenderEmail)
       || leadsPlatforms.some(lead => lead.channel?.toLowerCase() === 'email'),
     )
-    const hasMineracao = !!(platformSet.has('mineracao') || sourceSet.has('mineracao') || sourceSet.has('prospeccao') || settingsRow?.brevoApiKey)
-
-    // Se nenhuma plataforma estiver configurada ainda, mantém Hotmart/Geral como padrão
-    const noneConfigured = !hasHotmart && !hasKiwify && !hasGreenn && !hasZouti && !hasInstagram && !hasEmail && !hasMineracao
+    const hasMetaWhatsapp = Boolean(settingsRow?.metaPhoneNumberId?.trim() && settingsRow?.metaAccessToken?.trim())
+    const hasUazapiWhatsapp = Boolean(settingsRow?.uazapiBaseUrl?.trim() && settingsRow?.uazapiInstanceToken?.trim())
+    const whatsappProvider = settingsRow?.whatsappProvider ?? 'meta'
+    const hasOfficialWhatsapp = whatsappProvider === 'meta'
+      ? hasMetaWhatsapp
+      : whatsappProvider === 'uazapi'
+        ? hasUazapiWhatsapp
+        : false
+    const hasMineracao = mineracaoLeads.length > 0
 
     const sidebarConfig = (settingsRow?.sidebarConfig as SidebarMenuConfig | undefined) || null
     const effectiveSidebarConfig = sidebarConfig
@@ -109,7 +122,8 @@ export async function getCompanySidebarData(companyId: number): Promise<{
 
     return {
       activeConnections: {
-        hotmart: hotmartEnabled && (hasHotmart || noneConfigured),
+        whatsappOfficial: hasOfficialWhatsapp,
+        hotmart: hotmartEnabled && hasHotmart,
         kiwify: kiwifyEnabled && hasKiwify,
         greenn: greennEnabled && hasGreenn,
         zouti: zoutiEnabled && hasZouti,
@@ -125,6 +139,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
   } catch {
     return {
       activeConnections: {
+        whatsappOfficial: false,
         hotmart: false,
         kiwify: false,
         greenn: false,
