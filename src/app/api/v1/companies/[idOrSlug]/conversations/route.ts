@@ -6,6 +6,7 @@ import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq, desc, and, or, inArray } from 'drizzle-orm'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
+import { conversationVisibilityCondition } from '@/lib/inbox-conversation-policy'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -49,9 +50,7 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       createdAt: recoveryLeads.createdAt,
     })
     .from(recoveryLeads)
-    .where(
-      channelCondition ? and(eq(recoveryLeads.companyId, companyId), channelCondition) : eq(recoveryLeads.companyId, companyId)
-    )
+    .where(and(eq(recoveryLeads.companyId, companyId), conversationVisibilityCondition(companyId), channelCondition))
     .orderBy(desc(recoveryLeads.updatedAt))
     .limit(250)
 

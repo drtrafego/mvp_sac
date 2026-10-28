@@ -12,6 +12,7 @@ import {
   createInitialFunilCursosState,
   calculateFunilCursosSchedules,
 } from '@/lib/funnels/funil-cursos'
+import { shouldScheduleKiwifyMessageJobs } from '@/lib/kiwify-purchase-policy'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
 // Fonte: docs.kiwify.com.br, exemplos oficiais de payload e captura real do
@@ -774,7 +775,9 @@ export async function POST(
       transactionId: draft.transactionId,
     })
 
-    if (isFunilEligible && draft.phone) {
+    // Compra aprovada é somente upsert do contato/pedido. Nunca agenda
+    // conversa, upsell ou mensagem automática para o comprador.
+    if (shouldScheduleKiwifyMessageJobs(mappedType) && isFunilEligible && draft.phone) {
       const initialFunnelState = createInitialFunilCursosState({
         transactionId: draft.transactionId!,
         productName: draft.productName,
@@ -814,7 +817,7 @@ export async function POST(
     // Sem telefone: grava o lead (serve para analytics e receita) mas NÃO agenda
     // job nenhum, senão o cron criaria mensagem que falha e sujaria o painel.
     // Acontece quando a cliente desabilitou o campo de celular no checkout.
-    if (!isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
+    if (shouldScheduleKiwifyMessageJobs(mappedType) && !isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
       const messages = await db
         .select()
         .from(sequenceMessages)
