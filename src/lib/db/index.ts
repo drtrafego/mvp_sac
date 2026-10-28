@@ -500,6 +500,55 @@ export function ensureSchema(client: any): Promise<void> {
             ON ai_bridge_calls (created_at)
           `,
 
+          // ─── Saúde do SAC por empresa ───────────────────────────────────────
+          // O índice parcial de incidentes garante uma única falha aberta por
+          // funcionalidade mesmo quando duas abas fazem polling juntas.
+          client`
+            CREATE TABLE IF NOT EXISTS sac_health_checks (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              feature_key TEXT NOT NULL,
+              label TEXT NOT NULL,
+              description TEXT NOT NULL,
+              status TEXT NOT NULL,
+              severity TEXT NOT NULL,
+              critical BOOLEAN NOT NULL DEFAULT FALSE,
+              configured BOOLEAN NOT NULL DEFAULT FALSE,
+              reason TEXT NOT NULL,
+              latency_ms INTEGER,
+              status_code INTEGER,
+              checked_at TIMESTAMP NOT NULL DEFAULT NOW(),
+              updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+              UNIQUE (company_id, feature_key)
+            )
+          `,
+          client`CREATE INDEX IF NOT EXISTS sac_health_checks_company_checked_idx ON sac_health_checks (company_id, checked_at)`,
+          client`
+            CREATE TABLE IF NOT EXISTS sac_health_incidents (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              feature_key TEXT NOT NULL,
+              label TEXT NOT NULL,
+              severity TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              fingerprint TEXT NOT NULL,
+              is_open BOOLEAN NOT NULL DEFAULT TRUE,
+              started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+              last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+              recovered_at TIMESTAMP,
+              last_check_id INTEGER,
+              alert_sent_at TIMESTAMP,
+              next_alert_at TIMESTAMP,
+              recovery_alert_sent_at TIMESTAMP,
+              last_alert_error TEXT
+            )
+          `,
+          client`
+            CREATE UNIQUE INDEX IF NOT EXISTS sac_health_incidents_open_feature_unique
+            ON sac_health_incidents (company_id, feature_key) WHERE is_open = TRUE
+          `,
+          client`CREATE INDEX IF NOT EXISTS sac_health_incidents_company_started_idx ON sac_health_incidents (company_id, started_at)`,
+
           // ─── Meta Conversions API: log de envio de conversão (21/09/2026) ──────
           // Irmão de saída do webhook_received. uniqueIndex(company_id, event_id)
           // via UNIQUE inline garante que o mesmo evento (ex.: purchase_<txnId>)

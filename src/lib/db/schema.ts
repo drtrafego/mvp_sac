@@ -1081,6 +1081,53 @@ export const sacAuditEvents = pgTable('sac_audit_events', {
   index('sac_audit_events_company_lead_occurred_idx').on(table.companyId, table.leadId, table.occurredAt),
 ])
 
+// Saúde operacional por empresa. A linha atual é atualizada a cada leitura do
+// painel; incidentes ficam separados para preservar o começo e a recuperação
+// de cada falha sem guardar segredos ou payloads de dependências.
+export const sacHealthChecks = pgTable('sac_health_checks', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  featureKey: text('feature_key').notNull(),
+  label: text('label').notNull(),
+  description: text('description').notNull(),
+  status: text('status').notNull(), // active | inactive | degraded | failing
+  severity: text('severity').notNull(), // warning | critical
+  critical: boolean('critical').notNull().default(false),
+  configured: boolean('configured').notNull().default(false),
+  reason: text('reason').notNull(),
+  latencyMs: integer('latency_ms'),
+  statusCode: integer('status_code'),
+  checkedAt: timestamp('checked_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, table => [
+  uniqueIndex('sac_health_checks_company_feature_unique').on(table.companyId, table.featureKey),
+  index('sac_health_checks_company_checked_idx').on(table.companyId, table.checkedAt),
+])
+
+export const sacHealthIncidents = pgTable('sac_health_incidents', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  featureKey: text('feature_key').notNull(),
+  label: text('label').notNull(),
+  severity: text('severity').notNull(),
+  reason: text('reason').notNull(),
+  fingerprint: text('fingerprint').notNull(),
+  isOpen: boolean('is_open').notNull().default(true),
+  startedAt: timestamp('started_at').defaultNow().notNull(),
+  lastSeenAt: timestamp('last_seen_at').defaultNow().notNull(),
+  recoveredAt: timestamp('recovered_at'),
+  lastCheckId: integer('last_check_id'),
+  alertSentAt: timestamp('alert_sent_at'),
+  nextAlertAt: timestamp('next_alert_at'),
+  recoveryAlertSentAt: timestamp('recovery_alert_sent_at'),
+  lastAlertError: text('last_alert_error'),
+}, table => [
+  uniqueIndex('sac_health_incidents_open_feature_unique')
+    .on(table.companyId, table.featureKey)
+    .where(sql`${table.isOpen} = true`),
+  index('sac_health_incidents_company_started_idx').on(table.companyId, table.startedAt),
+])
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const companiesRelations = relations(companies, ({ one, many }) => ({
   settings: one(settings, { fields: [companies.id], references: [settings.companyId] }),
@@ -1099,6 +1146,8 @@ export const companiesRelations = relations(companies, ({ one, many }) => ({
   approvedReplies: many(sacApprovedReplies),
   pendingItems: many(sacPendingItems),
   auditEvents: many(sacAuditEvents),
+  healthChecks: many(sacHealthChecks),
+  healthIncidents: many(sacHealthIncidents),
 }))
 
 export const settingsRelations = relations(settings, ({ one }) => ({
@@ -1198,4 +1247,12 @@ export const sacPendingItemsRelations = relations(sacPendingItems, ({ one }) => 
 export const sacAuditEventsRelations = relations(sacAuditEvents, ({ one }) => ({
   company: one(companies, { fields: [sacAuditEvents.companyId], references: [companies.id] }),
   lead: one(recoveryLeads, { fields: [sacAuditEvents.leadId], references: [recoveryLeads.id] }),
+}))
+
+export const sacHealthChecksRelations = relations(sacHealthChecks, ({ one }) => ({
+  company: one(companies, { fields: [sacHealthChecks.companyId], references: [companies.id] }),
+}))
+
+export const sacHealthIncidentsRelations = relations(sacHealthIncidents, ({ one }) => ({
+  company: one(companies, { fields: [sacHealthIncidents.companyId], references: [companies.id] }),
 }))

@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
-import { Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette, Columns3, CalendarClock, ChevronRight, PauseCircle, PlayCircle, AlertTriangle, Loader2, Settings } from 'lucide-react'
+import { Activity, Eye, EyeOff, Save, Copy, Check, Users, UserPlus, Trash2, Crown, Clock, Shield, Sun, Moon, Monitor, Palette, Columns3, CalendarClock, ChevronRight, PauseCircle, PlayCircle, AlertTriangle, Loader2, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
+import { HealthFeaturesSection } from '@/components/settings/HealthFeaturesSection'
 
 /*
   Os selects do Base UI mostram o valor cru no gatilho quando o Root não recebe
@@ -948,6 +949,7 @@ function AparenciaSection() {
 export default function ConfiguracoesPage() {
   const router = useRouter()
   const [form, setForm] = useState<SettingsData>(defaults)
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'geral' | 'saude'>('geral')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -1116,6 +1118,29 @@ export default function ConfiguracoesPage() {
         title="Configurações"
         description="Aparência do sistema, credenciais das plataformas de pagamento, do WhatsApp e da sua equipe."
       />
+
+      <div role="tablist" aria-label="Seções de configurações" className="inline-flex w-fit items-center gap-1 rounded-[var(--r-md)] border border-line-subtle bg-surface-inset p-1">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSettingsTab === 'geral'}
+          onClick={() => setActiveSettingsTab('geral')}
+          className={cn('focus-ring rounded-[var(--r-md)] px-3 py-2 text-micro font-semibold transition-colors', activeSettingsTab === 'geral' ? 'bg-surface-panel text-fg shadow-sm' : 'text-fg-subtle hover:text-fg')}
+        >
+          Geral
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSettingsTab === 'saude'}
+          onClick={() => setActiveSettingsTab('saude')}
+          className={cn('focus-ring flex items-center gap-1.5 rounded-[var(--r-md)] px-3 py-2 text-micro font-semibold transition-colors', activeSettingsTab === 'saude' ? 'bg-surface-panel text-fg shadow-sm' : 'text-fg-subtle hover:text-fg')}
+        >
+          <Activity size={14} /> Saúde / Funcionalidades
+        </button>
+      </div>
+
+      {activeSettingsTab === 'saude' ? <HealthFeaturesSection /> : <>
 
       {/* Aparência & Tema */}
       <AparenciaSection />
@@ -1894,6 +1919,7 @@ export default function ConfiguracoesPage() {
           </p>
         )}
       </div>
+      </>}
     </div>
   )
 }
