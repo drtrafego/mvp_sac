@@ -7,9 +7,11 @@ import { settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { loadInboxPage, type InboxPage } from '@/lib/inbox-conversations'
 import { includesInstagramInGeneral } from '@/lib/instagram-inbox-placement'
+import { getCompanySidebarData } from '@/lib/company-sidebar'
 
 export default async function InboxLayout({ children }: { children: React.ReactNode }) {
   const company = await requireCompany()
+  const { activeConnections } = await getCompanySidebarData(company.id)
   const [companySettings] = await db
     .select({ instagramInboxPlacement: settings.instagramInboxPlacement })
     .from(settings)
@@ -34,6 +36,7 @@ export default async function InboxLayout({ children }: { children: React.ReactN
         initialCursor={page.nextCursor}
         initialHasMore={page.hasMore}
         initialError={error}
+        activeConnections={activeConnections}
       />
       <div className="flex-1 min-w-0 overflow-hidden flex flex-col h-full bg-surface-base">{children}</div>
     </div>

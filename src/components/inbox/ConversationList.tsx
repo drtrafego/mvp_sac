@@ -35,6 +35,7 @@ import {
 import { matchesInboxSourceFilter } from '@/lib/inbox-source-filter'
 import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
 import type { ConversationSummary, InboxPage } from '@/lib/inbox-conversations'
+import type { ActiveConnections } from '@/components/layout/sidebar'
 export type { ConversationSummary } from '@/lib/inbox-conversations'
 
 const CONVERSATION_LIST_POLL_MS = 15_000
@@ -113,6 +114,16 @@ function classifyChannel(c: Pick<ConversationSummary, 'channel' | 'platform' | '
   return classifyChannelInMemory(c)
 }
 
+export function isInboxChannelAvailable(
+  channel: Exclude<ChannelFilter, 'all' | 'anuncio'>,
+  activeConnections: ActiveConnections,
+): boolean {
+  if (channel === 'whatsapp') return activeConnections.whatsappOfficial === true
+  if (channel === 'instagram') return activeConnections.instagram === true
+  if (channel === 'email') return activeConnections.email === true
+  return activeConnections.mineracao === true
+}
+
 export function ConversationList({
   initial,
   initialCursor = null,
@@ -121,6 +132,7 @@ export function ConversationList({
   basePath = '/inbox',
   fixedChannel,
   title = 'Conversas',
+  activeConnections,
 }: {
   initial: ConversationSummary[]
   initialCursor?: string | null
@@ -129,6 +141,7 @@ export function ConversationList({
   basePath?: '/inbox' | '/instagram'
   fixedChannel?: Extract<ChannelFilter, 'instagram'>
   title?: string
+  activeConnections: ActiveConnections
 }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -147,6 +160,9 @@ export function ConversationList({
       ? initialChannelParam
       : 'all'
   )
+  const availableInitialChannel = initialChannelFilter === 'all' || initialChannelFilter === 'anuncio'
+    || isInboxChannelAvailable(initialChannelFilter, activeConnections)
+  const safeInitialChannelFilter: ChannelFilter = availableInitialChannel ? initialChannelFilter : 'all'
   const initialMineracaoSub = initialChannelParam.startsWith('mineracao_')
     ? initialChannelParam.slice('mineracao_'.length)
     : ''
@@ -161,7 +177,7 @@ export function ConversationList({
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [loadedSearch, setLoadedSearch] = useState('')
-  const [channelFilter, setChannelFilter] = useState<ChannelFilter>(initialChannelFilter)
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>(safeInitialChannelFilter)
   const [mineracaoSubFilter, setMineracaoSubFilter] = useState<MineracaoSubFilter>(
     initialMineracaoSub === 'email' || initialMineracaoSub === 'whatsapp' || initialMineracaoSub === 'instagram'
       ? initialMineracaoSub
@@ -509,7 +525,7 @@ export function ConversationList({
           >
             Todos ({counts.all})
           </button>
-          <button
+          {isInboxChannelAvailable('whatsapp', activeConnections) && <button
             type="button"
             onClick={() => selectChannelFilter('whatsapp')}
             className={cn(
@@ -521,8 +537,8 @@ export function ConversationList({
           >
             <MessageCircle size={12} className="text-emerald-400 shrink-0" />
             WhatsApp ({counts.whatsapp})
-          </button>
-          <button
+          </button>}
+          {isInboxChannelAvailable('email', activeConnections) && <button
             type="button"
             onClick={() => selectChannelFilter('email')}
             className={cn(
@@ -534,8 +550,8 @@ export function ConversationList({
           >
             <Mail size={12} className="text-indigo-400 shrink-0" />
             E-mail ({counts.email})
-          </button>
-          <button
+          </button>}
+          {isInboxChannelAvailable('instagram', activeConnections) && <button
             type="button"
             onClick={() => selectChannelFilter('instagram')}
             className={cn(
@@ -547,8 +563,8 @@ export function ConversationList({
           >
             <InstagramLogoIcon size={12} className="text-pink-400 shrink-0" />
             Instagram ({counts.instagram})
-          </button>
-          <button
+          </button>}
+          {isInboxChannelAvailable('mineracao', activeConnections) && <button
             type="button"
             onClick={() => selectChannelFilter('mineracao')}
             className={cn(
@@ -560,7 +576,7 @@ export function ConversationList({
           >
             <Pickaxe size={12} className="text-amber-400 shrink-0" />
             Mineração ({counts.mineracao})
-          </button>
+          </button>}
           <button
             type="button"
             onClick={() => selectChannelFilter('anuncio')}

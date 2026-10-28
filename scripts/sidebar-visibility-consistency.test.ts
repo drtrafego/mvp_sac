@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { resolveSidebarVisibility } from '../src/components/layout/sidebar'
+import { isInboxChannelAvailable } from '../src/components/inbox/ConversationList'
 
 test('desktop e menu móvel recebem a mesma configuração de sidebar', async () => {
   const layout = await readFile(new URL('../src/app/(dashboard)/layout.tsx', import.meta.url), 'utf8')
@@ -114,4 +115,22 @@ test('menu móvel e desktop calculam a mesma visibilidade a partir do mesmo cont
   assert.equal(desktop.hotmart, false)
   assert.equal(desktop.kiwify, true)
   assert.equal(desktop.instagram, true)
+})
+
+test('filtros do inbox seguem as conexões ativas do tenant', () => {
+  const inactive = {
+    whatsappOfficial: false,
+    instagram: true,
+    email: false,
+    mineracao: false,
+  }
+  assert.equal(isInboxChannelAvailable('whatsapp', inactive), false)
+  assert.equal(isInboxChannelAvailable('email', inactive), false)
+  assert.equal(isInboxChannelAvailable('instagram', inactive), true)
+  assert.equal(isInboxChannelAvailable('mineracao', inactive), false)
+
+  const active = { whatsappOfficial: true, instagram: true, email: true, mineracao: true }
+  assert.equal(isInboxChannelAvailable('whatsapp', active), true)
+  assert.equal(isInboxChannelAvailable('email', active), true)
+  assert.equal(isInboxChannelAvailable('mineracao', active), true)
 })

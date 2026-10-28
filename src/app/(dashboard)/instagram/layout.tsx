@@ -33,6 +33,7 @@ export default async function InstagramLayout({ children }: { children: React.Re
         basePath="/instagram"
         fixedChannel="instagram"
         title="Instagram Direct"
+        activeConnections={activeConnections}
       />
       <div className="flex-1 min-w-0 overflow-hidden flex flex-col h-full bg-surface-base">{children}</div>
     </div>
