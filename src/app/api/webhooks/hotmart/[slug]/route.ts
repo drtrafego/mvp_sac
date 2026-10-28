@@ -6,6 +6,7 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
+import { isRecoveryEventType, reconcileRecoveryLeadWithRecordedPurchase } from '@/lib/recovery-event-reconciliation'
 import { extractHotmartToken } from '@/lib/hotmart-token'
 
 async function logReceived(args: {
@@ -446,6 +447,16 @@ export async function POST(
     return NextResponse.json({ ok: true, duplicate: true })
   }
 
+  const alreadyConverted = isRecoveryEventType(mappedType)
+    ? await reconcileRecoveryLeadWithRecordedPurchase({
+        companyId: company.id,
+        platform: 'hotmart',
+        leadId: lead.id,
+        phone,
+        email: buyer?.email ?? null,
+      })
+    : false
+
   // Cancelar jobs pendentes de recuperação quando chega compra_aprovada
   if (mappedType === 'compra_aprovada' && phone) {
     const leadsToCancel = await db
@@ -487,7 +498,7 @@ export async function POST(
   const now = new Date()
 
   // Disputa: apenas registra o lead, não envia nada
-  if (sequence && mappedType !== 'disputa') {
+  if (!alreadyConverted && sequence && mappedType !== 'disputa') {
     const messages = await db
       .select()
       .from(sequenceMessages)
@@ -524,7 +535,7 @@ export async function POST(
   }
 
   // Notificação interna (fire-and-forget)
-  if (config?.notificationPhone) {
+  if (config?.notificationPhone && !alreadyConverted) {
     const label = eventTypeLabels[mappedType] ?? mappedType
     const nome = buyer?.name ?? 'Desconhecido'
     const produto = data?.product?.name ?? ''

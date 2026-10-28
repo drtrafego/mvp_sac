@@ -6,6 +6,7 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
+import { isRecoveryEventType, reconcileRecoveryLeadWithRecordedPurchase } from '@/lib/recovery-event-reconciliation'
 
 type SaleMeta = { meta_key?: string; meta_value?: string }
 
@@ -284,6 +285,16 @@ export async function POST(
     return NextResponse.json({ ok: true, duplicate: true })
   }
 
+  const alreadyConverted = isRecoveryEventType(mappedType)
+    ? await reconcileRecoveryLeadWithRecordedPurchase({
+        companyId: company.id,
+        platform: 'greenn',
+        leadId: lead.id,
+        phone,
+        email: clientData?.email ?? null,
+      })
+    : false
+
   // Cancelar jobs pendentes e marcar como convertido quando chega compra_aprovada
   if (mappedType === 'compra_aprovada' && phone) {
     const leadsToCancel = await db
@@ -324,7 +335,7 @@ export async function POST(
   const MIN_FIRST_DELAY_MS = 30 * 60 * 1000
   const now = new Date()
 
-  if (sequence) {
+  if (!alreadyConverted && sequence) {
     const messages = await db
       .select()
       .from(sequenceMessages)
@@ -361,7 +372,7 @@ export async function POST(
   }
 
   // Notificação interna (fire-and-forget)
-  if (config?.notificationPhone) {
+  if (config?.notificationPhone && !alreadyConverted) {
     const label = eventTypeLabels[mappedType] ?? mappedType
     const nome = clientData?.name ?? 'Desconhecido'
     const produto = body.product?.name ?? ''

@@ -13,6 +13,7 @@ import {
   calculateFunilCursosSchedules,
 } from '@/lib/funnels/funil-cursos'
 import { shouldScheduleKiwifyMessageJobs } from '@/lib/kiwify-purchase-policy'
+import { isRecoveryEventType, reconcileRecoveryLeadWithRecordedPurchase } from '@/lib/recovery-event-reconciliation'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
 // Fonte: docs.kiwify.com.br, exemplos oficiais de payload e captura real do
@@ -725,6 +726,16 @@ export async function POST(
 
     const leadId = lead.id
 
+    const alreadyConverted = isRecoveryEventType(mappedType)
+      ? await reconcileRecoveryLeadWithRecordedPurchase({
+          companyId: company.id,
+          platform: 'kiwify',
+          leadId,
+          phone: draft.phone,
+          email: draft.email,
+        })
+      : false
+
     // Cancelar jobs pendentes e marcar como convertido quando chega compra_aprovada ou disputa (reembolso/chargeback).
     if ((mappedType === 'compra_aprovada' || mappedType === 'disputa') && draft.phone) {
       const leadsToCancel = await db
@@ -777,7 +788,7 @@ export async function POST(
 
     // Compra aprovada é somente upsert do contato/pedido. Nunca agenda
     // conversa, upsell ou mensagem automática para o comprador.
-    if (shouldScheduleKiwifyMessageJobs(mappedType) && isFunilEligible && draft.phone) {
+    if (!alreadyConverted && shouldScheduleKiwifyMessageJobs(mappedType) && isFunilEligible && draft.phone) {
       const initialFunnelState = createInitialFunilCursosState({
         transactionId: draft.transactionId!,
         productName: draft.productName,
@@ -817,7 +828,7 @@ export async function POST(
     // Sem telefone: grava o lead (serve para analytics e receita) mas NÃO agenda
     // job nenhum, senão o cron criaria mensagem que falha e sujaria o painel.
     // Acontece quando a cliente desabilitou o campo de celular no checkout.
-    if (shouldScheduleKiwifyMessageJobs(mappedType) && !isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
+    if (!alreadyConverted && shouldScheduleKiwifyMessageJobs(mappedType) && !isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
       const messages = await db
         .select()
         .from(sequenceMessages)
@@ -856,7 +867,7 @@ export async function POST(
     }
 
     // Notificação interna (fire-and-forget).
-    if (config?.notificationPhone) {
+    if (config?.notificationPhone && !alreadyConverted) {
       const label = eventTypeLabels[mappedType] ?? mappedType
       const nome = draft.name ?? 'Desconhecido'
       const produto = draft.productName ?? ''
