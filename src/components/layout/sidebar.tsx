@@ -25,6 +25,7 @@ import {
   Bot,
   Code2,
   MessageCircle,
+  Mail,
   ListTodo,
   PlayCircle,
 } from 'lucide-react'
@@ -37,6 +38,7 @@ export interface ActiveConnections {
   greenn?: boolean
   zouti?: boolean
   instagram?: boolean
+  email?: boolean
   instagramCommentAutomation?: boolean
   mineracao?: boolean
 }
@@ -64,6 +66,7 @@ export function resolveSidebarVisibility(
     greenn: sidebarConfig?.showGreenn !== undefined ? sidebarConfig.showGreenn : !!activeConnections?.greenn,
     zouti: sidebarConfig?.showZouti !== undefined ? sidebarConfig.showZouti : !!activeConnections?.zouti,
     instagram: !!activeConnections?.instagram && sidebarConfig?.showInstagram !== false,
+    email: !!activeConnections?.email && sidebarConfig?.showEmail !== false,
     mineracao: sidebarConfig?.showMineracao !== undefined ? sidebarConfig.showMineracao : !!activeConnections?.mineracao,
   }
 }
@@ -245,6 +248,10 @@ export const mineracaoNav = [
   { label: 'CRM Prospecção', href: '/pipeline?source=mineracao' },
 ]
 
+export const emailNav = [
+  { label: 'Mensagens', href: '/inbox?channel=email' },
+]
+
 export const ajustesNav = [
   { label: 'Agente', href: '/agente', icon: Bot, key: 'agente' },
   { label: 'Configuração', href: '/configuracoes', icon: Settings, key: 'configuracoes' },
@@ -279,6 +286,7 @@ export interface SidebarMenuConfig {
   showGreenn?: boolean
   showZouti?: boolean
   showInstagram?: boolean
+  showEmail?: boolean
   showMineracao?: boolean
   showHotmartMessages?: boolean
   showGreennMessages?: boolean
@@ -366,6 +374,7 @@ export function SidebarNavContent({
     greenn: true,
     zouti: true,
     instagram: true,
+    email: true,
     mineracao: true,
     ajustes: true,
   })
@@ -399,6 +408,9 @@ export function SidebarNavContent({
     }
     if (apiOficialNav.some(item => isActive(item.href))) {
       setSectionsOpen(prev => ({ ...prev, api_oficial: true }))
+    }
+    if (emailNav.some(item => isActive(item.href))) {
+      setSectionsOpen(prev => ({ ...prev, email: true }))
     }
     // Pathname puro (ignora ?platform=) de propósito: as 5 telas de
     // recuperação são compartilhadas pelas 4 plataformas, então estar em
@@ -436,6 +448,7 @@ export function SidebarNavContent({
   const showGreenn = visibility.greenn
   const showZouti = visibility.zouti
   const showInstagram = visibility.instagram
+  const showEmail = visibility.email
   const showMineracao = visibility.mineracao
   const showHotmartMessages = sidebarConfig?.showHotmartMessages === true
   const showGreennMessages = sidebarConfig?.showGreennMessages === true
@@ -915,7 +928,59 @@ export function SidebarNavContent({
         </div>
       )}
 
-      {/* 9. SEÇÃO MINERAÇÃO & PROSPECÇÃO (Se ativa) */}
+      {/* 9. SEÇÃO E-MAIL (Se ativa) */}
+      {showEmail && (
+        <div className="space-y-1">
+          {!collapsed ? (
+            <button
+              type="button"
+              onClick={() => toggleSection('email')}
+              className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors group cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <Mail size={14} className="text-indigo-500 dark:text-indigo-400" />
+                <span>E-mail</span>
+              </div>
+              <ChevronDown
+                size={13}
+                className={cn('text-fg-faint group-hover:text-fg-muted transition-transform duration-200', !sectionsOpen.email && '-rotate-90')}
+              />
+            </button>
+          ) : (
+            <div className="h-px bg-line-subtle my-2 mx-1" />
+          )}
+
+          {(collapsed || sectionsOpen.email) && (
+            <div className={cn('space-y-0.5', !collapsed && 'border-l-2 border-indigo-500/80 ml-3 pl-2.5')}>
+              {emailNav.map(({ label, href }) => {
+                const active = isActive(href)
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    aria-current={active ? 'page' : undefined}
+                    title={label}
+                    className={cn(
+                      'nav-item group flex items-center rounded-lg transition-all duration-150 cursor-pointer',
+                      collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-2.5 py-1.5 text-[0.8125rem]',
+                      active
+                        ? 'bg-surface-raised text-fg font-semibold'
+                        : 'text-fg-muted hover:text-fg hover:bg-surface-raised/50'
+                    )}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', active ? 'bg-indigo-500 dark:bg-indigo-400' : 'bg-fg-faint')} />
+                      {!collapsed && <span className="truncate">{label}</span>}
+                    </div>
+                  </Link>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 10. SEÇÃO MINERAÇÃO & PROSPECÇÃO (Se ativa) */}
       {showMineracaoSection && (
         <div className="space-y-1">
           {!collapsed ? (

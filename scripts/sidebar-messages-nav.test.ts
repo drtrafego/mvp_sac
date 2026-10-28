@@ -14,6 +14,7 @@ const sections: Array<[string, readonly NavItem[], string]> = [
   ['Greenn', sidebar.greennNav, '/inbox?source=greenn'],
   ['Zouti', sidebar.zoutiNav, '/inbox?source=zouti'],
   ['Instagram', sidebar.instagramNav, '/instagram'],
+  ['E-mail', sidebar.emailNav, '/inbox?channel=email'],
   ['Mineração', sidebar.mineracaoNav, '/inbox?channel=mineracao'],
 ]
 
@@ -36,6 +37,7 @@ test('a navegação existente do SAC continua preservada', () => {
   assert.ok(sidebar.kiwifyNav.some(item => item.label === 'Carrinho Kiwify'))
   assert.ok(sidebar.instagramNav.some(item => item.label === 'Conversas Direct'))
   assert.ok(sidebar.mineracaoNav.some(item => item.label === 'CRM Prospecção'))
+  assert.equal(sidebar.emailNav.length, 1)
 })
 
 test('integração desativada pode expor somente Mensagens por setor', () => {

@@ -9,6 +9,7 @@ export interface ActiveConnectionsData {
   greenn: boolean
   zouti: boolean
   instagram: boolean
+  email: boolean
   instagramCommentAutomation: boolean
   mineracao: boolean
 }
@@ -49,6 +50,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
         .select({
           platform: recoveryLeads.platform,
           source: recoveryLeads.trackingSource,
+          channel: recoveryLeads.channel,
         })
         .from(recoveryLeads)
         .where(eq(recoveryLeads.companyId, companyId))
@@ -85,10 +87,14 @@ export async function getCompanySidebarData(companyId: number): Promise<{
     // caso contrário uma empresa com conversas antigas reabre o Direct sem
     // credencial válida.
     const hasInstagram = hasInstagramCredentials(settingsRow)
+    const hasEmail = Boolean(
+      (settingsRow?.brevoApiKey && settingsRow?.brevoSenderEmail)
+      || leadsPlatforms.some(lead => lead.channel?.toLowerCase() === 'email'),
+    )
     const hasMineracao = !!(platformSet.has('mineracao') || sourceSet.has('mineracao') || sourceSet.has('prospeccao') || settingsRow?.brevoApiKey)
 
     // Se nenhuma plataforma estiver configurada ainda, mantém Hotmart/Geral como padrão
-    const noneConfigured = !hasHotmart && !hasKiwify && !hasGreenn && !hasZouti && !hasInstagram && !hasMineracao
+    const noneConfigured = !hasHotmart && !hasKiwify && !hasGreenn && !hasZouti && !hasInstagram && !hasEmail && !hasMineracao
 
     const sidebarConfig = (settingsRow?.sidebarConfig as SidebarMenuConfig | undefined) || null
     const effectiveSidebarConfig = sidebarConfig
@@ -110,6 +116,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
         // Visibilidade do menu nunca transforma uma configuração visual em
         // conexão operacional. A flag da sidebar só pode esconder o Direct.
         instagram: hasInstagram,
+        email: hasEmail && sidebarConfig?.showEmail !== false,
         instagramCommentAutomation: activeCommentAutomations.length > 0,
         mineracao: hasMineracao,
       },
@@ -123,6 +130,7 @@ export async function getCompanySidebarData(companyId: number): Promise<{
         greenn: false,
         zouti: false,
         instagram: false,
+        email: false,
         instagramCommentAutomation: false,
         mineracao: false,
       },
