@@ -274,6 +274,7 @@ export async function processInstagramComment(event: CommentEventData) {
   if (matchedRule.publicReply && matchedRule.publicReply.trim()) {
     replyInstagramCommentPublic({
       commentId,
+      mediaId,
       text: matchedRule.publicReply.trim(),
       companyId,
     }).catch(err => console.error('[Comment-to-DM Public Reply Error]:', err))

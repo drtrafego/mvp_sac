@@ -224,27 +224,52 @@ export async function fetchInstagramUserProfile({
  */
 export async function replyInstagramCommentPublic({
   commentId,
+  mediaId,
   text,
   companyId,
 }: {
   commentId: string
+  mediaId: string
   text: string
   companyId: number
-}): Promise<{ ok: boolean; replyId?: string; error?: string }> {
+}): Promise<{ ok: boolean; replyId?: string; error?: string; uncertain?: boolean }> {
   const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
-  const token = config?.instagramAccessToken
-  if (!token) {
-    return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
+  const token = config?.instagramAccessToken?.trim()
+  const configuredAccountId = config?.instagramAccountId?.trim()
+  if (!token || !configuredAccountId) {
+    return { ok: false, error: 'Instagram não está conectado neste tenant: conta ou token ausente.' }
   }
+  if (!commentId.trim()) return { ok: false, error: 'O comment_id do Instagram é obrigatório.' }
+  if (!/^\d+$/.test(mediaId.trim())) return { ok: false, error: 'O media_id do Instagram é inválido.' }
+  const replyText = text.trim()
+  if (!replyText || replyText.length > 2_200) return { ok: false, error: 'A resposta precisa ter entre 1 e 2.200 caracteres.' }
 
   try {
+    // O job carrega o media_id recebido no webhook. A leitura anterior impede
+    // que um comment_id de outro tenant ou de outro post seja usado por engano.
+    const mediaResponse = await fetch(`https://graph.instagram.com/v21.0/${mediaId}?fields=id,username,media_type`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    const media = await mediaResponse.json().catch(() => ({})) as Record<string, unknown>
+    if (!mediaResponse.ok) {
+      const detail = (media.error as Record<string, unknown>)?.message || JSON.stringify(media)
+      return { ok: false, error: `O post do Instagram não pertence à conta autorizada ou não pode ser lido: ${detail}` }
+    }
+    const mediaOwner = typeof media.username === 'string' ? media.username.trim().toLowerCase() : ''
+    const configuredUsername = config.instagramUsername?.trim().replace(/^@/, '').toLowerCase() || ''
+    if (mediaOwner && configuredUsername && mediaOwner !== configuredUsername) {
+      return { ok: false, error: 'O post pertence a outra conta do Instagram; resposta bloqueada.' }
+    }
+
     const res = await fetch(`https://graph.instagram.com/v21.0/${commentId}/replies`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: replyText }),
+      signal: AbortSignal.timeout(30_000),
     })
 
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
@@ -258,7 +283,8 @@ export async function replyInstagramCommentPublic({
     return { ok: true, replyId }
   } catch (error) {
     console.error('[Instagram Public Reply Exception]:', error)
-    return { ok: false, error: String(error) }
+    const uncertain = error instanceof Error && /timeout|abort/i.test(error.name + error.message)
+    return { ok: false, error: error instanceof Error ? error.message : String(error), uncertain }
   }
 }
 

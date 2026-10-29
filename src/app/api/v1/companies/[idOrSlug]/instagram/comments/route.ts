@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { and, eq, isNull } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { companies, sacAuditEvents, sacCodexJobs } from '@/lib/db/schema'
-import { createInstagramMediaComment } from '@/lib/instagram'
+import { createInstagramMediaComment, replyInstagramCommentPublic } from '@/lib/instagram'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,8 +30,13 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!company) return NextResponse.json({ error: 'Tenant não encontrado.', code: 'TENANT_NOT_FOUND' }, { status: 404 })
   const [job] = await db.select().from(sacCodexJobs).where(and(eq(sacCodexJobs.jobId, jobId), eq(sacCodexJobs.companyId, company.id))).limit(1)
   if (!job) return NextResponse.json({ error: 'Job inexistente ou fora do tenant autorizado.', code: 'TENANT_MISMATCH' }, { status: 404 })
-  if (job.intent !== 'instagram.comment.create') return NextResponse.json({ error: 'Ação fora da allowlist do executor SAC.', code: 'ACTION_NOT_ALLOWLISTED' }, { status: 403 })
+  if (job.intent !== 'instagram.comment.create' && job.intent !== 'instagram.comment.reply') return NextResponse.json({ error: 'Ação fora da allowlist do executor SAC.', code: 'ACTION_NOT_ALLOWLISTED' }, { status: 403 })
   if (job.mediaId !== mediaId || job.targetText !== text) return NextResponse.json({ error: 'O payload não corresponde ao job original.', code: 'PAYLOAD_MISMATCH' }, { status: 409 })
+  const jobContext = job.context && typeof job.context === 'object' && !Array.isArray(job.context) ? job.context as Record<string, unknown> : {}
+  const commentId = typeof body?.commentId === 'string' ? body.commentId.trim() : ''
+  if (job.intent === 'instagram.comment.reply' && (!commentId || jobContext.commentId !== commentId)) {
+    return NextResponse.json({ error: 'commentId não corresponde ao evento original.', code: 'COMMENT_PAYLOAD_MISMATCH' }, { status: 409 })
+  }
   if (job.status === 'concluido') return NextResponse.json({ ok: true, reused: true, result: job.result })
   if (job.status !== 'executando') return NextResponse.json({ error: `Job está em ${job.status}; publicação bloqueada.`, code: 'INVALID_JOB_STATE' }, { status: 409 })
 
@@ -44,9 +49,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     .returning()
   if (!claimed) return NextResponse.json({ error: 'Ação já está em execução ou foi concluída.', code: 'ACTION_ALREADY_CLAIMED' }, { status: 409 })
 
-  const result = await createInstagramMediaComment({ companyId: job.companyId, mediaId, text })
+  const result = job.intent === 'instagram.comment.reply'
+    ? await replyInstagramCommentPublic({ companyId: job.companyId, mediaId, commentId, text })
+    : await createInstagramMediaComment({ companyId: job.companyId, mediaId, text })
   const nextStatus = result.ok ? 'concluido' : 'erro'
   const [updated] = await db.update(sacCodexJobs).set({ status: nextStatus, result, errorMessage: result.ok ? null : result.error?.slice(0, 500), updatedAt: new Date(), completedAt: result.ok ? new Date() : null }).where(and(eq(sacCodexJobs.id, job.id), eq(sacCodexJobs.status, 'executando'))).returning()
-  await db.insert(sacAuditEvents).values({ companyId: job.companyId, actorType: 'system', actorId: 'codex', type: result.ok ? 'instagram_comment_published' : 'instagram_comment_failed', referenceType: 'codex_job', referenceId: jobId, payload: { mediaId, commentId: result.commentId ?? null, permalink: result.permalink ?? null, error: result.error ?? null, uncertain: result.uncertain ?? false } })
+  const publishedCommentId = 'commentId' in result ? result.commentId ?? null : null
+  await db.insert(sacAuditEvents).values({ companyId: job.companyId, actorType: 'system', actorId: 'codex', type: result.ok ? (job.intent === 'instagram.comment.reply' ? 'instagram_comment_reply_published' : 'instagram_comment_published') : 'instagram_comment_failed', referenceType: 'codex_job', referenceId: jobId, payload: { mediaId, commentId: job.intent === 'instagram.comment.reply' ? commentId : publishedCommentId, replyId: 'replyId' in result ? result.replyId ?? null : null, permalink: 'permalink' in result ? result.permalink ?? null : null, error: result.error ?? null, uncertain: result.uncertain ?? false } })
   return NextResponse.json({ ok: result.ok, status: nextStatus, result, job: updated }, { status: result.ok ? 200 : (result.uncertain ? 504 : 502) })
 }

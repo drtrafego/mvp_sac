@@ -23,12 +23,12 @@ export const CODEX_ACTION_STATUSES = [
 ] as const
 
 export type CodexActionStatus = typeof CODEX_ACTION_STATUSES[number]
-export type CodexActionIntent = 'instagram.comment.create' | 'generic.request'
+export type CodexActionIntent = 'instagram.comment.create' | 'instagram.comment.reply' | 'generic.request'
 
-// Única operação externa que o executor SAC pode publicar neste contrato.
-// Avaliação genérica pode continuar existindo no gateway, mas nunca ganha
-// permissão de escrita por isso.
-export const CODEX_ACTION_ALLOWLIST = ['instagram.comment.create'] as const
+// Operações externas explícitas que o executor SAC pode publicar neste
+// contrato. Avaliação genérica pode continuar existindo no gateway, mas nunca
+// ganha permissão de escrita por isso.
+export const CODEX_ACTION_ALLOWLIST = ['instagram.comment.create', 'instagram.comment.reply'] as const
 
 export function isAllowlistedCodexIntent(intent: CodexActionIntent | string): boolean {
   return (CODEX_ACTION_ALLOWLIST as readonly string[]).includes(intent)

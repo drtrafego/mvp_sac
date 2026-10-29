@@ -16,7 +16,7 @@ test('reconhece intenção de comentário e mantém media_id explícito', () => 
 test('texto sem operação externa não vira comentário', () => {
   assert.equal(parseCodexIntent('Mostre o status do atendimento').intent, 'generic.request')
   assert.equal(isAllowlistedCodexIntent('generic.request'), false)
-  assert.deepEqual(CODEX_ACTION_ALLOWLIST, ['instagram.comment.create'])
+  assert.deepEqual(CODEX_ACTION_ALLOWLIST, ['instagram.comment.create', 'instagram.comment.reply'])
 })
 
 test('contexto é reduzido a chaves não secretas e idempotência é estável', () => {

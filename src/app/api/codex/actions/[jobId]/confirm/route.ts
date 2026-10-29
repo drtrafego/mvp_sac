@@ -16,6 +16,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ job
   if (body.confirm !== true) return NextResponse.json({ error: 'A confirmação precisa ser explícita.' }, { status: 400 })
   if (job.status !== 'aguardando_confirmacao') return NextResponse.json({ error: `Job está em ${job.status} e não aceita confirmação.` }, { status: 409 })
 
+  const jobContext = job.context && typeof job.context === 'object' && !Array.isArray(job.context) ? job.context as Record<string, unknown> : {}
+  if (jobContext.source === 'instagram_comment_event') {
+    const [updated] = await db.update(sacCodexJobs).set({ status: 'executando', errorMessage: null, confirmedAt: new Date(), updatedAt: new Date() }).where(and(eq(sacCodexJobs.companyId, actor.company.id), eq(sacCodexJobs.jobId, jobId))).returning()
+    await db.insert(sacAuditEvents).values({ companyId: actor.company.id, actorType: 'human', actorId: actor.actorId, type: 'codex_job_confirmed', referenceType: 'codex_job', referenceId: jobId, payload: { status: 'executando', source: 'instagram_comment_event', executionBlockedUntilCredential: true } })
+    return NextResponse.json({ ok: true, job: updated })
+  }
+
   try {
     const response = await confirmCodexGatewayJob({ jobId, tenant: { id: actor.company.id, slug: actor.company.slug }, sessionId: job.sessionId, confirmation: true })
     const status = typeof response.status === 'string' ? response.status : 'executando'

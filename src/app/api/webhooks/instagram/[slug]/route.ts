@@ -17,6 +17,7 @@ import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
+import { isLuanaTriggerComment, prepareLuanaCommentJob } from "@/lib/instagram-comment-event-automation"
 
 
 function instagramDebugPayload(opts: {
@@ -530,7 +531,18 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           const mediaObj = val.media as { id?: string } | undefined
           const mediaId = mediaObj?.id || (val.media_id as string) || ''
 
-          if (commentId && commenterId && commentText) {
+          if (isLuanaTriggerComment(commentText)) {
+            await prepareLuanaCommentJob({
+              companyId: company.id,
+              entryAccountId: pageId,
+              acceptedAccountIds: [companySettingsForSecret?.instagramAccountId ?? '', companySettingsForSecret?.instagramPageId ?? ''],
+              commentId,
+              commenterId,
+              commenterUsername,
+              mediaId,
+              commentText,
+            }).catch(err => console.error(`[Luana Comment Event ${slug} Error]:`, err))
+          } else if (commentId && commenterId && commentText) {
             await captureInstagramInboundInteraction({
               companyId: company.id,
               instagramUserId: commenterId,
