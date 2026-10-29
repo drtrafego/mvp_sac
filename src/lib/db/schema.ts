@@ -1081,6 +1081,39 @@ export const sacAuditEvents = pgTable('sac_audit_events', {
   index('sac_audit_events_company_lead_occurred_idx').on(table.companyId, table.leadId, table.occurredAt),
 ])
 
+// Jobs enviados pelo painel ao controlador Codex. O texto é mantido para
+// auditoria do comando, enquanto áudio cru fica fora do banco e é identificado
+// somente pelo hash. A unicidade por tenant + idempotencyKey impede publicação
+// duplicada quando o painel, o gateway ou a rede repetem uma tentativa.
+export const sacCodexJobs = pgTable('sac_codex_jobs', {
+  id: serial('id').primaryKey(),
+  jobId: text('job_id').notNull().unique(),
+  gatewayJobId: text('gateway_job_id'),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  sessionId: text('session_id').notNull(),
+  actorId: text('actor_id').notNull(),
+  inputKind: text('input_kind').notNull(),
+  audioSha256: text('audio_sha256'),
+  transcript: text('transcript').notNull(),
+  intent: text('intent').notNull(),
+  targetText: text('target_text'),
+  mediaId: text('media_id'),
+  mediaUrl: text('media_url'),
+  context: jsonb('context'),
+  status: text('status').notNull().default('recebido'),
+  result: jsonb('result'),
+  errorMessage: text('error_message'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  confirmedAt: timestamp('confirmed_at'),
+  executionClaimedAt: timestamp('execution_claimed_at'),
+  completedAt: timestamp('completed_at'),
+}, (table) => [
+  uniqueIndex('sac_codex_jobs_company_idempotency_unique').on(table.companyId, table.idempotencyKey),
+  index('sac_codex_jobs_company_status_updated_idx').on(table.companyId, table.status, table.updatedAt),
+])
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 export const companiesRelations = relations(companies, ({ one, many }) => ({
   settings: one(settings, { fields: [companies.id], references: [settings.companyId] }),
@@ -1099,6 +1132,7 @@ export const companiesRelations = relations(companies, ({ one, many }) => ({
   approvedReplies: many(sacApprovedReplies),
   pendingItems: many(sacPendingItems),
   auditEvents: many(sacAuditEvents),
+  codexJobs: many(sacCodexJobs),
 }))
 
 export const settingsRelations = relations(settings, ({ one }) => ({

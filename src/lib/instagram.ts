@@ -263,6 +263,76 @@ export async function replyInstagramCommentPublic({
 }
 
 /**
+ * Publica um comentário em um post/reel da conta autorizada pela empresa.
+ * Esta função só é chamada pelo endpoint executor do Codex, depois de a
+ * intenção ter sido confirmada. O media_id é obrigatório, pois a API não deve
+ * escolher um post implícito nem publicar em outra conta.
+ */
+export async function createInstagramMediaComment({
+  mediaId,
+  text,
+  companyId,
+}: {
+  mediaId: string
+  text: string
+  companyId: number
+}): Promise<{ ok: boolean; commentId?: string; permalink?: string; error?: string; uncertain?: boolean }> {
+  const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
+  const token = config?.instagramAccessToken?.trim()
+  const configuredAccountId = config?.instagramAccountId?.trim()
+  if (!token || !configuredAccountId) {
+    return { ok: false, error: 'Instagram não está conectado neste tenant: conta ou token ausente.' }
+  }
+  if (!/^\d+$/.test(mediaId.trim())) {
+    return { ok: false, error: 'O media_id do Instagram é inválido.' }
+  }
+  const commentText = text.trim()
+  if (!commentText || commentText.length > 2_200) {
+    return { ok: false, error: 'O comentário precisa ter entre 1 e 2.200 caracteres.' }
+  }
+
+  try {
+    // Leitura anterior é o gate de permissão/asset: o token da empresa precisa
+    // conseguir ler o alvo. Não aceitamos URL ou ID fornecido por outro tenant
+    // como prova de autorização.
+    const mediaResponse = await fetch(`https://graph.instagram.com/v21.0/${mediaId}?fields=id,permalink,username,media_type`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    const media = await mediaResponse.json().catch(() => ({})) as Record<string, unknown>
+    if (!mediaResponse.ok) {
+      const detail = (media.error as Record<string, unknown>)?.message || JSON.stringify(media)
+      return { ok: false, error: `O post do Instagram não pertence à conta autorizada ou não pode ser lido: ${detail}` }
+    }
+    const mediaOwner = typeof media.username === 'string' ? media.username.trim().toLowerCase() : ''
+    const configuredUsername = config.instagramUsername?.trim().replace(/^@/, '').toLowerCase() || ''
+    if (mediaOwner && configuredUsername && mediaOwner !== configuredUsername) {
+      return { ok: false, error: 'O post pertence a outra conta do Instagram; publicação bloqueada.' }
+    }
+
+    const response = await fetch(`https://graph.instagram.com/v21.0/${mediaId}/comments`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: commentText }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    const data = await response.json().catch(() => ({})) as Record<string, unknown>
+    if (!response.ok) {
+      const detail = (data.error as Record<string, unknown>)?.message || JSON.stringify(data)
+      return { ok: false, error: `A API oficial do Instagram recusou o comentário: ${detail}` }
+    }
+    return {
+      ok: true,
+      commentId: typeof data.id === 'string' ? data.id : undefined,
+      permalink: typeof media.permalink === 'string' ? media.permalink : undefined,
+    }
+  } catch (error) {
+    const uncertain = error instanceof Error && /timeout|abort/i.test(error.name + error.message)
+    return { ok: false, uncertain, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
  * Oculta (ou desoculta) um comentário no Instagram.
  * Endpoint Graph API: POST /{comment_id}
  * Payload: { hide: true }

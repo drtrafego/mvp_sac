@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
-import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived } from '@/lib/db/schema'
+import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived, metaMessageTemplates } from '@/lib/db/schema'
 import { db } from '@/lib/db'
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
+import { canScheduleAutomaticRecoverySequence, isApprovedUtilitySequence } from '@/lib/recovery-sequence-policy'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import {
   isFunilCursosTrigger,
   createInitialFunilCursosState,
-  calculateFunilCursosSchedules,
 } from '@/lib/funnels/funil-cursos'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
@@ -649,6 +649,7 @@ export async function POST(
 
     // Prioriza sequência com productFilter que combina; fallback para sem filtro.
     const sequence = selectRecoverySequence(sequences, draft.productId, draft.productName)
+    const isIsabela = company.slug === 'isabela-fanini'
 
     let lead: { id: number } | undefined
     try {
@@ -787,41 +788,32 @@ export async function POST(
         .set({ aiScheduleState: initialFunnelState as any })
         .where(eq(recoveryLeads.id, leadId))
 
-      // Agenda D+7 (10.080 min) e D+15 (21.600 min) a partir de approvedDate no fuso America/Sao_Paulo
-      const schedules = calculateFunilCursosSchedules(draft.approvedDate ?? draft.orderDate ?? now)
-
-      await db.insert(messageJobs).values([
-        {
-          leadId,
-          upsellContent: schedules.d7.template,
-          scheduledFor: schedules.d7.scheduledFor,
-          status: 'pending',
-          checkBeforeSend: false,
-          messageOrder: schedules.d7.order,
-        },
-        {
-          leadId,
-          upsellContent: schedules.d15.template,
-          scheduledFor: schedules.d15.scheduledFor,
-          status: 'pending',
-          checkBeforeSend: false,
-          messageOrder: schedules.d15.order,
-        },
-      ])
     }
 
     // Disputa: apenas registra o lead, não envia nada.
     // Sem telefone: grava o lead (serve para analytics e receita) mas NÃO agenda
     // job nenhum, senão o cron criaria mensagem que falha e sujaria o painel.
     // Acontece quando a cliente desabilitou o campo de celular no checkout.
-    if (!isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
+    if (sequence && mappedType !== 'disputa' && canScheduleAutomaticRecoverySequence(mappedType) && draft.phone) {
       const messages = await db
         .select()
         .from(sequenceMessages)
         .where(and(eq(sequenceMessages.sequenceId, sequence.id), eq(sequenceMessages.isActive, true)))
         .orderBy(sequenceMessages.order)
 
-      if (messages.length > 0) {
+      const approvedUtilityTemplateNames = isIsabela
+        ? new Set((await db
+          .select({ name: metaMessageTemplates.name })
+          .from(metaMessageTemplates)
+          .where(and(
+            eq(metaMessageTemplates.companyId, company.id),
+            eq(metaMessageTemplates.status, 'APPROVED'),
+            eq(metaMessageTemplates.category, 'UTILITY'),
+          ))).map(template => template.name))
+        : new Set<string>()
+      const canDispatch = !isIsabela || isApprovedUtilitySequence(messages, approvedUtilityTemplateNames)
+
+      if (canDispatch && messages.length > 0) {
         await db.insert(messageJobs).values(
           messages.map((msg, i) => {
             let delayMs = (msg.delayMinutes ?? 0) * 60 * 1000
@@ -840,7 +832,7 @@ export async function POST(
         )
       }
 
-      if (!isRecovery && sequence.upsellMessage) {
+      if (!isRecovery && !isIsabela && sequence.upsellMessage) {
         const upsellDelayMs = (sequence.upsellDelayMinutes ?? 1440) * 60 * 1000
         await db.insert(messageJobs).values({
           leadId,

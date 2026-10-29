@@ -11,6 +11,7 @@ import { AgentNameCard } from '@/components/agente/agent-name-card'
 import { AgendaSection } from '@/components/agente/agenda-section'
 import { FollowupCard } from '@/components/followup/followup-card'
 import { getFollowupConfigReal, getFollowupSentStatsReal } from '@/lib/followup-server'
+import { CodexActionConsole } from '@/components/agente/codex-action-console'
 
 export default async function AgentePage() {
   const company = await requireCompany()
@@ -77,6 +78,8 @@ export default async function AgentePage() {
       </div>
 
       <AgentNameCard />
+
+      <CodexActionConsole />
 
       <FollowupCard
         initialConfig={followupConfigData}

@@ -4,6 +4,7 @@ import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
+import { canScheduleAutomaticRecoverySequence } from '@/lib/recovery-sequence-policy'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 
@@ -324,7 +325,7 @@ export async function POST(
   const MIN_FIRST_DELAY_MS = 30 * 60 * 1000
   const now = new Date()
 
-  if (sequence) {
+  if (sequence && canScheduleAutomaticRecoverySequence(mappedType)) {
     const messages = await db
       .select()
       .from(sequenceMessages)
