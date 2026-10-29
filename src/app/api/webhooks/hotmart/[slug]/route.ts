@@ -6,6 +6,7 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
+import { shouldScheduleRecoveryMessageJobs, shouldSendRecoveryNotification } from '@/lib/recovery-event-policy'
 import { extractHotmartToken } from '@/lib/hotmart-token'
 
 async function logReceived(args: {
@@ -487,7 +488,7 @@ export async function POST(
   const now = new Date()
 
   // Disputa: apenas registra o lead, não envia nada
-  if (sequence && mappedType !== 'disputa') {
+  if (shouldScheduleRecoveryMessageJobs(mappedType) && sequence && mappedType !== 'disputa') {
     const messages = await db
       .select()
       .from(sequenceMessages)
@@ -524,7 +525,7 @@ export async function POST(
   }
 
   // Notificação interna (fire-and-forget)
-  if (config?.notificationPhone) {
+  if (config?.notificationPhone && shouldSendRecoveryNotification(mappedType)) {
     const label = eventTypeLabels[mappedType] ?? mappedType
     const nome = buyer?.name ?? 'Desconhecido'
     const produto = data?.product?.name ?? ''

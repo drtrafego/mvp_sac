@@ -17,6 +17,7 @@ import { evaluateDispatchWindow, firstDueJobPerLead, retryAtAfterPreviousFollowu
 import { isNativeAvailabilityCompany, normalizeAvailabilitySchedule } from '@/lib/agenda-schedule'
 import { shouldSyncHermesAgenda } from '@/lib/hermes-control-panel'
 import { evaluateSacPendingRules } from '@/lib/sac-pending-rules'
+import { ABANDONED_CART_EVENT } from '@/lib/recovery-event-policy'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
 
@@ -200,6 +201,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         leadPhone: recoveryLeads.phone,
         leadCreatedAt: recoveryLeads.createdAt,
         leadPriority: recoveryLeads.priority,
+        leadEventType: recoveryLeads.eventType,
         checkBeforeSend: messageJobs.checkBeforeSend,
       })
       .from(messageJobs)
@@ -372,7 +374,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
   let hasDispatchedAny = false
   const cooldownsByPhone = new Map<string, Date>()
 
-  for (const { job, companyId, companySlug, metaPhoneNumberId, whatsappProvider, availabilitySchedule, availabilityScheduleManual, nativeAvailabilitySchedule, leadPhone, leadCreatedAt, checkBeforeSend } of runnableJobs) {
+  for (const { job, companyId, companySlug, metaPhoneNumberId, whatsappProvider, availabilitySchedule, availabilityScheduleManual, nativeAvailabilitySchedule, leadPhone, leadCreatedAt, leadEventType, checkBeforeSend } of runnableJobs) {
     let providerAccepted = false
     try {
       const activeCooldown = metaPhoneNumberId ? cooldownsByPhone.get(metaPhoneNumberId) : undefined
@@ -389,6 +391,18 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
       if (!job.leadId || (!job.messageId && !job.upsellContent)) {
         await db.update(messageJobs).set({ status: 'failed', error: 'Missing lead or message', processingStartedAt: null }).where(eq(messageJobs.id, job.id))
         failed++
+        continue
+      }
+
+      // Carrinho abandonado é estado de CRM, nunca uma autorização de envio.
+      // Este bloqueio também cobre jobs antigos que já estavam pendentes antes
+      // do webhook passar a ser somente contato/estado.
+      if (leadEventType === ABANDONED_CART_EVENT) {
+        await db.update(messageJobs).set({
+          status: 'cancelled',
+          error: 'Carrinho abandonado não cria mensagens',
+          processingStartedAt: null,
+        }).where(eq(messageJobs.id, job.id))
         continue
       }
 

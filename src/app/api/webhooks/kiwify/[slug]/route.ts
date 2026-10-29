@@ -13,6 +13,7 @@ import {
   calculateFunilCursosSchedules,
 } from '@/lib/funnels/funil-cursos'
 import { shouldScheduleKiwifyMessageJobs } from '@/lib/kiwify-purchase-policy'
+import { shouldSendRecoveryNotification } from '@/lib/recovery-event-policy'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
 // Fonte: docs.kiwify.com.br, exemplos oficiais de payload e captura real do
@@ -856,7 +857,7 @@ export async function POST(
     }
 
     // Notificação interna (fire-and-forget).
-    if (config?.notificationPhone) {
+    if (config?.notificationPhone && shouldSendRecoveryNotification(mappedType)) {
       const label = eventTypeLabels[mappedType] ?? mappedType
       const nome = draft.name ?? 'Desconhecido'
       const produto = draft.productName ?? ''

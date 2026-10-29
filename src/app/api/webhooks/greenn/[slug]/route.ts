@@ -6,6 +6,7 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
+import { shouldScheduleRecoveryMessageJobs, shouldSendRecoveryNotification } from '@/lib/recovery-event-policy'
 
 type SaleMeta = { meta_key?: string; meta_value?: string }
 
@@ -324,7 +325,7 @@ export async function POST(
   const MIN_FIRST_DELAY_MS = 30 * 60 * 1000
   const now = new Date()
 
-  if (sequence) {
+  if (shouldScheduleRecoveryMessageJobs(mappedType) && sequence) {
     const messages = await db
       .select()
       .from(sequenceMessages)
@@ -361,7 +362,7 @@ export async function POST(
   }
 
   // Notificação interna (fire-and-forget)
-  if (config?.notificationPhone) {
+  if (config?.notificationPhone && shouldSendRecoveryNotification(mappedType)) {
     const label = eventTypeLabels[mappedType] ?? mappedType
     const nome = clientData?.name ?? 'Desconhecido'
     const produto = body.product?.name ?? ''

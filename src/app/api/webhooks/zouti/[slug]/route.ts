@@ -7,6 +7,7 @@ import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
+import { shouldScheduleRecoveryMessageJobs, shouldSendRecoveryNotification } from '@/lib/recovery-event-policy'
 
 // ─── Tipos do payload Zouti ──────────────────────────────────────────────────
 // Fonte: https://ajuda.zouti.com.br/pt-br/articles/9740950-como-configurar-webhook
@@ -543,7 +544,7 @@ export async function POST(
   const now = new Date()
 
   // Disputa: apenas registra o lead, nao envia nada
-  if (sequence && mappedType !== 'disputa') {
+  if (shouldScheduleRecoveryMessageJobs(mappedType) && sequence && mappedType !== 'disputa') {
     const messages = await db
       .select()
       .from(sequenceMessages)
@@ -580,7 +581,7 @@ export async function POST(
   }
 
   // Notificacao interna (fire-and-forget)
-  if (config?.notificationPhone) {
+  if (config?.notificationPhone && shouldSendRecoveryNotification(mappedType)) {
     const label = eventTypeLabels[mappedType] ?? mappedType
     const nome = customer?.name ?? 'Desconhecido'
     const produto = productName ?? ''

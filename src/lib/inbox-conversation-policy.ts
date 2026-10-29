@@ -1,24 +1,25 @@
 import { sql, type SQL } from 'drizzle-orm'
 import { recoveryLeads } from '@/lib/db/schema'
+import { ABANDONED_CART_EVENT, PURCHASE_APPROVED_EVENT } from '@/lib/recovery-event-policy'
 
 /**
- * Uma compra aprovada da Kiwify é um contato/pedido até existir uma mensagem
- * real. O lead continua no CRM e nos relatórios; esta condição só impede que
- * ele seja exposto como uma conversa vazia no Inbox e na API de conversas.
+ * Carrinho abandonado e compra aprovada são contato/estado de checkout até
+ * existir uma mensagem real. O lead continua no CRM e nos relatórios; esta
+ * condição só impede que uma linha sintética e vazia apareça como conversa.
  */
 export function conversationVisibilityCondition(companyId: number): SQL {
   return sql`NOT (
-    ${recoveryLeads.platform} = 'kiwify'
-    AND ${recoveryLeads.eventType} = 'compra_aprovada'
+    ${recoveryLeads.eventType} IN (${ABANDONED_CART_EVENT}, ${PURCHASE_APPROVED_EVENT})
     AND NOT EXISTS (
       SELECT 1
-      FROM whatsapp_messages kiwify_purchase_history
-      WHERE kiwify_purchase_history.company_id = ${companyId}
+      FROM whatsapp_messages abandoned_cart_history
+      WHERE abandoned_cart_history.company_id = ${companyId}
         AND (
-          kiwify_purchase_history.lead_id = ${recoveryLeads.id}
-          OR kiwify_purchase_history.phone = ${recoveryLeads.phone}
-          OR regexp_replace(kiwify_purchase_history.phone, '\\D', '', 'g') = regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g')
-          OR right(regexp_replace(kiwify_purchase_history.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9)
+          abandoned_cart_history.lead_id = ${recoveryLeads.id}
+          OR (
+            abandoned_cart_history.lead_id IS NULL
+            AND right(regexp_replace(abandoned_cart_history.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9)
+          )
         )
     )
   )`

@@ -134,6 +134,13 @@
       "when": 1793000000001,
       "tag": "0032_first_human_message_metric",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793000000002,
+      "tag": "0038_abandoned_cart_no_conversations",
+      "breakpoints": true
     }
   ]
 }
