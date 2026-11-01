@@ -373,7 +373,6 @@ export async function POST(
       .set({
         pipelineStage: action === 'cancelled' ? 'perdido' : 'agendado',
         status: action === 'cancelled' ? 'cancelled' : 'completed',
-        firstContactAt: sql`coalesce(${recoveryLeads.firstContactAt}, ${eventTime.toISOString()})`,
         updatedAt: new Date(),
       })
       .where(

@@ -306,7 +306,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const gramadoPessoasCount = Number(gramadoReservationStats?.totalPessoas ?? 0)
   const lucasAgendamentosCount = Number(lucasAppointmentStats?.totalAgendamentos ?? 0)
   const agendamentosCount = isGramado ? gramadoReservasCount : isLucas ? lucasAgendamentosCount : fechadosCount
-  const agendamentoConversionCount = agendamentosCount
+  // The reservation card counts operational rows. The conversion rate keeps
+  // the business rule "converted conversations / eligible conversations" and
+  // therefore uses distinct inbound conversations with a valid reservation.
+  const agendamentoConversionCount = isGramado
+    ? Number(gramadoConversationStats?.converteu ?? 0)
+    : agendamentosCount
   const fechadosValueCents = Number(leadStats?.valorFechadoCents ?? 0)
   const qualificadosCount = leadStats?.qualificadosTotal ?? 0
   const gramadoCardCounts = gramadoDashboardCardCounts(leadStats)

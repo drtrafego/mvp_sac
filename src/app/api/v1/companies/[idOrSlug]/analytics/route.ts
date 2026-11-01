@@ -122,7 +122,16 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       ? Number(lucasAppointmentStats?.totalAgendamentos ?? 0)
       : (leadStats?.fechadosTotal ?? 0)
   const valorFechadoCents = Number(leadStats?.valorFechadoCents ?? 0)
-  const conversionRate = calculateConversionRate(fechados, total)
+  // Gramado has two valid, intentionally separate measures:
+  // - `fechados` is the operational reservation count used by the card;
+  // - conversion is the number of eligible inbound conversations that have
+  //   at least one valid reservation. Counting reservation rows here would
+  //   turn repeated updates for the same lead into extra conversions and
+  //   would mix attendance/reservation data with the conversation denominator.
+  const conversionNumerator = isGramado
+    ? Number(gramadoConversationStats?.converteu ?? 0)
+    : fechados
+  const conversionRate = calculateConversionRate(conversionNumerator, total)
 
   let modelMetrics = {}
   if (isGramado) {

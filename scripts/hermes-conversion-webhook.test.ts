@@ -308,6 +308,7 @@ async function main() {
       assert.equal(lead.companyId, company.id)
       assert.equal(lead.platform, 'hermes')
       assert.equal(lead.id, call.leadId)
+      assert.equal(lead.firstContactAt, null, 'evento de reserva não pode virar início de conversa')
 
       const [logRow] = await testDb
         .select()

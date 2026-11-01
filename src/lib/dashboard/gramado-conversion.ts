@@ -18,9 +18,9 @@ export const gramadoMessageCountSql = sql`(
 
 /**
  * A Gramado conversation is active in the period when it has at least one
- * inbound message in that BRT interval. This intentionally does not require
- * the first inbound message to be inside the interval: returning customers
- * still represent real traffic and must remain in the conversion denominator.
+ * inbound message in that exact BRT interval. There is no rolling 24-hour
+ * lookback/lookahead: returning customers count only when their event is in
+ * the selected panel period.
  */
 export function gramadoInboundConversationInPeriodSql(from: string, to: string): SQL {
   return sql`exists (

@@ -129,7 +129,7 @@ async function main() {
       assert.equal(body.code, 'INVALID_PERIOD')
     })
 
-    const [gramadoLead, returningGramadoLead, zeroConversionGramadoLead] = await testDb.insert(schema.recoveryLeads).values([
+    const [gramadoLead, returningGramadoLead, zeroConversionGramadoLead, outsideWindowGramadoLead] = await testDb.insert(schema.recoveryLeads).values([
       {
         companyId: gramado.id,
         platform: 'sac',
@@ -167,6 +167,15 @@ async function main() {
         createdAt: new Date('2026-10-02T10:00:00.000Z'),
         updatedAt: new Date('2026-10-02T10:00:00.000Z'),
       },
+      {
+        companyId: gramado.id,
+        platform: 'sac',
+        eventType: 'atendimento_ia',
+        phone: '5554999990005',
+        status: 'in_conversation',
+        createdAt: new Date('2026-09-30T23:59:59.000Z'),
+        updatedAt: new Date('2026-10-01T02:59:59.999Z'),
+      },
     ]).returning()
     await testDb.insert(schema.whatsappMessages).values([
       {
@@ -201,6 +210,14 @@ async function main() {
         content: 'Quero saber o horário',
         createdAt: new Date('2026-10-02T10:01:00.000Z'),
       },
+      {
+        companyId: gramado.id,
+        leadId: outsideWindowGramadoLead.id,
+        phone: outsideWindowGramadoLead.phone,
+        direction: 'inbound',
+        content: 'Mensagem imediatamente antes do dia selecionado',
+        createdAt: new Date('2026-10-01T02:59:59.999Z'),
+      },
     ])
     await testDb.insert(schema.gramadoReservations).values([
       {
@@ -221,9 +238,18 @@ async function main() {
         status: 'compareceu',
         pessoas: 2,
       },
+      {
+        companyId: gramado.id,
+        leadId: outsideWindowGramadoLead.id,
+        reservaId: 'reserva-fora-da-janela',
+        phoneNorm: outsideWindowGramadoLead.phone,
+        data: '2026-10-01',
+        status: 'compareceu',
+        pessoas: 2,
+      },
     ])
 
-    await test('analytics do Gramado usa a fonte de reservas do período, sem passar de 100%', async () => {
+    await test('analytics do Gramado usa somente a janela temporal selecionada e separa reserva da taxa por conversa', async () => {
       authenticatedCompany = gramado
       const response = await analyticsRoute.GET(
         new NextRequest('http://localhost/api/v1/companies/gramado-plaza/analytics?from=2026-10-01&to=2026-10-01'),
@@ -232,11 +258,11 @@ async function main() {
       const body = await response.json()
 
       assert.equal(response.status, 200)
-      assert.equal(body.totalLeads, 2)
+      assert.equal(body.totalLeads, 2, 'não deve aplicar janela móvel de 24h antes/depois do período')
       assert.equal(body.period.from, '2026-10-01T03:00:00.000Z')
       assert.equal(body.period.to, '2026-10-02T02:59:59.999Z')
-      assert.equal(body.closingStats.reservasConfirmadas, 2)
-      assert.equal(body.closingStats.taxaConversaoReservas, '100.0%')
+      assert.equal(body.closingStats.reservasConfirmadas, 3)
+      assert.equal(body.closingStats.taxaConversaoReservas, '50.0%')
     })
 
     await test('analytics do Gramado mostra 0% quando a conversa inbound ativa nao converteu', async () => {
