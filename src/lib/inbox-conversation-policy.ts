@@ -2,24 +2,24 @@ import { sql, type SQL } from 'drizzle-orm'
 import { recoveryLeads } from '@/lib/db/schema'
 
 /**
- * Uma compra aprovada da Kiwify é um contato/pedido até existir uma mensagem
- * real. O lead continua no CRM e nos relatórios; esta condição só impede que
- * ele seja exposto como uma conversa vazia no Inbox e na API de conversas.
+ * A recovery lead can represent a reservation, purchase, or CRM contact.
+ * It belongs in the Inbox conversation list only after a real message exists
+ * for the same tenant, contact, and delivery channel.
  */
 export function conversationVisibilityCondition(companyId: number): SQL {
-  return sql`NOT (
-    ${recoveryLeads.platform} = 'kiwify'
-    AND ${recoveryLeads.eventType} = 'compra_aprovada'
-    AND NOT EXISTS (
-      SELECT 1
-      FROM whatsapp_messages kiwify_purchase_history
-      WHERE kiwify_purchase_history.company_id = ${companyId}
-        AND (
-          kiwify_purchase_history.lead_id = ${recoveryLeads.id}
-          OR kiwify_purchase_history.phone = ${recoveryLeads.phone}
-          OR regexp_replace(kiwify_purchase_history.phone, '\\D', '', 'g') = regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g')
-          OR right(regexp_replace(kiwify_purchase_history.phone, '\\D', '', 'g'), 9) = right(regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g'), 9)
+  return sql`EXISTS (
+    SELECT 1
+    FROM whatsapp_messages inbox_history
+    WHERE inbox_history.company_id = ${companyId}
+      AND (
+        inbox_history.lead_id = ${recoveryLeads.id}
+        OR inbox_history.phone = ${recoveryLeads.phone}
+        OR (
+          regexp_replace(inbox_history.phone, '\\D', '', 'g') <> ''
+          AND regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g') <> ''
+          AND regexp_replace(inbox_history.phone, '\\D', '', 'g') = regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g')
         )
-    )
+      )
+      AND coalesce(inbox_history.channel, 'whatsapp') = coalesce(${recoveryLeads.channel}, 'whatsapp')
   )`
 }
