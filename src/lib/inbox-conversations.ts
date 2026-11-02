@@ -4,6 +4,7 @@ import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { channelWhereCondition, normalizePhoneDigits } from '@/lib/inbox-channel-filter'
 import { isDirectOrganicSourceFilter, normalizeInboxSourceFilter } from '@/lib/inbox-source-filter'
 import { getEmailEngagement, type EmailEngagement } from '@/lib/email-engagement'
+import { conversationVisibilityCondition } from '@/lib/inbox-conversation-policy'
 
 export const INBOX_PAGE_SIZE = 75
 export const INBOX_PAGE_SIZE_MAX = 100
@@ -105,6 +106,9 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
 
   const channelCondition = channelWhereCondition(options.channel)
   if (channelCondition) whereConditions.push(channelCondition)
+  // recovery_leads also stores reservations and CRM contacts. Only a lead
+  // with real message history is a conversation in this Inbox.
+  whereConditions.push(conversationVisibilityCondition(options.companyId))
   // A área dedicada sempre passa channel=instagram_direct e não é afetada.
   if (!options.channel && options.includeInstagramInGeneral === false) {
     const instagramDirectCondition = channelWhereCondition('instagram_direct')
