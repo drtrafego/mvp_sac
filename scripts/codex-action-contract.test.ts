@@ -55,9 +55,10 @@ test('Whisper local usa o contrato real video_path e remove o arquivo temporári
     assert.equal(result.transcript, 'texto local')
     assert.equal(result.provider, 'hermes-local')
     assert.deepEqual(sentFileContents, Buffer.from([1, 2, 3]))
-    assert.equal(typeof requestBody?.video_path, 'string')
-    assert.equal(requestBody?.language, 'pt')
-    assert.equal('data_url' in (requestBody ?? {}), false)
+    const receivedRequestBody = requestBody as unknown as Record<string, unknown>
+    assert.equal(typeof receivedRequestBody.video_path, 'string')
+    assert.equal(receivedRequestBody.language, 'pt')
+    assert.equal('data_url' in receivedRequestBody, false)
     await assert.rejects(() => stat(String(requestBody?.video_path)), { code: 'ENOENT' })
   } finally {
     globalThis.fetch = originalFetch

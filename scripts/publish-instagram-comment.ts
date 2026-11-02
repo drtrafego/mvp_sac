@@ -16,6 +16,11 @@ export type PublishResponse = {
   body: unknown
 }
 
+type PublishEnvironment = {
+  SAC_API_BASE_URL?: string
+  SAC_CODEX_EXECUTOR_KEY?: string
+}
+
 class HelpRequested extends Error {}
 
 function usage(): string {
@@ -39,7 +44,7 @@ function requiredValue(args: Map<string, string>, flag: string): string {
   return value
 }
 
-export function parsePublishArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): Omit<PublishOptions, 'text'> & { textFile: string } {
+export function parsePublishArgs(argv: string[], env: PublishEnvironment | NodeJS.ProcessEnv = process.env): Omit<PublishOptions, 'text'> & { textFile: string } {
   const args = new Map<string, string>()
   let confirmed = false
 
