@@ -186,8 +186,9 @@ export function shouldApplyFollowupDispatchWindow(job: {
   massDispatchBatchId?: number | null
   messageOrder?: number | null
   upsellContent?: string | null
+  jobType?: string | null
 }): boolean {
-  if (job.massDispatchBatchId != null) return false
+  if (job.massDispatchBatchId != null || job.jobType === 'boleto_followup_immediate') return false
   return job.messageOrder != null || Boolean(job.upsellContent)
 }
 

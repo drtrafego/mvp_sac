@@ -359,6 +359,8 @@ export const recoveryLeads = pgTable('recovery_leads', {
   // Status e payload bruto
   rawPayload: jsonb('raw_payload'),
   status: text('status').default('pending'),
+  whatsappConsentStatus: text('whatsapp_consent_status').notNull().default('unknown'),
+  whatsappConsentAt: timestamp('whatsapp_consent_at'),
   priority: integer('priority').default(0),           // Fase 3.2: 3=cartao_recusado, 2=boleto, 1=carrinho, 0=aprovada
   convertedByJobId: integer('converted_by_job_id'),   // Fase 2: qual job desencadeou a conversão
   convertedFrom: text('converted_from'),               // Fase 2: "msg_N" para rastrear posição da mensagem
@@ -627,6 +629,8 @@ export const messageJobs = pgTable('message_jobs', {
   externalWamid: text('external_wamid'),               // Fase 1.4: WAMID retornado pela Meta ao enviar
   deliveryStatus: text('delivery_status'),              // Fase 1.4: sent | delivered | read | failed
   messageOrder: integer('message_order'),               // Fase 2.3: posição da mensagem na sequência
+  jobType: text('job_type'),
+  idempotencyKey: text('idempotency_key'),
   massDispatchBatchId: integer('mass_dispatch_batch_id').references(() => massDispatchBatches.id, { onDelete: 'set null' }),
   messageSnapshot: jsonb('message_snapshot'),            // cópia imutável usada pelos disparos em massa
   retryCount: integer('retry_count').notNull().default(0),
@@ -634,6 +638,7 @@ export const messageJobs = pgTable('message_jobs', {
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   uniqueIndex('message_jobs_mass_dispatch_unique').on(table.massDispatchBatchId, table.leadId, table.messageId),
+  uniqueIndex('message_jobs_idempotency_key_unique').on(table.idempotencyKey),
 ])
 
 export const massDispatchPhoneCooldowns = pgTable('mass_dispatch_phone_cooldowns', {

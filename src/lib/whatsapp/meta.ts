@@ -123,9 +123,13 @@ export async function sendMetaTemplate(
   phone: string,
   templateName: string,
   languageCode: string,
-  variableValues: string[]  // valores interpolados em ordem: [valor_{{1}}, valor_{{2}}, ...]
+  variableValues: string[],  // valores interpolados em ordem: [valor_{{1}}, valor_{{2}}, ...]
+  variableNames?: string[]
 ): Promise<string | null> {
-  const parameters = variableValues.map(v => ({ type: 'text', text: v }))
+  const parameters = variableValues.map((v, index) => ({
+    type: 'text', text: v,
+    ...(variableNames?.[index] ? { parameter_name: variableNames[index] } : {}),
+  }))
   const components = parameters.length > 0
     ? [{ type: 'body', parameters }]
     : []
