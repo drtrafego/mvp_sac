@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
-import { buildIsabelaBoletoIdempotencyKey, canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent, isApprovedImmediateIsabelaBoletoSequence, ISABELA_BOLETO_JOB_TYPE, ISABELA_BOLETO_TEMPLATE_NAME, isApprovedUtilitySequence } from '@/lib/recovery-sequence-policy'
+import { buildIsabelaBoletoIdempotencyKey, canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent, isApprovedImmediateIsabelaBoletoSequence, isApprovedIsabelaSequence, ISABELA_APPROVED_TEMPLATE_NAMES, ISABELA_BOLETO_JOB_TYPE, ISABELA_BOLETO_TEMPLATE_NAME } from '@/lib/recovery-sequence-policy'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import {
@@ -197,6 +197,29 @@ async function auditBoletoFollowup(args: {
     })
     return false
   }
+}
+
+async function auditIsabelaSequence(args: {
+  companyId: number
+  leadId: number
+  type: string
+  payload: Record<string, unknown>
+}): Promise<void> {
+  await db.insert(sacAuditEvents).values({
+    companyId: args.companyId,
+    leadId: args.leadId,
+    type: args.type,
+    actorType: 'system',
+    actorId: 'isabela_purchase_sequence',
+    actorName: 'SAC Isabela sequence',
+    referenceType: 'message_job',
+    payload: args.payload,
+  }).catch(error => console.error('[isabela-sequence] falha ao gravar auditoria', {
+    companyId: args.companyId,
+    leadId: args.leadId,
+    type: args.type,
+    error: error instanceof Error ? error.message : String(error),
+  }))
 }
 
 // Nunca gravamos req.url em lugar nenhum: a query string carrega o nosso ?token=.
@@ -829,6 +852,24 @@ export async function POST(
     const isImmediateIsabelaBoleto = isIsabela && mappedType === 'boleto'
     let followupSkipReason: string | null = null
 
+    const [storedConsent] = isIsabela
+      ? await db.select({ whatsappConsentStatus: recoveryLeads.whatsappConsentStatus })
+        .from(recoveryLeads)
+        .where(eq(recoveryLeads.id, leadId))
+        .limit(1)
+      : []
+    const hasConsent = storedConsent?.whatsappConsentStatus === 'opted_in' || hasExplicitWhatsAppConsent(item)
+    const approvedIsabelaTemplateNames = isIsabela
+      ? new Set((await db
+        .select({ name: metaMessageTemplates.name })
+        .from(metaMessageTemplates)
+        .where(and(
+          eq(metaMessageTemplates.companyId, company.id),
+          eq(metaMessageTemplates.status, 'APPROVED'),
+          inArray(metaMessageTemplates.name, [...ISABELA_APPROVED_TEMPLATE_NAMES]),
+        ))).map(template => template.name))
+      : new Set<string>()
+
     // ─── Funil Cursos (Isabela Fanini - Despertar das Bellas) ─────────────────
     const isFunilEligible = isFunilCursosTrigger({
       companySlug: company.slug,
@@ -839,9 +880,10 @@ export async function POST(
       transactionId: draft.transactionId,
     })
 
-    // Compra aprovada é somente upsert do contato/pedido. Nunca agenda
-    // conversa, upsell ou mensagem automática para o comprador.
-    if (shouldScheduleKiwifyMessageJobs(mappedType) && isFunilEligible && draft.phone) {
+    // Compra aprovada do Despertar agenda somente os templates aprovados e
+    // consentidos da sequência configurada no SAC. O webhook continua sendo
+    // idempotente por transação; cada job também recebe uma chave própria.
+    if (isFunilEligible && sequence && draft.phone) {
       const initialFunnelState = createInitialFunilCursosState({
         transactionId: draft.transactionId!,
         productName: draft.productName,
@@ -853,6 +895,42 @@ export async function POST(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .set({ aiScheduleState: initialFunnelState as any })
         .where(eq(recoveryLeads.id, leadId))
+
+      const messages = await db
+        .select()
+        .from(sequenceMessages)
+        .where(and(eq(sequenceMessages.sequenceId, sequence.id), eq(sequenceMessages.isActive, true)))
+        .orderBy(sequenceMessages.order)
+      const canDispatch = hasConsent && isApprovedIsabelaSequence(messages, approvedIsabelaTemplateNames)
+
+      if (!hasConsent) {
+        followupSkipReason = 'sequencia_isabela_sem_consentimento_whatsapp_explicito'
+      } else if (!canDispatch) {
+        followupSkipReason = 'sequencia_isabela_sem_template_aprovado_configurado'
+      } else {
+        const scheduledJobs = await db.insert(messageJobs).values(messages.map(message => ({
+          leadId,
+          messageId: message.id,
+          scheduledFor: new Date(now.getTime() + (message.delayMinutes ?? 0) * 60 * 1000),
+          status: 'pending',
+          checkBeforeSend: false,
+          messageOrder: message.order,
+          jobType: 'isabela_purchase_sequence',
+          idempotencyKey: `isabela_purchase:${company.id}:${draft.transactionId}:${message.id}`,
+        }))).onConflictDoNothing({ target: messageJobs.idempotencyKey }).returning({ id: messageJobs.id })
+
+        await auditIsabelaSequence({
+          companyId: company.id,
+          leadId,
+          type: scheduledJobs.length > 0 ? 'isabela_purchase_sequence_scheduled' : 'isabela_purchase_sequence_duplicate',
+          payload: {
+            eventType: 'compra_aprovada',
+            templateNames: messages.map(message => message.templateName),
+            messageCount: scheduledJobs.length,
+            consent: true,
+          },
+        })
+      }
 
     }
 
@@ -877,15 +955,11 @@ export async function POST(
             eq(metaMessageTemplates.category, 'UTILITY'),
           ))).map(template => template.name))
         : new Set<string>()
-      const [storedConsent] = isImmediateIsabelaBoleto
-        ? await db.select({ whatsappConsentStatus: recoveryLeads.whatsappConsentStatus }).from(recoveryLeads).where(eq(recoveryLeads.id, leadId)).limit(1)
-        : []
-      const hasConsent = storedConsent?.whatsappConsentStatus === 'opted_in' || hasExplicitWhatsAppConsent(item)
       const canDispatch = isImmediateIsabelaBoleto
         ? hasConsent
           && Boolean(draft.transactionId && draft.boletoCode && draft.boletoExpiry)
           && isApprovedImmediateIsabelaBoletoSequence(messages, approvedUtilityTemplateNames)
-        : !isIsabela || isApprovedUtilitySequence(messages, approvedUtilityTemplateNames)
+        : !isIsabela || hasConsent && isApprovedIsabelaSequence(messages, approvedIsabelaTemplateNames)
 
       if (isImmediateIsabelaBoleto && !hasConsent) {
         followupSkipReason = 'boleto_followup_sem_consentimento_whatsapp_explicito'
@@ -893,8 +967,10 @@ export async function POST(
         followupSkipReason = 'boleto_followup_sem_referencia_ou_vencimento_real'
       } else if (isImmediateIsabelaBoleto && !isApprovedImmediateIsabelaBoletoSequence(messages, approvedUtilityTemplateNames)) {
         followupSkipReason = 'boleto_followup_sem_sequencia_utility_aprovada_unica_imediata'
+      } else if (isIsabela && !hasConsent) {
+        followupSkipReason = 'sequencia_isabela_sem_consentimento_whatsapp_explicito'
       } else if (isIsabela && !canDispatch) {
-        followupSkipReason = 'sequencia_isabela_sem_template_utility_aprovado'
+        followupSkipReason = 'sequencia_isabela_sem_template_aprovado_configurado'
       }
 
       if (canDispatch && messages.length > 0) {

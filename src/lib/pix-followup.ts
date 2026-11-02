@@ -19,6 +19,7 @@ import {
   PIX_FOLLOWUP_TEMPLATE_NAME,
   validatePixFollowupMessage,
 } from '@/lib/pix-followup-policy'
+import { selectRecoverySequence } from '@/lib/recovery-sequence'
 
 type DatabaseLead = typeof recoveryLeads.$inferSelect
 
@@ -79,7 +80,7 @@ export async function schedulePixFollowup(lead: DatabaseLead, now = new Date()):
     return await blockPixSchedule(lead, 'WhatsApp Meta não está configurado para o follow-up Pix')
   }
 
-  const [sequence] = await db
+  const sequences = await db
     .select()
     .from(recoverySequences)
     .where(and(
@@ -87,7 +88,7 @@ export async function schedulePixFollowup(lead: DatabaseLead, now = new Date()):
       eq(recoverySequences.eventType, 'pix'),
       eq(recoverySequences.isActive, true),
     ))
-    .limit(1)
+  const sequence = selectRecoverySequence(sequences, lead.productId, lead.productName)
   if (!sequence) return await blockPixSchedule(lead, 'sequência Pix ativa não configurada')
 
   const messages = await db

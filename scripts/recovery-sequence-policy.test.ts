@@ -5,6 +5,7 @@ import {
   buildIsabelaBoletoIdempotencyKey,
   hasExplicitWhatsAppConsent,
   isApprovedImmediateIsabelaBoletoSequence,
+  isApprovedIsabelaSequence,
   isApprovedUtilitySequence,
 } from '../src/lib/recovery-sequence-policy'
 
@@ -21,6 +22,16 @@ test('sequência da Isabela exige mensagem template com nome UTILITY aprovado', 
   assert.equal(isApprovedUtilitySequence([{ messageType: 'text', templateName: null }], approved), false)
   assert.equal(isApprovedUtilitySequence([{ messageType: 'template', templateName: 'coringa_texto' }], approved), false)
   assert.equal(isApprovedUtilitySequence([], approved), false)
+})
+
+test('sequência da Isabela aceita somente os nomes aprovados, incluindo MARKETING, e rejeita coringas', () => {
+  const approved = new Set(['boas_vindas_despertar_pos_compra', 'isabela_formulario_d1_20261031_corrigida'])
+  assert.equal(isApprovedIsabelaSequence([
+    { messageType: 'template', templateName: 'boas_vindas_despertar_pos_compra', templateLanguage: 'pt_BR' },
+    { messageType: 'template', templateName: 'isabela_formulario_d1_20261031_corrigida', templateLanguage: 'pt_BR' },
+  ], approved), true)
+  assert.equal(isApprovedIsabelaSequence([{ messageType: 'template', templateName: 'coringa_texto', templateLanguage: 'pt_BR' }], new Set(['coringa_texto'])), false)
+  assert.equal(isApprovedIsabelaSequence([{ messageType: 'text', templateName: null }], approved), false)
 })
 
 test('boleto do Despertar exige uma única mensagem UTILITY imediata com referência e vencimento', () => {

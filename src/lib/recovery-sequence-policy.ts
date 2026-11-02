@@ -9,6 +9,16 @@ export function canScheduleAutomaticRecoverySequence(eventType: string): boolean
 export const ISABELA_BOLETO_TEMPLATE_NAME = 'boleto_despertar_nao_pago'
 export const ISABELA_BOLETO_JOB_TYPE = 'boleto_followup_immediate'
 
+export const ISABELA_APPROVED_TEMPLATE_NAMES = [
+  'boas_vindas_despertar_pos_compra',
+  'isabela_formulario_d1_20261031_corrigida',
+  'acompanhamento_desafio_d10',
+  'convite_portal_apos_desafio',
+  'pix_despertar_nao_pago',
+  'boleto_despertar_nao_pago',
+  'cartao_despertar_recusado',
+] as const
+
 export function buildIsabelaBoletoIdempotencyKey(companyId: number, transactionId: string): string {
   return `${ISABELA_BOLETO_JOB_TYPE}:${companyId}:${transactionId.trim()}`
 }
@@ -30,6 +40,25 @@ export function isApprovedUtilitySequence(
     message.messageType === 'template'
     && Boolean(message.templateName)
     && approvedUtilityTemplateNames.has(message.templateName as string)
+  )
+}
+
+/**
+ * Isabela só usa nomes de template aprovados e previamente autorizados para
+ * os fluxos deste tenant. Os coringas ficam deliberadamente fora da lista,
+ * mesmo quando a Meta os classifica como APPROVED.
+ */
+export function isApprovedIsabelaSequence(
+  messages: SequenceMessageForPolicy[],
+  approvedTemplateNames: ReadonlySet<string>,
+): boolean {
+  const allowedNames = new Set<string>(ISABELA_APPROVED_TEMPLATE_NAMES)
+  return messages.length > 0 && messages.every(message =>
+    message.messageType === 'template'
+    && Boolean(message.templateName)
+    && (message.templateLanguage ?? 'pt_BR') === 'pt_BR'
+    && allowedNames.has(message.templateName as string)
+    && approvedTemplateNames.has(message.templateName as string)
   )
 }
 

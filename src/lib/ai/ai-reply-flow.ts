@@ -20,6 +20,7 @@ export interface AiReplyDependencies {
   readHistory(companyId: number, leadId: number): Promise<AiReplyHistoryRow[]>
   readIntent(companyId: number, requestId: string): Promise<Message | undefined>
   persistSchedule(lead: Lead, state: AiScheduleState): Promise<void>
+  schedulePortalTemplate?(lead: Lead, state: FunilCursosState): Promise<void>
   pauseIfUnchanged(lead: Lead, expectedVersion: number, reason: string): Promise<Lead | undefined>
   generate: typeof gerarResposta
   executeAction: typeof executarAcaoDetectada
@@ -31,6 +32,7 @@ import {
   formatFunilCursosContext,
   evaluateFunilTransition,
   createInitialFunilCursosState,
+  canOfferPortal,
   type FunilCursosState,
 } from '@/lib/funnels/funil-cursos'
 
@@ -133,6 +135,11 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
       }
       // An already confirmed external action survives a human pause and a failed notice.
       if (JSON.stringify(nextState) !== JSON.stringify(state)) await deps.persistSchedule(lead, nextState)
+      if (currentFunnelState
+        && currentFunnelState.stage !== 'portal_com_abertura'
+        && canOfferPortal(currentFunnelState)) {
+        await deps.schedulePortalTemplate?.(lead, currentFunnelState)
+      }
       if (currentFunnelState?.stage === 'pausado' && await controlAllowsEffects()) {
         const reason = currentFunnelState.pause_reason || 'IA (funil pausado por pedido do usuário)'
         const closed = await deps.pauseIfUnchanged(lead, version, reason)

@@ -16,12 +16,86 @@
 
 import { and, or, isNull, isNotNull, eq, desc, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { recoveryLeads, settings, whatsappMessages, companies } from '@/lib/db/schema'
+import { recoveryLeads, settings, whatsappMessages, companies, metaMessageTemplates, messageJobs, recoverySequences, sequenceMessages, sacAuditEvents } from '@/lib/db/schema'
 import { gerarResposta } from '@/lib/ai/ai-bridge'
 import { executarAcaoDetectada } from '@/lib/ai/agenda-actions'
 import { detectarBotDoOutroLado } from '@/lib/ai/bot-detector'
 import { sendOutboundForLead } from '@/lib/outbound-send'
 import { createAiReplyHandler, type AiReplyDependencies } from '@/lib/ai/ai-reply-flow'
+import type { FunilCursosState } from '@/lib/funnels/funil-cursos'
+
+async function scheduleIsabelaPortalTemplate(lead: typeof recoveryLeads.$inferSelect, state: FunilCursosState): Promise<void> {
+  if (lead.whatsappConsentStatus !== 'opted_in') {
+    await db.insert(sacAuditEvents).values({
+      companyId: lead.companyId,
+      leadId: lead.id,
+      type: 'isabela_portal_template_blocked',
+      actorType: 'system',
+      actorId: 'isabela_portal_sequence',
+      actorName: 'SAC Isabela',
+      referenceType: 'lead',
+      referenceId: String(lead.id),
+      payload: { reason: 'consentimento_whatsapp_nao_confirmado', stage: state.stage },
+    }).catch(() => {})
+    return
+  }
+
+  const [config] = await db.select({ whatsappProvider: settings.whatsappProvider, metaPhoneNumberId: settings.metaPhoneNumberId })
+    .from(settings)
+    .where(eq(settings.companyId, lead.companyId))
+    .limit(1)
+  if ((config?.whatsappProvider ?? 'meta') !== 'meta' || !config?.metaPhoneNumberId) return
+
+  const [company] = await db.select({ slug: companies.slug }).from(companies).where(eq(companies.id, lead.companyId)).limit(1)
+  if (company?.slug !== 'isabela-fanini') return
+
+  const [sequence] = await db.select().from(recoverySequences).where(and(
+    eq(recoverySequences.companyId, lead.companyId),
+    eq(recoverySequences.eventType, 'portal_apos_desafio'),
+    eq(recoverySequences.isActive, true),
+  )).limit(1)
+  if (!sequence) return
+
+  const [message] = await db.select().from(sequenceMessages).where(and(
+    eq(sequenceMessages.sequenceId, sequence.id),
+    eq(sequenceMessages.isActive, true),
+    eq(sequenceMessages.templateName, 'convite_portal_apos_desafio'),
+  )).limit(1)
+  if (!message) return
+
+  const [template] = await db.select({ status: metaMessageTemplates.status, category: metaMessageTemplates.category })
+    .from(metaMessageTemplates)
+    .where(and(
+      eq(metaMessageTemplates.companyId, lead.companyId),
+      eq(metaMessageTemplates.name, 'convite_portal_apos_desafio'),
+      eq(metaMessageTemplates.language, 'pt_BR'),
+    )).limit(1)
+  if (!template || template.status !== 'APPROVED' || template.category !== 'MARKETING') return
+
+  const idempotencyKey = `isabela_portal:${lead.companyId}:${lead.id}`
+  const [job] = await db.insert(messageJobs).values({
+    leadId: lead.id,
+    messageId: message.id,
+    scheduledFor: new Date(),
+    status: 'pending',
+    checkBeforeSend: false,
+    messageOrder: message.order,
+    jobType: 'isabela_portal_after_challenge',
+    idempotencyKey,
+  }).onConflictDoNothing({ target: messageJobs.idempotencyKey }).returning({ id: messageJobs.id })
+
+  await db.insert(sacAuditEvents).values({
+    companyId: lead.companyId,
+    leadId: lead.id,
+    type: job ? 'isabela_portal_template_scheduled' : 'isabela_portal_template_duplicate',
+    actorType: 'system',
+    actorId: 'isabela_portal_sequence',
+    actorName: 'SAC Isabela',
+    referenceType: 'message_job',
+    referenceId: job ? String(job.id) : idempotencyKey,
+    payload: { templateName: 'convite_portal_apos_desafio', stage: state.stage, consent: true },
+  }).catch(() => {})
+}
 
 const productionDependencies: AiReplyDependencies = {
   async acquireLock(leadId) {
@@ -66,6 +140,7 @@ const productionDependencies: AiReplyDependencies = {
     await db.update(recoveryLeads).set({ aiScheduleState: state })
       .where(and(eq(recoveryLeads.id, lead.id), eq(recoveryLeads.companyId, lead.companyId)))
   },
+  schedulePortalTemplate: scheduleIsabelaPortalTemplate,
   async pauseIfUnchanged(lead, version, reason) {
     const [paused] = await db.update(recoveryLeads).set({
       botPaused: true, botPausedAt: new Date(), botPausedBy: reason,
