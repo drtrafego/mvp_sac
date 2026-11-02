@@ -83,6 +83,60 @@ export type ResultadoBridge =
       detalhe?: string
     }
 
+const ACAO_TIPOS = new Set<AcaoDetectada['tipo']>(['book', 'reschedule', 'cancel'])
+
+function stringField(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.replace(/\u0000/g, '').trim().slice(0, maxLength)
+  return normalized || undefined
+}
+
+/**
+ * The bridge is authenticated, but its JSON is still an external boundary.
+ * Reject malformed or unknown actions before the workflow can execute a tool.
+ */
+function parseBridgeResponse(value: unknown): RespostaBridge | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Record<string, unknown>
+  if (raw.ok !== true || !['ok', 'sem_resposta', 'travado'].includes(String(raw.status))) return null
+
+  let acao: AcaoDetectada | null = null
+  if (raw.acao_detectada != null) {
+    if (!raw.acao_detectada || typeof raw.acao_detectada !== 'object' || Array.isArray(raw.acao_detectada)) return null
+    const candidate = raw.acao_detectada as Record<string, unknown>
+    const tipo = candidate.tipo
+    if (typeof tipo !== 'string' || !ACAO_TIPOS.has(tipo as AcaoDetectada['tipo'])) return null
+    const nome = stringField(candidate.nome, 120)
+    const email = stringField(candidate.email, 200)
+    const start = stringField(candidate.start, 80)
+    const end = stringField(candidate.end, 80)
+    acao = {
+      tipo: tipo as AcaoDetectada['tipo'],
+      ...(nome ? { nome } : {}),
+      ...(email ? { email } : {}),
+      ...(start ? { start } : {}),
+      ...(end ? { end } : {}),
+    }
+  }
+
+  let encerrar: { motivo?: string } | null = null
+  if (raw.encerrar != null) {
+    if (!raw.encerrar || typeof raw.encerrar !== 'object' || Array.isArray(raw.encerrar)) return null
+    const motivo = stringField((raw.encerrar as Record<string, unknown>).motivo, 300)
+    encerrar = motivo ? { motivo } : {}
+  }
+
+  const resposta = raw.resposta == null ? null : stringField(raw.resposta, 8_000)
+  if (raw.resposta != null && resposta === undefined) return null
+  return {
+    ok: true,
+    status: raw.status as RespostaBridge['status'],
+    resposta,
+    acao_detectada: acao,
+    encerrar,
+  }
+}
+
 /**
  * Reserva atomicamente um slot na janela de 300s (CTE + INSERT numa única
  * query, pra não abrir race entre invocações concorrentes da Vercel que
@@ -180,9 +234,9 @@ export async function gerarResposta(opts: {
       return { ok: false, motivo: 'erro', detalhe: texto.slice(0, 500) }
     }
 
-    const data = (await resp.json()) as RespostaBridge
-    if (!data || data.ok !== true) {
-      console.error('[AI Bridge] resposta 200 sem ok:true, tratando como falha:', JSON.stringify(data).slice(0, 500))
+    const data = parseBridgeResponse(await resp.json().catch(() => null))
+    if (!data) {
+      console.error('[AI Bridge] resposta inválida, tratando como falha')
       return { ok: false, motivo: 'erro' }
     }
     return { ok: true, resposta: data }

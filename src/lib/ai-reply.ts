@@ -156,6 +156,19 @@ const productionDependencies: AiReplyDependencies = {
   executeAction: executarAcaoDetectada,
   detectBot: detectarBotDoOutroLado,
   send: sendOutboundForLead,
+  async audit({ leadId, companyId, type, referenceId, payload }) {
+    await db.insert(sacAuditEvents).values({
+      companyId,
+      leadId,
+      type,
+      actorType: 'bot',
+      actorId: 'sac-ai',
+      actorName: 'SAC IA',
+      referenceType: 'whatsapp_message',
+      referenceId: referenceId ?? null,
+      payload: payload ?? null,
+    })
+  },
 }
 
 /** Overrides inject real dependency boundaries in tests; production uses its existing bridge. */

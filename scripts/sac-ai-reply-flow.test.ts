@@ -26,6 +26,7 @@ function fixture() {
   let sendCount = 0
   let transportCount = 0
   let releaseCount = 0
+  const auditEvents: Array<{ type: string; payload?: Record<string, unknown> }> = []
   let failNotice = false
   const deps: AiReplyDependencies = {
     acquireLock: async () => true,
@@ -53,8 +54,9 @@ function fixture() {
       intent = { ...intent, sendState: failNotice ? 'failed' : 'accepted' }
       return { ok: !failNotice, status: failNotice ? 502 : 200, message: intent }
     },
+    audit: async input => { auditEvents.push({ type: input.type, payload: input.payload }) },
   }
-  return { deps, lead: () => lead, intent: () => intent, pause: () => { lead = { ...lead, botPaused: true, botPausedBy: 'Operador', botControlVersion: (lead.botControlVersion ?? 0) + 1 } }, resume: () => { lead = { ...lead, botPaused: false, botPausedBy: null, botControlVersion: (lead.botControlVersion ?? 0) + 1 } }, fail: (value: boolean) => { failNotice = value }, setIntentState: (value: string) => { if (intent) intent = { ...intent, sendState: value } }, counts: () => ({ generateCount, actionCount, sendCount, transportCount, releaseCount }) }
+  return { deps, lead: () => lead, intent: () => intent, audit: () => auditEvents, pause: () => { lead = { ...lead, botPaused: true, botPausedBy: 'Operador', botControlVersion: (lead.botControlVersion ?? 0) + 1 } }, resume: () => { lead = { ...lead, botPaused: false, botPausedBy: null, botControlVersion: (lead.botControlVersion ?? 0) + 1 } }, fail: (value: boolean) => { failNotice = value }, setIntentState: (value: string) => { if (intent) intent = { ...intent, sendState: value } }, counts: () => ({ generateCount, actionCount, sendCount, transportCount, releaseCount }) }
 }
 
 test('handler real envia resposta normal e libera lock', async () => {
@@ -63,6 +65,11 @@ test('handler real envia resposta normal e libera lock', async () => {
   assert.equal(f.counts().transportCount, 1)
   assert.equal(f.intent()?.sendState, 'accepted')
   assert.equal(f.counts().releaseCount, 1)
+  assert.deepEqual(f.audit().map(event => event.type), [
+    'ai_reply_started',
+    'ai_reply_interpreted',
+    'ai_reply_sent',
+  ])
 })
 
 test('encerramento próprio pausa e ainda envia a confirmação final', async () => {
@@ -72,6 +79,20 @@ test('encerramento próprio pausa e ainda envia a confirmação final', async ()
   assert.equal(f.lead().botPaused, true)
   assert.equal(f.lead().botControlVersion, 2)
   assert.equal(f.counts().transportCount, 1)
+})
+
+test('ação interpretada registra pedido e resultado sem guardar conteúdo', async () => {
+  const f = fixture()
+  f.deps.generate = async () => ({ ok: true, resposta: { ok: true, status: 'ok', resposta: 'Confirmado', acao_detectada: { tipo: 'book' } } })
+  await generateAndSendAiReply(20, f.deps)
+  assert.deepEqual(f.audit().map(event => event.type), [
+    'ai_reply_started',
+    'ai_reply_interpreted',
+    'ai_action_requested',
+    'ai_action_result',
+    'ai_reply_sent',
+  ])
+  assert.deepEqual(Object.keys(f.audit()[2].payload || {}).sort(), ['actionType'])
 })
 
 test('pausa humana durante geração descarta ação e envio', async () => {

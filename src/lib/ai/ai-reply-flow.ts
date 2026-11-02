@@ -26,6 +26,14 @@ export interface AiReplyDependencies {
   executeAction: typeof executarAcaoDetectada
   detectBot: typeof detectarBotDoOutroLado
   send: typeof sendOutboundForLead
+  /** Best-effort, PII-free lifecycle audit for the AI decision chain. */
+  audit?(input: {
+    leadId: number
+    companyId: number
+    type: string
+    referenceId?: string | null
+    payload?: Record<string, unknown>
+  }): Promise<void>
 }
 
 import {
@@ -47,12 +55,27 @@ const textOf = (row: AiReplyHistoryRow) => row.content?.trim() ? row.content : `
 
 export function createAiReplyHandler(deps: AiReplyDependencies) {
   return async function generateAndSendAiReply(leadId: number): Promise<void> {
+    let auditCompanyId: number | null = null
+    const audit = async (input: Omit<Parameters<NonNullable<AiReplyDependencies['audit']>>[0], 'leadId' | 'companyId'>) => {
+      if (!deps.audit || auditCompanyId === null) return
+      try {
+        await deps.audit({
+          leadId,
+          companyId: auditCompanyId,
+          ...input,
+        })
+      } catch {
+        // Audit must never turn a safe, already-guarded response into a retry.
+        console.error('[AI Reply] auditoria da cadeia não foi registrada', { leadId, type: input.type })
+      }
+    }
     let locked = false
     try {
       locked = await deps.acquireLock(leadId)
       if (!locked) return
       const lead = await deps.readLead(leadId)
       if (!lead || lead.botPaused) return
+      auditCompanyId = lead.companyId
       const version = lead.botControlVersion ?? 0
       let ownClosure: { version: number; reason: string } | undefined
       const controlAllowsEffects = async () => {
@@ -74,14 +97,24 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
       const previous = rows.slice(currentIndex + 1).reverse()
       // Stable per inbound event: a failed notice is retried without regenerating or redoing an action.
       const requestId = `ai-reply:${lead.companyId}:${lead.id}:${current.id}`
+      await audit({
+        type: 'ai_reply_started',
+        referenceId: String(current.id),
+        payload: { inboundMessageId: current.id, requestId },
+      })
       const existing = await deps.readIntent(lead.companyId, requestId)
       const senderName = bot === 'nina' ? 'Nina' : bot === 'bela' ? 'Bela' : 'Amanda'
       if (existing) {
         if (existing.sendState !== 'failed' || !existing.content) return
-        await deps.send({
+        const retry = await deps.send({
           companyId: lead.companyId, lead, content: existing.content, messageType: 'text',
           clientRequestId: requestId, sentBy: 'bot', senderName,
           agentId: bot, beforeTransport: controlAllowsEffects,
+        })
+        await audit({
+          type: retry.ok ? 'ai_reply_sent' : 'ai_reply_send_failed',
+          referenceId: String(existing.id),
+          payload: { status: retry.status, sendState: retry.message?.sendState ?? null, retry: true },
         })
         return
       }
@@ -122,16 +155,39 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
         waId: lead.phone,
         agendamentoAtual: currentFunnelState ? (currentFunnelState as unknown as Record<string, unknown>) : Object.keys(state).length ? state : null,
       })
+      await audit({
+        type: 'ai_reply_interpreted',
+        referenceId: String(current.id),
+        payload: {
+          ok: generated.ok,
+          status: generated.ok ? generated.resposta.status : 'error',
+          failure: generated.ok ? null : generated.motivo,
+          actionType: generated.ok ? generated.resposta.acao_detectada?.tipo ?? null : null,
+        },
+      })
       if (!generated.ok || !await controlAllowsEffects()) return
       const envelope = generated.resposta
       if (envelope.status === 'sem_resposta') return
       let text = (envelope.resposta || '').trim()
       let nextState = currentFunnelState ? (currentFunnelState as unknown as AiScheduleState) : state
       if (envelope.acao_detectada) {
+        await audit({
+          type: 'ai_action_requested',
+          referenceId: String(current.id),
+          payload: { actionType: envelope.acao_detectada.tipo },
+        })
         if (!await controlAllowsEffects()) return
         const action = await deps.executeAction({ acao: envelope.acao_detectada, textoVisivel: text, telefone: lead.phone, nomeContato: lead.name || '', state: nextState }, { beforeExternalEffect: controlAllowsEffects })
         text = action.textoVisivel
         nextState = action.novoState
+        await audit({
+          type: 'ai_action_result',
+          referenceId: String(current.id),
+          payload: {
+            actionType: envelope.acao_detectada.tipo,
+            stateChanged: JSON.stringify(nextState) !== JSON.stringify(state),
+          },
+        })
       }
       // An already confirmed external action survives a human pause and a failed notice.
       if (JSON.stringify(nextState) !== JSON.stringify(state)) await deps.persistSchedule(lead, nextState)
@@ -153,10 +209,15 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
       if (!text.trim()) return
       // Sender persists the notice before its final control guard. A blocked/failed notice
       // stays recoverable; it must not cause an agenda action to be executed again.
-      await deps.send({
+      const sent = await deps.send({
         companyId: lead.companyId, lead, content: text, messageType: 'text',
         clientRequestId: requestId, sentBy: 'bot', senderName,
         agentId: bot, beforeTransport: controlAllowsEffects,
+      })
+      await audit({
+        type: sent.ok ? 'ai_reply_sent' : 'ai_reply_send_failed',
+        referenceId: String(current.id),
+        payload: { status: sent.status, sendState: sent.message?.sendState ?? null, retry: false },
       })
     } catch {
       console.error('[AI Reply] rodada interrompida; conferir estado e aviso no atendimento', { leadId })
