@@ -106,6 +106,9 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
 
   const channelCondition = channelWhereCondition(options.channel)
   if (channelCondition) whereConditions.push(channelCondition)
+  // recovery_leads also stores reservations and CRM contacts. Only a lead
+  // with real message history is a conversation in this Inbox.
+  whereConditions.push(conversationVisibilityCondition(options.companyId))
   // A área dedicada sempre passa channel=instagram_direct e não é afetada.
   if (!options.channel && options.includeInstagramInGeneral === false) {
     const instagramDirectCondition = channelWhereCondition('instagram_direct')

@@ -50,7 +50,9 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       createdAt: recoveryLeads.createdAt,
     })
     .from(recoveryLeads)
-    .where(and(eq(recoveryLeads.companyId, companyId), conversationVisibilityCondition(companyId), channelCondition))
+    .where(
+      and(eq(recoveryLeads.companyId, companyId), conversationVisibilityCondition(companyId), channelCondition)
+    )
     .orderBy(desc(recoveryLeads.updatedAt))
     .limit(250)
 

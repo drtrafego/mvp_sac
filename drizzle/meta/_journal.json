@@ -134,6 +134,13 @@
       "when": 1793000000001,
       "tag": "0032_first_human_message_metric",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793220000000,
+      "tag": "0037_sac_codex_jobs",
+      "breakpoints": true
     }
   ]
 }

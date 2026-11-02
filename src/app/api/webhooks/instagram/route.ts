@@ -18,6 +18,7 @@ import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { AmbiguousCredentialError } from "@/lib/instagram-webhook-errors"
 import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
+import { isLuanaTriggerComment, prepareLuanaCommentJob } from "@/lib/instagram-comment-event-automation"
 
 
 // Resolve a empresa dona de um pageId (Instagram Account ID ou Page ID) e,
@@ -211,6 +212,9 @@ export async function POST(req: NextRequest) {
             throw err
           }
           const companyId = resolved?.companyId ?? null
+          const [companySettingsForEntry] = companyId
+            ? await db.select().from(settings).where(eq(settings.companyId, companyId)).limit(1)
+            : []
 
         // Registra o webhook_received pra ESTE entry, tanto no sucesso quanto
         // na falha de resolução: antes disso a rota global nunca gravava
@@ -633,7 +637,18 @@ export async function POST(req: NextRequest) {
               const mediaObj = val.media as { id?: string } | undefined
               const mediaId = mediaObj?.id || (val.media_id as string) || ''
 
-              if (commentId && commenterId && commentText) {
+              if (isLuanaTriggerComment(commentText)) {
+                await prepareLuanaCommentJob({
+                  companyId,
+                  entryAccountId: pageId,
+                  acceptedAccountIds: [companySettingsForEntry?.instagramAccountId ?? '', companySettingsForEntry?.instagramPageId ?? ''],
+                  commentId,
+                  commenterId,
+                  commenterUsername,
+                  mediaId,
+                  commentText,
+                }).catch(err => console.error('[Luana Comment Event Global Error]:', err))
+              } else if (commentId && commenterId && commentText) {
                 await captureInstagramInboundInteraction({
                   companyId,
                   instagramUserId: commenterId,

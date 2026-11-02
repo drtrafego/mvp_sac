@@ -23,6 +23,8 @@ const PUBLIC_PATHS = [
   '/index.html',
 ]
 
+const PUBLIC_MARKDOWN_PATHS = new Set(['/docs/API_AGENTE_SAC.md'])
+
 // Garante que after_auth_return_to só aponte pra um caminho da mesma origem.
 // Whitelist por resultado (resolve com new URL() e compara origin), em vez de
 // blacklist de prefixo: fecha qualquer caractere especial que o parser de URL
@@ -73,6 +75,10 @@ export async function proxy(request: NextRequest) {
 
   if (pathname === '/RAG-Isabella-Portal-das-Bellas.txt') {
     return new NextResponse(null, { status: 404 })
+  }
+
+  if (PUBLIC_MARKDOWN_PATHS.has(pathname)) {
+    return NextResponse.next()
   }
 
   // Permitir arquivos estáticos (css, js, json, svg, png, etc.)

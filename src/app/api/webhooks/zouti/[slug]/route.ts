@@ -5,6 +5,7 @@ import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
+import { canScheduleAutomaticRecoverySequence } from '@/lib/recovery-sequence-policy'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 
@@ -543,7 +544,7 @@ export async function POST(
   const now = new Date()
 
   // Disputa: apenas registra o lead, nao envia nada
-  if (sequence && mappedType !== 'disputa') {
+  if (sequence && mappedType !== 'disputa' && canScheduleAutomaticRecoverySequence(mappedType)) {
     const messages = await db
       .select()
       .from(sequenceMessages)
