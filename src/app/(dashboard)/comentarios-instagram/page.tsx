@@ -907,7 +907,7 @@ export default function ComentariosInstagramPage() {
                       Exigir que a pessoa siga a conta antes de liberar
                     </span>
                     <span className="text-[10px] text-fg-subtle">
-                      Em vez da DM final, manda uma pergunta primeiro. Só libera o conteúdo depois de confirmar de verdade (Graph API) que a pessoa segue a conta.
+                      Consulta a Graph API no comentário. Se já segue, libera a DM final; caso contrário, envia a orientação aprovada para seguir e aguarda nova interação.
                     </span>
                   </div>
                   <input

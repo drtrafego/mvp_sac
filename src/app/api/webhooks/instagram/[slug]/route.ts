@@ -7,7 +7,7 @@ export const maxDuration = 180
 import { NextRequest, NextResponse } from "next/server"
 import { after } from "next/server"
 import { db } from "@/lib/db"
-import { companies, settings, whatsappMessages, recoveryLeads, webhookReceived, leadTags } from "@/lib/db/schema"
+import { companies, settings, recoveryLeads, webhookReceived, leadTags } from "@/lib/db/schema"
 import { and, eq, sql } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
@@ -17,7 +17,6 @@ import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
-import { isLuanaTriggerComment, prepareLuanaCommentJob } from "@/lib/instagram-comment-event-automation"
 
 
 function instagramDebugPayload(opts: {
@@ -531,18 +530,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           const mediaObj = val.media as { id?: string } | undefined
           const mediaId = mediaObj?.id || (val.media_id as string) || ''
 
-          if (isLuanaTriggerComment(commentText)) {
-            await prepareLuanaCommentJob({
-              companyId: company.id,
-              entryAccountId: instagramAccountId,
-              acceptedAccountIds: [companySettingsForSecret?.instagramAccountId ?? ''],
-              commentId,
-              commenterId,
-              commenterUsername,
-              mediaId,
-              commentText,
-            }).catch(err => console.error(`[Luana Comment Event ${slug} Error]:`, err))
-          } else if (commentId && commenterId && commentText) {
+          if (commentId && commenterId && commentText) {
             await captureInstagramInboundInteraction({
               companyId: company.id,
               instagramUserId: commenterId,
@@ -551,11 +539,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             })
             await processInstagramComment({
               companyId: company.id,
+              source: 'instagram_webhook',
               commentId,
               commenterId,
               commenterUsername,
               mediaId,
               commentText,
+              commentCreatedAt: val.timestamp as string | undefined,
             }).catch(err => console.error(`[Comment-to-DM Webhook ${slug} Error]:`, err))
           }
         }

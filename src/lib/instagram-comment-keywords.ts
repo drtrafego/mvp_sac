@@ -32,7 +32,7 @@ export function matchesCommentKeywords(
 
   for (const keyword of keywordsList) {
     const regex = new RegExp(`(^|\\s|[.,!?;])${escapeRegExp(keyword)}($|\\s|[.,!?;])`, 'i')
-    if (regex.test(normalizedComment) || normalizedComment.includes(keyword)) {
+    if (regex.test(normalizedComment)) {
       return { matched: true, matchedKeyword: keyword }
     }
   }

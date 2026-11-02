@@ -448,6 +448,11 @@ export function ensureSchema(client: any): Promise<void> {
               active_hours_start TEXT,
               active_hours_end TEXT,
               is_active BOOLEAN DEFAULT TRUE,
+              template_id TEXT,
+              template_variables JSONB,
+              consent_required BOOLEAN NOT NULL DEFAULT FALSE,
+              meta_window_hours INTEGER NOT NULL DEFAULT 168,
+              api_origin TEXT NOT NULL DEFAULT 'instagram_graph',
               total_triggered INTEGER DEFAULT 0,
               created_at TIMESTAMP DEFAULT NOW(),
               updated_at TIMESTAMP DEFAULT NOW()
@@ -489,6 +494,11 @@ export function ensureSchema(client: any): Promise<void> {
           // (instagramCommentAutomations.requireFollowCheck e
           // recoveryLeads.pendingFollowCheckAutomationId).
           client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS require_follow_check BOOLEAN DEFAULT FALSE`,
+          client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS template_id TEXT`,
+          client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS template_variables JSONB`,
+          client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS consent_required BOOLEAN NOT NULL DEFAULT FALSE`,
+          client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS meta_window_hours INTEGER NOT NULL DEFAULT 168`,
+          client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS api_origin TEXT NOT NULL DEFAULT 'instagram_graph'`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS pending_follow_check_automation_id INTEGER REFERENCES instagram_comment_automations(id) ON DELETE SET NULL`,
           // FIX ALTO de QA (24/09/2026, 2ª rodada): contador de tentativas
           // sem confirmar, ver comentário completo em schema.ts.
@@ -737,6 +747,14 @@ export function ensureSchema(client: any): Promise<void> {
             ON gramado_reservations (company_id, phone_norm)
           `,
         ])
+
+        // Esta chave depende das colunas adicionadas acima; mantenha a criação
+        // fora do Promise.allSettled para não haver corrida em banco existente.
+        await client`
+          CREATE UNIQUE INDEX IF NOT EXISTS instagram_comment_automations_company_template_unique
+          ON instagram_comment_automations (company_id, template_id)
+          WHERE template_id IS NOT NULL AND template_id != ''
+        `
 
         // ─── Credenciais de agente com entropia real (26/09/2026, achado de ────
         // auditoria de segurança P0, reproduzido) ───────────────────────────────

@@ -378,9 +378,9 @@ export const recoveryLeads = pgTable('recovery_leads', {
 
   // Estado do gate de seguidor do Instagram Comment-to-DM (24/09/2026, ver
   // comentário completo em instagramCommentAutomations.requireFollowCheck).
-  // Não-nulo = este lead está no meio do fluxo de 2 mensagens de UMA
-  // automação específica (aguardando a pessoa responder pra checar
-  // is_user_follow_business de verdade via Graph API). O webhook inbound do
+  // Não-nulo = o comentário inicial foi verificado pela API e a conta não
+  // seguia naquele momento; o fluxo aguarda uma nova interação para consultar
+  // is_user_follow_business de novo via Graph API. O webhook inbound do
   // Instagram (src/app/api/webhooks/instagram/route.ts e [slug]/route.ts)
   // testa este campo (E !botPaused, ver comentário lá) ANTES de decidir se a
   // mensagem cai no generateAndSendAiReply normal: se estiver pendente, a
@@ -827,6 +827,13 @@ export const instagramCommentAutomations = pgTable('instagram_comment_automation
   activeHoursStart: text('active_hours_start'),           // ex: "08:00"
   activeHoursEnd: text('active_hours_end'),               // ex: "22:00"
   isActive: boolean('is_active').default(true),
+  // Registro formal de templates de comentário → DM. O template 021126 usa
+  // somente a API própria do Instagram e fica inativo até haver mediaId real.
+  templateId: text('template_id'),
+  templateVariables: jsonb('template_variables').$type<Record<string, string> | null>(),
+  consentRequired: boolean('consent_required').default(false).notNull(),
+  metaWindowHours: integer('meta_window_hours').default(168).notNull(),
+  apiOrigin: text('api_origin').default('instagram_graph').notNull(),
   // ─── Gate de seguidor (24/09/2026) ─────────────────────────────────────
   // Opt-in POR AUTOMAÇÃO, default false = comportamento de sempre (manda o
   // dmMessage direto). Quando true, processInstagramComment (ver
@@ -850,6 +857,9 @@ export const instagramCommentAutomations = pgTable('instagram_comment_automation
   uniqueIndex('instagram_comment_automations_company_media_unique')
     .on(table.companyId, table.mediaId)
     .where(sql`${table.mediaId} is not null and ${table.mediaId} != ''`),
+  uniqueIndex('instagram_comment_automations_company_template_unique')
+    .on(table.companyId, table.templateId)
+    .where(sql`${table.templateId} is not null and ${table.templateId} != ''`),
 ])
 
 export const instagramCommentLogs = pgTable('instagram_comment_logs', {

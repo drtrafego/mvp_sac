@@ -5,6 +5,10 @@ import { eq, desc } from 'drizzle-orm'
 import { requireCompanyRole, AuthError, ForbiddenError, forbiddenResponse } from '@/lib/auth'
 import { findInvalidOptionalTextField } from '@/lib/request-validation'
 import { MAX_TAG_LENGTH, normalizeTag } from '@/lib/lead-tags'
+import {
+  INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
+  buildInstagramCommentDmTemplateRegistration,
+} from '@/lib/instagram-comment-dm-template'
 
 function isUnauthorizedError(error: unknown): boolean {
   return error instanceof AuthError || (
@@ -54,17 +58,18 @@ export async function POST(req: NextRequest) {
       hideCommentAfterReply = false,
       activeHoursStart,
       activeHoursEnd,
-      isActive = true,
+      isActive,
       requireFollowCheck = false,
       autoTag,
+      templateId,
     } = body
 
-    if (!name || typeof name !== 'string' || !name.trim()) {
-      return NextResponse.json({ error: 'O nome da automação é obrigatório.' }, { status: 400 })
+    const requestedTemplateId = typeof templateId === 'string' ? templateId.trim() : ''
+    if (requestedTemplateId && requestedTemplateId !== INSTAGRAM_COMMENT_DM_TEMPLATE_ID) {
+      return NextResponse.json({ error: 'templateId não reconhecido.' }, { status: 400 })
     }
-
-    if (!dmMessage || typeof dmMessage !== 'string' || !dmMessage.trim()) {
-      return NextResponse.json({ error: 'A mensagem da DM é obrigatória.' }, { status: 400 })
+    if ((!name || typeof name !== 'string' || !name.trim()) && !requestedTemplateId) {
+      return NextResponse.json({ error: 'O nome da automação é obrigatório.' }, { status: 400 })
     }
 
     const optionalTextFields = [
@@ -90,22 +95,51 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `A tag pode ter no máximo ${MAX_TAG_LENGTH} caracteres.` }, { status: 400 })
     }
 
+    const requestedIsActive = typeof isActive === 'boolean' ? isActive : !requestedTemplateId
+    let templateRegistration: ReturnType<typeof buildInstagramCommentDmTemplateRegistration> | null = null
+    if (requestedTemplateId) {
+      if (typeof publicReply === 'string' && publicReply.trim()) {
+        return NextResponse.json({ error: 'O template 021126 não publica resposta em comentário.' }, { status: 400 })
+      }
+      if (hideCommentAfterReply === true) {
+        return NextResponse.json({ error: 'O template 021126 não oculta comentários.' }, { status: 400 })
+      }
+      try {
+        templateRegistration = buildInstagramCommentDmTemplateRegistration({
+          mediaId: typeof mediaId === 'string' ? mediaId : null,
+          isActive: requestedIsActive,
+        })
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : 'Registro de template inválido.' }, { status: 400 })
+      }
+      if (typeof dmMessage === 'string' && dmMessage.trim() && dmMessage.trim() !== templateRegistration.dmMessage) {
+        return NextResponse.json({ error: 'A mensagem do template 021126 é fixa e não pode ser alterada.' }, { status: 400 })
+      }
+    } else if (!dmMessage || typeof dmMessage !== 'string' || !dmMessage.trim()) {
+      return NextResponse.json({ error: 'A mensagem da DM é obrigatória.' }, { status: 400 })
+    }
+
     const [created] = await db
       .insert(instagramCommentAutomations)
       .values({
         companyId: company.id,
-        name: name.trim(),
+        name: templateRegistration?.name ?? (name as string).trim(),
         mediaId: typeof mediaId === 'string' ? mediaId.trim() || null : null,
         mediaUrl: typeof mediaUrl === 'string' ? mediaUrl.trim() || null : null,
         mediaCaption: typeof mediaCaption === 'string' ? mediaCaption.trim() || null : null,
-        keywords: typeof keywords === 'string' ? keywords.trim() || null : null,
-        matchType: typeof matchType === 'string' && ['contains', 'exact', 'any'].includes(matchType) ? matchType : 'contains',
-        dmMessage: dmMessage.trim(),
-        publicReply: typeof publicReply === 'string' ? publicReply.trim() || null : null,
+        keywords: templateRegistration?.keywords ?? (typeof keywords === 'string' ? keywords.trim() || null : null),
+        matchType: templateRegistration?.matchType ?? (typeof matchType === 'string' && ['contains', 'exact', 'any'].includes(matchType) ? matchType : 'contains'),
+        dmMessage: templateRegistration?.dmMessage ?? (dmMessage as string).trim(),
+        publicReply: templateRegistration?.publicReply ?? (typeof publicReply === 'string' ? publicReply.trim() || null : null),
         hideCommentAfterReply: Boolean(hideCommentAfterReply),
         activeHoursStart: typeof activeHoursStart === 'string' ? activeHoursStart.trim() || null : null,
         activeHoursEnd: typeof activeHoursEnd === 'string' ? activeHoursEnd.trim() || null : null,
-        isActive: Boolean(isActive),
+        isActive: requestedIsActive,
+        templateId: templateRegistration?.templateId ?? null,
+        templateVariables: templateRegistration?.templateVariables ?? null,
+        consentRequired: templateRegistration?.consentRequired ?? false,
+        metaWindowHours: templateRegistration?.metaWindowHours ?? 168,
+        apiOrigin: templateRegistration?.apiOrigin ?? 'instagram_graph',
         requireFollowCheck: Boolean(requireFollowCheck),
         autoTag: normalizedAutoTag || null,
       })

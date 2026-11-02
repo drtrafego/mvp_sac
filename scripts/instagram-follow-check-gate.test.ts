@@ -3,9 +3,9 @@
 // Contexto: hoje, comentário com palavra-chave dispara IMEDIATAMENTE o
 // dmMessage configurado (uma mensagem só). Esta mudança introduz um flag
 // opt-in POR AUTOMAÇÃO (instagramCommentAutomations.requireFollowCheck):
-// quando ligado, o fluxo vira DUAS mensagens — pergunta intermediária,
-// resposta da pessoa, checagem REAL via Graph API (is_user_follow_business),
-// só então o dmMessage real. Automação sem o flag continua idêntica a hoje.
+// quando ligado, o comentário consulta a Graph API (is_user_follow_business)
+// imediatamente. Se não seguir, envia a orientação aprovada e aguarda nova
+// interação; só libera o dmMessage real depois da confirmação da API.
 //
 // Mesmo padrão de scripts/hermes-conversion-webhook.test.ts: sobe um
 // Postgres DESCARTÁVEL via Docker, aplica o schema real via
@@ -24,8 +24,8 @@
 // Casos cobertos (pedidos na tarefa):
 //   (a) automação SEM requireFollowCheck -> dmMessage direto, sem mudança
 //       nenhuma no comportamento de hoje (regressão do fluxo antigo).
-//   (b) automação COM requireFollowCheck -> manda a pergunta intermediária,
-//       NÃO o dmMessage; lead fica marcado pendingFollowCheckAutomationId.
+//   (b) automação COM requireFollowCheck -> consulta a API no comentário e,
+//       quando não segue, manda orientação sem liberar o dmMessage.
 //   (c) resposta com is_user_follow_business=true -> libera o dmMessage
 //       real e limpa o estado pendente.
 //   (d) resposta com is_user_follow_business=false -> manda "segue
@@ -395,10 +395,11 @@ async function main() {
       privateReplyCalls.length = callsBefore
     })
 
-    // ── (b) automação COM requireFollowCheck: pergunta intermediária, não o dmMessage ─
+    // ── (b) automação COM requireFollowCheck: consulta imediata, não pergunta ─
     let automationComFlagId: number
     let commenterComFlag: string
-    await test('(b) automação com requireFollowCheck manda a pergunta intermediária, NÃO o dmMessage, e marca o lead pendente', async () => {
+    await test('(b) automação com requireFollowCheck consulta a API no comentário, não libera e marca o lead pendente quando não segue', async () => {
+      followCheckResponse = { ok: true, follows: false }
       const [automation] = await testDb
         .insert(schema.instagramCommentAutomations)
         .values({
@@ -426,8 +427,9 @@ async function main() {
       assert.equal(result.status, 'sent')
       assert.equal(privateReplyCalls.length, 2, 'deveria ter mandado 1 mensagem nova (a 1ª já foi do teste (a))')
       const sentText = privateReplyCalls[1].text
-      assert.notEqual(sentText, automation.dmMessage, 'com o flag, o conteúdo final NUNCA pode sair na primeira mensagem')
-      assert.match(sentText, /segue/i, 'a pergunta intermediária precisa perguntar sobre seguir a conta')
+      assert.notEqual(sentText, automation.dmMessage, 'sem seguir, o conteúdo final NUNCA pode sair no comentário inicial')
+      assert.match(sentText, /segue/i, 'a orientação para não seguidor precisa pedir para seguir')
+      assert.equal(followCheckCalls.at(-1)?.igsid, commenterComFlag, 'a decisão inicial precisa usar a API própria do Instagram')
 
       const [lead] = await testDb
         .select()
@@ -445,6 +447,44 @@ async function main() {
         .from(schema.whatsappMessages)
         .where(eq(schema.whatsappMessages.leadId, lead.id))
       assert.equal(msg.content, sentText)
+    })
+
+    await test('(b2) automação com requireFollowCheck libera imediatamente o dmMessage quando a API confirma que segue', async () => {
+      followCheckResponse = { ok: true, follows: true }
+      const [automation] = await testDb
+        .insert(schema.instagramCommentAutomations)
+        .values({
+          companyId: company.id,
+          name: 'Automação com seguidor confirmado',
+          keywords: 'JA_SEGUI',
+          matchType: 'contains',
+          dmMessage: 'DM aprovada com URL oficial.',
+          isActive: true,
+          requireFollowCheck: true,
+        })
+        .returning()
+
+      const commenter = 'commenter_already_following_1'
+      const before = privateReplyCalls.length
+      const result = await processInstagramComment({
+        companyId: company.id,
+        commentId: 'comment_already_following_1',
+        commenterId: commenter,
+        mediaId: 'media_already_following',
+        commentText: 'JA_SEGUI',
+      })
+
+      assert.equal(result.status, 'sent')
+      assert.equal(privateReplyCalls.length, before + 1)
+      assert.equal(privateReplyCalls.at(-1)?.text, automation.dmMessage)
+      assert.equal(followCheckCalls.at(-1)?.igsid, commenter)
+
+      const [lead] = await testDb
+        .select()
+        .from(schema.recoveryLeads)
+        .where(eq(schema.recoveryLeads.phone, `ig_${commenter}`))
+      assert.ok(lead)
+      assert.equal(lead.pendingFollowCheckAutomationId, null)
     })
 
     // ── (e) prova direta: resposta de lead com checagem pendente NUNCA cai no
@@ -536,6 +576,7 @@ async function main() {
 
     // ── (g) erro da Graph API: não decide no escuro, mantém pendente ────────
     await test('(g) erro da Graph API (token/rede) mantém o estado pendente e não libera nem nega errado', async () => {
+      followCheckResponse = { ok: true, follows: false }
       const [automation] = await testDb
         .insert(schema.instagramCommentAutomations)
         .values({
@@ -605,6 +646,7 @@ async function main() {
     // pendente de OUTRA automação (achado real do QA adversarial na 2ª
     // rodada do PR #59) ──────────────────────────────────────────────────
     await test('(h) QA-1 CRÍTICO: comentário em automação SEM requireFollowCheck NÃO apaga gate pendente de outra automação', async () => {
+      followCheckResponse = { ok: true, follows: false }
       const [automationA] = await testDb
         .insert(schema.instagramCommentAutomations)
         .values({
@@ -691,6 +733,7 @@ async function main() {
     // ── (i) QA-2 CRÍTICO: pendente + botPaused não pode disparar NADA
     // automático (nem gate, nem IA) ──────────────────────────────────────
     await test('(i) QA-2 CRÍTICO: lead com checagem pendente E botPaused=true não aciona gate nem IA', async () => {
+      followCheckResponse = { ok: true, follows: false }
       const [automation] = await testDb
         .insert(schema.instagramCommentAutomations)
         .values({
@@ -754,6 +797,7 @@ async function main() {
 
     // ── (j) QA-3 CRÍTICO: corrida real não pode duplicar o conteúdo pago ────
     await test('(j) QA-3 CRÍTICO: duas invocações concorrentes de handleFollowCheckReply só liberam o conteúdo UMA vez', async () => {
+      followCheckResponse = { ok: true, follows: false }
       const [automation] = await testDb
         .insert(schema.instagramCommentAutomations)
         .values({
@@ -817,6 +861,7 @@ async function main() {
 
     // ── (k) QA-4 ALTO: limite de tentativas evita sequestro de conversa ─────
     await test('(k) QA-4 ALTO: depois do limite de tentativas, o gate desiste e devolve a conversa pro fluxo normal de IA', async () => {
+      followCheckResponse = { ok: true, follows: false }
       const [automation] = await testDb
         .insert(schema.instagramCommentAutomations)
         .values({

@@ -126,14 +126,50 @@ export async function sendInstagramPrivateReply({
 }
 
 /**
+ * Lê somente o timestamp do comentário pela API própria do Instagram. O
+ * private reply da Meta só pode ser enviado dentro da janela de 7 dias do
+ * comentário; quando o webhook não traz o timestamp, o processador consulta
+ * a fonte oficial antes de tentar enviar.
+ */
+export async function getInstagramCommentCreatedAt({
+  commentId,
+  companyId,
+}: {
+  commentId: string
+  companyId: number
+}): Promise<{ ok: boolean; createdAt?: Date; error?: string }> {
+  const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId))
+  const token = config?.instagramAccessToken?.trim()
+  if (!token) return { ok: false, error: 'Token de acesso do Instagram não configurado.' }
+
+  try {
+    const res = await fetch(`https://graph.instagram.com/v21.0/${encodeURIComponent(commentId)}?fields=timestamp`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    if (!res.ok || typeof data.timestamp !== 'string') {
+      const errDetail = (data.error as Record<string, unknown>)?.message || 'timestamp do comentário não retornado.'
+      return { ok: false, error: `Não foi possível validar a janela do comentário: ${errDetail}` }
+    }
+    const createdAt = new Date(data.timestamp)
+    if (Number.isNaN(createdAt.getTime())) return { ok: false, error: 'Timestamp do comentário inválido.' }
+    return { ok: true, createdAt }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
  * Consulta se um usuário do Instagram (IGSID) segue a conta da empresa,
  * via Instagram User Profile API (campo is_user_follow_business).
  * Restrição real da Meta (confirmada na doc oficial em 24/09/2026): só dá
  * pra consultar o perfil de alguém DEPOIS que essa pessoa mandou mensagem
  * pra empresa (ou clicou em ice breaker/menu persistente) — comentar num
  * post sozinho não libera esse acesso. Por isso o gate de seguidor
- * (src/lib/instagram-comment-processor.ts) manda uma pergunta intermediária
- * pelo Direct e só chama esta função depois que a pessoa responde.
+ * (src/lib/instagram-comment-processor.ts) consulta a API imediatamente no
+ * comentário/DM recebido. Se a API não responder, o fluxo falha fechado
+ * e não libera a mensagem aprovada.
  */
 export async function checkInstagramUserFollowsBusiness({
   igsid,

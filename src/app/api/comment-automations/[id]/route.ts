@@ -5,11 +5,22 @@ import { eq, and } from 'drizzle-orm'
 import { requireCompanyRole, AuthError, ForbiddenError, forbiddenResponse } from '@/lib/auth'
 import { findInvalidOptionalTextField } from '@/lib/request-validation'
 import { MAX_TAG_LENGTH, normalizeTag } from '@/lib/lead-tags'
+import {
+  INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
+  buildInstagramCommentDmTemplateRegistration,
+} from '@/lib/instagram-comment-dm-template'
 
 interface RouteContext {
   params: Promise<{ id: string }>
 }
-function isForbiddenError(error: unknown): boolean { return error instanceof ForbiddenError || (typeof error === 'object' && error !== null && 'status' in error && error.status === 403) }
+function isForbiddenError(error: unknown): boolean {
+  return (typeof ForbiddenError === 'function' && error instanceof ForbiddenError) ||
+    (typeof error === 'object' && error !== null && 'status' in error && error.status === 403)
+}
+function isUnauthorizedError(error: unknown): boolean {
+  return (typeof AuthError === 'function' && error instanceof AuthError) ||
+    (typeof error === 'object' && error !== null && 'status' in error && error.status === 401)
+}
 
 export async function GET(req: NextRequest, { params }: RouteContext) {
   try {
@@ -37,8 +48,8 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     }
 
     return NextResponse.json({ automation: rule })
-  } catch (err: any) {
-    if (err instanceof AuthError || err?.status === 401) {
+  } catch (err: unknown) {
+    if (isUnauthorizedError(err)) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
     if (isForbiddenError(err)) return forbiddenResponse()
@@ -83,6 +94,20 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: `A tag pode ter no máximo ${MAX_TAG_LENGTH} caracteres.` }, { status: 400 })
     }
 
+    const [current] = await db
+      .select()
+      .from(instagramCommentAutomations)
+      .where(and(eq(instagramCommentAutomations.id, automationId), eq(instagramCommentAutomations.companyId, company.id)))
+      .limit(1)
+    if (!current) return NextResponse.json({ error: 'Automação não encontrada' }, { status: 404 })
+
+    const requestedTemplateId = body.templateId === undefined
+      ? current.templateId?.trim() || ''
+      : typeof body.templateId === 'string' ? body.templateId.trim() : ''
+    if (requestedTemplateId && requestedTemplateId !== INSTAGRAM_COMMENT_DM_TEMPLATE_ID) {
+      return NextResponse.json({ error: 'templateId não reconhecido.' }, { status: 400 })
+    }
+
     const updateData: Record<string, unknown> = {
       updatedAt: new Date(),
     }
@@ -104,6 +129,41 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     if (typeof body.requireFollowCheck === 'boolean') updateData.requireFollowCheck = body.requireFollowCheck
     if (body.autoTag !== undefined) updateData.autoTag = typeof body.autoTag === 'string' ? normalizeTag(body.autoTag) || null : null
 
+    if (requestedTemplateId === INSTAGRAM_COMMENT_DM_TEMPLATE_ID) {
+      const nextMediaId = body.mediaId !== undefined
+        ? typeof body.mediaId === 'string' ? body.mediaId.trim() || null : null
+        : current.mediaId
+      const nextIsActive = typeof body.isActive === 'boolean' ? body.isActive : Boolean(current.isActive)
+      if (typeof body.publicReply === 'string' && body.publicReply.trim()) {
+        return NextResponse.json({ error: 'O template 021126 não publica resposta em comentário.' }, { status: 400 })
+      }
+      if (body.hideCommentAfterReply === true) {
+        return NextResponse.json({ error: 'O template 021126 não oculta comentários.' }, { status: 400 })
+      }
+      let registration: ReturnType<typeof buildInstagramCommentDmTemplateRegistration>
+      try {
+        registration = buildInstagramCommentDmTemplateRegistration({ mediaId: nextMediaId, isActive: nextIsActive })
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : 'Registro de template inválido.' }, { status: 400 })
+      }
+      if (typeof body.dmMessage === 'string' && body.dmMessage.trim() && body.dmMessage.trim() !== registration.dmMessage) {
+        return NextResponse.json({ error: 'A mensagem do template 021126 é fixa e não pode ser alterada.' }, { status: 400 })
+      }
+      updateData.name = registration.name
+      updateData.mediaId = registration.mediaId
+      updateData.keywords = registration.keywords
+      updateData.matchType = registration.matchType
+      updateData.dmMessage = registration.dmMessage
+      updateData.publicReply = null
+      updateData.hideCommentAfterReply = false
+      updateData.isActive = registration.isActive
+      updateData.templateId = registration.templateId
+      updateData.templateVariables = registration.templateVariables
+      updateData.consentRequired = registration.consentRequired
+      updateData.metaWindowHours = registration.metaWindowHours
+      updateData.apiOrigin = registration.apiOrigin
+    }
+
     const [updated] = await db
       .update(instagramCommentAutomations)
       .set(updateData)
@@ -120,8 +180,8 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     }
 
     return NextResponse.json({ automation: updated })
-  } catch (err: any) {
-    if (err instanceof AuthError || err?.status === 401) {
+  } catch (err: unknown) {
+    if (isUnauthorizedError(err)) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
     if (isForbiddenError(err)) return forbiddenResponse()
@@ -155,8 +215,8 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
     }
 
     return NextResponse.json({ success: true })
-  } catch (err: any) {
-    if (err instanceof AuthError || err?.status === 401) {
+  } catch (err: unknown) {
+    if (isUnauthorizedError(err)) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
     if (isForbiddenError(err)) return forbiddenResponse()

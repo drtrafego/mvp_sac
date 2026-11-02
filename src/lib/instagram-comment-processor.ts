@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import {
   instagramCommentAutomations,
   instagramCommentLogs,
+  sacAuditEvents,
   recoveryLeads,
   settings,
   whatsappMessages,
@@ -13,11 +14,18 @@ import {
   replyInstagramCommentPublic,
   hideInstagramComment,
   checkInstagramUserFollowsBusiness,
+  getInstagramCommentCreatedAt,
 } from '@/lib/instagram'
 import { generateAndSendAiReply } from '@/lib/ai-reply'
 import { eq, and, gte, sql } from 'drizzle-orm'
 import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
 import { normalizeTag } from '@/lib/lead-tags'
+import {
+  INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
+  INSTAGRAM_COMMENT_DM_TEMPLATE_KEYWORD,
+  INSTAGRAM_COMMENT_DM_TEMPLATE_URL,
+  renderInstagramCommentDmTemplate,
+} from '@/lib/instagram-comment-dm-template'
 
 export interface CommentEventData {
   companyId: number
@@ -26,6 +34,47 @@ export interface CommentEventData {
   commenterUsername?: string
   mediaId: string
   commentText: string
+  source?: 'instagram_webhook' | 'unknown'
+  commentCreatedAt?: Date | string | number
+}
+
+async function auditPreparedTemplate(
+  companyId: number,
+  type: string,
+  referenceId: string,
+  payload: Record<string, unknown>,
+) {
+  try {
+    await db.insert(sacAuditEvents).values({
+      companyId,
+      actorType: 'system',
+      actorId: 'instagram-comment-automation',
+      type,
+      referenceType: 'instagram_comment_dm_template',
+      referenceId,
+      payload,
+    })
+  } catch (error) {
+    console.error('[Comment-to-DM Audit Error]:', error)
+  }
+}
+
+function parseCommentCreatedAt(value: Date | string | number | undefined): Date | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
+  if (typeof value === 'number') {
+    const date = new Date(value < 10_000_000_000 ? value * 1000 : value)
+    return Number.isNaN(date.getTime()) ? null : date
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? null : date
+  }
+  return null
+}
+
+function isWithinMetaPrivateReplyWindow(createdAt: Date, windowHours: number): boolean {
+  const ageMs = Date.now() - createdAt.getTime()
+  return ageMs >= 0 && ageMs <= windowHours * 60 * 60 * 1000
 }
 
 /**
@@ -66,14 +115,29 @@ function isWithinActiveHours(startTime?: string | null, endTime?: string | null)
  * comentário em schema.ts): manter fixo evita mais um campo de texto pra
  * validar/testar sem necessidade real hoje.
  */
-function buildFollowCheckQuestion(username?: string | null): string {
-  const handle = username ? `@${username}` : 'a nossa conta'
-  return `Oi! Antes de eu te mandar o conteúdo, só preciso confirmar uma coisa: você já segue ${handle} aqui no Instagram? Responde aqui que eu libero na hora!`
-}
-
 function buildFollowCheckDenied(username?: string | null): string {
   const handle = username ? `@${username}` : 'a nossa conta'
   return `Ainda não te encontrei seguindo ${handle}. Segue lá e me responde de novo (um "pronto" já serve) que eu libero o conteúdo certinho pra você!`
+}
+
+async function auditFollowCheck(
+  companyId: number,
+  commentId: string,
+  payload: Record<string, unknown>,
+) {
+  try {
+    await db.insert(sacAuditEvents).values({
+      companyId,
+      actorType: 'system',
+      actorId: 'instagram-follow-check',
+      type: 'instagram_comment_follow_check',
+      referenceType: 'instagram_comment',
+      referenceId: commentId,
+      payload,
+    })
+  } catch (error) {
+    console.error('[Instagram Follow Check Audit Error]:', error)
+  }
 }
 
 /**
@@ -146,13 +210,34 @@ export async function processInstagramComment(event: CommentEventData) {
   }
 
   // Filtra regras que se aplicam a este post (ou a qualquer post se mediaId for null/vazio)
-  const applicableAutomations = automations.filter(rule => {
+  let applicableAutomations = automations.filter(rule => {
     if (!rule.mediaId) return true // regra global para todos os posts
     return rule.mediaId === mediaId
   })
 
   if (applicableAutomations.length === 0) {
     return { status: 'skipped', reason: 'no_matching_post_rule' }
+  }
+
+  // Luana é um gatilho reservado ao template 021126. Regras legadas com a
+  // mesma palavra podem ter DM ou resposta pública diferentes e não podem
+  // assumir esse fluxo enquanto a configuração aprovada não estiver presente.
+  const isLuanaTrigger = matchesCommentKeywords(
+    commentText,
+    INSTAGRAM_COMMENT_DM_TEMPLATE_KEYWORD,
+    'contains',
+  ).matched
+  if (isLuanaTrigger) {
+    const preparedRules = applicableAutomations.filter(rule => rule.templateId === INSTAGRAM_COMMENT_DM_TEMPLATE_ID)
+    if (preparedRules.length === 0) {
+      await auditPreparedTemplate(companyId, 'instagram_comment_dm_blocked', commentId, {
+        templateId: INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
+        reason: 'gatilho_luana_sem_template_021126_configurado',
+        keyword: INSTAGRAM_COMMENT_DM_TEMPLATE_KEYWORD,
+      })
+      return { status: 'blocked', reason: 'luana_template_not_configured' }
+    }
+    applicableAutomations = preparedRules
   }
 
   // 4. Encontra a primeira regra que casa com o horário e as palavras-chave
@@ -175,6 +260,69 @@ export async function processInstagramComment(event: CommentEventData) {
 
   if (!matchedRule) {
     return { status: 'skipped', reason: 'no_keyword_matched' }
+  }
+
+  const isPreparedTemplate = matchedRule.templateId === INSTAGRAM_COMMENT_DM_TEMPLATE_ID
+  if (isPreparedTemplate) {
+    const invalidRegistration =
+      event.source !== 'instagram_webhook' ||
+      !matchedRule.consentRequired ||
+      matchedRule.apiOrigin !== 'instagram_graph' ||
+      matchedRule.publicReply !== null ||
+      matchedRule.hideCommentAfterReply ||
+      matchedRule.dmMessage !== renderInstagramCommentDmTemplate({ url: INSTAGRAM_COMMENT_DM_TEMPLATE_URL }) ||
+      matchedRule.templateVariables?.url !== INSTAGRAM_COMMENT_DM_TEMPLATE_URL
+
+    if (invalidRegistration) {
+      await auditPreparedTemplate(companyId, 'instagram_comment_dm_blocked', commentId, {
+        templateId: INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
+        reason: 'registro_invalido_ou_evento_sem_consentimento_oficial',
+        apiOrigin: matchedRule.apiOrigin,
+      })
+      return { status: 'blocked', reason: 'template_registration_or_consent_invalid' }
+    }
+
+    let createdAt = parseCommentCreatedAt(event.commentCreatedAt)
+    if (!createdAt) {
+      const timestamp = await getInstagramCommentCreatedAt({ commentId, companyId })
+      if (timestamp.ok) createdAt = timestamp.createdAt ?? null
+    }
+    if (!createdAt || !isWithinMetaPrivateReplyWindow(createdAt, matchedRule.metaWindowHours || 168)) {
+      await auditPreparedTemplate(companyId, 'instagram_comment_dm_blocked', commentId, {
+        templateId: INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
+        reason: 'fora_da_janela_meta_ou_timestamp_indisponivel',
+        windowHours: matchedRule.metaWindowHours || 168,
+      })
+      return { status: 'blocked', reason: 'meta_private_reply_window' }
+    }
+  }
+
+  // O comentário já é a interação oficial recebida pelo Instagram. Consulta
+  // a própria Instagram User Profile API imediatamente; nunca transforma a
+  // verificação em uma pergunta de confirmação para o cliente.
+  let followCheckFollows: boolean | null = null
+  if (matchedRule.requireFollowCheck) {
+    const followCheck = await checkInstagramUserFollowsBusiness({
+      igsid: commenterId,
+      companyId,
+    })
+
+    if (!followCheck.ok) {
+      await auditFollowCheck(companyId, commentId, {
+        decision: 'blocked',
+        reason: 'instagram_follow_api_error',
+        apiOrigin: 'instagram_graph',
+        error: followCheck.error ?? 'erro_sem_detalhe',
+      })
+      console.error(`[Comment-to-DM Follow Check Error] Empresa ${companyId}, comment ${commentId}:`, followCheck.error)
+      return { status: 'blocked', reason: 'follow_check_api_error', error: followCheck.error }
+    }
+
+    followCheckFollows = followCheck.follows === true
+    await auditFollowCheck(companyId, commentId, {
+      decision: followCheckFollows ? 'follows' : 'does_not_follow',
+      apiOrigin: 'instagram_graph',
+    })
   }
 
   // 5. Deduplicação por Usuário + Post + Regra (não reenviar DM se já enviou pelo mesmo post)
@@ -209,19 +357,36 @@ export async function processInstagramComment(event: CommentEventData) {
     }
   }
 
+  // A claim is written before the external call. The unique comment index
+  // makes concurrent Meta webhook deliveries idempotent and prevents two DMs
+  // from leaving the process at the same time.
+  const [claim] = await db.insert(instagramCommentLogs).values({
+    companyId,
+    automationId: matchedRule.id,
+    commentId,
+    commenterId,
+    commenterUsername,
+    mediaId,
+    commentText,
+    matchedKeyword: matchedKeywordFound,
+    status: 'processing',
+  }).onConflictDoNothing().returning({ id: instagramCommentLogs.id })
+  if (!claim) return { status: 'skipped', reason: 'comment_claim_already_exists' }
+
   // 6. Disparo da Resposta Privada (Private Reply) via Graph API.
-  // Automação com requireFollowCheck: NÃO manda o dmMessage ainda, manda a
-  // pergunta intermediária (ver comentário no schema.ts). O conteúdo real só
-  // sai depois que a pessoa responder e a Graph API confirmar que ela segue
-  // a conta (handleFollowCheckReply, chamado pelo webhook inbound).
+  // A verificação de seguidor já aconteceu acima, no próprio comentário.
+  // Não seguimos a alegação do cliente: o conteúdo final só sai quando a
+  // Instagram User Profile API confirmou is_user_follow_business=true.
   let sentText = matchedRule.dmMessage
-  if (matchedRule.requireFollowCheck) {
+  const followCheckRequiresAnotherInteraction =
+    matchedRule.requireFollowCheck && followCheckFollows === false
+  if (followCheckRequiresAnotherInteraction) {
     const [config] = await db
       .select({ instagramUsername: settings.instagramUsername })
       .from(settings)
       .where(eq(settings.companyId, companyId))
       .limit(1)
-    sentText = buildFollowCheckQuestion(config?.instagramUsername)
+    sentText = buildFollowCheckDenied(config?.instagramUsername)
   }
 
   const dmResult = await sendInstagramPrivateReply({
@@ -232,35 +397,29 @@ export async function processInstagramComment(event: CommentEventData) {
 
   if (!dmResult.ok) {
     console.error(`[Comment-to-DM Error] Empresa ${companyId}, comment ${commentId}:`, dmResult.error)
-    await db.insert(instagramCommentLogs).values({
-      companyId,
-      automationId: matchedRule.id,
-      commentId,
-      commenterId,
-      commenterUsername,
-      mediaId,
-      commentText,
-      matchedKeyword: matchedKeywordFound,
-      status: 'failed',
-      errorMessage: dmResult.error,
-    }).onConflictDoNothing()
+    await db.update(instagramCommentLogs).set({ status: 'failed', errorMessage: dmResult.error }).where(eq(instagramCommentLogs.id, claim.id))
+    if (isPreparedTemplate) {
+      await auditPreparedTemplate(companyId, 'instagram_comment_dm_failed', commentId, {
+        templateId: INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
+        mediaId,
+        error: dmResult.error ?? 'erro_sem_detalhe',
+      })
+    }
     return { status: 'failed', error: dmResult.error }
   }
 
   // 7. Sucesso no Envio da DM: grava log e incrementa contador da automação
   const now = new Date()
-  await db.insert(instagramCommentLogs).values({
-    companyId,
-    automationId: matchedRule.id,
-    commentId,
-    commenterId,
-    commenterUsername,
-    mediaId,
-    commentText,
-    matchedKeyword: matchedKeywordFound,
-    status: 'sent',
-    sentAt: now,
-  }).onConflictDoNothing()
+  await db.update(instagramCommentLogs).set({ status: 'sent', sentAt: now, errorMessage: null }).where(eq(instagramCommentLogs.id, claim.id))
+
+  if (isPreparedTemplate) {
+    await auditPreparedTemplate(companyId, 'instagram_comment_dm_sent', commentId, {
+      templateId: INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
+      mediaId,
+      apiOrigin: 'instagram_graph',
+      publicReply: false,
+    })
+  }
 
   await db
     .update(instagramCommentAutomations)
@@ -312,7 +471,7 @@ export async function processInstagramComment(event: CommentEventData) {
           status: 'in_conversation',
           trackingSource: 'instagram_comment',
           // Lead novo, sem estado anterior pra preservar: grava direto.
-          pendingFollowCheckAutomationId: matchedRule.requireFollowCheck ? matchedRule.id : null,
+          pendingFollowCheckAutomationId: followCheckRequiresAnotherInteraction ? matchedRule.id : null,
           pendingFollowCheckAttempts: 0,
         })
         .returning()
@@ -345,7 +504,7 @@ export async function processInstagramComment(event: CommentEventData) {
       // gate pendente de OUTRA automação com flag (última pergunta vale,
       // decisão de produto já documentada em schema.ts) — isso não mudou.
       if (matchedRule.requireFollowCheck) {
-        updateSet.pendingFollowCheckAutomationId = matchedRule.id
+        updateSet.pendingFollowCheckAutomationId = followCheckRequiresAnotherInteraction ? matchedRule.id : null
         updateSet.pendingFollowCheckAttempts = 0
       }
 
@@ -363,8 +522,8 @@ export async function processInstagramComment(event: CommentEventData) {
       }).onConflictDoNothing()
     }
 
-    // Grava a mensagem enviada (pergunta intermediária ou dmMessage direto,
-    // dependendo do gate) na tabela unificada de mensagens
+    // Grava a mensagem enviada (orientação aprovada para não seguidores ou
+    // dmMessage aprovado para seguidores) na tabela unificada de mensagens.
     await db.insert(whatsappMessages).values({
       companyId,
       leadId: lead?.id ?? null,

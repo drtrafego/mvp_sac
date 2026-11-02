@@ -7,7 +7,7 @@ export const maxDuration = 180
 import { NextRequest, NextResponse } from "next/server"
 import { after } from "next/server"
 import { db } from "@/lib/db"
-import { companies, settings, whatsappMessages, webhookReceived, recoveryLeads, leadTags } from "@/lib/db/schema"
+import { companies, settings, webhookReceived, recoveryLeads, leadTags } from "@/lib/db/schema"
 import { and, eq, sql } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
@@ -18,7 +18,6 @@ import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { AmbiguousCredentialError } from "@/lib/instagram-webhook-errors"
 import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
-import { isLuanaTriggerComment, prepareLuanaCommentJob } from "@/lib/instagram-comment-event-automation"
 
 
 // Resolve a empresa dona do Instagram Business User ID e,
@@ -200,10 +199,6 @@ export async function POST(req: NextRequest) {
             throw err
           }
           const companyId = resolved?.companyId ?? null
-          const [companySettingsForEntry] = companyId
-            ? await db.select().from(settings).where(eq(settings.companyId, companyId)).limit(1)
-            : []
-
         // Registra o webhook_received pra ESTE entry, tanto no sucesso quanto
         // na falha de resolução: antes disso a rota global nunca gravava
         // nada aqui (só a rota [slug] gravava sempre), e uma empresa não
@@ -625,18 +620,7 @@ export async function POST(req: NextRequest) {
               const mediaObj = val.media as { id?: string } | undefined
               const mediaId = mediaObj?.id || (val.media_id as string) || ''
 
-              if (isLuanaTriggerComment(commentText)) {
-                await prepareLuanaCommentJob({
-                  companyId,
-                  entryAccountId: instagramAccountId,
-                  acceptedAccountIds: [companySettingsForEntry?.instagramAccountId ?? ''],
-                  commentId,
-                  commenterId,
-                  commenterUsername,
-                  mediaId,
-                  commentText,
-                }).catch(err => console.error('[Luana Comment Event Global Error]:', err))
-              } else if (commentId && commenterId && commentText) {
+              if (commentId && commenterId && commentText) {
                 await captureInstagramInboundInteraction({
                   companyId,
                   instagramUserId: commenterId,
@@ -645,11 +629,13 @@ export async function POST(req: NextRequest) {
                 })
                 await processInstagramComment({
                   companyId,
+                  source: 'instagram_webhook',
                   commentId,
                   commenterId,
                   commenterUsername,
                   mediaId,
                   commentText,
+                  commentCreatedAt: val.timestamp as string | undefined,
                 }).catch(err => console.error('[Comment-to-DM Webhook Global Error]:', err))
               }
             }
