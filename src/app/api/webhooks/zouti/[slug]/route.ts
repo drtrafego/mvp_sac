@@ -5,9 +5,10 @@ import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
-import { canScheduleAutomaticRecoverySequence } from '@/lib/recovery-sequence-policy'
+import { canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent } from '@/lib/recovery-sequence-policy'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
+import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
 
 // ─── Tipos do payload Zouti ──────────────────────────────────────────────────
 // Fonte: https://ajuda.zouti.com.br/pt-br/articles/9740950-como-configurar-webhook
@@ -435,6 +436,7 @@ export async function POST(
         orderDate: parseDate(body.created_at),
         approvedDate: mappedType === 'compra_aprovada' ? parseDate(body.updated_at ?? body.created_at) : null,
         rawPayload: body,
+        whatsappConsentStatus: hasExplicitWhatsAppConsent(body) ? 'opted_in' : 'unknown',
         status: mappedType === 'compra_aprovada' ? 'completed' : 'pending',
       })
       // Merge ao inves de DoNothing: os dois eventos PAID (ord_ e pmt_) chegam em
@@ -486,6 +488,9 @@ export async function POST(
   // Salvaguarda: com onConflictDoUpdate o returning sempre traz a linha. Se vier
   // vazio e algo inesperado, evita seguir com lead indefinido.
   if (!lead) {
+    if (mappedType === 'compra_aprovada' && phone) {
+      await cancelPixFollowupsForPayment({ companyId: company.id, phone, transactionId })
+    }
     await logReceived({
       companyId: company.id, slug, event: eventLabel, processed: false,
       skipReason: 'lead_insert_no_return', rawBody: body, headers: headersObj,
@@ -497,6 +502,9 @@ export async function POST(
   // nao-nulos. Nao reprocessa agendamento de mensagens nem notificacao interna,
   // senao o dono receberia notificacao duplicada e os jobs seriam recriados.
   if (!lead.wasInserted) {
+    if (mappedType === 'compra_aprovada' && phone) {
+      await cancelPixFollowupsForPayment({ companyId: company.id, phone, transactionId })
+    }
     await logReceived({
       companyId: company.id, slug, event: eventLabel, processed: false,
       skipReason: 'duplicate_transaction_merged', rawBody: body, headers: headersObj, leadId: lead.id,
@@ -506,6 +514,7 @@ export async function POST(
 
   // Cancelar jobs pendentes e marcar como convertido quando chega compra_aprovada
   if (mappedType === 'compra_aprovada' && phone) {
+    await cancelPixFollowupsForPayment({ companyId: company.id, phone, transactionId })
     const leadsToCancel = await db
       .select({ id: recoveryLeads.id })
       .from(recoveryLeads)
@@ -544,7 +553,7 @@ export async function POST(
   const now = new Date()
 
   // Disputa: apenas registra o lead, nao envia nada
-  if (sequence && mappedType !== 'disputa' && canScheduleAutomaticRecoverySequence(mappedType)) {
+  if (sequence && mappedType !== 'pix' && mappedType !== 'disputa' && canScheduleAutomaticRecoverySequence(mappedType)) {
     const messages = await db
       .select()
       .from(sequenceMessages)
@@ -578,6 +587,11 @@ export async function POST(
         checkBeforeSend: false,
       })
     }
+  }
+
+  if (mappedType === 'pix') {
+    const [fullLead] = await db.select().from(recoveryLeads).where(eq(recoveryLeads.id, lead.id)).limit(1)
+    if (fullLead) await schedulePixFollowup(fullLead)
   }
 
   // Notificacao interna (fire-and-forget)

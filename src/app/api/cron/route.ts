@@ -17,6 +17,8 @@ import { evaluateDispatchWindow, firstDueJobPerLead, retryAtAfterPreviousFollowu
 import { isNativeAvailabilityCompany, normalizeAvailabilitySchedule } from '@/lib/agenda-schedule'
 import { shouldSyncHermesAgenda } from '@/lib/hermes-control-panel'
 import { evaluateSacPendingRules } from '@/lib/sac-pending-rules'
+import { recordPixFollowupSent } from '@/lib/pix-followup'
+import { isApprovedUtilityPixTemplate, isRealPendingPix, PIX_FOLLOWUP_JOB_TYPE } from '@/lib/pix-followup-policy'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
 
@@ -40,6 +42,15 @@ function formatCurrency(cents: number | null | undefined): string {
 function formatDate(d: Date | null | undefined): string {
   if (!d) return ''
   return new Date(d).toLocaleDateString('pt-BR')
+}
+
+function formatPixExpiry(d: Date | null | undefined): string {
+  if (!d) return ''
+  return new Date(d).toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    dateStyle: 'short',
+    timeStyle: 'short',
+  })
 }
 
 function interpolate(text: string | null | undefined, lead: {
@@ -83,7 +94,7 @@ function interpolate(text: string | null | undefined, lead: {
     .replace(/\{boleto_url\}/gi, lead.boletoUrl ?? '')
     .replace(/\{boleto_validade\}/gi, formatDate(lead.boletoExpiry))
     .replace(/\{pix_codigo\}/gi, lead.pixCode ?? '')
-    .replace(/\{pix_validade\}/gi, formatDate(lead.pixExpiry))
+    .replace(/\{pix_validade\}/gi, formatPixExpiry(lead.pixExpiry))
     .replace(/\{link_checkout\}/gi, lead.checkoutUrl ?? '')
     .replace(/\{afiliado\}/gi, lead.affiliateCode ?? '')
 }
@@ -375,6 +386,15 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
   for (const { job, companyId, companySlug, metaPhoneNumberId, whatsappProvider, availabilitySchedule, availabilityScheduleManual, nativeAvailabilitySchedule, leadPhone, leadCreatedAt, checkBeforeSend } of runnableJobs) {
     let providerAccepted = false
     try {
+      // O webhook de compra pode cancelar um job depois da seleção do cron.
+      // Releitura imediata fecha essa corrida antes de qualquer chamada à Meta.
+      const [freshJob] = await db
+        .select({ status: messageJobs.status })
+        .from(messageJobs)
+        .where(eq(messageJobs.id, job.id))
+        .limit(1)
+      if (freshJob?.status !== 'processing') continue
+
       const activeCooldown = metaPhoneNumberId ? cooldownsByPhone.get(metaPhoneNumberId) : undefined
       if (activeCooldown && activeCooldown > new Date()) {
         await db.update(messageJobs).set({
@@ -433,6 +453,17 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         failed++
         continue
       }
+
+      // Um pagamento aprovado pode cancelar um job enquanto este cron já o
+      // selecionou. Releia o estado antes do transporte para que a
+      // reconciliação vença a seleção anterior.
+      const [currentJob] = await db
+        .select({ status: messageJobs.status })
+        .from(messageJobs)
+        .where(eq(messageJobs.id, job.id))
+        .limit(1)
+      if (currentJob?.status !== 'processing') continue
+
       if (lead.botPaused) {
         await db
           .update(messageJobs)
@@ -442,6 +473,26 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
             inArray(messageJobs.status, ['pending', 'processing'])
           ))
         continue
+      }
+
+      if (job.jobType === PIX_FOLLOWUP_JOB_TYPE) {
+        const pixGate = isRealPendingPix(lead)
+        if (!pixGate.eligible) {
+          await db.update(messageJobs).set({
+            status: 'cancelled',
+            error: `Follow-up Pix cancelado: ${pixGate.reason}`,
+            processingStartedAt: null,
+          }).where(eq(messageJobs.id, job.id))
+          continue
+        }
+        if ((whatsappProvider ?? 'meta') !== 'meta') {
+          await db.update(messageJobs).set({
+            status: 'cancelled',
+            error: 'Follow-up Pix exige provedor Meta Cloud API',
+            processingStartedAt: null,
+          }).where(eq(messageJobs.id, job.id))
+          continue
+        }
       }
 
       const spacing = await followupSpacingDecision(job)
@@ -556,6 +607,26 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         continue
       }
 
+      if (job.jobType === PIX_FOLLOWUP_JOB_TYPE) {
+        const [pixTemplate] = await db
+          .select({ name: schema.metaMessageTemplates.name, language: schema.metaMessageTemplates.language, status: schema.metaMessageTemplates.status, category: schema.metaMessageTemplates.category })
+          .from(schema.metaMessageTemplates)
+          .where(and(
+            eq(schema.metaMessageTemplates.companyId, companyId),
+            eq(schema.metaMessageTemplates.name, 'pix_despertar_nao_pago'),
+            eq(schema.metaMessageTemplates.language, 'pt_BR'),
+          ))
+          .limit(1)
+        if (!isApprovedUtilityPixTemplate(pixTemplate)) {
+          await db.update(messageJobs).set({
+            status: 'cancelled',
+            error: 'Template Pix deixou de estar APPROVED/UTILITY antes do envio',
+            processingStartedAt: null,
+          }).where(eq(messageJobs.id, job.id))
+          continue
+        }
+      }
+
       const msgType = message.messageType ?? 'text'
       const buttons = Array.isArray(message.buttonsJson) ? message.buttonsJson as { id: string; label: string }[] : undefined
 
@@ -620,6 +691,12 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
       await db.update(recoveryLeads).set({ status: 'in_progress', updatedAt: new Date() }).where(eq(recoveryLeads.id, lead.id))
       // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead
       await markLeadContacted(lead.id)
+      if (job.jobType === PIX_FOLLOWUP_JOB_TYPE) {
+        const externalWamid = outcome.status === 'sent' || outcome.status === 'sent_unconfirmed'
+          ? outcome.externalWamid
+          : null
+        await recordPixFollowupSent({ companyId, leadId: lead.id, jobId: job.id, externalWamid })
+      }
       sent++
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)

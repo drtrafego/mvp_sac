@@ -370,6 +370,11 @@ export const recoveryLeads = pgTable('recovery_leads', {
   botPausedBy: text('bot_paused_by'),
   botPausedAll: boolean('bot_paused_all').default(false), // true só quando o PAUSAR TUDO da empresa foi quem pausou este lead.
   botPausedChannel: text('bot_paused_channel'), // 'whatsapp' | 'instagram' | 'email' quando uma pausa em massa por canal pausou este lead.
+  // Consentimento explícito para follow-ups transacionais via WhatsApp.
+  // 'unknown' é fechado: nenhum fluxo automático de Pix agenda enquanto a
+  // origem do opt-in não estiver registrada.
+  whatsappConsentStatus: text('whatsapp_consent_status').notNull().default('unknown'), // unknown | opted_in | opted_out
+  whatsappConsentAt: timestamp('whatsapp_consent_at'),
 
   // Estado do gate de seguidor do Instagram Comment-to-DM (24/09/2026, ver
   // comentário completo em instagramCommentAutomations.requireFollowCheck).
@@ -631,9 +636,12 @@ export const messageJobs = pgTable('message_jobs', {
   messageSnapshot: jsonb('message_snapshot'),            // cópia imutável usada pelos disparos em massa
   retryCount: integer('retry_count').notNull().default(0),
   processingStartedAt: timestamp('processing_started_at'),
+  jobType: text('job_type'), // pix_followup_60m | null para sequências legadas
+  idempotencyKey: text('idempotency_key'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   uniqueIndex('message_jobs_mass_dispatch_unique').on(table.massDispatchBatchId, table.leadId, table.messageId),
+  uniqueIndex('message_jobs_idempotency_key_unique').on(table.idempotencyKey),
 ])
 
 export const massDispatchPhoneCooldowns = pgTable('mass_dispatch_phone_cooldowns', {

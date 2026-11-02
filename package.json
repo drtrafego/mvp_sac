@@ -38,6 +38,7 @@
     "test:agenda-slot-validation": "tsx --test scripts/agenda-slot-validation.test.ts",
     "test:lead-tags": "node --import tsx --experimental-test-module-mocks scripts/lead-tags.test.ts",
     "test:message-jobs-policy": "tsx --test scripts/message-jobs-policy.test.ts",
+    "test:pix-followup": "tsx --test scripts/pix-followup-policy.test.ts",
     "test:agenda-followup-policy": "tsx --test scripts/agenda-followup-policy.test.ts && tsx --test scripts/agenda-schedule-route-contract.test.ts && tsx --test scripts/agenda-blocked-date-delete-contract.test.ts && tsx --test scripts/hermes-control-panel.test.ts",
     "test:hermes-control-panel-live": "node --import tsx --experimental-test-module-mocks scripts/hermes-control-panel.live-smoke.ts",
     "test:hermes-blocked-date-live": "node --import tsx --experimental-test-module-mocks scripts/hermes-blocked-date.live-smoke.ts",

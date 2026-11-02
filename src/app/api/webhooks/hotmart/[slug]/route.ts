@@ -4,10 +4,11 @@ import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
-import { canScheduleAutomaticRecoverySequence } from '@/lib/recovery-sequence-policy'
+import { canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent } from '@/lib/recovery-sequence-policy'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import { extractHotmartToken } from '@/lib/hotmart-token'
+import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
 
 async function logReceived(args: {
   companyId: number | null
@@ -420,6 +421,7 @@ export async function POST(
       approvedDate,
       isOrderBump: purchase?.order_bump?.is_order_bump ?? false,
       rawPayload: body,
+      whatsappConsentStatus: hasExplicitWhatsAppConsent(body) ? 'opted_in' : 'unknown',
       status: mappedType === 'compra_aprovada' ? 'completed' : 'pending',
     })
     .onConflictDoNothing({
@@ -440,6 +442,9 @@ export async function POST(
   // Evento repetido: a Hotmart reenvia o mesmo evento (retry) e o indice unico
   // parcial bloqueou a duplicata. Responde 200 sem reagendar nada.
   if (!lead) {
+    if (mappedType === 'compra_aprovada' && phone) {
+      await cancelPixFollowupsForPayment({ companyId: company.id, phone, transactionId: purchase?.transaction ?? null })
+    }
     await logReceived({
       companyId: company.id, slug, event: event ?? null, processed: false,
       skipReason: 'duplicate_transaction', rawBody: body, headers: headersObj,
@@ -449,6 +454,7 @@ export async function POST(
 
   // Cancelar jobs pendentes de recuperação quando chega compra_aprovada
   if (mappedType === 'compra_aprovada' && phone) {
+    await cancelPixFollowupsForPayment({ companyId: company.id, phone, transactionId: purchase?.transaction ?? null })
     const leadsToCancel = await db
       .select({ id: recoveryLeads.id })
       .from(recoveryLeads)
@@ -488,7 +494,7 @@ export async function POST(
   const now = new Date()
 
   // Disputa: apenas registra o lead, não envia nada
-  if (sequence && mappedType !== 'disputa' && canScheduleAutomaticRecoverySequence(mappedType)) {
+  if (sequence && mappedType !== 'pix' && mappedType !== 'disputa' && canScheduleAutomaticRecoverySequence(mappedType)) {
     const messages = await db
       .select()
       .from(sequenceMessages)
@@ -522,6 +528,10 @@ export async function POST(
         checkBeforeSend: false,
       })
     }
+  }
+
+  if (mappedType === 'pix') {
+    await schedulePixFollowup(lead)
   }
 
   // Notificação interna (fire-and-forget)

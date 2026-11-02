@@ -865,6 +865,23 @@ export function ensureSchema(client: any): Promise<void> {
           console.error('[DB Schema Sync Error] Falha ao criar infraestrutura de disparo em massa:', message)
         }
 
+        // ─── Follow-up transacional de Pix pendente (60 min) ───────────────
+        // O default unknown é deliberadamente fechado: uma instalação antiga
+        // não pode começar a enviar templates sem que o opt-in seja registrado.
+        try {
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS whatsapp_consent_status text NOT NULL DEFAULT 'unknown'`
+          await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS whatsapp_consent_at timestamp`
+          await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS job_type text`
+          await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS idempotency_key text`
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS message_jobs_idempotency_key_unique
+            ON message_jobs (idempotency_key)
+          `
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error('[DB Schema Sync Error] Falha ao criar infraestrutura do follow-up Pix:', message)
+        }
+
         // ─── Tags livres de lead (25/09/2026) ──────────────────────────────
         // Ver comentário completo em src/lib/db/schema.ts (leadTags) e no
         // contrato da rota src/app/api/leads/[leadId]/tags/route.ts.

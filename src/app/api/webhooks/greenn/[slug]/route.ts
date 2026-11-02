@@ -4,9 +4,10 @@ import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
-import { canScheduleAutomaticRecoverySequence } from '@/lib/recovery-sequence-policy'
+import { canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent } from '@/lib/recovery-sequence-policy'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
+import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
 
 type SaleMeta = { meta_key?: string; meta_value?: string }
 
@@ -271,6 +272,7 @@ export async function POST(
       metaAdsetId: getMeta(metas, 'adset_id'),
       metaAdId: getMeta(metas, 'ad_id'),
       rawPayload: body,
+      whatsappConsentStatus: hasExplicitWhatsAppConsent(body) ? 'opted_in' : 'unknown',
       status: mappedType === 'compra_aprovada' ? 'completed' : 'pending',
     })
     .onConflictDoNothing({
@@ -282,11 +284,15 @@ export async function POST(
   // Evento repetido: a Greenn reenvia o mesmo evento (retry) e o indice unico
   // parcial bloqueou a duplicata. Responde 200 sem reagendar nada.
   if (!lead) {
+    if (mappedType === 'compra_aprovada' && phone) {
+      await cancelPixFollowupsForPayment({ companyId: company.id, phone, transactionId })
+    }
     return NextResponse.json({ ok: true, duplicate: true })
   }
 
   // Cancelar jobs pendentes e marcar como convertido quando chega compra_aprovada
   if (mappedType === 'compra_aprovada' && phone) {
+    await cancelPixFollowupsForPayment({ companyId: company.id, phone, transactionId })
     const leadsToCancel = await db
       .select({ id: recoveryLeads.id })
       .from(recoveryLeads)
@@ -325,7 +331,7 @@ export async function POST(
   const MIN_FIRST_DELAY_MS = 30 * 60 * 1000
   const now = new Date()
 
-  if (sequence && canScheduleAutomaticRecoverySequence(mappedType)) {
+  if (sequence && mappedType !== 'pix' && canScheduleAutomaticRecoverySequence(mappedType)) {
     const messages = await db
       .select()
       .from(sequenceMessages)
@@ -359,6 +365,10 @@ export async function POST(
         checkBeforeSend: false,
       })
     }
+  }
+
+  if (mappedType === 'pix') {
+    await schedulePixFollowup(lead)
   }
 
   // Notificação interna (fire-and-forget)

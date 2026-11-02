@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
-import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived, metaMessageTemplates } from '@/lib/db/schema'
+import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived, metaMessageTemplates, sacAuditEvents } from '@/lib/db/schema'
 import { db } from '@/lib/db'
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
-import { canScheduleAutomaticRecoverySequence, isApprovedUtilitySequence } from '@/lib/recovery-sequence-policy'
+import { buildIsabelaBoletoIdempotencyKey, canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent, isApprovedImmediateIsabelaBoletoSequence, ISABELA_BOLETO_JOB_TYPE, ISABELA_BOLETO_TEMPLATE_NAME, isApprovedUtilitySequence } from '@/lib/recovery-sequence-policy'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import {
@@ -13,6 +13,7 @@ import {
   createInitialFunilCursosState,
 } from '@/lib/funnels/funil-cursos'
 import { shouldScheduleKiwifyMessageJobs } from '@/lib/kiwify-purchase-policy'
+import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
 // Fonte: docs.kiwify.com.br, exemplos oficiais de payload e captura real do
@@ -163,6 +164,38 @@ async function logReceived(args: {
     })
   } catch (e) {
     console.error('[webhook_received kiwify insert failed]', e)
+  }
+}
+
+async function auditBoletoFollowup(args: {
+  companyId: number
+  leadId: number
+  type: string
+  referenceType?: string
+  referenceId?: string | null
+  payload: Record<string, unknown>
+}): Promise<boolean> {
+  try {
+    await db.insert(sacAuditEvents).values({
+      companyId: args.companyId,
+      leadId: args.leadId,
+      type: args.type,
+      actorType: 'system',
+      actorId: ISABELA_BOLETO_JOB_TYPE,
+      actorName: 'SAC boleto follow-up',
+      referenceType: args.referenceType ?? 'message_job',
+      referenceId: args.referenceId ?? null,
+      payload: args.payload,
+    })
+    return true
+  } catch (error) {
+    console.error('[boleto-followup] falha ao gravar auditoria', {
+      companyId: args.companyId,
+      leadId: args.leadId,
+      type: args.type,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return false
   }
 }
 
@@ -612,7 +645,6 @@ export async function POST(
   }
 
   const RECOVERY_TYPES = ['boleto', 'pix', 'carrinho_abandonado', 'cartao_recusado']
-  const MIN_FIRST_DELAY_MS = 30 * 60 * 1000
 
   // Cada item do lote vira uma linha própria em webhook_received e chama
   // logReceived exatamente uma vez.
@@ -695,6 +727,7 @@ export async function POST(
           // existir dado real para calibrar.
           isOrderBump: false,
           rawPayload: item,
+          whatsappConsentStatus: hasExplicitWhatsAppConsent(item) ? 'opted_in' : 'unknown',
           status: mappedType === 'compra_aprovada' ? 'completed' : 'pending',
         })
         // Idempotência igual Hotmart e Greenn: cada payload da Kiwify já vem
@@ -717,6 +750,9 @@ export async function POST(
     }
 
     if (!lead) {
+      if (mappedType === 'compra_aprovada' && draft.phone) {
+        await cancelPixFollowupsForPayment({ companyId: company.id, phone: draft.phone, transactionId: draft.transactionId })
+      }
       await logReceived({
         companyId: company.id, slug, event: eventLabel, processed: false,
         skipReason: 'duplicate_transaction', rawBody: rawForLog, headers: headersObj,
@@ -728,6 +764,9 @@ export async function POST(
 
     // Cancelar jobs pendentes e marcar como convertido quando chega compra_aprovada ou disputa (reembolso/chargeback).
     if ((mappedType === 'compra_aprovada' || mappedType === 'disputa') && draft.phone) {
+      if (mappedType === 'compra_aprovada') {
+        await cancelPixFollowupsForPayment({ companyId: company.id, phone: draft.phone, transactionId: draft.transactionId })
+      }
       const leadsToCancel = await db
         .select({ id: recoveryLeads.id })
         .from(recoveryLeads)
@@ -738,8 +777,10 @@ export async function POST(
         ))
       if (leadsToCancel.length > 0) {
         const leadIds = leadsToCancel.map((l) => l.id)
-        await db.update(messageJobs).set({ status: 'cancelled' })
-          .where(and(inArray(messageJobs.leadId, leadIds), eq(messageJobs.status, 'pending')))
+        await db.update(messageJobs).set({
+          status: 'cancelled',
+          error: 'Pagamento confirmado antes da execução do follow-up de recuperação',
+        }).where(and(inArray(messageJobs.leadId, leadIds), inArray(messageJobs.status, ['pending', 'processing'])))
 
         // Atribuição correta: verifica se alguma mensagem já foi enviada para cada lead.
         for (const cancelledLeadId of leadIds) {
@@ -765,6 +806,8 @@ export async function POST(
 
     const isRecovery = RECOVERY_TYPES.includes(mappedType)
     const now = new Date()
+    const isImmediateIsabelaBoleto = isIsabela && mappedType === 'boleto'
+    let followupSkipReason: string | null = null
 
     // ─── Funil Cursos (Isabela Fanini - Despertar das Bellas) ─────────────────
     const isFunilEligible = isFunilCursosTrigger({
@@ -797,7 +840,7 @@ export async function POST(
     // Sem telefone: grava o lead (serve para analytics e receita) mas NÃO agenda
     // job nenhum, senão o cron criaria mensagem que falha e sujaria o painel.
     // Acontece quando a cliente desabilitou o campo de celular no checkout.
-    if (shouldScheduleKiwifyMessageJobs(mappedType) && canScheduleAutomaticRecoverySequence(mappedType) && !isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
+    if (shouldScheduleKiwifyMessageJobs(mappedType) && mappedType !== 'pix' && canScheduleAutomaticRecoverySequence(mappedType) && !isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
       const messages = await db
         .select()
         .from(sequenceMessages)
@@ -814,15 +857,35 @@ export async function POST(
             eq(metaMessageTemplates.category, 'UTILITY'),
           ))).map(template => template.name))
         : new Set<string>()
-      const canDispatch = !isIsabela || isApprovedUtilitySequence(messages, approvedUtilityTemplateNames)
+      const [storedConsent] = isImmediateIsabelaBoleto
+        ? await db.select({ whatsappConsentStatus: recoveryLeads.whatsappConsentStatus }).from(recoveryLeads).where(eq(recoveryLeads.id, leadId)).limit(1)
+        : []
+      const hasConsent = storedConsent?.whatsappConsentStatus === 'opted_in' || hasExplicitWhatsAppConsent(item)
+      const canDispatch = isImmediateIsabelaBoleto
+        ? hasConsent
+          && Boolean(draft.transactionId && draft.boletoCode && draft.boletoExpiry)
+          && isApprovedImmediateIsabelaBoletoSequence(messages, approvedUtilityTemplateNames)
+        : !isIsabela || isApprovedUtilitySequence(messages, approvedUtilityTemplateNames)
+
+      if (isImmediateIsabelaBoleto && !hasConsent) {
+        followupSkipReason = 'boleto_followup_sem_consentimento_whatsapp_explicito'
+      } else if (isImmediateIsabelaBoleto && (!draft.transactionId || !draft.boletoCode || !draft.boletoExpiry)) {
+        followupSkipReason = 'boleto_followup_sem_referencia_ou_vencimento_real'
+      } else if (isImmediateIsabelaBoleto && !isApprovedImmediateIsabelaBoletoSequence(messages, approvedUtilityTemplateNames)) {
+        followupSkipReason = 'boleto_followup_sem_sequencia_utility_aprovada_unica_imediata'
+      } else if (isIsabela && !canDispatch) {
+        followupSkipReason = 'sequencia_isabela_sem_template_utility_aprovado'
+      }
 
       if (canDispatch && messages.length > 0) {
-        await db.insert(messageJobs).values(
-          messages.map((msg, i) => {
+        const jobValues = messages.map((msg, i) => {
             let delayMs = (msg.delayMinutes ?? 0) * 60 * 1000
-            // Regra 6: PIX mensagem após 1 hora (60m); boleto/cartão após 30m
-            const minDelay = mappedType === 'pix' ? 60 * 60 * 1000 : 30 * 60 * 1000
-            if (isRecovery && i === 0 && delayMs < minDelay) delayMs = minDelay
+            // O boleto do Despertar sai imediatamente após a emissão. A régua
+            // antiga segue para os demais recuperadores.
+            if (!isImmediateIsabelaBoleto && isRecovery && i === 0) {
+              const minDelay = mappedType === 'pix' ? 60 * 60 * 1000 : 30 * 60 * 1000
+              if (delayMs < minDelay) delayMs = minDelay
+            }
             return {
               leadId,
               messageId: msg.id,
@@ -830,10 +893,53 @@ export async function POST(
               status: 'pending',
               checkBeforeSend: isRecovery,
               messageOrder: msg.order,
+              ...(isImmediateIsabelaBoleto ? {
+                jobType: ISABELA_BOLETO_JOB_TYPE,
+                idempotencyKey: buildIsabelaBoletoIdempotencyKey(company.id, draft.transactionId!),
+              } : {}),
             }
           })
-        )
-      }
+        const scheduledJobs = isImmediateIsabelaBoleto
+          ? await db.insert(messageJobs).values(jobValues).onConflictDoNothing({ target: messageJobs.idempotencyKey }).returning({ id: messageJobs.id })
+          : await db.insert(messageJobs).values(jobValues).returning({ id: messageJobs.id })
+
+        if (isImmediateIsabelaBoleto) {
+          const jobId = scheduledJobs[0]?.id ?? null
+          if (jobId == null) {
+            followupSkipReason = 'boleto_followup_job_duplicado_idempotente'
+            await auditBoletoFollowup({
+              companyId: company.id,
+              leadId,
+              type: 'boleto_followup_duplicate',
+              payload: { eventType: 'boleto', idempotent: true },
+            })
+          } else {
+            const audited = await auditBoletoFollowup({
+              companyId: company.id,
+              leadId,
+              type: 'boleto_followup_scheduled',
+              referenceId: String(jobId),
+              payload: {
+                eventType: 'boleto',
+                templateName: ISABELA_BOLETO_TEMPLATE_NAME,
+                messageCount: scheduledJobs.length,
+                immediate: true,
+                hasReference: Boolean(draft.boletoCode),
+                hasExpiry: Boolean(draft.boletoExpiry),
+              },
+            })
+            if (!audited) {
+              await db.update(messageJobs).set({ status: 'cancelled', error: 'Auditoria do follow-up de boleto não foi registrada' }).where(eq(messageJobs.id, jobId))
+              followupSkipReason = 'boleto_followup_auditoria_indisponivel'
+            }
+          }
+        }
+    }
+
+    if (mappedType === 'pix') {
+      const [fullLead] = await db.select().from(recoveryLeads).where(eq(recoveryLeads.id, leadId)).limit(1)
+      if (fullLead) await schedulePixFollowup(fullLead)
+    }
 
       if (!isRecovery && !isIsabela && sequence.upsellMessage) {
         const upsellDelayMs = (sequence.upsellDelayMinutes ?? 1440) * 60 * 1000
@@ -845,6 +951,12 @@ export async function POST(
           checkBeforeSend: false,
         })
       }
+    } else if (isImmediateIsabelaBoleto) {
+      followupSkipReason = !sequence
+        ? 'boleto_followup_sem_sequencia_ativa'
+        : !draft.phone
+          ? 'boleto_followup_sem_telefone'
+          : 'boleto_followup_nao_elegivel'
     }
 
     // Notificação interna (fire-and-forget).
@@ -859,9 +971,19 @@ export async function POST(
 
     await logReceived({
       companyId: company.id, slug, event: eventLabel, processed: true,
-      skipReason: draft.phone ? null : 'no_phone_no_schedule',
+      skipReason: followupSkipReason ?? (draft.phone ? null : 'no_phone_no_schedule'),
       leadId, rawBody: rawForLog, headers: headersObj,
     })
+
+    if (isImmediateIsabelaBoleto && followupSkipReason) {
+      await auditBoletoFollowup({
+        companyId: company.id,
+        leadId,
+        type: 'boleto_followup_blocked',
+        referenceType: 'webhook_received',
+        payload: { eventType: 'boleto', reason: followupSkipReason },
+      })
+    }
 
     return { outcome: 'processed', leadId }
   }
