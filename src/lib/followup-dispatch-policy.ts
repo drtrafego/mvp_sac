@@ -188,7 +188,7 @@ export function shouldApplyFollowupDispatchWindow(job: {
   upsellContent?: string | null
   jobType?: string | null
 }): boolean {
-  if (job.massDispatchBatchId != null) return false
+  if (job.massDispatchBatchId != null || job.jobType === 'boleto_followup_immediate') return false
   // O follow-up Pix usa template UTILITY aprovado e a janela da Meta; a
   // janela comercial do bot não pode transformar 60 minutos em um atraso
   // arbitrário. O cron ainda aplica a política de janela Meta ao job.

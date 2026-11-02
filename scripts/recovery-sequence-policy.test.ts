@@ -47,3 +47,15 @@ test('consentimento de WhatsApp precisa ser explícito', () => {
   assert.equal(hasExplicitWhatsAppConsent({ accepted_terms: true }), false)
   assert.equal(buildIsabelaBoletoIdempotencyKey(2, 'pedido-1'), 'boleto_followup_immediate:2:pedido-1')
 })
+
+test('boleto imediato aceita parâmetros nomeados reais', () => {
+  const approved = new Set(['boleto_despertar_nao_pago'])
+  const message = {
+    messageType: 'template', templateName: 'boleto_despertar_nao_pago', templateLanguage: 'pt_BR', delayMinutes: 0,
+    templateVariablesMap: { customer_name: '{nome}', order_reference: '{transacao}', payment_due_date: '{boleto_validade}' },
+  }
+  assert.equal(isApprovedImmediateIsabelaBoletoSequence([message], approved), true)
+  assert.equal(isApprovedImmediateIsabelaBoletoSequence([{ ...message, templateVariablesMap: { '1': '{nome}', '2': '{boleto_validade}' } }], approved), false)
+  assert.equal(isApprovedImmediateIsabelaBoletoSequence([{ ...message, delayMinutes: 30 }], approved), false)
+  assert.equal(hasExplicitWhatsAppConsent({ Customer: { whatsapp_opt_in: false } }), false)
+})

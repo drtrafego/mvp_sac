@@ -774,13 +774,33 @@ export async function POST(
           eq(recoveryLeads.companyId, company.id),
           eq(recoveryLeads.phone, draft.phone),
           inArray(recoveryLeads.eventType, ['boleto', 'pix', 'carrinho_abandonado', 'cartao_recusado'])
-        ))
+      ))
       if (leadsToCancel.length > 0) {
         const leadIds = leadsToCancel.map((l) => l.id)
+        const boletoJobsToCancel = mappedType === 'compra_aprovada'
+          ? await db.select({ id: messageJobs.id, leadId: messageJobs.leadId })
+            .from(messageJobs)
+            .where(and(
+              inArray(messageJobs.leadId, leadIds),
+              eq(messageJobs.jobType, ISABELA_BOLETO_JOB_TYPE),
+              inArray(messageJobs.status, ['pending', 'processing']),
+            ))
+          : []
         await db.update(messageJobs).set({
           status: 'cancelled',
           error: 'Pagamento confirmado antes da execução do follow-up de recuperação',
         }).where(and(inArray(messageJobs.leadId, leadIds), inArray(messageJobs.status, ['pending', 'processing'])))
+        for (const boletoJob of boletoJobsToCancel) {
+          if (boletoJob.leadId != null) {
+            await auditBoletoFollowup({
+              companyId: company.id,
+              leadId: boletoJob.leadId,
+              type: 'boleto_followup_cancelled_paid',
+              referenceId: String(boletoJob.id),
+              payload: { eventType: 'compra_aprovada', reason: 'pagamento_confirmado_antes_do_envio' },
+            })
+          }
+        }
 
         // Atribuição correta: verifica se alguma mensagem já foi enviada para cada lead.
         for (const cancelledLeadId of leadIds) {

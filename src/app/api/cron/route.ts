@@ -649,13 +649,17 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
 
       // Fase 1.3: monta variáveis interpoladas para templates Meta
       let templateVariableValues: string[] | undefined
+      let templateVariableNames: string[] | undefined
       if (msgType === 'template' && message.templateVariablesMap) {
         const varMap = message.templateVariablesMap as Record<string, string>
-        const maxIndex = Math.max(...Object.keys(varMap).map(Number).filter(n => !isNaN(n)), 0)
-        templateVariableValues = Array.from({ length: maxIndex }, (_, i) => {
-          const sysVar = varMap[String(i + 1)] ?? ''
-          return interpolate(sysVar, lead)
-        })
+        const numericKeys = Object.keys(varMap).filter(key => /^\d+$/.test(key)).sort((a, b) => Number(a) - Number(b))
+        if (numericKeys.length > 0) {
+          const maxIndex = Math.max(...numericKeys.map(Number), 0)
+          templateVariableValues = Array.from({ length: maxIndex }, (_, i) => interpolate(varMap[String(i + 1)] ?? '', lead))
+        } else {
+          templateVariableNames = Object.keys(varMap)
+          templateVariableValues = templateVariableNames.map(name => interpolate(varMap[name], lead))
+        }
       }
 
       if (hasDispatchedAny) {
@@ -676,6 +680,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
           templateName: message.templateName ?? undefined,
           templateLanguage: message.templateLanguage ?? undefined,
           templateVariableValues,
+          templateVariableNames,
         }, companyId),
         result => recordJobOutcome(job.id, result, metaPhoneNumberId, transactionalDb),
         undefined,

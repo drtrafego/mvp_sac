@@ -19,6 +19,7 @@ interface MessagePayload {
   templateName?: string
   templateLanguage?: string
   templateVariableValues?: string[]  // valores interpolados em ordem posicional
+  templateVariableNames?: string[]
 }
 
 import { formatBrazilianPhone } from '@/lib/phone'
@@ -52,7 +53,8 @@ export async function sendWhatsAppMessage(
         normalized,
         message.templateName,
         message.templateLanguage ?? 'pt_BR',
-        message.templateVariableValues ?? []
+        message.templateVariableValues ?? [],
+        message.templateVariableNames,
       )
     } else if (message.type === 'interactive_buttons' && message.buttons?.length) {
       return sendMetaInteractiveButtons(metaConfig, normalized, message.content ?? '', message.buttons)

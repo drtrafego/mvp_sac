@@ -632,12 +632,12 @@ export const messageJobs = pgTable('message_jobs', {
   externalWamid: text('external_wamid'),               // Fase 1.4: WAMID retornado pela Meta ao enviar
   deliveryStatus: text('delivery_status'),              // Fase 1.4: sent | delivered | read | failed
   messageOrder: integer('message_order'),               // Fase 2.3: posição da mensagem na sequência
+  jobType: text('job_type'),
+  idempotencyKey: text('idempotency_key'),
   massDispatchBatchId: integer('mass_dispatch_batch_id').references(() => massDispatchBatches.id, { onDelete: 'set null' }),
   messageSnapshot: jsonb('message_snapshot'),            // cópia imutável usada pelos disparos em massa
   retryCount: integer('retry_count').notNull().default(0),
   processingStartedAt: timestamp('processing_started_at'),
-  jobType: text('job_type'), // pix_followup_60m | null para sequências legadas
-  idempotencyKey: text('idempotency_key'),
   createdAt: timestamp('created_at').defaultNow(),
 }, (table) => [
   uniqueIndex('message_jobs_mass_dispatch_unique').on(table.massDispatchBatchId, table.leadId, table.messageId),

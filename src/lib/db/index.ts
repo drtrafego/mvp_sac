@@ -175,6 +175,11 @@ export function ensureSchema(client: any): Promise<void> {
         await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS first_human_message_channel text`
         await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS first_human_message_agent_key text`
         await client`CREATE INDEX IF NOT EXISTS recovery_leads_first_human_message_daily_idx ON recovery_leads (company_id, first_human_message_at, first_human_message_channel, first_human_message_agent_key)`
+        await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS whatsapp_consent_status text NOT NULL DEFAULT 'unknown'`
+        await client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS whatsapp_consent_at timestamp`
+        await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS job_type text`
+        await client`ALTER TABLE message_jobs ADD COLUMN IF NOT EXISTS idempotency_key text`
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS message_jobs_idempotency_key_unique ON message_jobs (idempotency_key)`
 
         // Keep this DDL sequential: the indexes depend on the table and must
         // not race it inside the best-effort batch below.

@@ -53,11 +53,18 @@ export function isApprovedImmediateIsabelaBoletoSequence(
     || (message.delayMinutes ?? 0) !== 0
   ) return false
 
-  const variableValues = Object.values(
-    message.templateVariablesMap && typeof message.templateVariablesMap === 'object'
-      ? message.templateVariablesMap as Record<string, unknown>
-      : {},
-  ).filter((value): value is string => typeof value === 'string')
+  const variableMap = message.templateVariablesMap && typeof message.templateVariablesMap === 'object'
+    ? message.templateVariablesMap as Record<string, unknown>
+    : {}
+  const variableKeys = Object.keys(variableMap)
+  const expectedNamedKeys = ['customer_name', 'order_reference', 'payment_due_date']
+  if (variableKeys.sort().join('|') === expectedNamedKeys.sort().join('|')) {
+    return variableMap.customer_name === '{nome}'
+      && variableMap.order_reference === '{transacao}'
+      && variableMap.payment_due_date === '{boleto_validade}'
+  }
+
+  const variableValues = Object.values(variableMap).filter((value): value is string => typeof value === 'string')
 
   return variableValues.some(value => value.includes('{boleto_codigo}'))
     && variableValues.some(value => value.includes('{boleto_validade}'))
