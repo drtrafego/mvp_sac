@@ -13,7 +13,7 @@ function event(overrides: Partial<Parameters<typeof isEligibleLuanaCommentEvent>
   return {
     companyId: 42,
     entryAccountId: '17841400000000000',
-    acceptedAccountIds: ['17841400000000000', 'page-42'],
+    acceptedAccountIds: ['17841400000000000'],
     commentId: '17900000000000001',
     commenterId: '17900000000000002',
     commenterUsername: 'pessoa',
@@ -45,6 +45,7 @@ test('enumera qualquer post elegível, explicita media_ids, deduplica comentári
 test('filtro bloqueia media_id inválido e evento de outro tenant', () => {
   assert.deepEqual(isEligibleLuanaCommentEvent(event({ mediaId: 'post-url' })), { eligible: false, reason: 'media_id_invalido' })
   assert.deepEqual(isEligibleLuanaCommentEvent(event({ entryAccountId: 'conta-errada' })), { eligible: false, reason: 'conta_fora_do_tenant' })
+  assert.deepEqual(isEligibleLuanaCommentEvent(event({ entryAccountId: 'page-42' })), { eligible: false, reason: 'conta_fora_do_tenant' }, 'Page ID não pode entrar no job de comentários')
 })
 
 test('preparação cria um job aguardando confirmação, audita, deduplica e não publica', async () => {

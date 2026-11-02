@@ -23,7 +23,7 @@ import { isLuanaTriggerComment, prepareLuanaCommentJob } from "@/lib/instagram-c
 function instagramDebugPayload(opts: {
   entry?: Record<string, unknown>
   item?: Record<string, unknown>
-  pageId?: string
+  instagramAccountId?: string
   companyId?: number | null
   slug?: string | null
   senderId?: string | null
@@ -44,7 +44,7 @@ function instagramDebugPayload(opts: {
     item: opts.item,
     debug: {
       source: 'instagram',
-      pageId: opts.pageId ?? null,
+      instagramAccountId: opts.instagramAccountId ?? null,
       companyId: opts.companyId ?? null,
       slug: opts.slug ?? null,
       senderId: opts.senderId ?? null,
@@ -142,9 +142,9 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
   if (rawBody.object === "instagram" && Array.isArray(rawBody.entry)) {
     for (const entry of rawBody.entry as Record<string, unknown>[]) {
-      const pageId = (entry.id as string) || ''
-      if (!isInstagramEntryForCompany(pageId, companySettingsForSecret ?? {})) {
-        console.warn(`[Instagram Webhook] entry recusado: id não pertence à empresa do slug=${slug}, entry.id=${pageId || '(ausente)'}`)
+      const instagramAccountId = (entry.id as string) || ''
+      if (!isInstagramEntryForCompany(instagramAccountId, companySettingsForSecret ?? {})) {
+        console.warn(`[Instagram Webhook] entry recusado: Instagram Business User ID não pertence à empresa do slug=${slug}, entry.id=${instagramAccountId || '(ausente)'}`)
         continue
       }
       const messagingList = (entry.messaging as Record<string, unknown>[]) ?? []
@@ -160,7 +160,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           is_story_reply?: boolean
         } | undefined
         const recipient = item.recipient as { id?: string } | undefined
-        const ownAccountIds = [companySettingsForSecret?.instagramAccountId, companySettingsForSecret?.instagramPageId].filter(Boolean)
+        const ownAccountIds = [companySettingsForSecret?.instagramAccountId].filter(Boolean)
 
         // ‼️ Checagem de anexo/partilha (24/09/2026): quando alguém compartilha post/reel
         // ou manda mídia, a Meta manda `attachments`. Se tiver anexos, ignoramos o processamento
@@ -231,7 +231,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             rawBody: instagramDebugPayload({
               entry,
               item,
-              pageId: (entry.id as string) || undefined,
+              instagramAccountId: (entry.id as string) || undefined,
               companyId: company.id,
               slug,
               senderId: sender?.id ?? null,
@@ -263,7 +263,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               rawBody: instagramDebugPayload({
                 entry,
                 item,
-                pageId: (entry.id as string) || undefined,
+                instagramAccountId: (entry.id as string) || undefined,
                 companyId: company.id,
                 slug,
                 senderId: sender?.id ?? null,
@@ -534,8 +534,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           if (isLuanaTriggerComment(commentText)) {
             await prepareLuanaCommentJob({
               companyId: company.id,
-              entryAccountId: pageId,
-              acceptedAccountIds: [companySettingsForSecret?.instagramAccountId ?? '', companySettingsForSecret?.instagramPageId ?? ''],
+              entryAccountId: instagramAccountId,
+              acceptedAccountIds: [companySettingsForSecret?.instagramAccountId ?? ''],
               commentId,
               commenterId,
               commenterUsername,
@@ -563,7 +563,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         if (change.field === 'message_reactions' && change.value) {
           const val = change.value as Record<string, unknown>
           const sender = val.sender as { id?: string; username?: string } | undefined
-          if (sender?.id && sender.id !== pageId && isInstagramStoryReaction(val)) {
+          if (sender?.id && sender.id !== instagramAccountId && isInstagramStoryReaction(val)) {
             await captureInstagramInboundInteraction({
               companyId: company.id,
               instagramUserId: sender.id,

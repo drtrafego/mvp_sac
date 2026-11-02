@@ -53,13 +53,11 @@ export function isInstagramStoryReaction(value: Record<string, unknown> | undefi
 
 export function isInstagramEntryForCompany(
   entryId: unknown,
-  settings: { instagramAccountId?: string | null; instagramPageId?: string | null },
+  settings: { instagramAccountId?: string | null },
 ): boolean {
   if (typeof entryId !== 'string' || !entryId.trim()) return false
-  const acceptedIds = [settings.instagramAccountId, settings.instagramPageId]
-    .filter((id): id is string => typeof id === 'string' && Boolean(id.trim()))
-    .map(id => id.trim())
-  return acceptedIds.includes(entryId.trim())
+  const instagramAccountId = settings.instagramAccountId?.trim()
+  return Boolean(instagramAccountId && instagramAccountId === entryId.trim())
 }
 
 export function getInstagramInboundTagTriggers(isStoryReply: boolean): InstagramInboundTagTrigger[] {

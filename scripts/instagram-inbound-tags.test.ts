@@ -95,8 +95,9 @@ test('cada interação Instagram cria ou atualiza um único lead e aplica sua ta
 
   assert.equal(isInstagramStoryReaction(storyReaction.value), true, 'a reação vinculada à Story recebe a tag de Story')
   assert.equal(isInstagramStoryReaction(dmReaction.value), false, 'a reação de DM não pode receber uma tag de Story')
-  assert.equal(isInstagramEntryForCompany('CONTA_A', { instagramAccountId: 'CONTA_A', instagramPageId: 'PAGINA_A' }), true)
-  assert.equal(isInstagramEntryForCompany('CONTA_B', { instagramAccountId: 'CONTA_A', instagramPageId: 'PAGINA_A' }), false, 'payload da conta B é recusado na rota da empresa A')
+  assert.equal(isInstagramEntryForCompany('CONTA_A', { instagramAccountId: 'CONTA_A' }), true)
+  assert.equal(isInstagramEntryForCompany('CONTA_B', { instagramAccountId: 'CONTA_A' }), false, 'payload da conta B é recusado na rota da empresa A')
+  assert.equal(isInstagramEntryForCompany('PAGINA_A', { instagramAccountId: 'CONTA_A' }), false, 'Page ID nunca pode autenticar a origem de comentários do Instagram')
 
   const { POST: postSlugWebhook } = await import('../src/app/api/webhooks/instagram/[slug]/route')
   const rejectedPayload = JSON.stringify({
