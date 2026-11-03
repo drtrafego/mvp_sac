@@ -18,7 +18,7 @@ export interface ActiveConnectionsData {
 
 type InstagramCredentialFields = Pick<
   typeof settings.$inferSelect,
-  'instagramAccountId' | 'instagramPageId' | 'instagramAccessToken' | 'metaAccessToken'
+  'instagramAccountId' | 'instagramAccessToken'
 >
 
 /** Credenciais mínimas do transporte Instagram Login / Instagram Direct. */
@@ -26,11 +26,6 @@ export function hasInstagramCredentials(row: InstagramCredentialFields | null | 
   const accountId = row?.instagramAccountId?.trim()
   const accessToken = row?.instagramAccessToken?.trim()
   return Boolean(accountId && accessToken)
-}
-
-/** Credenciais de uma automação que realmente chama a Page/Graph API. */
-export function hasInstagramPageCredentials(row: InstagramCredentialFields | null | undefined): boolean {
-  return Boolean(row?.instagramPageId?.trim() && row?.metaAccessToken?.trim())
 }
 
 // Extraído de (dashboard)/layout.tsx (era função local `getCompanySidebarData`,

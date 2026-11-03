@@ -22,7 +22,7 @@ export type HealthSettings = {
   uazapiInstanceToken?: string | null
   instagramAccountId?: string | null
   instagramAccessToken?: string | null
-  instagramPageId?: string | null
+  facebookPageId?: string | null
   brevoApiKey?: string | null
   brevoSenderEmail?: string | null
   hotmartEnabled?: boolean | null
@@ -132,15 +132,15 @@ export function buildHealthFeatures(
     })
   }
 
-  if (hasAny(current.instagramAccountId, current.instagramAccessToken, current.instagramPageId)) {
+  if (hasAny(current.instagramAccountId, current.instagramAccessToken)) {
     features.push({
       key: 'channel-instagram',
       label: 'Instagram',
-      description: 'Instagram Direct e webhooks da conta configurada.',
+      description: 'Instagram Direct e webhooks do Instagram Business User configurado.',
       critical: true,
       kind: 'configuration',
       configured: hasAll(current.instagramAccountId, current.instagramAccessToken),
-      configuredFields: [current.instagramAccountId ? 'Account ID' : '', current.instagramAccessToken ? 'token' : '', current.instagramPageId ? 'Page ID' : ''].filter(Boolean),
+      configuredFields: [current.instagramAccountId ? 'Account ID' : '', current.instagramAccessToken ? 'token' : ''].filter(Boolean),
       required: ['Account ID', 'token'],
     })
   }

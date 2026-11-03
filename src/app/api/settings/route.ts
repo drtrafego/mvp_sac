@@ -60,7 +60,7 @@ const WRITABLE_SETTING_FIELDS = [
   ['instagramAccountId', 'string'],
   ['instagramAccessToken', 'string'],
   ['instagramVerifyToken', 'string'],
-  ['instagramPageId', 'string'],
+  ['facebookPageId', 'string'],
   ['instagramAppSecret', 'string'],
   ['instagramInboxPlacement', 'string'],
   ['sidebarConfig', 'present'],
@@ -82,6 +82,13 @@ function buildWritableSettingsFields(body: Record<string, unknown>): Record<stri
   }
 
   return writableFields
+}
+
+function normalizeLegacyPageField(body: Record<string, unknown>): Record<string, unknown> {
+  if (body.facebookPageId === undefined && body.instagramPageId !== undefined) {
+    return { ...body, facebookPageId: body.instagramPageId }
+  }
+  return body
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -131,7 +138,7 @@ export async function GET(): Promise<NextResponse> {
       instagramAccountId: '',
       instagramAccessToken: '',
       instagramVerifyToken: '',
-      instagramPageId: '',
+      facebookPageId: '',
       instagramAppSecret: '',
       instagramInboxPlacement: 'general',
     })
@@ -151,7 +158,7 @@ export async function GET(): Promise<NextResponse> {
     instagramUsername: row.instagramUsername ?? '',
     instagramAccountId: row.instagramAccountId ?? '',
     instagramVerifyToken: row.instagramVerifyToken ?? '',
-    instagramPageId: row.instagramPageId ?? '',
+    facebookPageId: row.facebookPageId ?? '',
     sidebarConfig: row.sidebarConfig ?? null,
   })
 }
@@ -161,7 +168,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
   const company = access.company
   let body: Record<string, unknown>
   try {
-    body = parseSacObject(await req.json().catch(() => null))
+    body = normalizeLegacyPageField(parseSacObject(await req.json().catch(() => null)))
     if (body.instagramInboxPlacement !== undefined && !isInstagramInboxPlacement(body.instagramInboxPlacement)) {
       throw new SacInputError('A posição da caixa do Instagram é inválida.')
     }

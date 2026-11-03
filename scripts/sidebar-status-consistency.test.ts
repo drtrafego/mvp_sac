@@ -7,7 +7,7 @@ let failSidebarLookup = false
 let hasMineracaoLead = false
 const settingsWithoutInstagramConnection = {
   instagramAccountId: null,
-  instagramPageId: null,
+  facebookPageId: null,
   instagramAccessToken: null,
   metaAccessToken: null,
   brevoApiKey: 'brevo-key',

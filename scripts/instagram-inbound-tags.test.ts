@@ -70,10 +70,10 @@ test('cada interação Instagram cria ou atualiza um único lead e aplica sua ta
   await testDb.insert(schema.settings).values({
     companyId: company.id,
     instagramAccountId: 'CONTA_A',
-    instagramPageId: 'PAGINA_A',
+    facebookPageId: 'PAGINA_A',
     instagramAppSecret: APP_SECRET,
   })
-  await testDb.insert(schema.settings).values({ companyId: otherCompany.id, instagramAccountId: 'CONTA_B', instagramPageId: 'PAGINA_B' })
+  await testDb.insert(schema.settings).values({ companyId: otherCompany.id, instagramAccountId: 'CONTA_B', facebookPageId: 'PAGINA_B' })
 
   mock.module('@/lib/instagram', {
     namedExports: {

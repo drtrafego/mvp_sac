@@ -4,7 +4,7 @@ import * as schema from '../src/lib/db/schema'
 
 const settingsWithoutCredentials = {
   instagramAccountId: null,
-  instagramPageId: null,
+  facebookPageId: null,
   instagramAccessToken: null,
   metaAccessToken: null,
   instagramUsername: '@historico',
@@ -55,7 +55,7 @@ mock.module('next/navigation', {
 })
 
 async function main() {
-  const { getCompanySidebarData, hasInstagramCredentials, hasInstagramPageCredentials } = await import('../src/lib/company-sidebar')
+  const { getCompanySidebarData, hasInstagramCredentials } = await import('../src/lib/company-sidebar')
   const { default: InstagramLayout } = await import('../src/app/(dashboard)/instagram/layout')
 
   await test('B2: histórico Instagram sem credencial não ativa conexão nem acessa /instagram', async () => {
@@ -74,40 +74,20 @@ async function main() {
     assert.equal(hasInstagramCredentials(settingsWithoutCredentials), false)
     assert.equal(hasInstagramCredentials({
       instagramAccountId: 'ig-account',
-      instagramPageId: null,
       instagramAccessToken: null,
-      metaAccessToken: null,
     }), false)
     assert.equal(hasInstagramCredentials({
       instagramAccountId: null,
-      instagramPageId: null,
       instagramAccessToken: 'token-sem-conta',
-      metaAccessToken: null,
     }), false)
     assert.equal(hasInstagramCredentials({
       instagramAccountId: 'ig-account',
-      instagramPageId: null,
       instagramAccessToken: 'ig-token',
-      metaAccessToken: null,
     }), true)
     assert.equal(hasInstagramCredentials({
       instagramAccountId: null,
-      instagramPageId: 'page-id',
       instagramAccessToken: null,
-      metaAccessToken: 'meta-token',
     }), false)
-    assert.equal(hasInstagramPageCredentials({
-      instagramAccountId: null,
-      instagramPageId: null,
-      instagramAccessToken: null,
-      metaAccessToken: 'meta-token',
-    }), false)
-    assert.equal(hasInstagramPageCredentials({
-      instagramAccountId: null,
-      instagramPageId: 'page-id',
-      instagramAccessToken: null,
-      metaAccessToken: 'meta-token',
-    }), true)
   })
 
   await test('preferência visual não reativa Instagram sem conexão operacional', async () => {

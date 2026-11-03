@@ -93,12 +93,16 @@ export const settings = pgTable('settings', {
   brevoApiKey: text('brevo_api_key'),
   brevoSenderEmail: text('brevo_sender_email'),
   brevoSenderName: text('brevo_sender_name'),
-  // Instagram Direct (Meta Graph API)
+  // Instagram Direct (Instagram API with Instagram Login / Meta Graph API).
+  // These credentials are independent from the Facebook Page resource below.
   instagramUsername: text('instagram_username'),
   instagramAccountId: text('instagram_account_id'),
   instagramAccessToken: text('instagram_access_token'),
   instagramVerifyToken: text('instagram_verify_token'),
-  instagramPageId: text('instagram_page_id'),
+  // Keep the physical column name for a no-write, backward-compatible rollout.
+  // The value is a Facebook Page ID for Page-owned resources; it is never an
+  // Instagram Direct credential or transport identifier.
+  facebookPageId: text('instagram_page_id'),
   // ‼️ 23/09/2026: o app do Instagram (Instagram API with Instagram Login,
   // sem Página do Facebook) tem App ID e App Secret PRÓPRIOS, diferentes do
   // app principal usado pro WhatsApp. O webhook estava usando metaAppSecret
@@ -147,7 +151,7 @@ export const settings = pgTable('settings', {
   uniqueIndex('settings_meta_phone_number_id_unique').on(table.metaPhoneNumberId),
   uniqueIndex('settings_uazapi_instance_token_unique').on(table.uazapiInstanceToken),
   uniqueIndex('settings_instagram_account_id_unique').on(table.instagramAccountId),
-  uniqueIndex('settings_instagram_page_id_unique').on(table.instagramPageId),
+  uniqueIndex('settings_instagram_page_id_unique').on(table.facebookPageId),
 ])
 
 // ─── Cursores de sincronização incremental dos Agents/CRM ───────────────────

@@ -9,7 +9,7 @@
 // "Unsupported post request. Object with ID '...' does not exist..."
 //
 // Correção:
-// const pageId = config?.instagramAccountId || config?.instagramPageId || 'me'
+// const pageId = config?.instagramAccountId || config?.facebookPageId || 'me'
 //
 // Execução:
 // node --experimental-test-module-mocks --import tsx scripts/instagram-page-id-priority.test.ts
@@ -86,7 +86,7 @@ async function startDisposablePostgres(): Promise<{ url: string; stop: () => voi
 let testSettingsRow: any = {
   companyId: 1,
   instagramAccountId: 'ig_acc_999999',
-  instagramPageId: 'fb_page_888888',
+  facebookPageId: 'fb_page_888888',
   instagramAccessToken: 'fake_token_123',
 }
 
@@ -115,14 +115,14 @@ globalThis.fetch = async (url: string | URL | Request, options?: any) => {
   } as any
 }
 
-test('sendInstagramPrivateReply prioriza instagramAccountId sobre instagramPageId', async () => {
+test('sendInstagramPrivateReply prioriza instagramAccountId sobre facebookPageId', async () => {
   const { sendInstagramPrivateReply } = await import('../src/lib/instagram')
 
   fetchCalls.length = 0
   testSettingsRow = {
     companyId: 1,
     instagramAccountId: 'ig_acc_999999',
-    instagramPageId: 'fb_page_888888',
+    facebookPageId: 'fb_page_888888',
     instagramAccessToken: 'fake_token_123',
   }
 
@@ -137,18 +137,18 @@ test('sendInstagramPrivateReply prioriza instagramAccountId sobre instagramPageI
   assert.equal(
     fetchCalls[0].url,
     'https://graph.instagram.com/v21.0/ig_acc_999999/messages',
-    'Deveria chamar a URL com instagramAccountId e NÃO instagramPageId'
+    'Deveria chamar a URL com instagramAccountId e NÃO facebookPageId'
   )
 })
 
-test('sendInstagramMessage prioriza instagramAccountId sobre instagramPageId', async () => {
+test('sendInstagramMessage prioriza instagramAccountId sobre facebookPageId', async () => {
   const { sendInstagramMessage } = await import('../src/lib/instagram')
 
   fetchCalls.length = 0
   testSettingsRow = {
     companyId: 1,
     instagramAccountId: 'ig_acc_999999',
-    instagramPageId: 'fb_page_888888',
+    facebookPageId: 'fb_page_888888',
     instagramAccessToken: 'fake_token_123',
   }
 
@@ -163,7 +163,7 @@ test('sendInstagramMessage prioriza instagramAccountId sobre instagramPageId', a
   assert.equal(
     fetchCalls[0].url,
     'https://graph.instagram.com/v21.0/ig_acc_999999/messages',
-    'Deveria chamar a URL com instagramAccountId e NÃO instagramPageId'
+    'Deveria chamar a URL com instagramAccountId e NÃO facebookPageId'
   )
 })
 
@@ -174,7 +174,7 @@ test('sendInstagramPrivateReply ignora Page ID e usa o contexto /me no Direct', 
   testSettingsRow = {
     companyId: 1,
     instagramAccountId: null,
-    instagramPageId: 'fb_page_888888',
+    facebookPageId: 'fb_page_888888',
     instagramAccessToken: 'fake_token_123',
   }
 
@@ -189,7 +189,7 @@ test('sendInstagramPrivateReply ignora Page ID e usa o contexto /me no Direct', 
   assert.equal(
     fetchCalls[0].url,
     'https://graph.instagram.com/v21.0/me/messages',
-    'Direct não pode usar instagramPageId como identificador de transporte'
+    'Direct não pode usar facebookPageId como identificador de transporte'
   )
 })
 
@@ -200,7 +200,7 @@ test('sendInstagramMessage faz fallback para "me" quando ambos IDs estiverem aus
   testSettingsRow = {
     companyId: 1,
     instagramAccountId: null,
-    instagramPageId: null,
+    facebookPageId: null,
     instagramAccessToken: 'fake_token_123',
   }
 

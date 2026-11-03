@@ -88,7 +88,7 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       'instagramAccountId',
       'instagramAccessToken',
       'instagramVerifyToken',
-      'instagramPageId',
+      'facebookPageId',
       'supabaseDatabaseUrl',
       'agentBiaApiKey',
       'agentLuanaApiKey',
@@ -118,9 +118,12 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
     // agentBiaApiKey/agentLuanaApiKey/agentRenatoApiKey/agentPublicadorApiKey
     // (bearer tokens que autenticam agentes e workers nesta API) e os demais tokens da
     // allowlist abaixo. Ver shouldWriteSettingsField() em settings-mask.ts.
+    const normalizedBody = body.facebookPageId === undefined && body.instagramPageId !== undefined
+      ? { ...body, facebookPageId: body.instagramPageId }
+      : body
     const updateData: Record<string, unknown> = { updatedAt: new Date() }
     for (const k of allowedKeys) {
-      if (shouldWriteSettingsField(k, body[k])) updateData[k] = body[k]
+      if (shouldWriteSettingsField(k, normalizedBody[k])) updateData[k] = normalizedBody[k]
     }
     // Os gates são booleanos não-secretos e ficam fora da allowlist de strings:
     // shouldWriteSettingsField() filtra placeholders mascarados de credenciais.

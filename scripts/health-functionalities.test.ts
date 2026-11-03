@@ -30,6 +30,19 @@ test('configuração parcial fica degradada e integração explicitamente deslig
   assert.equal(configurationStatus(kiwify).status, 'inactive')
 })
 
+test('Instagram não depende da Página do Facebook no health check', () => {
+  const onlyPage = buildHealthFeatures({ facebookPageId: 'page-1' }, {}, 0)
+  assert.equal(onlyPage.some(feature => feature.key === 'channel-instagram'), false)
+
+  const instagram = buildHealthFeatures({
+    instagramAccountId: 'business-user-1',
+    instagramAccessToken: 'instagram-token-1',
+    facebookPageId: 'page-1',
+  }, {}, 0).find(feature => feature.key === 'channel-instagram')!
+  assert.deepEqual(instagram.configuredFields, ['Account ID', 'token'])
+  assert.deepEqual(instagram.required, ['Account ID', 'token'])
+})
+
 test('falha simulada abre um incidente, respeita cooldown e registra recuperação sem alertar fora do teste', () => {
   const first = new Date('2026-10-28T10:00:00.000Z')
   const cooldown = new Date('2026-10-28T10:10:00.000Z')
