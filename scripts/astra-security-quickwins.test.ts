@@ -24,6 +24,9 @@ mock.module('@/lib/auth', {
       requireCompanyCalls += 1
       return { id: 1 }
     },
+    requireCompanyRole: async () => ({ company: { id: 1 }, user: { id: 'u-test', isAdmin: true } }),
+    AuthError: class AuthError extends Error {},
+    ForbiddenError: class ForbiddenError extends Error {},
   },
 })
 
@@ -185,3 +188,14 @@ test('rota direta aceita token via Authorization: Bearer', async () => {
   assert.match(cookies, /agent_auth_session=/)
 })
 
+test('API do Inbox aceita o mesmo token de agente e cria sessão assinada', async () => {
+  const { proxy } = await import('../src/proxy')
+  const response = await proxy(new NextRequest('https://app.example/api/inbox?limit=1', {
+    headers: { 'x-agent-token': 'segredo-de-teste' },
+  }))
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('location'), null)
+  assert.match(response.headers.get('set-cookie') ?? '', /agent_auth_session=/)
+  assert.doesNotMatch(response.headers.get('set-cookie') ?? '', /segredo-de-teste/)
+})

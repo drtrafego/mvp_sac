@@ -6,6 +6,10 @@ import { AGENT_SESSION_TTL_MS, configuredMasterAgentToken, isValidMasterAgentTok
 
 const AGENT_DIRECT_LOGIN_PATHS = new Set(['/atender-agora', '/inbox'])
 
+function isAgentDirectLoginPath(pathname: string) {
+  return AGENT_DIRECT_LOGIN_PATHS.has(pathname) || pathname === '/api/inbox' || pathname.startsWith('/api/inbox/')
+}
+
 const PUBLIC_PATHS = [
   '/handler',
   '/invite',
@@ -142,8 +146,8 @@ export async function proxy(request: NextRequest) {
 
   // Fluxo reservado para robôs de gravação. Tokens na query string são
   // rejeitados antes de renderizar ou redirecionar, pois podem vazar em logs,
-  // histórico e cache. Só o header x-agent-token é aceito nestas duas telas.
-  if (AGENT_DIRECT_LOGIN_PATHS.has(pathname)) {
+  // histórico e cache. Só o header x-agent-token é aceito nestes pontos de entrada.
+  if (isAgentDirectLoginPath(pathname)) {
     if (request.nextUrl.searchParams.has('token')) {
       return NextResponse.json({ error: 'Use x-agent-token ou POST para autenticação de agente.' }, { status: 400 })
     }
@@ -218,6 +222,12 @@ export async function proxy(request: NextRequest) {
   if (stackProjectId) {
     const user = await stackMiddlewareApp.getUser()
     if (!user) {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json(
+          { error: 'Não autenticado', code: 'UNAUTHORIZED' },
+          { status: 401, headers: { 'Cache-Control': 'no-store' } },
+        )
+      }
       const url = new URL('/handler/sign-in', request.url)
       url.searchParams.set('after_auth_return_to', sanitizeReturnPath(pathname, url))
       return NextResponse.redirect(url)
