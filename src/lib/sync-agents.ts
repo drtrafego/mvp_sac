@@ -1163,8 +1163,19 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           'started_at',
           conversationMetadataColumns.has('created_at') ? 'created_at' : null,
           `'${EPOCH_CURSOR_ISO}'::timestamptz`,
-        ].filter(Boolean)
-        const conversationSortExpr = `coalesce(${conversationSortCandidates.join(', ')})`
+        ].filter((candidate): candidate is string => candidate !== null)
+        // Alguns agentes atualizam `messages.ts` sem tocar no cabeçalho da
+        // conversa (`updated_at`, `ended_at` ou `last_message_at`). Usar só o
+        // cabeçalho congela o cursor no último atendimento que o cabeçalho
+        // conheceu; foi exatamente o que deixou o Gramado parado em 17/10.
+        // A última mensagem é a fonte de atividade real e continua sendo
+        // lida no mesmo banco somente leitura dos agentes.
+        const conversationSortExpr = `coalesce(message_activity.last_message_at, ${conversationSortCandidates.map((candidate) => candidate.replace(/^(updated_at|last_message_at|ended_at|started_at|created_at)$/, 'c.$1')).join(', ')})`
+        const conversationSource = `"${schema}".conversations c left join lateral (
+          select max(m.ts) as last_message_at
+          from "${schema}".messages m
+          where m.session_id = c.session_id
+        ) message_activity on true`
         const conversationIdExpr = 'session_id::text'
         const conversationBatch = await loadTimedSyncBatch<ConversationDbRow>({
           companyId: company.id,
@@ -1174,11 +1185,11 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           fetchNewRows: (cursor) =>
             queryAgentsDb<ConversationDbRow>(
               `
-                select session_id, chat_id, channel, title, started_at, ended_at, message_count,
+                select c.session_id, c.chat_id, c.channel, c.title, c.started_at, c.ended_at, c.message_count,
                        ${conversationMetadataSelect},
                        ${conversationSortExpr} as __sync_sort_at,
-                       ${conversationIdExpr} as __sync_cursor_id
-                from "${schema}".conversations
+                       c.${conversationIdExpr} as __sync_cursor_id
+                from ${conversationSource}
                 where (${conversationSortExpr}, ${conversationIdExpr}) > ($1::timestamptz, $2::text)
                 order by ${conversationSortExpr} asc, ${conversationIdExpr} asc
                 limit ${SYNC_NEW_BATCH_SIZE}
@@ -1189,11 +1200,11 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const hasBackfillCursor = !!cursor.backfillBeforeAt
             return queryAgentsDb<ConversationDbRow>(
               `
-                select session_id, chat_id, channel, title, started_at, ended_at, message_count,
+                select c.session_id, c.chat_id, c.channel, c.title, c.started_at, c.ended_at, c.message_count,
                        ${conversationMetadataSelect},
                        ${conversationSortExpr} as __sync_sort_at,
-                       ${conversationIdExpr} as __sync_cursor_id
-                from "${schema}".conversations
+                       c.${conversationIdExpr} as __sync_cursor_id
+                from ${conversationSource}
                 ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamptz, $2::text)` : ''}
                 order by ${conversationSortExpr} desc, ${conversationIdExpr} desc
                 limit ${SYNC_BACKFILL_BATCH_SIZE}
@@ -1211,11 +1222,11 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const hasBackfillCursor = !!cursor.backfillBeforeAt
             return queryAgentsDb<ConversationDbRow>(
               `
-                select session_id, chat_id, channel, title, started_at, ended_at, message_count,
+                select c.session_id, c.chat_id, c.channel, c.title, c.started_at, c.ended_at, c.message_count,
                        ${conversationMetadataSelect},
                        ${conversationSortExpr} as __sync_sort_at,
-                       ${conversationIdExpr} as __sync_cursor_id
-                from "${schema}".conversations
+                       c.${conversationIdExpr} as __sync_cursor_id
+                from ${conversationSource}
                 ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamptz, $2::text)` : ''}
                 order by ${conversationSortExpr} desc, ${conversationIdExpr} desc
                 limit ${SYNC_BACKFILL_BATCH_SIZE}

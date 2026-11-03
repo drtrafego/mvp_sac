@@ -291,10 +291,10 @@ async function seedLocalCtwaLeadFixtures(sql: ReturnType<typeof postgres>) {
   `
 
   await sql`
-    insert into recovery_leads (company_id, platform, event_type, phone, name, status)
+    insert into recovery_leads (company_id, platform, event_type, phone, name, status, created_at)
     values
-      (${company.id}, 'manual', 'manual', ${CTWA_1201_PHONE}, 'Lead CTWA 1201', 'pending'),
-      (${company.id}, 'manual', 'manual', '5511999997777', 'Lead sem CTWA', 'pending')
+      (${company.id}, 'manual', 'manual', ${CTWA_1201_PHONE}, 'Lead CTWA 1201', 'pending', '2026-09-22T20:00:00Z'),
+      (${company.id}, 'manual', 'manual', '5511999997777', 'Lead sem CTWA', 'pending', '2026-09-22T20:00:00Z')
   `
 }
 
@@ -476,11 +476,6 @@ async function main() {
 
     const newMessageAt = '2026-09-02T00:00:00.000Z'
     await sql`
-      update ${sql(SOURCE_SCHEMA)}.conversations
-      set ended_at = ${newMessageAt}, message_count = 2
-      where session_id = 'session-500'
-    `
-    await sql`
       insert into ${sql(SOURCE_SCHEMA)}.messages (
         id, session_id, role, content, ts, platform_message_id, reasoning, sent_email
       ) values (
@@ -497,7 +492,7 @@ async function main() {
       where source = 'agent_conversations' and source_key = ${SOURCE_SCHEMA}
     `
 
-    await test('4ª execução importa mensagem nova de conversa existente e avança o cursor', () => {
+    await test('4ª execução importa mensagem nova mesmo sem atualização do cabeçalho da conversa', () => {
       assert.equal(report4.ok, true)
       assert.equal(report4.messagesImported, 1)
       assert.equal(counts4.leads, TOTAL_CONVERSATIONS)
