@@ -640,7 +640,9 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
             )).limit(1)
           : []
         const portalCategoryOk = job.jobType !== 'isabela_portal_after_challenge' || approvedTemplate?.category === 'MARKETING'
-        const categoryOk = approvedTemplate?.category === 'UTILITY' || approvedTemplate?.category === 'MARKETING'
+        const categoryOk = job.jobType === 'isabela_purchase_sequence'
+          ? approvedTemplate?.category === 'UTILITY' || approvedTemplate?.category === 'MARKETING'
+          : approvedTemplate?.category === 'UTILITY'
         if (
           message.messageType !== 'template'
           || !templateName

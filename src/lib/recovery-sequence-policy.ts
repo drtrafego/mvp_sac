@@ -38,6 +38,13 @@ export const ISABELA_FLOW_TEMPLATE_NAMES: Readonly<Record<IsabelaFlow, readonly 
   cartao_recusado: ['cartao_despertar_recusado'],
 }
 
+export const ISABELA_FLOW_ALLOWED_CATEGORIES: Readonly<Record<IsabelaFlow, readonly string[]>> = {
+  compra_aprovada: ['UTILITY', 'MARKETING'],
+  portal_apos_desafio: ['MARKETING'],
+  pix: ['UTILITY'],
+  boleto: ['UTILITY'],
+  cartao_recusado: ['UTILITY'],
+}
 export const ISABELA_FLOW_JOB_TYPES = new Set([
   'isabela_purchase_sequence',
   'isabela_portal_after_challenge',
@@ -74,7 +81,7 @@ export function isConfiguredIsabelaFlow(
     const approved = approvedTemplates.get(name)
     if (!approved) return false
     return (approved.language ?? 'pt_BR') === 'pt_BR'
-      && ['UTILITY', 'MARKETING'].includes((approved.category ?? '').toUpperCase())
+      && ISABELA_FLOW_ALLOWED_CATEGORIES[flow].includes((approved.category ?? '').toUpperCase())
   })
 }
 
