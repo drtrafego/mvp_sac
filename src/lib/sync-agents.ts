@@ -1088,7 +1088,20 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
   const existingMsgIds = new Set<string>(existingMsgsRows.map(m => m.externalId!).filter(Boolean))
 
-  for (const agent of agents) {
+  // O cron tem limite de 60s. O Gramado é o tenant prioritário e estava
+  // ficando depois de outros agentes na ordem alfabética; se uma rodada
+  // esgota o tempo, ele não pode ser o agente que fica esperando a próxima.
+  const orderedAgents = [...agents].sort((a, b) => {
+    const priority = (agent: AgentDbRow) => {
+      const classified = classifyAgentCompany(agent.slug, agent.name, agent.schema_name)
+      if (classified.companySlug === 'gramado-plaza') return 0
+      if (classified.companySlug === 'drlucas') return 1
+      return 2
+    }
+    return priority(a) - priority(b)
+  })
+
+  for (const agent of orderedAgents) {
     const rawSlug = (agent.slug || agent.org_slug || agent.name.toLowerCase().replace(/\s+/g, '-')).toLowerCase()
     const rawName = agent.name || agent.org_name || 'Agente IA'
     const { companySlug, companyName } = classifyAgentCompany(rawSlug, rawName, agent.schema_name)
@@ -1171,12 +1184,12 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         // A última mensagem é a fonte de atividade real e continua sendo
         // lida no mesmo banco somente leitura dos agentes.
         const conversationSortExpr = `coalesce(message_activity.last_message_at, ${conversationSortCandidates.map((candidate) => candidate.replace(/^(updated_at|last_message_at|ended_at|started_at|created_at)$/, 'c.$1')).join(', ')})`
-        const conversationSource = `"${schema}".conversations c left join lateral (
-          select max(m.ts) as last_message_at
+        const conversationSource = `"${schema}".conversations c left join (
+          select m.session_id, max(m.ts) as last_message_at
           from "${schema}".messages m
-          where m.session_id = c.session_id
-        ) message_activity on true`
-        const conversationIdExpr = 'session_id::text'
+          group by m.session_id
+        ) message_activity on message_activity.session_id = c.session_id`
+        const conversationIdExpr = 'c.session_id::text'
         const conversationBatch = await loadTimedSyncBatch<ConversationDbRow>({
           companyId: company.id,
           source: 'agent_conversations',
@@ -1188,7 +1201,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 select c.session_id, c.chat_id, c.channel, c.title, c.started_at, c.ended_at, c.message_count,
                        ${conversationMetadataSelect},
                        ${conversationSortExpr} as __sync_sort_at,
-                       c.${conversationIdExpr} as __sync_cursor_id
+                       ${conversationIdExpr} as __sync_cursor_id
                 from ${conversationSource}
                 where (${conversationSortExpr}, ${conversationIdExpr}) > ($1::timestamptz, $2::text)
                 order by ${conversationSortExpr} asc, ${conversationIdExpr} asc
@@ -1203,7 +1216,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 select c.session_id, c.chat_id, c.channel, c.title, c.started_at, c.ended_at, c.message_count,
                        ${conversationMetadataSelect},
                        ${conversationSortExpr} as __sync_sort_at,
-                       c.${conversationIdExpr} as __sync_cursor_id
+                       ${conversationIdExpr} as __sync_cursor_id
                 from ${conversationSource}
                 ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamptz, $2::text)` : ''}
                 order by ${conversationSortExpr} desc, ${conversationIdExpr} desc
@@ -1225,7 +1238,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 select c.session_id, c.chat_id, c.channel, c.title, c.started_at, c.ended_at, c.message_count,
                        ${conversationMetadataSelect},
                        ${conversationSortExpr} as __sync_sort_at,
-                       c.${conversationIdExpr} as __sync_cursor_id
+                       ${conversationIdExpr} as __sync_cursor_id
                 from ${conversationSource}
                 ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamptz, $2::text)` : ''}
                 order by ${conversationSortExpr} desc, ${conversationIdExpr} desc
