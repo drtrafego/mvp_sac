@@ -1,4 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm'
+import type { BatchItem } from 'drizzle-orm/batch'
 import { db } from '@/lib/db'
 import { instagramInboundTagRules, leadTags, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
@@ -73,30 +74,49 @@ export async function applyInstagramInboundTagRules(input: {
 }): Promise<{ matched: string[]; applied: string[] }> {
   const { companyId, leadId, text, isStoryReply } = input
   const executor = input.executor ?? db
+  const matched = await findInstagramInboundTags({ companyId, text, isStoryReply, executor })
+  const applied: string[] = []
+
+  for (const { tag, trigger } of matched) {
+    const inserted = await executor.insert(leadTags).values({
+      leadId,
+      tag,
+      scopeChannel: 'instagram',
+      createdBy: `automation:instagram:${trigger}`,
+    }).onConflictDoNothing().returning({ id: leadTags.id })
+    if (inserted.length) applied.push(tag)
+  }
+  return { matched: matched.map(({ tag }) => tag), applied }
+}
+
+async function findInstagramInboundTags({
+  companyId,
+  text,
+  isStoryReply,
+  executor,
+}: {
+  companyId: number
+  text: string
+  isStoryReply: boolean
+  executor: TagExecutor
+}): Promise<Array<{ tag: string; trigger: InstagramInboundTagTrigger }>> {
   const triggers = getInstagramInboundTagTriggers(isStoryReply)
   const rules = await executor
     .select()
     .from(instagramInboundTagRules)
     .where(and(eq(instagramInboundTagRules.companyId, companyId), eq(instagramInboundTagRules.isActive, true)))
 
-  const matched: string[] = []
-  const applied: string[] = []
+  const matched: Array<{ tag: string; trigger: InstagramInboundTagTrigger }> = []
   for (const rule of rules) {
-    if (!triggers.includes(rule.trigger as InstagramInboundTagTrigger)) continue
+    const trigger = rule.trigger as InstagramInboundTagTrigger
+    if (!triggers.includes(trigger)) continue
     const result = matchesCommentKeywords(text, rule.keywords, rule.matchType)
     if (!result.matched) continue
     const tag = normalizeTag(rule.tag)
     if (!tag) continue
-    matched.push(tag)
-    const inserted = await executor.insert(leadTags).values({
-      leadId,
-      tag,
-      scopeChannel: 'instagram',
-      createdBy: `automation:instagram:${rule.trigger}`,
-    }).onConflictDoNothing().returning({ id: leadTags.id })
-    if (inserted.length) applied.push(tag)
+    matched.push({ tag, trigger })
   }
-  return { matched, applied }
+  return matched
 }
 
 export async function applyInstagramInboundTag(
@@ -163,6 +183,28 @@ export async function persistInstagramInboundWithTags({
   message: typeof whatsappMessages.$inferInsert
 }) {
   try {
+    const matched = await findInstagramInboundTags({ companyId, text, isStoryReply, executor: db })
+    const tagStatements = matched.map(({ tag, trigger }) => db.insert(leadTags).values({
+      leadId,
+      tag,
+      scopeChannel: 'instagram',
+      createdBy: `automation:instagram:${trigger}`,
+    }).onConflictDoNothing().returning({ id: leadTags.id }))
+    const messageStatement = db.insert(whatsappMessages).values(message)
+
+    if (typeof db.batch === 'function') {
+      const statements = [...tagStatements, messageStatement] as unknown as readonly [
+        BatchItem<'pg'>,
+        ...BatchItem<'pg'>[],
+      ]
+      const results = await db.batch(statements)
+      const applied = matched
+        .map(({ tag }, index) => results[index]?.length ? tag : null)
+        .filter((tag): tag is string => Boolean(tag))
+      return { matched: matched.map(({ tag }) => tag), applied }
+    }
+
+    // Keeps alternate drivers and the unit-test double working. Production uses neon-http above.
     return await db.transaction(async tx => {
       const tagResult = await applyInstagramInboundTagRules({ companyId, leadId, text, isStoryReply, executor: tx })
       await tx.insert(whatsappMessages).values(message)
