@@ -213,6 +213,29 @@ export function ensureSchema(client: any): Promise<void> {
         await client`CREATE INDEX IF NOT EXISTS sac_codex_jobs_company_status_updated_idx ON sac_codex_jobs (company_id, status, updated_at)`
         await client`ALTER TABLE sac_codex_jobs ADD COLUMN IF NOT EXISTS execution_claimed_at timestamp`
 
+        await client`
+          CREATE TABLE IF NOT EXISTS sac_audio_assets (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            lead_id INTEGER NOT NULL REFERENCES recovery_leads(id) ON DELETE CASCADE,
+            idempotency_key TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            sha256 TEXT NOT NULL,
+            audio_data BYTEA NOT NULL,
+            status TEXT NOT NULL DEFAULT 'recebido',
+            transcript TEXT,
+            transcription_provider TEXT,
+            error_message TEXT,
+            ai_insight JSONB,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+          )
+        `
+        await client`CREATE UNIQUE INDEX IF NOT EXISTS sac_audio_assets_company_idempotency_unique ON sac_audio_assets (company_id, idempotency_key)`
+        await client`CREATE INDEX IF NOT EXISTS sac_audio_assets_company_lead_created_idx ON sac_audio_assets (company_id, lead_id, created_at)`
+
         await Promise.allSettled([
           // recovery_leads
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS channel text DEFAULT 'whatsapp'`,

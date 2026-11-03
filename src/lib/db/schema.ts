@@ -1,6 +1,10 @@
-import { pgTable, serial, integer, bigint, numeric, text, boolean, timestamp, jsonb, uniqueIndex, index, date, time } from 'drizzle-orm/pg-core'
+import { pgTable, serial, integer, bigint, numeric, text, boolean, timestamp, jsonb, uniqueIndex, index, date, time, customType } from 'drizzle-orm/pg-core'
 import { relations, sql } from 'drizzle-orm'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => 'bytea',
+})
 
 // ─── Empresas (multi-tenant) ──────────────────────────────────────────────────
 export const companies = pgTable('companies', {
@@ -1103,6 +1107,31 @@ export const sacAuditEvents = pgTable('sac_audit_events', {
   index('sac_audit_events_company_lead_occurred_idx').on(table.companyId, table.leadId, table.occurredAt),
 ])
 
+// Arquivos de áudio enviados explicitamente ao painel do SAC. O conteúdo fica
+// preservado no banco para auditoria e pré-escuta posterior; a listagem nunca
+// carrega os bytes, apenas a rota autenticada de mídia.
+export const sacAudioAssets = pgTable('sac_audio_assets', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  leadId: integer('lead_id').references(() => recoveryLeads.id, { onDelete: 'cascade' }).notNull(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  filename: text('filename').notNull(),
+  mimeType: text('mime_type').notNull(),
+  sizeBytes: integer('size_bytes').notNull(),
+  sha256: text('sha256').notNull(),
+  audioData: bytea('audio_data').notNull(),
+  status: text('status').notNull().default('recebido'),
+  transcript: text('transcript'),
+  transcriptionProvider: text('transcription_provider'),
+  errorMessage: text('error_message'),
+  aiInsight: jsonb('ai_insight').$type<Record<string, unknown> | null>(),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, table => [
+  uniqueIndex('sac_audio_assets_company_idempotency_unique').on(table.companyId, table.idempotencyKey),
+  index('sac_audio_assets_company_lead_created_idx').on(table.companyId, table.leadId, table.createdAt),
+])
+
 // Saúde operacional por empresa. A linha atual é atualizada a cada leitura do
 // painel; incidentes ficam separados para preservar o começo e a recuperação
 // de cada falha sem guardar segredos ou payloads de dependências.
@@ -1204,6 +1233,7 @@ export const companiesRelations = relations(companies, ({ one, many }) => ({
   healthChecks: many(sacHealthChecks),
   healthIncidents: many(sacHealthIncidents),
   codexJobs: many(sacCodexJobs),
+  audioAssets: many(sacAudioAssets),
 }))
 
 export const settingsRelations = relations(settings, ({ one }) => ({
@@ -1233,6 +1263,7 @@ export const recoveryLeadsRelations = relations(recoveryLeads, ({ one, many }) =
   internalNotes: many(sacInternalNotes),
   pendingItems: many(sacPendingItems),
   auditEvents: many(sacAuditEvents),
+  audioAssets: many(sacAudioAssets),
 }))
 
 export const massDispatchBatchesRelations = relations(massDispatchBatches, ({ one, many }) => ({
@@ -1303,6 +1334,11 @@ export const sacPendingItemsRelations = relations(sacPendingItems, ({ one }) => 
 export const sacAuditEventsRelations = relations(sacAuditEvents, ({ one }) => ({
   company: one(companies, { fields: [sacAuditEvents.companyId], references: [companies.id] }),
   lead: one(recoveryLeads, { fields: [sacAuditEvents.leadId], references: [recoveryLeads.id] }),
+}))
+
+export const sacAudioAssetsRelations = relations(sacAudioAssets, ({ one }) => ({
+  company: one(companies, { fields: [sacAudioAssets.companyId], references: [companies.id] }),
+  lead: one(recoveryLeads, { fields: [sacAudioAssets.leadId], references: [recoveryLeads.id] }),
 }))
 
 export const sacHealthChecksRelations = relations(sacHealthChecks, ({ one }) => ({

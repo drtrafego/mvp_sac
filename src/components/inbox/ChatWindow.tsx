@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
+import { ConversationAiPanel } from './ConversationAiPanel'
 import { LeadTags } from './LeadTags'
 import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill, EmailEngagementBadge } from './ChannelBadge'
 import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
@@ -170,7 +171,7 @@ export function ChatWindow({
   const [pauseToast, setPauseToast] = useState<string | null>(null)
 
   // SAC Lote 1: Abas do Painel Lateral
-  const [sidePanelTab, setSidePanelTab] = useState<'context' | 'notes' | 'pending' | 'info'>('context')
+  const [sidePanelTab, setSidePanelTab] = useState<'ai' | 'context' | 'notes' | 'pending' | 'info'>('context')
 
   // SAC Lote 1: Card de Contexto e Próxima Ação
   // The compact summary only reflects confirmed server data, never a local edit.
@@ -1002,6 +1003,7 @@ export function ChatWindow({
           {/* Ações do Topo: acesso explícito ao contexto, bot, pendências e atualização */}
           <div className="studio-chat-actions ml-auto hidden md:flex items-center gap-1.5 shrink-0">
             <button type="button" onClick={() => { setShowDetails(true); setSidePanelTab('pending'); void loadPending() }} title="Pendências de atendimento" aria-label="Abrir pendências de atendimento" className="h-8 w-8 rounded-lg border border-line-subtle flex items-center justify-center text-fg-muted hover:text-fg"><Clock size={14} /></button>
+            <button type="button" onClick={() => { setShowDetails(true); setSidePanelTab('ai') }} title="Abrir camada de IA do atendimento" aria-label="Abrir camada de IA do atendimento" className={cn('inline-flex h-8 items-center gap-1.5 rounded-xl border px-2.5 text-micro font-semibold transition-colors cursor-pointer', showDetails && sidePanelTab === 'ai' ? 'border-brand-solid/40 bg-brand-glow text-brand-ink' : 'border-brand-solid/30 bg-brand-glow/50 text-brand-ink hover:bg-brand-glow')}><Sparkles size={14} /><span>IA</span></button>
             {/* BOTÃO PAUSAR / RETOMAR BOT */}
             <button
               type="button"
@@ -1344,6 +1346,7 @@ export function ChatWindow({
 
           {/* Navegação entre Abas do Painel */}
           <div className="flex items-center border-b border-line-subtle gap-1 pb-1">
+            <button type="button" onClick={() => setSidePanelTab('ai')} className={cn('flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-colors text-center cursor-pointer flex items-center justify-center gap-1', sidePanelTab === 'ai' ? 'bg-brand-glow text-brand-ink border border-brand-solid/30' : 'text-fg-subtle hover:text-fg hover:bg-surface-inset')}><Sparkles size={11} /> IA</button>
             <button
               type="button"
               onClick={() => setSidePanelTab('context')}
@@ -1392,6 +1395,7 @@ export function ChatWindow({
             const data = await response.json()
             if (data.lead) { dirtyContextRef.current.clear(); hydrateContext(data.lead); setIsEditingContext(false); setContextError(null) }
           }}>Recarregar contexto e descartar minha edição</button></div>}
+          {sidePanelTab === 'ai' && <ConversationAiPanel leadId={lead.id} />}
           {sidePanelTab === 'pending' && <div className="space-y-3">
             <p className="text-micro text-fg-muted">Pendências da empresa. Resolver este alerta não encerra o atendimento nem altera a etapa comercial.</p>
             <button type="button" onClick={() => void loadPending()} disabled={loadingPending} className="text-micro text-brand-ink underline">{loadingPending ? 'Carregando...' : 'Atualizar pendências'}</button>

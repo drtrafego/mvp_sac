@@ -12,6 +12,7 @@ import { AgendaSection } from '@/components/agente/agenda-section'
 import { FollowupCard } from '@/components/followup/followup-card'
 import { getFollowupConfigReal, getFollowupSentStatsReal } from '@/lib/followup-server'
 import { CodexActionConsole } from '@/components/agente/codex-action-console'
+import { AiOperationsPanel } from '@/components/agente/ai-operations-panel'
 
 export default async function AgentePage() {
   const company = await requireCompany()
@@ -78,6 +79,8 @@ export default async function AgentePage() {
       </div>
 
       <AgentNameCard />
+
+      <AiOperationsPanel companyId={company.id} />
 
       <CodexActionConsole />
 
