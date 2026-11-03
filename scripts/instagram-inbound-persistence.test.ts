@@ -17,6 +17,8 @@ const tx = {
 }
 
 const db = {
+  select: () => ({ from: () => ({ where: async () => [] }) }),
+  insert: () => ({ values: () => ({}) }),
   transaction: async <T>(callback: (transaction: typeof tx) => Promise<T>) => callback(tx),
 }
 
