@@ -7,19 +7,36 @@ import { recoveryLeads } from '@/lib/db/schema'
  * for the same tenant, contact, and delivery channel.
  */
 export function conversationVisibilityCondition(companyId: number): SQL {
-  return sql`EXISTS (
-    SELECT 1
-    FROM whatsapp_messages inbox_history
-    WHERE inbox_history.company_id = ${companyId}
+  const channel = sql`coalesce(${recoveryLeads.channel}, 'whatsapp')`
+  const normalizedLeadPhone = sql`regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g')`
+  return sql`(
+    (
+      ${recoveryLeads.id}, ${channel}
+    ) IN (
+      SELECT inbox_by_lead.lead_id, coalesce(inbox_by_lead.channel, 'whatsapp')
+      FROM whatsapp_messages inbox_by_lead
+      WHERE inbox_by_lead.company_id = ${companyId}
+        AND inbox_by_lead.lead_id IS NOT NULL
+    )
+    OR (
+      ${recoveryLeads.phone}, ${channel}
+    ) IN (
+      SELECT inbox_by_phone.phone, coalesce(inbox_by_phone.channel, 'whatsapp')
+      FROM whatsapp_messages inbox_by_phone
+      WHERE inbox_by_phone.company_id = ${companyId}
+        AND inbox_by_phone.phone IS NOT NULL
+    )
+    OR (
+      ${normalizedLeadPhone} <> ''
       AND (
-        inbox_history.lead_id = ${recoveryLeads.id}
-        OR inbox_history.phone = ${recoveryLeads.phone}
-        OR (
-          regexp_replace(inbox_history.phone, '\\D', '', 'g') <> ''
-          AND regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g') <> ''
-          AND regexp_replace(inbox_history.phone, '\\D', '', 'g') = regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g')
-        )
+        ${normalizedLeadPhone}, ${channel}
+      ) IN (
+        SELECT regexp_replace(inbox_by_normalized_phone.phone, '\\D', '', 'g'),
+               coalesce(inbox_by_normalized_phone.channel, 'whatsapp')
+        FROM whatsapp_messages inbox_by_normalized_phone
+        WHERE inbox_by_normalized_phone.company_id = ${companyId}
+          AND inbox_by_normalized_phone.phone IS NOT NULL
       )
-      AND coalesce(inbox_history.channel, 'whatsapp') = coalesce(${recoveryLeads.channel}, 'whatsapp')
+    )
   )`
 }

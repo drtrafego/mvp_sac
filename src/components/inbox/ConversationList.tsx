@@ -35,6 +35,7 @@ import {
 import { matchesInboxSourceFilter } from '@/lib/inbox-source-filter'
 import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
 import type { ConversationSummary, InboxPage } from '@/lib/inbox-conversations'
+import { inboxClientErrorMessage, readInboxResponse } from '@/lib/inbox-client'
 import type { ActiveConnections } from '@/components/layout/sidebar'
 export type { ConversationSummary } from '@/lib/inbox-conversations'
 
@@ -189,7 +190,9 @@ export function ConversationList({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [refreshing, setRefreshing] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [initialLoading, setInitialLoading] = useState(initial.length === 0 && !initialError)
   const requestSequence = useRef(0)
+  const requestAbort = useRef<AbortController | null>(null)
 
   // Busca no backend já filtrada pelo canal selecionado: a aba "Todos" não
   // manda parâmetro (mesmo comportamento de sempre), as abas de canal
@@ -223,6 +226,10 @@ export function ConversationList({
       merge = false,
     }: { silent?: boolean; cursor?: string | null; append?: boolean; merge?: boolean } = {}) => {
       const requestId = ++requestSequence.current
+      requestAbort.current?.abort()
+      const controller = new AbortController()
+      requestAbort.current = controller
+      const timeout = setTimeout(() => controller.abort(), 12_000)
       if (!silent) setRefreshing(true)
       if (append) setLoadingMore(true)
       try {
@@ -233,31 +240,29 @@ export function ConversationList({
         if (debouncedSearch) params.set('q', debouncedSearch)
         if (cursor) params.set('cursor', cursor)
         const qs = params.toString()
-        const res = await fetch(`/api/inbox${qs ? `?${qs}` : ''}`, { cache: 'no-store' })
+        const res = await fetch(`/api/inbox${qs ? `?${qs}` : ''}`, { cache: 'no-store', signal: controller.signal })
         if (requestId !== requestSequence.current) return
-        if (res.ok) {
-          const data: InboxPage = await res.json()
-          setLoadedSearch(debouncedSearch)
-          setConvs(current => {
-            if (!append && !merge) return data.conversations
-            const incomingIds = new Set(data.conversations.map(conversation => conversation.id))
-            const currentIds = new Set(current.map(conversation => conversation.id))
-            return merge
-              ? [...data.conversations, ...current.filter(conversation => !incomingIds.has(conversation.id))]
-              : [...current, ...data.conversations.filter(conversation => !currentIds.has(conversation.id))]
-          })
-          if (!merge) {
-            setNextCursor(data.nextCursor)
-            setHasMore(data.hasMore)
-          }
-          setError(null)
-        } else {
-          setError('Erro ao sincronizar conversas com o servidor.')
+        const data: InboxPage = await readInboxResponse(res)
+        setLoadedSearch(debouncedSearch)
+        setConvs(current => {
+          if (!append && !merge) return data.conversations
+          const incomingIds = new Set(data.conversations.map(conversation => conversation.id))
+          const currentIds = new Set(current.map(conversation => conversation.id))
+          return merge
+            ? [...data.conversations, ...current.filter(conversation => !incomingIds.has(conversation.id))]
+            : [...current, ...data.conversations.filter(conversation => !currentIds.has(conversation.id))]
+        })
+        if (!merge) {
+          setNextCursor(data.nextCursor)
+          setHasMore(data.hasMore)
         }
-      } catch {
+        setError(null)
+      } catch (error) {
         if (requestId !== requestSequence.current) return
-        setError('Falha de rede ao buscar conversas.')
+        setError(inboxClientErrorMessage(error))
       } finally {
+        clearTimeout(timeout)
+        if (requestId === requestSequence.current) setInitialLoading(false)
         if (!silent) setRefreshing(false)
         if (append) setLoadingMore(false)
       }
@@ -779,7 +784,12 @@ export function ConversationList({
 
       {/* Lista de Conversas com Scroll */}
       <div className="scroll-thin flex-1 overflow-y-auto p-2 space-y-1 pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-2">
-        {filtered.length === 0 ? (
+        {initialLoading ? (
+          <div role="status" className="flex flex-col gap-2 px-2 py-4">
+            <span className="text-micro font-semibold text-fg-muted">Carregando conversas…</span>
+            {[0, 1, 2].map(item => <div key={item} className="skeleton h-20 w-full rounded-xl" />)}
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-16 text-fg-faint text-center px-4">
             <MessageSquare size={28} className="opacity-40" />
             <p className="text-body font-semibold text-fg-muted">Nenhuma conversa encontrada</p>

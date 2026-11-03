@@ -269,6 +269,7 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS sent_email text`,
           client`CREATE INDEX IF NOT EXISTS whatsapp_messages_company_lead_created_id_idx ON whatsapp_messages (company_id, lead_id, created_at, id)`,
           client`CREATE INDEX IF NOT EXISTS whatsapp_messages_company_phone_created_id_idx ON whatsapp_messages (company_id, phone, created_at, id)`,
+          client`CREATE INDEX IF NOT EXISTS whatsapp_messages_company_channel_phone_digits_idx ON whatsapp_messages (company_id, (coalesce(channel, 'whatsapp')), (regexp_replace(phone, '\\D', '', 'g')))` ,
           client`CREATE INDEX IF NOT EXISTS whatsapp_messages_company_direction_lead_idx ON whatsapp_messages (company_id, direction, lead_id)`,
           client`CREATE INDEX IF NOT EXISTS recovery_leads_company_activity_idx ON recovery_leads (company_id, COALESCE(last_action_at, updated_at, created_at) DESC, id DESC)`,
           client`CREATE INDEX IF NOT EXISTS recovery_leads_company_paused_idx ON recovery_leads (company_id, bot_paused)`,

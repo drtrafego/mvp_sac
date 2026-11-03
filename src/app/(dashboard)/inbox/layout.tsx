@@ -8,25 +8,37 @@ import { eq } from 'drizzle-orm'
 import { loadInboxPage, type InboxPage } from '@/lib/inbox-conversations'
 import { includesInstagramInGeneral } from '@/lib/instagram-inbox-placement'
 import { getCompanySidebarData } from '@/lib/company-sidebar'
+import { withTimeout } from '@/lib/with-timeout'
+
+const INBOX_INITIAL_LOAD_TIMEOUT_MS = 8_000
 
 export default async function InboxLayout({ children }: { children: React.ReactNode }) {
   const company = await requireCompany()
-  const { activeConnections } = await getCompanySidebarData(company.id)
-  const [companySettings] = await db
-    .select({ instagramInboxPlacement: settings.instagramInboxPlacement })
-    .from(settings)
-    .where(eq(settings.companyId, company.id))
-    .limit(1)
+  const [{ activeConnections }, companySettingsRows] = await Promise.all([
+    getCompanySidebarData(company.id),
+    db
+      .select({ instagramInboxPlacement: settings.instagramInboxPlacement })
+      .from(settings)
+      .where(eq(settings.companyId, company.id))
+      .limit(1),
+  ])
+  const companySettings = companySettingsRows[0]
   let page: InboxPage = { conversations: [], nextCursor: null, hasMore: false }
   let error: string | null = null
   try {
-    page = await loadInboxPage({
-      companyId: company.id,
-      includeInstagramInGeneral: includesInstagramInGeneral(companySettings?.instagramInboxPlacement),
-    })
+    page = await withTimeout(
+      loadInboxPage({
+        companyId: company.id,
+        includeInstagramInGeneral: includesInstagramInGeneral(companySettings?.instagramInboxPlacement),
+      }),
+      INBOX_INITIAL_LOAD_TIMEOUT_MS,
+      `Inbox load timeout after ${INBOX_INITIAL_LOAD_TIMEOUT_MS}ms`,
+    )
   } catch (err) {
     console.error('[Inbox layout loadInboxPage error]:', err)
-    error = 'Falha ao carregar as conversas do banco de dados.'
+    error = err instanceof Error && err.message.startsWith('Inbox load timeout')
+      ? 'O carregamento das conversas demorou mais de 8 segundos. Tente novamente.'
+      : 'Falha ao carregar as conversas do banco de dados.'
   }
 
   return (

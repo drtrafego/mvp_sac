@@ -134,10 +134,6 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
     )`)
   }
 
-  // O contato continua em recovery_leads; só entra na lista de conversas
-  // depois de existir mensagem real.
-  whereConditions.push(conversationVisibilityCondition(options.companyId))
-
   const query = options.query?.trim()
   if (query) {
     const pattern = `%${query}%`

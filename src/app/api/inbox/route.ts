@@ -22,27 +22,35 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const company = await requireCompany()
   const { searchParams } = new URL(req.url)
 
-  const cursor = searchParams.get('cursor')
-  if (cursor && !decodeInboxCursor(cursor)) {
-    return noStoreJson({ error: 'Cursor inválido.' }, { status: 400 })
+  try {
+    const cursor = searchParams.get('cursor')
+    if (cursor && !decodeInboxCursor(cursor)) {
+      return noStoreJson({ error: 'Cursor inválido.' }, { status: 400 })
+    }
+
+    const requestedLimit = Number(searchParams.get('limit') || INBOX_PAGE_SIZE)
+    const [companySettings] = await db
+      .select({ instagramInboxPlacement: settings.instagramInboxPlacement })
+      .from(settings)
+      .where(eq(settings.companyId, company.id))
+      .limit(1)
+    const page = await loadInboxPage({
+      companyId: company.id,
+      channel: searchParams.get('channel'),
+      source: searchParams.get('source'),
+      status: searchParams.get('status'),
+      query: searchParams.get('q'),
+      cursor,
+      limit: Number.isFinite(requestedLimit) ? requestedLimit : INBOX_PAGE_SIZE,
+      includeInstagramInGeneral: includesInstagramInGeneral(companySettings?.instagramInboxPlacement),
+    })
+
+    return noStoreJson(page)
+  } catch (error) {
+    console.error('[Inbox API] failed to load conversations:', error instanceof Error ? error.name : 'unknown')
+    return noStoreJson(
+      { error: 'Não foi possível carregar as conversas.', code: 'INBOX_LOAD_FAILED' },
+      { status: 500 },
+    )
   }
-
-  const requestedLimit = Number(searchParams.get('limit') || INBOX_PAGE_SIZE)
-  const [companySettings] = await db
-    .select({ instagramInboxPlacement: settings.instagramInboxPlacement })
-    .from(settings)
-    .where(eq(settings.companyId, company.id))
-    .limit(1)
-  const page = await loadInboxPage({
-    companyId: company.id,
-    channel: searchParams.get('channel'),
-    source: searchParams.get('source'),
-    status: searchParams.get('status'),
-    query: searchParams.get('q'),
-    cursor,
-    limit: Number.isFinite(requestedLimit) ? requestedLimit : INBOX_PAGE_SIZE,
-    includeInstagramInGeneral: includesInstagramInGeneral(companySettings?.instagramInboxPlacement),
-  })
-
-  return noStoreJson(page)
 }

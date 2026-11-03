@@ -690,6 +690,15 @@ export const whatsappMessages = pgTable('whatsapp_messages', {
     .on(table.companyId, table.leadId, table.createdAt, table.id),
   index('whatsapp_messages_company_phone_created_id_idx')
     .on(table.companyId, table.phone, table.createdAt, table.id),
+  // Inbox visibility compares the normalized phone as a fallback when a
+  // message arrived before its lead_id was linked. Keep that OR branch
+  // indexable for larger tenants such as Gramado.
+  index('whatsapp_messages_company_channel_phone_digits_idx')
+    .on(
+      table.companyId,
+      sql`coalesce(${table.channel}, 'whatsapp')`,
+      sql`regexp_replace(${table.phone}, '\\D', '', 'g')`,
+    ),
   index('whatsapp_messages_company_direction_lead_idx')
     .on(table.companyId, table.direction, table.leadId),
   // Idempotência contra reentrega de webhook da Meta (comportamento real e
