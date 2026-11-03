@@ -512,6 +512,10 @@ async function detectOutreachTagColumns(): Promise<Set<string>> {
 
 const SYNC_BACKFILL_BATCH_SIZE = 300
 const SYNC_NEW_BATCH_SIZE = 5000
+// Conversas carregam todas as mensagens do lote para o inbox. O lote global
+// de 5.000 é seguro para tabelas leves, mas faria o Gramado tentar processar
+// milhares de threads de uma vez ao destravar o cursor congelado.
+const SYNC_CONVERSATION_NEW_BATCH_SIZE = 300
 const EPOCH_CURSOR_ISO = '1970-01-01T00:00:00.000Z'
 
 type SyncCursorSource = 'agent_conversations' | 'agent_conversation_metadata' | 'outreach_convos' | 'crm_leads' | 'ctwa_referrals' | 'appointments' | 'gramado_reservas'
@@ -1205,7 +1209,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 from ${conversationSource}
                 where (${conversationSortExpr}, ${conversationIdExpr}) > ($1::timestamptz, $2::text)
                 order by ${conversationSortExpr} asc, ${conversationIdExpr} asc
-                limit ${SYNC_NEW_BATCH_SIZE}
+                limit ${SYNC_CONVERSATION_NEW_BATCH_SIZE}
               `,
               [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
             ),
