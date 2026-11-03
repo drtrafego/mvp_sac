@@ -7,13 +7,14 @@ export const maxDuration = 180
 import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { db } from '@/lib/db'
-import { whatsappMessages, recoveryLeads, settings, messageJobs } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { whatsappMessages, recoveryLeads, settings, messageJobs, sacAuditEvents } from '@/lib/db/schema'
+import { and, eq, sql } from 'drizzle-orm'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { markLeadContacted } from '@/lib/leads'
 import { verifyMetaSignature } from '@/lib/meta-signature'
 import { generateAndSendAiReply } from '@/lib/ai-reply'
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from '@/lib/webhook-dedup'
+import { isWhatsAppOptOutText } from '@/lib/recovery-sequence-policy'
 
 function normalizePhone(raw: string): string {
   return raw.replace(/[@+\s\-().]/g, '').replace(/@.*$/, '').replace(/^0+/, '')
@@ -329,6 +330,44 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // Mensagem real trocada: se for a primeira, marca a abordagem do lead
     await markLeadContacted(leadId)
+
+    if (isWhatsAppOptOutText(content)) {
+      // Opt-out é persistente por telefone/empresa. A atualização cobre todos
+      // os eventos de checkout do mesmo contato e cancela a fila antes de
+      // qualquer nova tentativa do cron.
+      await db.update(recoveryLeads).set({
+        whatsappConsentStatus: 'opted_out',
+        whatsappConsentAt: new Date(),
+        botPaused: true,
+        botPausedAt: new Date(),
+        botPausedBy: 'optout_whatsapp',
+        botControlVersion: sql`coalesce(${recoveryLeads.botControlVersion}, 0) + 1`,
+        updatedAt: new Date(),
+      }).where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, phone)))
+      await db.execute(sql`
+        UPDATE message_jobs
+        SET status = 'cancelled',
+            error = 'Opt-out de WhatsApp registrado antes do envio',
+            processing_started_at = NULL
+        WHERE lead_id IN (
+          SELECT id FROM recovery_leads
+          WHERE company_id = ${companyId} AND phone = ${phone}
+        )
+          AND status IN ('pending', 'processing')
+      `)
+      await db.insert(sacAuditEvents).values({
+        companyId,
+        leadId,
+        type: 'whatsapp_opted_out',
+        actorType: 'system',
+        actorId: 'whatsapp_webhook',
+        actorName: 'SAC WhatsApp',
+        referenceType: 'whatsapp_message',
+        referenceId: externalId ?? null,
+        payload: { source: parsed.provider },
+      }).catch(error => console.error('[WhatsApp Webhook] falha ao auditar opt-out', { companyId, leadId, error }))
+      return NextResponse.json({ ok: true, optedOut: true })
+    }
 
     // Resposta automática de IA (Fase 1): roda DEPOIS do 200 sair pra Meta,
     // nunca atrasa o webhook. Respeita o handoff humano (botPaused) e o gate

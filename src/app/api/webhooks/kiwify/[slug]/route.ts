@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { eq, and, inArray, desc, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage, formatBrazilianPhone } from '@/lib/whatsapp'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
-import { buildIsabelaBoletoIdempotencyKey, canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent, isApprovedImmediateIsabelaBoletoSequence, isApprovedIsabelaSequence, ISABELA_APPROVED_TEMPLATE_NAMES, ISABELA_BOLETO_JOB_TYPE, ISABELA_BOLETO_TEMPLATE_NAME } from '@/lib/recovery-sequence-policy'
+import { buildIsabelaBoletoIdempotencyKey, buildIsabelaFlowIdempotencyKey, canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent, isApprovedImmediateIsabelaBoletoSequence, isConfiguredIsabelaFlow, ISABELA_APPROVED_TEMPLATE_NAMES, ISABELA_BOLETO_JOB_TYPE, ISABELA_BOLETO_TEMPLATE_NAME } from '@/lib/recovery-sequence-policy'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import {
@@ -204,22 +204,28 @@ async function auditIsabelaSequence(args: {
   leadId: number
   type: string
   payload: Record<string, unknown>
-}): Promise<void> {
-  await db.insert(sacAuditEvents).values({
-    companyId: args.companyId,
-    leadId: args.leadId,
-    type: args.type,
-    actorType: 'system',
-    actorId: 'isabela_purchase_sequence',
-    actorName: 'SAC Isabela sequence',
-    referenceType: 'message_job',
-    payload: args.payload,
-  }).catch(error => console.error('[isabela-sequence] falha ao gravar auditoria', {
-    companyId: args.companyId,
-    leadId: args.leadId,
-    type: args.type,
-    error: error instanceof Error ? error.message : String(error),
-  }))
+}): Promise<boolean> {
+  try {
+    await db.insert(sacAuditEvents).values({
+      companyId: args.companyId,
+      leadId: args.leadId,
+      type: args.type,
+      actorType: 'system',
+      actorId: 'isabela_flow',
+      actorName: 'SAC Isabela',
+      referenceType: 'message_job',
+      payload: args.payload,
+    })
+    return true
+  } catch (error) {
+    console.error('[isabela-sequence] falha ao gravar auditoria', {
+      companyId: args.companyId,
+      leadId: args.leadId,
+      type: args.type,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return false
+  }
 }
 
 // Nunca gravamos req.url em lugar nenhum: a query string carrega o nosso ?token=.
@@ -850,25 +856,37 @@ export async function POST(
     const isRecovery = RECOVERY_TYPES.includes(mappedType)
     const now = new Date()
     const isImmediateIsabelaBoleto = isIsabela && mappedType === 'boleto'
+    const isIsabelaCardRecovery = isIsabela && mappedType === 'cartao_recusado'
     let followupSkipReason: string | null = null
+    if (mappedType === 'carrinho_abandonado') {
+      followupSkipReason = 'carrinho_abandonado_registrado_sem_agendamento'
+    }
 
-    const [storedConsent] = isIsabela
+    const consentRows = isIsabela
       ? await db.select({ whatsappConsentStatus: recoveryLeads.whatsappConsentStatus })
         .from(recoveryLeads)
-        .where(eq(recoveryLeads.id, leadId))
-        .limit(1)
+        .where(and(eq(recoveryLeads.companyId, company.id), eq(recoveryLeads.phone, draft.phone)))
       : []
-    const hasConsent = storedConsent?.whatsappConsentStatus === 'opted_in' || hasExplicitWhatsAppConsent(item)
-    const approvedIsabelaTemplateNames = isIsabela
-      ? new Set((await db
-        .select({ name: metaMessageTemplates.name })
+    const payloadConsent = hasExplicitWhatsAppConsent(item)
+    const hasStoredOptOut = consentRows.some(row => row.whatsappConsentStatus === 'opted_out')
+    const hasStoredOptIn = consentRows.some(row => row.whatsappConsentStatus === 'opted_in')
+    // Um opt-in explícito no evento atual pode reabrir o contato; fora disso,
+    // qualquer opt-out persistido vence o histórico de compras do telefone.
+    const hasConsent = payloadConsent || (!hasStoredOptOut && hasStoredOptIn)
+    const approvedIsabelaTemplates = isIsabela
+      ? new Map((await db
+        .select({
+          name: metaMessageTemplates.name,
+          language: metaMessageTemplates.language,
+          category: metaMessageTemplates.category,
+        })
         .from(metaMessageTemplates)
         .where(and(
           eq(metaMessageTemplates.companyId, company.id),
           eq(metaMessageTemplates.status, 'APPROVED'),
           inArray(metaMessageTemplates.name, [...ISABELA_APPROVED_TEMPLATE_NAMES]),
-        ))).map(template => template.name))
-      : new Set<string>()
+        ))).map(template => [template.name, template]))
+      : new Map()
 
     // ─── Funil Cursos (Isabela Fanini - Despertar das Bellas) ─────────────────
     const isFunilEligible = isFunilCursosTrigger({
@@ -883,7 +901,7 @@ export async function POST(
     // Compra aprovada do Despertar agenda somente os templates aprovados e
     // consentidos da sequência configurada no SAC. O webhook continua sendo
     // idempotente por transação; cada job também recebe uma chave própria.
-    if (isFunilEligible && sequence && draft.phone) {
+    if (isFunilEligible) {
       const initialFunnelState = createInitialFunilCursosState({
         transactionId: draft.transactionId!,
         productName: draft.productName,
@@ -896,14 +914,22 @@ export async function POST(
         .set({ aiScheduleState: initialFunnelState as any })
         .where(eq(recoveryLeads.id, leadId))
 
-      const messages = await db
-        .select()
-        .from(sequenceMessages)
-        .where(and(eq(sequenceMessages.sequenceId, sequence.id), eq(sequenceMessages.isActive, true)))
-        .orderBy(sequenceMessages.order)
-      const canDispatch = hasConsent && isApprovedIsabelaSequence(messages, approvedIsabelaTemplateNames)
+      const messages = sequence
+        ? await db
+          .select()
+          .from(sequenceMessages)
+          .where(and(eq(sequenceMessages.sequenceId, sequence.id), eq(sequenceMessages.isActive, true)))
+          .orderBy(sequenceMessages.order)
+        : []
+      const canDispatch = Boolean(draft.phone && sequence)
+        && hasConsent
+        && isConfiguredIsabelaFlow(messages, 'compra_aprovada', approvedIsabelaTemplates)
 
-      if (!hasConsent) {
+      if (!draft.phone) {
+        followupSkipReason = 'sequencia_isabela_sem_telefone'
+      } else if (!sequence) {
+        followupSkipReason = 'sequencia_isabela_sem_sequencia_ativa'
+      } else if (!hasConsent) {
         followupSkipReason = 'sequencia_isabela_sem_consentimento_whatsapp_explicito'
       } else if (!canDispatch) {
         followupSkipReason = 'sequencia_isabela_sem_template_aprovado_configurado'
@@ -916,10 +942,10 @@ export async function POST(
           checkBeforeSend: false,
           messageOrder: message.order,
           jobType: 'isabela_purchase_sequence',
-          idempotencyKey: `isabela_purchase:${company.id}:${draft.transactionId}:${message.id}`,
+          idempotencyKey: buildIsabelaFlowIdempotencyKey('compra_aprovada', company.id, draft.transactionId!, message.id),
         }))).onConflictDoNothing({ target: messageJobs.idempotencyKey }).returning({ id: messageJobs.id })
 
-        await auditIsabelaSequence({
+        const audited = await auditIsabelaSequence({
           companyId: company.id,
           leadId,
           type: scheduledJobs.length > 0 ? 'isabela_purchase_sequence_scheduled' : 'isabela_purchase_sequence_duplicate',
@@ -930,6 +956,13 @@ export async function POST(
             consent: true,
           },
         })
+        if (!audited) {
+          await db.update(messageJobs).set({
+            status: 'cancelled',
+            error: 'Auditoria da sequência de compra da Isabela não foi registrada',
+          }).where(inArray(messageJobs.id, scheduledJobs.map(job => job.id)))
+          followupSkipReason = 'sequencia_isabela_auditoria_indisponivel'
+        }
       }
 
     }
@@ -953,13 +986,16 @@ export async function POST(
             eq(metaMessageTemplates.companyId, company.id),
             eq(metaMessageTemplates.status, 'APPROVED'),
             eq(metaMessageTemplates.category, 'UTILITY'),
+            inArray(metaMessageTemplates.name, [...ISABELA_APPROVED_TEMPLATE_NAMES]),
           ))).map(template => template.name))
         : new Set<string>()
       const canDispatch = isImmediateIsabelaBoleto
         ? hasConsent
           && Boolean(draft.transactionId && draft.boletoCode && draft.boletoExpiry)
           && isApprovedImmediateIsabelaBoletoSequence(messages, approvedUtilityTemplateNames)
-        : !isIsabela || hasConsent && isApprovedIsabelaSequence(messages, approvedIsabelaTemplateNames)
+        : !isIsabela || hasConsent
+          && Boolean(draft.transactionId)
+          && isConfiguredIsabelaFlow(messages, mappedType === 'cartao_recusado' ? 'cartao_recusado' : mappedType as 'pix' | 'boleto', approvedIsabelaTemplates)
 
       if (isImmediateIsabelaBoleto && !hasConsent) {
         followupSkipReason = 'boleto_followup_sem_consentimento_whatsapp_explicito'
@@ -992,10 +1028,13 @@ export async function POST(
               ...(isImmediateIsabelaBoleto ? {
                 jobType: ISABELA_BOLETO_JOB_TYPE,
                 idempotencyKey: buildIsabelaBoletoIdempotencyKey(company.id, draft.transactionId!),
+              } : isIsabelaCardRecovery ? {
+                jobType: 'isabela_cartao_recusado',
+                idempotencyKey: buildIsabelaFlowIdempotencyKey('cartao_recusado', company.id, draft.transactionId!, msg.id),
               } : {}),
             }
           })
-        const scheduledJobs = isImmediateIsabelaBoleto
+        const scheduledJobs = (isImmediateIsabelaBoleto || isIsabelaCardRecovery)
           ? await db.insert(messageJobs).values(jobValues).onConflictDoNothing({ target: messageJobs.idempotencyKey }).returning({ id: messageJobs.id })
           : await db.insert(messageJobs).values(jobValues).returning({ id: messageJobs.id })
 
@@ -1029,6 +1068,25 @@ export async function POST(
               followupSkipReason = 'boleto_followup_auditoria_indisponivel'
             }
           }
+        } else if (isIsabelaCardRecovery) {
+          const audited = await auditIsabelaSequence({
+            companyId: company.id,
+            leadId,
+            type: scheduledJobs.length > 0 ? 'isabela_card_recovery_scheduled' : 'isabela_card_recovery_duplicate',
+            payload: {
+              eventType: 'cartao_recusado',
+              templateNames: messages.map(message => message.templateName),
+              messageCount: scheduledJobs.length,
+              consent: true,
+            },
+          })
+          if (!audited) {
+            await db.update(messageJobs).set({
+              status: 'cancelled',
+              error: 'Auditoria da recuperação de cartão da Isabela não foi registrada',
+            }).where(inArray(messageJobs.id, scheduledJobs.map(job => job.id)))
+            followupSkipReason = 'cartao_recusado_auditoria_indisponivel'
+          }
         }
     }
 
@@ -1053,6 +1111,12 @@ export async function POST(
         : !draft.phone
           ? 'boleto_followup_sem_telefone'
           : 'boleto_followup_nao_elegivel'
+    } else if (isIsabelaCardRecovery) {
+      followupSkipReason = !sequence
+        ? 'cartao_recusado_sem_sequencia_ativa'
+        : !draft.phone
+          ? 'cartao_recusado_sem_telefone'
+          : 'cartao_recusado_nao_elegivel'
     }
 
     // Notificação interna (fire-and-forget).
@@ -1078,6 +1142,14 @@ export async function POST(
         type: 'boleto_followup_blocked',
         referenceType: 'webhook_received',
         payload: { eventType: 'boleto', reason: followupSkipReason },
+      })
+    }
+    if (isIsabelaCardRecovery && followupSkipReason) {
+      await auditIsabelaSequence({
+        companyId: company.id,
+        leadId,
+        type: 'isabela_card_recovery_blocked',
+        payload: { eventType: 'cartao_recusado', reason: followupSkipReason },
       })
     }
 

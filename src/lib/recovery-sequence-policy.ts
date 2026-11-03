@@ -19,6 +19,100 @@ export const ISABELA_APPROVED_TEMPLATE_NAMES = [
   'cartao_despertar_recusado',
 ] as const
 
+export type IsabelaFlow = 'compra_aprovada' | 'portal_apos_desafio' | 'pix' | 'boleto' | 'cartao_recusado'
+
+/**
+ * Catálogo fechado dos fluxos da Bela. O webhook nunca aceita um template
+ * apenas porque a Meta o marcou como APPROVED: o nome precisa estar neste
+ * catálogo e na sequência explícita do fluxo correspondente.
+ */
+export const ISABELA_FLOW_TEMPLATE_NAMES: Readonly<Record<IsabelaFlow, readonly string[]>> = {
+  compra_aprovada: [
+    'boas_vindas_despertar_pos_compra',
+    'isabela_formulario_d1_20261031_corrigida',
+    'acompanhamento_desafio_d10',
+  ],
+  portal_apos_desafio: ['convite_portal_apos_desafio'],
+  pix: ['pix_despertar_nao_pago'],
+  boleto: ['boleto_despertar_nao_pago'],
+  cartao_recusado: ['cartao_despertar_recusado'],
+}
+
+export const ISABELA_FLOW_JOB_TYPES = new Set([
+  'isabela_purchase_sequence',
+  'isabela_portal_after_challenge',
+  'pix_followup_60m',
+  ISABELA_BOLETO_JOB_TYPE,
+  'isabela_cartao_recusado',
+])
+
+export type ApprovedIsabelaTemplate = {
+  name: string
+  language?: string | null
+  category?: string | null
+}
+
+/** A sequência só passa quando contém exatamente os templates do seu fluxo. */
+export function isConfiguredIsabelaFlow(
+  messages: SequenceMessageForPolicy[],
+  flow: IsabelaFlow,
+  approvedTemplates: ReadonlyMap<string, ApprovedIsabelaTemplate>,
+): boolean {
+  const expected = ISABELA_FLOW_TEMPLATE_NAMES[flow]
+  if (messages.length !== expected.length) return false
+
+  const ordered = [...messages].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+  return ordered.every((message, index) => {
+    const name = message.templateName
+    if (
+      message.messageType !== 'template'
+      || !name
+      || name !== expected[index]
+      || (message.templateLanguage ?? 'pt_BR') !== 'pt_BR'
+    ) return false
+
+    const approved = approvedTemplates.get(name)
+    if (!approved) return false
+    return (approved.language ?? 'pt_BR') === 'pt_BR'
+      && ['UTILITY', 'MARKETING'].includes((approved.category ?? '').toUpperCase())
+  })
+}
+
+export function buildIsabelaFlowIdempotencyKey(
+  flow: IsabelaFlow,
+  companyId: number,
+  transactionId: string,
+  messageId: number,
+): string {
+  return `isabela:${flow}:${companyId}:${transactionId.trim()}:${messageId}`
+}
+
+export function isIsabelaJobType(jobType: string | null | undefined): boolean {
+  return Boolean(jobType && ISABELA_FLOW_JOB_TYPES.has(jobType))
+}
+
+export function isWhatsAppOptOutText(text: string | null | undefined): boolean {
+  if (!text) return false
+  const normalized = text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return [
+    'pare',
+    'parar',
+    'stop',
+    'sair',
+    'descadastrar',
+    'cancelar mensagens',
+    'nao quero receber',
+    'nao me mande mais',
+    'nao enviar mais',
+  ].some(pattern => normalized === pattern || normalized.startsWith(`${pattern} `))
+}
+
 export function buildIsabelaBoletoIdempotencyKey(companyId: number, transactionId: string): string {
   return `${ISABELA_BOLETO_JOB_TYPE}:${companyId}:${transactionId.trim()}`
 }
@@ -26,6 +120,7 @@ export function buildIsabelaBoletoIdempotencyKey(companyId: number, transactionI
 export type SequenceMessageForPolicy = {
   messageType?: string | null
   templateName?: string | null
+  order?: number | null
   templateLanguage?: string | null
   delayMinutes?: number | null
   templateVariablesMap?: unknown

@@ -3,10 +3,13 @@ import test from 'node:test'
 import {
   canScheduleAutomaticRecoverySequence,
   buildIsabelaBoletoIdempotencyKey,
+  buildIsabelaFlowIdempotencyKey,
   hasExplicitWhatsAppConsent,
+  isConfiguredIsabelaFlow,
   isApprovedImmediateIsabelaBoletoSequence,
   isApprovedIsabelaSequence,
   isApprovedUtilitySequence,
+  isWhatsAppOptOutText,
 } from '../src/lib/recovery-sequence-policy'
 
 test('carrinho abandonado registra estado, mas nunca agenda mensagem', () => {
@@ -69,4 +72,32 @@ test('boleto imediato aceita parâmetros nomeados reais', () => {
   assert.equal(isApprovedImmediateIsabelaBoletoSequence([{ ...message, templateVariablesMap: { '1': '{nome}', '2': '{boleto_validade}' } }], approved), false)
   assert.equal(isApprovedImmediateIsabelaBoletoSequence([{ ...message, delayMinutes: 30 }], approved), false)
   assert.equal(hasExplicitWhatsAppConsent({ Customer: { whatsapp_opt_in: false } }), false)
+})
+
+test('cada fluxo da Isabela exige o catálogo exato de templates aprovados', () => {
+  const approved = new Map([
+    ['boas_vindas_despertar_pos_compra', { name: 'boas_vindas_despertar_pos_compra', category: 'UTILITY', language: 'pt_BR' }],
+    ['isabela_formulario_d1_20261031_corrigida', { name: 'isabela_formulario_d1_20261031_corrigida', category: 'MARKETING', language: 'pt_BR' }],
+    ['acompanhamento_desafio_d10', { name: 'acompanhamento_desafio_d10', category: 'MARKETING', language: 'pt_BR' }],
+    ['cartao_despertar_recusado', { name: 'cartao_despertar_recusado', category: 'UTILITY', language: 'pt_BR' }],
+  ])
+  const purchase = [
+    { order: 1, messageType: 'template', templateName: 'boas_vindas_despertar_pos_compra', templateLanguage: 'pt_BR' },
+    { order: 2, messageType: 'template', templateName: 'isabela_formulario_d1_20261031_corrigida', templateLanguage: 'pt_BR' },
+    { order: 3, messageType: 'template', templateName: 'acompanhamento_desafio_d10', templateLanguage: 'pt_BR' },
+  ]
+  assert.equal(isConfiguredIsabelaFlow(purchase, 'compra_aprovada', approved), true)
+  assert.equal(isConfiguredIsabelaFlow([{ ...purchase[0], templateName: 'coringa_texto' }], 'compra_aprovada', approved), false)
+  assert.equal(isConfiguredIsabelaFlow([purchase[0]], 'compra_aprovada', approved), false)
+  assert.equal(isConfiguredIsabelaFlow([{
+    order: 1, messageType: 'template', templateName: 'cartao_despertar_recusado', templateLanguage: 'pt_BR',
+  }], 'cartao_recusado', approved), true)
+  assert.equal(buildIsabelaFlowIdempotencyKey('cartao_recusado', 2, 'pedido-1', 9), 'isabela:cartao_recusado:2:pedido-1:9')
+})
+
+test('opt-out reconhece comandos explícitos sem inferir a partir de texto comum', () => {
+  assert.equal(isWhatsAppOptOutText('PARE de mandar mensagens'), true)
+  assert.equal(isWhatsAppOptOutText('STOP'), true)
+  assert.equal(isWhatsAppOptOutText('Quero continuar'), false)
+  assert.equal(isWhatsAppOptOutText('não comecei ainda'), false)
 })

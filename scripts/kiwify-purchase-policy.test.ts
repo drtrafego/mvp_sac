@@ -17,8 +17,10 @@ test('eventos de recuperação da Kiwify continuam elegíveis para jobs', () => 
 })
 
 test('o webhook aplica a trava nos dois caminhos de criação de jobs', () => {
-  assert.equal((kiwifyRouteSource.match(/shouldScheduleKiwifyMessageJobs\(mappedType\)/g) ?? []).length, 2)
+  assert.equal((kiwifyRouteSource.match(/shouldScheduleKiwifyMessageJobs\(mappedType\)/g) ?? []).length, 1)
   assert.match(kiwifyRouteSource, /insert\(recoveryLeads\)/)
+  assert.match(kiwifyRouteSource, /jobType: 'isabela_cartao_recusado'/)
+  assert.match(kiwifyRouteSource, /buildIsabelaFlowIdempotencyKey\('cartao_recusado'/)
   assert.doesNotMatch(kiwifyRouteSource, /delete\(recoveryLeads\)/)
   assert.doesNotMatch(kiwifyRouteSource, /insert\(whatsappMessages\)/)
 })

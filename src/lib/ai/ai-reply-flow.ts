@@ -191,9 +191,7 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
       }
       // An already confirmed external action survives a human pause and a failed notice.
       if (JSON.stringify(nextState) !== JSON.stringify(state)) await deps.persistSchedule(lead, nextState)
-      if (currentFunnelState
-        && currentFunnelState.stage !== 'portal_com_abertura'
-        && canOfferPortal(currentFunnelState)) {
+      if (currentFunnelState && canOfferPortal(currentFunnelState)) {
         await deps.schedulePortalTemplate?.(lead, currentFunnelState)
       }
       if (currentFunnelState?.stage === 'pausado' && await controlAllowsEffects()) {

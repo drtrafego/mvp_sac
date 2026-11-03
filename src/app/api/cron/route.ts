@@ -19,6 +19,7 @@ import { shouldSyncHermesAgenda } from '@/lib/hermes-control-panel'
 import { evaluateSacPendingRules } from '@/lib/sac-pending-rules'
 import { recordPixFollowupSent } from '@/lib/pix-followup'
 import { isApprovedUtilityPixTemplate, isRealPendingPix, PIX_FOLLOWUP_JOB_TYPE } from '@/lib/pix-followup-policy'
+import { ISABELA_APPROVED_TEMPLATE_NAMES, isIsabelaJobType } from '@/lib/recovery-sequence-policy'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
 
@@ -475,6 +476,26 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         continue
       }
 
+      if (isIsabelaJobType(job.jobType) && lead.whatsappConsentStatus !== 'opted_in') {
+        await db.update(messageJobs).set({
+          status: 'cancelled',
+          error: 'Fluxo da Isabela cancelado: consentimento de WhatsApp não está opted_in',
+          processingStartedAt: null,
+        }).where(eq(messageJobs.id, job.id))
+        await db.insert(schema.sacAuditEvents).values({
+          companyId,
+          leadId: lead.id,
+          type: 'isabela_dispatch_blocked',
+          actorType: 'system',
+          actorId: 'isabela_flow_cron',
+          actorName: 'SAC Isabela',
+          referenceType: 'message_job',
+          referenceId: String(job.id),
+          payload: { reason: 'whatsapp_consent_not_opted_in', jobType: job.jobType },
+        }).catch(() => {})
+        continue
+      }
+
       if (job.jobType === PIX_FOLLOWUP_JOB_TYPE) {
         const pixGate = isRealPendingPix(lead)
         if (!pixGate.eligible) {
@@ -605,6 +626,48 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         await db.update(messageJobs).set({ status: 'failed', error, processingStartedAt: null }).where(eq(messageJobs.id, job.id))
         failed++
         continue
+      }
+
+      if (companySlug === 'isabela-fanini' && isIsabelaJobType(job.jobType)) {
+        const templateName = message.templateName
+        const [approvedTemplate] = templateName
+          ? await db.select({ name: schema.metaMessageTemplates.name, language: schema.metaMessageTemplates.language, status: schema.metaMessageTemplates.status, category: schema.metaMessageTemplates.category })
+            .from(schema.metaMessageTemplates)
+            .where(and(
+              eq(schema.metaMessageTemplates.companyId, companyId),
+              eq(schema.metaMessageTemplates.name, templateName),
+              eq(schema.metaMessageTemplates.language, 'pt_BR'),
+            )).limit(1)
+          : []
+        const portalCategoryOk = job.jobType !== 'isabela_portal_after_challenge' || approvedTemplate?.category === 'MARKETING'
+        const categoryOk = approvedTemplate?.category === 'UTILITY' || approvedTemplate?.category === 'MARKETING'
+        if (
+          message.messageType !== 'template'
+          || !templateName
+          || !ISABELA_APPROVED_TEMPLATE_NAMES.includes(templateName as typeof ISABELA_APPROVED_TEMPLATE_NAMES[number])
+          || (message.templateLanguage ?? 'pt_BR') !== 'pt_BR'
+          || approvedTemplate?.status !== 'APPROVED'
+          || !portalCategoryOk
+          || !categoryOk
+        ) {
+          await db.update(messageJobs).set({
+            status: 'cancelled',
+            error: 'Template explícito da Isabela deixou de estar aprovado/configurado antes do envio',
+            processingStartedAt: null,
+          }).where(eq(messageJobs.id, job.id))
+          await db.insert(schema.sacAuditEvents).values({
+            companyId,
+            leadId: lead.id,
+            type: 'isabela_dispatch_blocked',
+            actorType: 'system',
+            actorId: 'isabela_flow_cron',
+            actorName: 'SAC Isabela',
+            referenceType: 'message_job',
+            referenceId: String(job.id),
+            payload: { reason: 'template_not_approved_or_not_explicit', jobType: job.jobType },
+          }).catch(() => {})
+          continue
+        }
       }
 
       if (job.jobType === PIX_FOLLOWUP_JOB_TYPE) {
