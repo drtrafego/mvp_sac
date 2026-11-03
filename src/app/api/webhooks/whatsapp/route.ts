@@ -7,7 +7,7 @@ export const maxDuration = 180
 import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { db } from '@/lib/db'
-import { whatsappMessages, recoveryLeads, settings, messageJobs, sacAuditEvents } from '@/lib/db/schema'
+import { whatsappMessages, recoveryLeads, settings, messageJobs, sacAuditEvents, companies } from '@/lib/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { markLeadContacted } from '@/lib/leads'
@@ -331,7 +331,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Mensagem real trocada: se for a primeira, marca a abordagem do lead
     await markLeadContacted(leadId)
 
-    if (isWhatsAppOptOutText(content)) {
+    const [companyForOptOut] = await db.select({ slug: companies.slug })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1)
+    if (companyForOptOut?.slug === 'isabela-fanini' && isWhatsAppOptOutText(content)) {
       // Opt-out é persistente por telefone/empresa. A atualização cobre todos
       // os eventos de checkout do mesmo contato e cancela a fila antes de
       // qualquer nova tentativa do cron.
