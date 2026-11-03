@@ -1125,6 +1125,29 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
       companyMap.set(companySlug, company)
     }
 
+    // O catálogo oficial dos agentes é a fonte existente dos identificadores
+    // Meta por tenant. Antes eles eram apenas lidos para o relatório e nunca
+    // chegavam a `settings`, deixando o webhook sem como selecionar Gramado.
+    // Preenche somente campos locais vazios; nunca copia token, substitui uma
+    // configuração existente ou inventa uma variável de ambiente.
+    const sourceMetaPhoneId = agent.meta_phone_number_id?.trim() || null
+    const sourceMetaWabaId = agent.meta_waba_id?.trim() || null
+    if (sourceMetaPhoneId || sourceMetaWabaId) {
+      const [currentSettings] = await db
+        .select({ metaPhoneNumberId: settings.metaPhoneNumberId, metaWabaId: settings.metaWabaId })
+        .from(settings)
+        .where(eq(settings.companyId, company.id))
+        .limit(1)
+      const settingsPatch: Partial<typeof settings.$inferInsert> = {}
+      if (sourceMetaPhoneId && !currentSettings?.metaPhoneNumberId?.trim()) settingsPatch.metaPhoneNumberId = sourceMetaPhoneId
+      if (sourceMetaWabaId && !currentSettings?.metaWabaId?.trim()) settingsPatch.metaWabaId = sourceMetaWabaId
+      if (Object.keys(settingsPatch).length > 0) {
+        settingsPatch.updatedAt = new Date()
+        await db.update(settings).set(settingsPatch).where(eq(settings.companyId, company.id))
+        details.push(`${company.name}: identificadores Meta reconciliados do catálogo oficial.`)
+      }
+    }
+
     // Persiste o nome nativo enquanto não houver um override salvo em
     // Configurações. Depois de uma edição manual, o nome escolhido pelo usuário
     // tem precedência e não é revertido pelo cron.
