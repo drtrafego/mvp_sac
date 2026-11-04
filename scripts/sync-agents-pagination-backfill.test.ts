@@ -381,7 +381,12 @@ async function main() {
       },
     })
 
-    const { syncAgentsAndCompanies } = await import('../src/lib/sync-agents')
+    const { syncAgentsAndCompanies, getConversationSyncBatchSize } = await import('../src/lib/sync-agents')
+
+    await test('Gramado usa lote reduzido e os demais tenants preservam o lote normal', () => {
+      assert.equal(getConversationSyncBatchSize('gramado-plaza'), 25)
+      assert.equal(getConversationSyncBatchSize('autonomia'), 300)
+    })
 
     const report1 = await syncAgentsAndCompanies()
     const counts1 = await localCounts(sql)

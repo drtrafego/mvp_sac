@@ -516,7 +516,20 @@ const SYNC_NEW_BATCH_SIZE = 5000
 // de 5.000 é seguro para tabelas leves, mas faria o Gramado tentar processar
 // milhares de threads de uma vez ao destravar o cursor congelado.
 const SYNC_CONVERSATION_NEW_BATCH_SIZE = 300
+const SYNC_GRAMADO_CONVERSATION_BATCH_SIZE = 25
 const EPOCH_CURSOR_ISO = '1970-01-01T00:00:00.000Z'
+
+// Gramado acumulou uma janela de mensagens enquanto o cursor do SAC ficou
+// congelado em 17/10. A fonte central está saudável, mas o processamento local
+// de 300 conversas novas + 300 de backfill pode exceder a janela do cron antes
+// de markProcessed(), deixando a mesma fronteira para a rodada seguinte.
+// Mantemos o lote normal nos demais tenants e reduzimos só o tenant comprovado,
+// limitando também a soma de mensagens carregadas em cada rodada.
+export function getConversationSyncBatchSize(companySlug: string): number {
+  return companySlug === 'gramado-plaza'
+    ? SYNC_GRAMADO_CONVERSATION_BATCH_SIZE
+    : SYNC_CONVERSATION_NEW_BATCH_SIZE
+}
 
 type SyncCursorSource = 'agent_conversations' | 'agent_conversation_metadata' | 'outreach_convos' | 'crm_leads' | 'ctwa_referrals' | 'appointments' | 'gramado_reservas'
 type SyncCursorRow = typeof syncCursors.$inferSelect
@@ -1217,6 +1230,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           group by m.session_id
         ) message_activity on message_activity.session_id = c.session_id`
         const conversationIdExpr = 'c.session_id::text'
+        const conversationBatchSize = getConversationSyncBatchSize(companySlug)
         const conversationBatch = await loadTimedSyncBatch<ConversationDbRow>({
           companyId: company.id,
           source: 'agent_conversations',
@@ -1232,7 +1246,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 from ${conversationSource}
                 where (${conversationSortExpr}, ${conversationIdExpr}) > ($1::timestamptz, $2::text)
                 order by ${conversationSortExpr} asc, ${conversationIdExpr} asc
-                limit ${SYNC_CONVERSATION_NEW_BATCH_SIZE}
+                limit ${conversationBatchSize}
               `,
               [cursorTimestampParam(cursor.newestSyncedAt), cursor.newestSyncedId || '']
             ),
@@ -1247,7 +1261,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 from ${conversationSource}
                 ${hasBackfillCursor ? `where (${conversationSortExpr}, ${conversationIdExpr}) < ($1::timestamptz, $2::text)` : ''}
                 order by ${conversationSortExpr} desc, ${conversationIdExpr} desc
-                limit ${SYNC_BACKFILL_BATCH_SIZE}
+                limit ${companySlug === 'gramado-plaza' ? conversationBatchSize : SYNC_BACKFILL_BATCH_SIZE}
               `,
               hasBackfillCursor ? [cursorTimestampParam(cursor.backfillBeforeAt), cursor.backfillBeforeId || ''] : []
             )
