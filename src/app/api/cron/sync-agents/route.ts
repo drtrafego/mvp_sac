@@ -41,6 +41,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // (public.leads, ctwa_referrals) mascarando um sync principal que na
     // verdade estava completando. Este log deixa explícito ok/contadores
     // reais a cada execução, sem precisar reconstruir isso via CRON_SECRET.
+    const safeDetails = report.details
+      .filter((detail) => /gramado|cursor|conversas do schema/i.test(detail))
+      .map((detail) => detail.replace(/postgres(?:ql)?:\/\/[^\s]+/gi, '[redacted-url]'))
+
     console.log('[Cron Sync Agents] Relatório:', JSON.stringify({
       ok: report.ok,
       agentsFound: report.agentsFound,
@@ -48,6 +52,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       leadsCreated: report.leadsCreated,
       messagesImported: report.messagesImported,
       dbUrlUsed: report.dbUrlUsed,
+      safeDetails,
     }))
 
     try {
