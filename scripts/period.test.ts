@@ -28,7 +28,7 @@ test('month vai do primeiro dia do mes ate hoje, sem incluir futuro', () => {
   assert.equal(endOfMonth('2026-09-12'), '2026-09-30')
 })
 
-test('all usa o inicio operacional fixo do SAC e custom aceita from sem to', () => {
+test('all mantém o início operacional legado e custom aceita from sem to', () => {
   assert.deepEqual(resolvePeriod({ period: 'all', now: NOW }), { from: '2026-01-01', to: '2026-09-30' })
   assert.deepEqual(resolvePeriod({ period: 'custom', from: '2026-09-20', now: NOW }), {
     from: '2026-09-20',

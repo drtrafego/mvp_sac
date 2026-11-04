@@ -255,10 +255,17 @@ export default function LeadsPage() {
   const [templateSelection, setTemplateSelection] = useState<TemplateSelection | null>(null)
   const [creatingDispatch, setCreatingDispatch] = useState(false)
 
-  const { from, to } = resolvePeriod({
+  const requestedPeriod = searchParams.get('period')
+  const resolvedPeriod = resolvePeriod({
     from: searchParams.get('from') ?? undefined,
     to: searchParams.get('to') ?? undefined,
+    period: requestedPeriod ?? undefined,
   })
+  // "all" precisa chegar à API como modo sem início; enviar o valor
+  // resolvido aqui transformaria o modo global em um corte desde 2026-01-01.
+  const isAllPeriod = requestedPeriod === 'all' && !searchParams.get('from') && !searchParams.get('to')
+  const from = resolvedPeriod.from
+  const to = resolvedPeriod.to
 
   // Debounce para Busca Textual Global
   useEffect(() => {
@@ -301,9 +308,13 @@ export default function LeadsPage() {
     const params = new URLSearchParams({
       limit: String(PAGE_SIZE + 1),
       offset: String(pg * PAGE_SIZE),
-      from,
-      to,
     })
+    if (isAllPeriod) {
+      params.set('period', 'all')
+    } else {
+      params.set('from', from)
+      params.set('to', to)
+    }
 
     if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim())
     if (eventType !== 'all') params.set('event_type', eventType)
@@ -347,6 +358,7 @@ export default function LeadsPage() {
     transactionIdFilter,
     from,
     to,
+    isAllPeriod,
   ])
 
   const dispatchFilter = useMemo(() => ({
@@ -357,8 +369,8 @@ export default function LeadsPage() {
     is_sale: isSaleFilter !== 'all' ? isSaleFilter : undefined,
     has_phone: hasFilter === 'has_phone' || undefined, has_email: hasFilter === 'has_email' || undefined,
     has_tags: hasFilter === 'has_tags' || undefined, min_value: minValue || undefined, max_value: maxValue || undefined,
-    transaction_id: transactionIdFilter || undefined, from, to,
-  }), [debouncedSearch, eventType, status, sourceParam, productFilter, platformFilter, paymentFilter, debouncedTag, isSaleFilter, hasFilter, minValue, maxValue, transactionIdFilter, from, to])
+    transaction_id: transactionIdFilter || undefined, from: isAllPeriod ? undefined : from, to: isAllPeriod ? undefined : to,
+  }), [debouncedSearch, eventType, status, sourceParam, productFilter, platformFilter, paymentFilter, debouncedTag, isSaleFilter, hasFilter, minValue, maxValue, transactionIdFilter, from, to, isAllPeriod])
 
   const toggleLead = (id: number) => {
     setSelectAllFilter(false)
@@ -396,11 +408,13 @@ export default function LeadsPage() {
   async function exportCSV() {
     setExporting(true)
     try {
-      const params = new URLSearchParams({
-        export: 'csv',
-        from,
-        to,
-      })
+      const params = new URLSearchParams({ export: 'csv' })
+      if (isAllPeriod) {
+        params.set('period', 'all')
+      } else {
+        params.set('from', from)
+        params.set('to', to)
+      }
 
       if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim())
       if (eventType !== 'all') params.set('event_type', eventType)
