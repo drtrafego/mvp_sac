@@ -964,9 +964,10 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     ? getAgentsDbSourceDiagnostic()
     : {
         status: 'configured' as const,
-        source: 'hermes-central-neon' as const,
+        source: 'hermes-central-supabase' as const,
         env: 'AGENTS_DATABASE_URL' as const,
         host: 'test-double' as string,
+        port: 'test' as string,
         database: null,
         ignoredLegacyEnvs: [],
         reason: null,

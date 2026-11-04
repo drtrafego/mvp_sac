@@ -16,13 +16,13 @@ function logSourceDiagnostic(diagnostic: AgentsDbSourceDiagnostic): void {
   if (diagnostic.status === 'configured') {
     console.log(
       `[Agents DB] Fonte=${diagnostic.source} env=${diagnostic.env} host=${diagnostic.host} ` +
-      `database=${diagnostic.database || '(default)'}${legacy}`,
+      `port=${diagnostic.port || '(default)'} database=${diagnostic.database || '(default)'}${legacy}`,
     )
     return
   }
   console.error(
     `[Agents DB] Fonte recusada status=${diagnostic.status} env=${diagnostic.env || '(nenhuma)'} ` +
-    `host=${diagnostic.host || '(nenhum)'}${legacy}; motivo=${diagnostic.reason}`,
+    `host=${diagnostic.host || '(nenhum)'} port=${diagnostic.port || '(nenhuma)'}${legacy}; motivo=${diagnostic.reason}`,
   )
 }
 

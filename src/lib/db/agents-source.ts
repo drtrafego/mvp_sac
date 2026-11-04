@@ -1,14 +1,17 @@
 /**
  * A única fonte operacional dos agentes do SAC.
  *
- * O hostname vem da configuração já usada por
- * /opt/gastaomatos/hermes/central-db/.neon, que foi a fonte que recebeu as
- * mensagens do Gramado depois do cutover de 17/10/2026. A credencial inteira
- * continua exclusivamente no ambiente; este arquivo registra apenas a
- * identidade não secreta necessária para impedir um fallback silencioso.
+ * A identidade vem da configuração existente em
+ * /opt/gastaomatos/hermes/central-db/.neon.bak-before-cutover-20261017-124028.
+ * A leitura direta dessa fonte confirmou mensagens do Gramado até 04/11/2026.
+ * A credencial inteira continua exclusivamente no ambiente; este arquivo
+ * registra apenas a identidade não secreta necessária para impedir um
+ * fallback silencioso para o Neon parado em 17/10 ou para outro banco.
  */
 export const AGENTS_DATABASE_ENV = 'AGENTS_DATABASE_URL' as const
-export const CENTRAL_AGENTS_DB_HOST = 'ep-hidden-dust-acu81nrx-pooler.sa-east-1.aws.neon.tech'
+export const CENTRAL_AGENTS_DB_HOST = 'aws-0-us-west-2.pooler.supabase.com'
+export const CENTRAL_AGENTS_DB_PORT = '6543'
+export const CENTRAL_AGENTS_DB_NAME = 'postgres'
 
 const LEGACY_DATABASE_ENVS = ['CRM_DATABASE_URL', 'SUPABASE_DATABASE_URL'] as const
 
@@ -20,9 +23,10 @@ export type AgentsDbSourceStatus =
 
 export interface AgentsDbSourceDiagnostic {
   status: AgentsDbSourceStatus
-  source: 'hermes-central-neon' | null
+  source: 'hermes-central-supabase' | null
   env: typeof AGENTS_DATABASE_ENV | null
   host: string | null
+  port: string | null
   database: string | null
   ignoredLegacyEnvs: string[]
   reason: string | null
@@ -49,6 +53,7 @@ export function resolveAgentsDbSource(
       source: null,
       env: null,
       host: null,
+      port: null,
       database: null,
       ignoredLegacyEnvs,
       reason: `${AGENTS_DATABASE_ENV} é obrigatória; fontes legadas não são usadas`,
@@ -65,6 +70,7 @@ export function resolveAgentsDbSource(
       source: null,
       env: AGENTS_DATABASE_ENV,
       host: null,
+      port: null,
       database: null,
       ignoredLegacyEnvs,
       reason: `${AGENTS_DATABASE_ENV} não contém uma URL PostgreSQL válida`,
@@ -78,6 +84,7 @@ export function resolveAgentsDbSource(
       source: null,
       env: AGENTS_DATABASE_ENV,
       host: parsed.hostname || null,
+      port: parsed.port || null,
       database: safeDatabaseName(parsed),
       ignoredLegacyEnvs,
       reason: `${AGENTS_DATABASE_ENV} deve usar o protocolo PostgreSQL`,
@@ -85,12 +92,13 @@ export function resolveAgentsDbSource(
     }
   }
 
-  if (parsed.hostname !== CENTRAL_AGENTS_DB_HOST) {
+  if (parsed.hostname !== CENTRAL_AGENTS_DB_HOST || parsed.port !== CENTRAL_AGENTS_DB_PORT || safeDatabaseName(parsed) !== CENTRAL_AGENTS_DB_NAME) {
     return {
       status: 'wrong_central_host',
       source: null,
       env: AGENTS_DATABASE_ENV,
       host: parsed.hostname || null,
+      port: parsed.port || null,
       database: safeDatabaseName(parsed),
       ignoredLegacyEnvs,
       reason: `${AGENTS_DATABASE_ENV} não aponta para a fonte central de agentes`,
@@ -100,9 +108,10 @@ export function resolveAgentsDbSource(
 
   return {
     status: 'configured',
-    source: 'hermes-central-neon',
+    source: 'hermes-central-supabase',
     env: AGENTS_DATABASE_ENV,
     host: parsed.hostname,
+    port: parsed.port,
     database: safeDatabaseName(parsed),
     ignoredLegacyEnvs,
     reason: null,
