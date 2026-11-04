@@ -89,7 +89,6 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       'instagramAccessToken',
       'instagramVerifyToken',
       'facebookPageId',
-      'supabaseDatabaseUrl',
       'agentBiaApiKey',
       'agentLuanaApiKey',
       'agentRenatoApiKey',

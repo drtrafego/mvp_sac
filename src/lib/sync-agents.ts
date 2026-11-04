@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { appointmentMirror, companies, settings, syncCursors, recoveryLeads, whatsappMessages, gramadoReservations } from '@/lib/db/schema'
-import { queryAgentsDb, getAgentsDbUrl } from '@/lib/db/agents-db'
+import { queryAgentsDb, getAgentsDbUrl, getAgentsDbSourceDiagnostic } from '@/lib/db/agents-db'
+import type { AgentsDbSourceDiagnostic } from '@/lib/db/agents-source'
 import { eq, and, sql, type SQL } from 'drizzle-orm'
 import { backfillFirstContactFromMessages, backfillFirstHumanMessageFromMessages } from '@/lib/leads'
 import {
@@ -222,6 +223,7 @@ export interface SyncReport {
   messagesImported: number
   details: string[]
   dbUrlUsed?: string | null
+  sourceDiagnostic?: AgentsDbSourceDiagnostic
 }
 
 function normalizeDigits(val: string | null | undefined): string {
@@ -954,8 +956,49 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   let messagesImported = 0
   let outreachUnknownOriginSkipped = 0
 
+  // Alguns testes de integração substituem o módulo inteiro de conexão e
+  // ainda expõem somente getAgentsDbUrl/queryAgentsDb. O diagnóstico de
+  // produção continua obrigatório; este ramo é apenas uma identidade segura
+  // para esses doubles, sem qualquer fallback de conexão.
+  const sourceDiagnostic = typeof getAgentsDbSourceDiagnostic === 'function'
+    ? getAgentsDbSourceDiagnostic()
+    : {
+        status: 'configured' as const,
+        source: 'hermes-central-neon' as const,
+        env: 'AGENTS_DATABASE_URL' as const,
+        host: 'test-double' as string,
+        database: null,
+        ignoredLegacyEnvs: [],
+        reason: null,
+      }
   const dbUrl = await getAgentsDbUrl()
-  const dbUrlMasked = dbUrl ? dbUrl.replace(/:[^:@]+@/, ':****@') : 'Não configurado'
+  const dbSourceLabel = sourceDiagnostic.status === 'configured'
+    ? `${sourceDiagnostic.source}/${sourceDiagnostic.env}@${sourceDiagnostic.host}`
+    : null
+
+  // A fonte é resolvida antes de qualquer escrita local. Isso mantém o cron
+  // fechado quando uma variável antiga ou um fallback persistido reaparece.
+  if (!dbUrl) {
+    return {
+      ok: false,
+      message: 'Sincronização recusada: a fonte central dos agentes não está configurada de forma válida.',
+      agentsFound: 0,
+      companiesCreated,
+      leadsCreated,
+      messagesImported,
+      details: [
+        `Fonte recusada: status=${sourceDiagnostic.status}; motivo=${sourceDiagnostic.reason}`,
+        'Tenant alvo: gramado-plaza / schema gramadoplazza; cursor preservado, nenhum histórico reprocessado.',
+      ],
+      dbUrlUsed: dbSourceLabel,
+      sourceDiagnostic,
+    }
+  }
+
+  details.push(
+    `Fonte central: ${dbSourceLabel}; tenant alvo: gramado-plaza/schema=gramadoplazza; ` +
+    'cursor de conversas: agent_conversations/gramadoplazza.',
+  )
 
   // 1. Garante imediatamente as empresas principais no banco de dados local
   const defaultCompanies = [
@@ -1003,20 +1046,21 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   if (!agents || agents.length === 0) {
     return {
       ok: false,
-      message: `Nenhum agente ativo encontrado na base (${dbUrlMasked}). Verifique a string de conexão.`,
+      message: 'Nenhum agente ativo encontrado na fonte central dos agentes. Verifique a configuração canônica.',
       agentsFound: 0,
       companiesCreated,
       leadsCreated,
       messagesImported,
       details: [
         ...details,
-        `Tentativa de conexão com: ${dbUrlMasked}`,
+        'A consulta ao catálogo central não retornou agentes ativos; nenhum fallback foi tentado.',
       ],
-      dbUrlUsed: dbUrlMasked,
+      dbUrlUsed: dbSourceLabel,
+      sourceDiagnostic,
     }
   }
 
-  details.push(`Encontrados ${agents.length} agentes ativos no catálogo Supabase/Neon.`)
+  details.push(`Encontrados ${agents.length} agentes ativos no catálogo central.`)
 
   // Pre-carrega em memória os telefones e externalIds existentes para evitar N+1 queries
   const existingLeadsRows = await db
@@ -2375,6 +2419,40 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     details.push(`Aviso no backfill de métricas de primeira mensagem: ${String(backfillErr)}`)
   }
 
+  // Readback local somente para diagnóstico: o cursor continua sendo
+  // avançado pelos mesmos markProcessed() existentes e nenhuma linha antiga
+  // é reaberta ou reprocessada por esta leitura.
+  try {
+    const gramadoCursors = await db
+      .select({
+        source: syncCursors.source,
+        sourceKey: syncCursors.sourceKey,
+        newestSyncedAt: syncCursors.newestSyncedAt,
+        newestSyncedId: syncCursors.newestSyncedId,
+        lastRunAt: syncCursors.lastRunAt,
+      })
+      .from(syncCursors)
+      .innerJoin(companies, eq(companies.id, syncCursors.companyId))
+      .where(and(
+        eq(companies.slug, 'gramado-plaza'),
+        sql`${syncCursors.source} in ('agent_conversations', 'agent_conversation_metadata')`,
+      ))
+
+    if (gramadoCursors.length === 0) {
+      details.push('Cursor Gramado: nenhum registro local encontrado após a execução.')
+    } else {
+      for (const cursor of gramadoCursors) {
+        details.push(
+          `Cursor Gramado ${cursor.source}/${cursor.sourceKey}: ` +
+          `newest=${cursor.newestSyncedAt?.toISOString() || 'null'} id=${cursor.newestSyncedId || 'null'} ` +
+          `lastRun=${cursor.lastRunAt?.toISOString() || 'null'}`,
+        )
+      }
+    }
+  } catch (cursorErr) {
+    details.push(`Diagnóstico de cursor indisponível: ${String(cursorErr)}`)
+  }
+
   return {
     ok: true,
     message: `Sincronização concluída com sucesso. ${agents.length} agentes processados, ${leadsCreated} novos leads e ${messagesImported} mensagens importadas.`,
@@ -2383,6 +2461,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
     leadsCreated,
     messagesImported,
     details,
-    dbUrlUsed: dbUrlMasked,
+    dbUrlUsed: dbSourceLabel,
+    sourceDiagnostic,
   }
 }

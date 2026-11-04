@@ -46,10 +46,8 @@ export default function EmpresasPage() {
   const [copied, setCopied] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
 
-  // Supabase Hub state
-  const [supabaseUrlInput, setSupabaseUrlInput] = useState('')
-  const [supabaseStatus, setSupabaseStatus] = useState<{ configured: boolean; hasEnv: boolean; url: string | null } | null>(null)
-  const [showUrlField, setShowUrlField] = useState(false)
+  // Fonte central dos agentes: somente a identidade segura chega ao painel.
+  const [agentSourceStatus, setAgentSourceStatus] = useState<{ configured: boolean; hasEnv: boolean; source?: { host?: string | null; database?: string | null; status?: string } } | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncReport, setSyncReport] = useState<any | null>(null)
   const router = useRouter()
@@ -65,14 +63,11 @@ export default function EmpresasPage() {
     }
   }
 
-  async function loadSupabaseStatus() {
+  async function loadAgentSourceStatus() {
     try {
       const res = await fetch('/api/admin/sync-agents')
       const data = await res.json()
-      setSupabaseStatus(data)
-      if (data.url && !supabaseUrlInput) {
-        setSupabaseUrlInput(data.url)
-      }
+      setAgentSourceStatus(data)
     } catch {}
   }
 
@@ -80,24 +75,15 @@ export default function EmpresasPage() {
     setSyncing(true)
     setSyncReport(null)
     try {
-      const trimmedInput = supabaseUrlInput.trim()
-      // loadSupabaseStatus() pré-preenche este campo com a URL MASCARADA
-      // (senha trocada por "****") só pra exibição. Se o admin clicar em
-      // "Sincronizar" sem editar o campo, não pode reenviar essa máscara
-      // como se fosse a URL real: isso sobrescreveria settings.supabaseDatabaseUrl
-      // com uma string quebrada (achado em 19/09/2026 investigando o cron).
-      const isMaskedPlaceholder = trimmedInput.includes('****')
       const res = await fetch('/api/admin/sync-agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          supabaseUrl: isMaskedPlaceholder ? undefined : (trimmedInput || undefined),
-        }),
+        body: JSON.stringify({}),
       })
       const data = await res.json()
       setSyncReport(data)
       loadCompanies()
-      loadSupabaseStatus()
+      loadAgentSourceStatus()
     } catch (err: any) {
       setSyncReport({
         ok: false,
@@ -111,7 +97,7 @@ export default function EmpresasPage() {
 
   useEffect(() => {
     loadCompanies()
-    loadSupabaseStatus()
+    loadAgentSourceStatus()
   }, [])
 
   async function handleEnter(companyId: number) {
@@ -150,7 +136,7 @@ export default function EmpresasPage() {
         <div>
           <h1 className="text-h1 text-fg">Central de Agentes & Empresas</h1>
           <p className="text-body text-fg-muted mt-1">
-            Gerencie os workspaces dos agentes (AutonomIA, Gramado Plaza, Dr. Lucas) ou conecte via Supabase.
+            Gerencie os workspaces dos agentes (AutonomIA, Gramado Plaza, Dr. Lucas) pela fonte central.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -161,7 +147,7 @@ export default function EmpresasPage() {
         </div>
       </div>
 
-      {/* Card Principal: Hub de Sincronização Supabase */}
+      {/* Card Principal: sincronização da fonte central de agentes */}
       <div className="rounded-2xl border border-brand-solid/30 bg-surface-panel p-5 shadow-xs space-y-4 rise rise-1">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -170,14 +156,14 @@ export default function EmpresasPage() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-h3 text-fg font-bold">Integração Central Supabase</h2>
+                <h2 className="text-h3 text-fg font-bold">Integração Central de Agentes</h2>
                 <span className={cn(
                   'text-[10px] font-bold px-2 py-0.5 rounded-full border',
-                  supabaseStatus?.configured
+                  agentSourceStatus?.configured
                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                     : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                 )}>
-                  {supabaseStatus?.configured ? 'Conectado' : 'Aguardando Configuração'}
+                  {agentSourceStatus?.configured ? 'Conectado' : 'Aguardando Configuração'}
                 </span>
               </div>
               <p className="text-micro text-fg-subtle mt-0.5">
@@ -194,46 +180,15 @@ export default function EmpresasPage() {
               className="focus-ring inline-flex h-10 items-center gap-2 rounded-xl bg-brand-solid px-4 text-xs font-bold text-on-accent transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer shadow-sm"
             >
               <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
-              <span>{syncing ? 'Sincronizando do Supabase...' : 'Sincronizar Agentes & CRM'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowUrlField(!showUrlField)}
-              className="text-xs font-semibold text-brand-ink hover:underline px-2 py-1"
-            >
-              {showUrlField ? 'Ocultar URL' : 'Configurar URL'}
+              <span>{syncing ? 'Sincronizando da fonte central...' : 'Sincronizar Agentes & CRM'}</span>
             </button>
           </div>
         </div>
 
-        {/* Campo opcional para colar a URL do Supabase */}
-        {showUrlField && (
-          <div className="p-3.5 rounded-xl bg-surface-inset border border-line-subtle space-y-2 text-micro">
-            <label className="font-semibold text-fg block">
-              String de Conexão Supabase (Porta 6543 / Transaction Mode):
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={supabaseUrlInput}
-                onChange={(e) => setSupabaseUrlInput(e.target.value)}
-                placeholder="postgresql://postgres.[ref]:[senha]@aws-0-[region].pooler.supabase.com:6543/postgres"
-                className="flex-1 h-9 px-3 rounded-lg bg-surface-panel border border-line-subtle text-fg text-xs font-mono placeholder:text-fg-faint"
-              />
-              <button
-                type="button"
-                onClick={handleSyncAgents}
-                disabled={syncing || !supabaseUrlInput.trim()}
-                className="h-9 px-3 bg-surface-panel hover:bg-surface-raised border border-brand-solid/40 text-brand-ink rounded-lg font-bold text-xs cursor-pointer"
-              >
-                Salvar & Sincronizar
-              </button>
-            </div>
-            <p className="text-[11px] text-fg-subtle">
-              Dica: Copie a URL Transaction Mode do Supabase (porta 6543) para multiplexar conexões sem exceder o limite do pooler.
-            </p>
-          </div>
-        )}
+        <p className="text-micro text-fg-subtle">
+          Fonte: {agentSourceStatus?.source?.host || 'não configurada'} / {agentSourceStatus?.source?.database || 'database não identificado'}.
+          A credencial é lida somente de AGENTS_DATABASE_URL no ambiente de produção.
+        </p>
 
         {/* Feedback da sincronização */}
         {syncReport && (

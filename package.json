@@ -19,6 +19,7 @@
     "test:inbox-message-history": "tsx --experimental-test-module-mocks scripts/inbox-message-history-performance.test.ts",
     "test:hermes-conversion-webhook": "tsx --experimental-test-module-mocks scripts/hermes-conversion-webhook.test.ts",
     "test:sync-agents-crm-channel": "tsx --experimental-test-module-mocks scripts/sync-agents-crm-channel.test.ts",
+    "test:agents-source": "node --import tsx --test scripts/agents-source.test.ts",
     "test:sync-drlucas-mirror": "tsx --experimental-test-module-mocks --test scripts/sync-drlucas-mirror.test.ts",
     "test:sync-agents-ctwa-multi-company": "tsx --experimental-test-module-mocks --test scripts/sync-agents-ctwa-multi-company.test.ts",
     "test:sync-gramado-reservations": "tsx --experimental-test-module-mocks --test scripts/sync-gramado-reservations.test.ts",
