@@ -12,6 +12,7 @@ export async function POST() {
   const cookieStore = await cookies()
   cookieStore.delete('admin_viewing')
   cookieStore.delete('admin_viewing_slug')
+  cookieStore.delete('tenant_viewing')
 
   return NextResponse.json({ ok: true })
 }

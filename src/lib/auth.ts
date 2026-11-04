@@ -2,10 +2,10 @@ import 'server-only'
 import { stackServerApp } from '@/stack'
 import { db } from '@/lib/db'
 import { companies, companyMembers } from '@/lib/db/schema'
-import { eq, sql, and, isNull, or } from 'drizzle-orm'
+import { eq, sql, and, isNull } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
-import { cookies, headers } from 'next/headers'
-import { verifyAgentSessionCookie } from '@/lib/agent-session'
+import { cookies } from 'next/headers'
+import { verifyAgentSessionCookie, verifyTenantSelectionCookie } from '@/lib/agent-session'
 import { resolveCompanyRole, roleSatisfies, type CompanyRole } from '@/lib/company-role'
 import { canAcceptMemberInvite, normalizeMemberEmail } from '@/lib/member-invite-policy'
 
@@ -83,7 +83,7 @@ export async function getCurrentUser() {
 
 // Retorna a empresa a ser usada no contexto atual
 // - Admin sem cookie → null (redirecionar para /empresas)
-// - Admin com cookie admin_viewing → empresa do cookie
+// - Admin sem seleção de tenant assinada → null (fail closed)
 // - Client → empresa vinculada ao user, auto-cria se não existir
 export async function getCurrentCompany() {
   const user = await getCurrentUser()
@@ -107,52 +107,11 @@ export async function getCurrentCompany() {
     }
 
     const cookieStore = await cookies()
-    let targetSlug: string | undefined
-    try {
-      const headerStore = await headers()
-      targetSlug = headerStore.get('x-company-slug') ?? undefined
-    } catch {
-      // fora de request context
-    }
-    if (!targetSlug) {
-      targetSlug = cookieStore.get('admin_viewing_slug')?.value
-    }
-
-    if (targetSlug) {
-      const cleanSlug = targetSlug.toLowerCase().trim()
-      const [companyBySlug] = await db
-        .select()
-        .from(companies)
-        .where(
-          or(
-            sql`lower(trim(${companies.slug})) = ${cleanSlug}`,
-            sql`replace(lower(trim(${companies.slug})), 'nn', 'n') = replace(${cleanSlug}, 'nn', 'n')`,
-            sql`lower(trim(${companies.name})) = ${cleanSlug}`
-          )
-        )
-        .limit(1)
-
-      if (companyBySlug) return companyBySlug
-    }
-
-    const viewingId = cookieStore.get('admin_viewing')?.value
-    if (viewingId) {
-      const [company] = await db
-        .select()
-        .from(companies)
-        .where(eq(companies.id, parseInt(viewingId)))
+    const selectedCompanyId = await verifyTenantSelectionCookie(cookieStore.get('tenant_viewing')?.value, user.id)
+    if (selectedCompanyId) {
+      const [company] = await db.select().from(companies).where(eq(companies.id, selectedCompanyId)).limit(1)
       if (company) return company
     }
-
-    // Se o admin não selecionou uma empresa específica via admin_viewing cookie,
-    // prioriza a empresa central AutonomIA
-    const [autonomiaCompany] = await db
-      .select()
-      .from(companies)
-      .where(eq(companies.slug, 'autonomia'))
-      .limit(1)
-
-    if (autonomiaCompany) return autonomiaCompany
 
     // Busca a empresa vinculada ao próprio user ID
     const [ownCompany] = await db
@@ -177,27 +136,7 @@ export async function getCurrentCompany() {
         if (memberCompany) return memberCompany
       }
     }
-
-    // Fallback: primeira empresa cadastrada no sistema
-    const [firstCompany] = await db
-      .select()
-      .from(companies)
-      .limit(1)
-
-    if (firstCompany) return firstCompany
-
-    // Auto-cria a empresa se nenhuma existir
-    const baseName = user.displayName || user.primaryEmail?.split('@')[0] || 'admin'
-    const baseSlug = baseName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-    const slug = `${baseSlug}-${Math.random().toString(36).slice(2, 7)}`
-
-    const [created] = await db
-      .insert(companies)
-      .values({ stackAuthUserId: user.id, name: baseName, slug })
-      .onConflictDoNothing({ target: companies.stackAuthUserId })
-      .returning()
-
-    return created ?? null
+    return null
   }
 
   const cookieStore = await cookies()

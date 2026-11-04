@@ -4,6 +4,7 @@ export async function GET(request: NextRequest) {
   const response = NextResponse.redirect(new URL('/handler/sign-in', request.url))
   response.cookies.delete('agent_auth_session')
   response.cookies.delete('admin_viewing')
+  response.cookies.delete('tenant_viewing')
   return response
 }
 

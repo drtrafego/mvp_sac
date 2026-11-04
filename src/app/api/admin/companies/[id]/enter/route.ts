@@ -4,10 +4,12 @@ import { db } from '@/lib/db'
 import { companies } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { cookies } from 'next/headers'
+import { createTenantSelectionCookie } from '@/lib/agent-session'
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let admin
   try {
-    await requireAdmin()
+    admin = await requireAdmin()
   } catch {
     return unauthorizedResponse()
   }
@@ -24,6 +26,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   }
 
   const cookieStore = await cookies()
+  const tenantCookie = await createTenantSelectionCookie(admin.id, company.id)
+  cookieStore.set('tenant_viewing', tenantCookie, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 7,
+  })
   cookieStore.set('admin_viewing', id, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',

@@ -100,3 +100,13 @@ export async function verifyAgentSessionCookie(
     return null
   }
 }
+
+export async function createTenantSelectionCookie(userId: string, companyId: number, ttlMs = 7 * 24 * 60 * 60 * 1000) {
+  return createAgentSessionCookie({ id: userId, primaryEmail: 'tenant-selection', displayName: 'tenant-selection', companyId, isAdmin: true }, ttlMs)
+}
+
+export async function verifyTenantSelectionCookie(value: string | undefined | null, userId: string) {
+  const payload = await verifyAgentSessionCookie(value)
+  if (!payload || payload.id !== userId || payload.primaryEmail !== 'tenant-selection' || !payload.companyId) return null
+  return payload.companyId
+}
