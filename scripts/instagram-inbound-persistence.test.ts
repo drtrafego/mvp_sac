@@ -9,16 +9,16 @@ const tx = {
   insert: () => ({
     values: (value: Record<string, unknown>) => {
       if ('tag' in value) return { onConflictDoNothing: () => ({ returning: async () => [] }) }
-      if (failMessageInsert) return Promise.reject(new Error('falha simulada no insert da mensagem'))
-      committedMessages++
-      return Promise.resolve([])
+      const result = failMessageInsert ? Promise.reject(new Error('falha simulada no insert da mensagem')) : Promise.resolve([])
+      if (!failMessageInsert) committedMessages++
+      return { onConflictDoNothing: () => result }
     },
   }),
 }
 
 const db = {
   select: () => ({ from: () => ({ where: async () => [] }) }),
-  insert: () => ({ values: () => ({}) }),
+  insert: () => ({ values: () => ({ onConflictDoNothing: () => ({}) }) }),
   transaction: async <T>(callback: (transaction: typeof tx) => Promise<T>) => callback(tx),
 }
 

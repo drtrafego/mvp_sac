@@ -7,7 +7,7 @@ export const maxDuration = 180
 import { NextRequest, NextResponse } from "next/server"
 import { after } from "next/server"
 import { db } from "@/lib/db"
-import { companies, settings, recoveryLeads, webhookReceived, leadTags } from "@/lib/db/schema"
+import { companies, settings, recoveryLeads, webhookReceived } from "@/lib/db/schema"
 import { and, eq, sql } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
@@ -16,7 +16,7 @@ import { fetchInstagramUserProfile } from "@/lib/instagram"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
-import { applyInstagramInboundTag, captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
+import { captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
 
 
 function instagramDebugPayload(opts: {
@@ -429,17 +429,6 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               })
               .returning()
 
-            if (isAd && lead?.id) {
-              await db.insert(leadTags).values({
-                leadId: lead.id,
-                tag: 'anuncio',
-                scopeChannel: 'instagram',
-                createdBy: 'system:instagram_ad',
-              }).onConflictDoNothing()
-            }
-
-            await applyInstagramInboundTag(lead?.id, isInstagramStoryReply(message) ? 'story_reply' : 'direct')
-
             try {
               if (!lead?.id) throw new InstagramInboundPersistenceError('lead ausente')
               await persistInstagramInboundWithTags({
@@ -447,6 +436,10 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 leadId: lead.id,
                 text: inboundText,
                 isStoryReply: isInstagramStoryReply(message),
+                additionalTags: [
+                  { tag: isInstagramStoryReply(message) ? 'instagram_resposta_story' : 'instagram_direct', createdBy: `system:instagram_${isInstagramStoryReply(message) ? 'story_reply' : 'direct'}` },
+                  ...(isAd ? [{ tag: 'anuncio', createdBy: 'system:instagram_ad' }] : []),
+                ],
                 message: {
                 companyId: company.id,
                 leadId: lead.id,

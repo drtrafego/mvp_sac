@@ -174,23 +174,37 @@ export async function persistInstagramInboundWithTags({
   leadId,
   text,
   isStoryReply,
+  additionalTags = [],
   message,
 }: {
   companyId: number
   leadId: number
   text: string
   isStoryReply: boolean
+  additionalTags?: Array<{ tag: string; createdBy: string }>
   message: typeof whatsappMessages.$inferInsert
 }) {
   try {
     const matched = await findInstagramInboundTags({ companyId, text, isStoryReply, executor: db })
-    const tagStatements = matched.map(({ tag, trigger }) => db.insert(leadTags).values({
-      leadId,
+    const ruleTags = matched.map(({ tag, trigger }) => ({
       tag,
-      scopeChannel: 'instagram',
       createdBy: `automation:instagram:${trigger}`,
+    }))
+    const tagValues = [...additionalTags, ...ruleTags]
+      .map(({ tag, createdBy }) => ({
+        leadId,
+        tag: normalizeTag(tag),
+        scopeChannel: 'instagram' as const,
+        createdBy,
+      }))
+      .filter(({ tag }) => Boolean(tag))
+    const tagStatements = tagValues.map((value) => db.insert(leadTags).values({
+      ...value,
     }).onConflictDoNothing().returning({ id: leadTags.id }))
-    const messageStatement = db.insert(whatsappMessages).values(message)
+    // The unique inbound external_id index is the database-level idempotency
+    // gate for concurrent Meta retries. A duplicate is success: tags remain
+    // deduplicated by their own unique index and no second message is made.
+    const messageStatement = db.insert(whatsappMessages).values(message).onConflictDoNothing()
 
     if (typeof db.batch === 'function') {
       const statements = [...tagStatements, messageStatement] as unknown as readonly [
@@ -198,7 +212,7 @@ export async function persistInstagramInboundWithTags({
         ...BatchItem<'pg'>[],
       ]
       const results = await db.batch(statements)
-      const applied = matched
+      const applied = tagValues
         .map(({ tag }, index) => results[index]?.length ? tag : null)
         .filter((tag): tag is string => Boolean(tag))
       return { matched: matched.map(({ tag }) => tag), applied }
@@ -207,8 +221,11 @@ export async function persistInstagramInboundWithTags({
     // Keeps alternate drivers and the unit-test double working. Production uses neon-http above.
     return await db.transaction(async tx => {
       const tagResult = await applyInstagramInboundTagRules({ companyId, leadId, text, isStoryReply, executor: tx })
-      await tx.insert(whatsappMessages).values(message)
-      return tagResult
+      for (const { tag, createdBy } of additionalTags) {
+        await tx.insert(leadTags).values({ leadId, tag: normalizeTag(tag), scopeChannel: 'instagram', createdBy }).onConflictDoNothing()
+      }
+      await tx.insert(whatsappMessages).values(message).onConflictDoNothing()
+      return { ...tagResult, applied: [...tagResult.applied, ...additionalTags.map(({ tag }) => normalizeTag(tag)).filter(Boolean)] }
     })
   } catch (error) {
     throw new InstagramInboundPersistenceError(error)
