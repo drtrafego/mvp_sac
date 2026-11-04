@@ -206,27 +206,18 @@ export async function persistInstagramInboundWithTags({
     // deduplicated by their own unique index and no second message is made.
     const messageStatement = db.insert(whatsappMessages).values(message).onConflictDoNothing()
 
-    if (typeof db.batch === 'function') {
-      const statements = [...tagStatements, messageStatement] as unknown as readonly [
-        BatchItem<'pg'>,
-        ...BatchItem<'pg'>[],
-      ]
-      const results = await db.batch(statements)
-      const applied = tagValues
-        .map(({ tag }, index) => results[index]?.length ? tag : null)
-        .filter((tag): tag is string => Boolean(tag))
-      return { matched: matched.map(({ tag }) => tag), applied }
-    }
-
-    // Keeps alternate drivers and the unit-test double working. Production uses neon-http above.
-    return await db.transaction(async tx => {
-      const tagResult = await applyInstagramInboundTagRules({ companyId, leadId, text, isStoryReply, executor: tx })
-      for (const { tag, createdBy } of additionalTags) {
-        await tx.insert(leadTags).values({ leadId, tag: normalizeTag(tag), scopeChannel: 'instagram', createdBy }).onConflictDoNothing()
-      }
-      await tx.insert(whatsappMessages).values(message).onConflictDoNothing()
-      return { ...tagResult, applied: [...tagResult.applied, ...additionalTags.map(({ tag }) => normalizeTag(tag)).filter(Boolean)] }
-    })
+    // Neon HTTP does not support db.transaction(callback). Its batch API sends
+    // all statements in one database transaction and is the production-safe
+    // atomic path for the inbound message plus its tags.
+    const statements = [...tagStatements, messageStatement] as unknown as readonly [
+      BatchItem<'pg'>,
+      ...BatchItem<'pg'>[],
+    ]
+    const results = await db.batch(statements)
+    const applied = tagValues
+      .map(({ tag }, index) => results[index]?.length ? tag : null)
+      .filter((tag): tag is string => Boolean(tag))
+    return { matched: matched.map(({ tag }) => tag), applied }
   } catch (error) {
     throw new InstagramInboundPersistenceError(error)
   }
