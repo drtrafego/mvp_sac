@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { parseOriginItem } from '../src/components/inbox/ChannelBadge'
+import { getChannelBadgeLabel, parseOriginItem } from '../src/components/inbox/ChannelBadge'
 
 const cases = [
   ['nina_anuncio', 'Meta Ads'],
@@ -23,5 +23,9 @@ assert.equal(
   null,
   'origens desconhecidas não podem aparecer como texto cru',
 )
+
+assert.equal(getChannelBadgeLabel('instagram', 'meta_ads'), 'Meta Messaging · IG/WhatsApp')
+assert.equal(getChannelBadgeLabel('instagram', 'instagram_direct'), 'Instagram Direct')
+assert.equal(getChannelBadgeLabel('instagram', 'meta_messaging_unattributed'), 'Meta Messaging · origem não atribuída')
 
 console.log('channel-badge-origin: ok')

@@ -70,9 +70,11 @@ export function ChannelIcon({
 
 export function ChannelBadge({
   channel,
+  trackingSource,
   className,
 }: {
   channel: ChannelType | null | undefined
+  trackingSource?: string | null | undefined
   className?: string
 }) {
   const norm = (channel || 'whatsapp').toLowerCase()
@@ -86,7 +88,7 @@ export function ChannelBadge({
         )}
       >
         <InstagramLogoIcon size={11} className="shrink-0" />
-        <span>Instagram Direct</span>
+        <span>{getChannelBadgeLabel(channel, trackingSource)}</span>
       </span>
     )
   }
@@ -145,6 +147,15 @@ export function ChannelBadge({
       <span>WhatsApp</span>
     </span>
   )
+}
+
+export function getChannelBadgeLabel(channel: ChannelType | null | undefined, trackingSource?: string | null | undefined): string {
+  const norm = (channel || 'whatsapp').toLowerCase()
+  if (norm !== 'instagram' && norm !== 'instagram_direct') return norm === 'email' ? 'E-mail' : 'WhatsApp'
+  const source = (trackingSource || '').toLowerCase().trim()
+  if (source === 'meta_ads' || source === 'instagram_ad' || source === 'ig_ad') return 'Meta Messaging · IG/WhatsApp'
+  if (source === 'meta_messaging_unattributed') return 'Meta Messaging · origem não atribuída'
+  return 'Instagram Direct'
 }
 
 const EMAIL_ENGAGEMENT_LABELS: Record<string, { label: string; color: string }> = {
@@ -211,7 +222,12 @@ export function parseOriginItem(raw: string | null | undefined): OriginItem | nu
     }
   }
 
-  // 2. Anúncio (Google Ads / Meta Ads)
+  // 2. Meta Messaging sem atribuição não é anúncio pago.
+  if (norm === 'meta_messaging_unattributed') {
+    return { key: 'meta_messaging_unattributed', label: 'Meta Messaging · origem não atribuída', color: 'border-sky-500/30 bg-sky-500/10 text-sky-500 dark:text-sky-400', icon: <MetaInfinityIcon size={10} className="shrink-0 text-sky-400" /> }
+  }
+
+  // 3. Anúncio (Google Ads / Meta Ads)
   // Google precisa vencer antes do sinal genérico "ads"/"anúncio".
   if (norm.includes('google') || norm.includes('gclid') || norm.includes('adwords') || norm.includes('gads')) {
     return {
@@ -238,7 +254,7 @@ export function parseOriginItem(raw: string | null | undefined): OriginItem | nu
     }
   }
 
-  // 3. Instagram (Comentário, Anúncio, Direto)
+  // 4. Instagram (Comentário, Anúncio, Direto)
   if (norm.includes('instagram_comment') || norm.includes('ig_comment') || norm.includes('comentario') || norm.includes('comment')) {
     return {
       key: 'instagram_comment',

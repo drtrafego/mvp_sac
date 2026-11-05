@@ -1,4 +1,4 @@
-import { or, sql, type SQL } from 'drizzle-orm'
+import { and, or, sql, type SQL } from 'drizzle-orm'
 import { recoveryLeads } from '@/lib/db/schema'
 import { INSTAGRAM_DELIVERY_CHANNEL, INSTAGRAM_PHONE_PREFIX } from '@/lib/lead-delivery-channel'
 
@@ -48,6 +48,7 @@ interface CategoryRule {
   channelEquals?: string
   platformEquals?: string
   trackingIncludes: string[]
+  trackingExcludes?: string[]
   phonePrefix?: string
 }
 
@@ -137,6 +138,7 @@ const CATEGORY_RULES: CategoryRule[] = [
       'ads',
       'instagram_ad',
     ],
+    trackingExcludes: ['meta_messaging_unattributed'],
   },
   {
     name: 'email',
@@ -263,7 +265,10 @@ function ruleConditionSql(rule: CategoryRule): SQL {
     parts.push(sql`left(lower(${phone}), ${rule.phonePrefix.length}) = ${rule.phonePrefix}`)
   }
 
-  return sql<boolean>`coalesce(${or(...parts)}, false)`
+  const matched = sql<boolean>`coalesce(${or(...parts)}, false)`
+  if (!rule.trackingExcludes?.length) return matched
+  const exclusions = rule.trackingExcludes.map(value => sql`lower(coalesce(${trackingSource}, '')) <> ${value}`)
+  return sql<boolean>`${matched} and ${and(...exclusions)}`
 }
 
 // Um único CASE WHEN, testando as regras na ordem de CATEGORY_RULES e caindo
@@ -371,6 +376,7 @@ function matchesRule(rule: CategoryRule, fields: ChannelFields): boolean {
   const src = (fields.trackingSource || '').toLowerCase()
   const phone = (fields.phone || '').toLowerCase()
 
+  if (rule.trackingExcludes?.some(value => src === value)) return false
   if (rule.channelEquals && ch === rule.channelEquals) return true
   if (rule.platformEquals && pl === rule.platformEquals) return true
   if (rule.trackingIncludes.some(needle => matchesWordBoundary(src, needle))) return true

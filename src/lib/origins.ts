@@ -65,6 +65,10 @@ export function normalizeOrigin(
   const hasMetaAdsSignal = () =>
     hasAnyWordBoundary(['meta_ads', 'fb_ads', 'facebook_ads', 'meta', 'facebook', 'fb', 'anuncio', 'ads'])
 
+  if (s === 'meta_messaging_unattributed') {
+    return { key: 'meta_messaging_unattributed', label: 'Meta Messaging · origem não atribuída', shortLabel: 'Meta Messaging · não atribuída', category: 'instagram', subcategory: 'meta_messaging_unattributed', color: 'bg-sky-500', badgeColor: 'border-sky-500/30 bg-sky-500/10 text-sky-400', textColor: 'text-sky-400', iconName: 'meta' }
+  }
+
   // Regra prioritária de proteção médica / Dr. Lucas: NUNCA é Mineração
   const isDrLucas = combined.includes('lucas') || combined.includes('clara') || combined.includes('fernandes') || combined.includes('clinica') || combined.includes('consultorio')
   if (isDrLucas) {

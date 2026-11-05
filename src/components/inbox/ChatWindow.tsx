@@ -939,7 +939,7 @@ export function ChatWindow({
                   </button>
                 )}
                 <div className="studio-chat-badges flex items-center gap-1.5">
-                  <ChannelBadge channel={threadChannel} />
+                  <ChannelBadge channel={threadChannel} trackingSource={lead.trackingSource} />
                   <PlatformBadge platform={lead.platform || lead.trackingSource} eventType={lead.eventType} />
                   <EmailEngagementBadge engagement={lead.emailEngagement} />
                 </div>
