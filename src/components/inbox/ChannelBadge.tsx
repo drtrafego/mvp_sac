@@ -73,6 +73,7 @@ export function ChannelBadge({
   className,
 }: {
   channel: ChannelType | null | undefined
+  trackingSource?: string | null | undefined
   className?: string
 }) {
   const norm = (channel || 'whatsapp').toLowerCase()

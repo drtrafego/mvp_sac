@@ -629,6 +629,7 @@ async function main() {
             items: [{ phone: '11911110032', name: 'Tag Antes Do Lote' }],
             tag: 'vip-dispatch',
             createMassDispatch: true,
+            defaultEventType: 'import_mass_dispatch',
           }),
         })
         const res = await IMPORT_POST(req)
