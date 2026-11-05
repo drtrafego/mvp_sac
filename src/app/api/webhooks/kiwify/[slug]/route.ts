@@ -14,6 +14,7 @@ import {
 } from '@/lib/funnels/funil-cursos'
 import { shouldScheduleKiwifyMessageJobs } from '@/lib/kiwify-purchase-policy'
 import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
+import { ensureMetaAdsTagForLead, extractMetaLeadIdentifiers } from '@/lib/meta-ads-lead-tag'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
 // Fonte: docs.kiwify.com.br, exemplos oficiais de payload e captura real do
@@ -699,6 +700,7 @@ export async function POST(
     }
 
     const draft = isAbandonedPayload(item) ? draftFromAbandoned(item) : draftFromOrder(item)
+    const metaLeadIds = extractMetaLeadIdentifiers(item)
 
     const sequences = await db
       .select()
@@ -750,6 +752,8 @@ export async function POST(
           utmCampaign: draft.utmCampaign,
           utmContent: draft.utmContent,
           utmTerm: draft.utmTerm,
+          metaFormId: metaLeadIds.formId,
+          metaLeadgenId: metaLeadIds.leadgenId,
           orderDate: draft.orderDate,
           approvedDate: mappedType === 'compra_aprovada' ? (draft.approvedDate ?? draft.orderDate) : draft.approvedDate,
           // A Kiwify não expõe is_order_bump no webhook. Fica sempre false até
@@ -788,6 +792,12 @@ export async function POST(
       })
       return { outcome: 'duplicate', reason: 'duplicate_transaction' }
     }
+
+    await ensureMetaAdsTagForLead({
+      companyId: company.id,
+      leadId: lead.id,
+      evidence: { trackingSource: draft.trackingSource, rawPayload: item },
+    })
 
     const leadId = lead.id
 

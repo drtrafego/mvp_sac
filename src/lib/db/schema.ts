@@ -347,6 +347,8 @@ export const recoveryLeads = pgTable('recovery_leads', {
   metaCampaignId: text('meta_campaign_id'),
   metaAdsetId: text('meta_adset_id'),
   metaAdId: text('meta_ad_id'),
+  metaFormId: text('meta_form_id'),
+  metaLeadgenId: text('meta_leadgen_id'),
   // Click identifiers podem chegar do site/CRM e são repassados como
   // parâmetros de atribuição no evento do GA4.
   googleClickId: text('google_click_id'),

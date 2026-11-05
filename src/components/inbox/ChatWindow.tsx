@@ -75,6 +75,8 @@ export interface ChatLead {
   metaCampaignId: string | null
   metaAdsetId: string | null
   metaAdId: string | null
+  metaFormId: string | null
+  metaLeadgenId: string | null
   createdAt: string | null
   firstContactAt: string | null
   lastMessageAt?: string | null
@@ -1412,6 +1414,7 @@ export function ChatWindow({
           {sidePanelTab === 'context' && (
             <div className="space-y-3.5">
               <LeadAttributionCard lead={lead} />
+              <LeadTags leadId={lead.id} botPaused={botPaused} onBotPausedChange={setBotPaused} />
 
               {/* Bloco de Atendimento Humano & Bot */}
               <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2">
@@ -1693,9 +1696,6 @@ export function ChatWindow({
           {/* ── ABA 3: INFO & AUDITORIA ─────────────────────────────────────── */}
           {sidePanelTab === 'info' && (
             <div className="space-y-4">
-              {/* Tags do lead */}
-              <LeadTags leadId={lead.id} botPaused={botPaused} onBotPausedChange={setBotPaused} />
-
               {/* Consultas reais espelhadas */}
               {appointments.length > 0 && (
                 <div className="space-y-2">

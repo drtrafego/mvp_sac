@@ -7,6 +7,7 @@ import { and, desc, eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
 import { normalizeTag, PESSOA_TAG, MAX_TAG_LENGTH, isLeadChannel, type LeadChannel } from '@/lib/lead-tags'
 import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
+import { isProvenMetaAdsEvidence, META_AD_TAG } from '@/lib/meta-ads-lead-tag'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -83,6 +84,16 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     .from(recoveryLeads)
     .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
   if (!lead) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
+
+  // "anuncio" é a marca oficial de Meta Ads. Uma edição humana não pode
+  // transformar um contato orgânico/Direct/WhatsApp em tráfego pago; somente
+  // um payload ou registro com evidência factual pode recebê-la.
+  if (tag === META_AD_TAG && !isProvenMetaAdsEvidence(lead)) {
+    return NextResponse.json({
+      error: 'A tag anúncio só pode ser aplicada quando a origem Meta Ads estiver comprovada no lead.',
+      code: 'META_AD_EVIDENCE_REQUIRED',
+    }, { status: 422 })
+  }
 
   const createdBy = user?.displayName || user?.primaryEmail?.split('@')[0] || 'humano'
 

@@ -30,6 +30,8 @@ export interface ConversationSummary {
   metaCampaignId?: string | null
   metaAdsetId?: string | null
   metaAdId?: string | null
+  metaFormId?: string | null
+  metaLeadgenId?: string | null
   allOrigins?: string[]
   allEventTypes?: string[]
   lastMessage: string | null
@@ -189,6 +191,8 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
       metaCampaignId: recoveryLeads.metaCampaignId,
       metaAdsetId: recoveryLeads.metaAdsetId,
       metaAdId: recoveryLeads.metaAdId,
+      metaFormId: recoveryLeads.metaFormId,
+      metaLeadgenId: recoveryLeads.metaLeadgenId,
       createdAt: recoveryLeads.createdAt,
       updatedAt: recoveryLeads.updatedAt,
       miningTags: recoveryLeads.miningTags,
@@ -300,6 +304,8 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
       metaCampaignId: lead.metaCampaignId,
       metaAdsetId: lead.metaAdsetId,
       metaAdId: lead.metaAdId,
+      metaFormId: lead.metaFormId,
+      metaLeadgenId: lead.metaLeadgenId,
       createdAt: lead.createdAt?.toISOString() ?? null,
       lastMessage: lastMessage?.content ?? null,
       lastDirection: lastMessage?.direction ?? null,

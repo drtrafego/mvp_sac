@@ -9,6 +9,7 @@ import { canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent } from
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
+import { ensureMetaAdsTagForLead, extractMetaLeadIdentifiers } from '@/lib/meta-ads-lead-tag'
 
 // ─── Tipos do payload Zouti ──────────────────────────────────────────────────
 // Fonte: https://ajuda.zouti.com.br/pt-br/articles/9740950-como-configurar-webhook
@@ -393,6 +394,7 @@ export async function POST(
   // order_id="ord_xxx"). Resolvemos ambos para o mesmo transaction_id usando
   // order_id quando presente, para colidirem no indice unico e fazerem merge.
   const transactionId = body.order_id ?? body.id ?? body.order_session_id ?? null
+  const metaLeadIds = extractMetaLeadIdentifiers(body)
 
   let lead: { id: number; wasInserted: boolean } | undefined
   try {
@@ -433,6 +435,8 @@ export async function POST(
         metaCampaignId: utm.campaign_id ?? null,
         metaAdsetId: utm.adset_id ?? null,
         metaAdId: utm.ad_id ?? null,
+        metaFormId: metaLeadIds.formId,
+        metaLeadgenId: metaLeadIds.leadgenId,
         orderDate: parseDate(body.created_at),
         approvedDate: mappedType === 'compra_aprovada' ? parseDate(body.updated_at ?? body.created_at) : null,
         rawPayload: body,
@@ -463,6 +467,8 @@ export async function POST(
           utmCampaign: sql`coalesce(excluded.utm_campaign, ${recoveryLeads.utmCampaign})`,
           utmContent: sql`coalesce(excluded.utm_content, ${recoveryLeads.utmContent})`,
           utmTerm: sql`coalesce(excluded.utm_term, ${recoveryLeads.utmTerm})`,
+          metaFormId: sql`coalesce(excluded.meta_form_id, ${recoveryLeads.metaFormId})`,
+          metaLeadgenId: sql`coalesce(excluded.meta_leadgen_id, ${recoveryLeads.metaLeadgenId})`,
           orderDate: sql`coalesce(excluded.order_date, ${recoveryLeads.orderDate})`,
           approvedDate: sql`coalesce(excluded.approved_date, ${recoveryLeads.approvedDate})`,
           updatedAt: sql`now()`,
@@ -497,6 +503,18 @@ export async function POST(
     })
     return NextResponse.json({ ok: true, duplicate: true })
   }
+
+  await ensureMetaAdsTagForLead({
+    companyId: company.id,
+    leadId: lead.id,
+    evidence: {
+      trackingSource: utm.utm_source ?? utm.src ?? null,
+      metaCampaignId: utm.campaign_id ?? null,
+      metaAdsetId: utm.adset_id ?? null,
+      metaAdId: utm.ad_id ?? null,
+      rawPayload: body,
+    },
+  })
 
   // Segundo evento da mesma venda (duplicata): o merge ja atualizou os campos
   // nao-nulos. Nao reprocessa agendamento de mensagens nem notificacao interna,

@@ -36,6 +36,8 @@ export function LeadTags({
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [warning, setWarning] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
   const [confirmingPessoa, setConfirmingPessoa] = useState(false)
 
   const load = useCallback(async () => {
@@ -44,9 +46,12 @@ export function LeadTags({
       if (res.ok) {
         const data = await res.json()
         setTags(Array.isArray(data.tags) ? data.tags : [])
+      } else {
+        const data = await res.json().catch(() => null)
+        setError(data?.error || 'Não foi possível carregar as tags.')
       }
     } catch {
-      /* silencioso, painel de detalhes não é crítico */
+      setError('Não foi possível conectar ao SAC para carregar as tags.')
     } finally {
       setLoading(false)
     }
@@ -63,6 +68,8 @@ export function LeadTags({
     if (!trimmed || busy) return
     setBusy(true)
     setWarning(null)
+    setError(null)
+    setSuccess(null)
     try {
       const res = await fetch(`/api/leads/${leadId}/tags`, {
         method: 'POST',
@@ -75,7 +82,12 @@ export function LeadTags({
         setInput('')
         if (data.warning) setWarning(data.warning)
         if (trimmed.toLowerCase() === PESSOA_TAG) onBotPausedChange(true)
+        setSuccess(`Tag “${trimmed.toLowerCase()}” adicionada.`)
+      } else {
+        setError(data?.error || 'Não foi possível adicionar a tag.')
       }
+    } catch {
+      setError('Não foi possível conectar ao SAC para adicionar a tag.')
     } finally {
       setBusy(false)
       setConfirmingPessoa(false)
@@ -86,6 +98,8 @@ export function LeadTags({
     if (busy) return
     setBusy(true)
     setWarning(null)
+    setError(null)
+    setSuccess(null)
     try {
       const res = await fetch(buildLeadTagDeleteUrl(leadId, value, scopeChannel), { method: 'DELETE' })
       const data = await res.json().catch(() => null)
@@ -93,7 +107,12 @@ export function LeadTags({
         setTags(Array.isArray(data.tags) ? data.tags : [])
         if (data.warning) setWarning(data.warning)
         if (typeof data.botPaused === 'boolean') onBotPausedChange(data.botPaused)
+        setSuccess(`Tag “${value}” removida.`)
+      } else {
+        setError(data?.error || 'Não foi possível remover a tag.')
       }
+    } catch {
+      setError('Não foi possível conectar ao SAC para remover a tag.')
     } finally {
       setBusy(false)
     }
@@ -218,6 +237,8 @@ export function LeadTags({
           <TriangleAlert size={12} className="shrink-0 mt-0.5" /> {warning}
         </p>
       )}
+      {error && <p role="alert" className="text-[10px] text-rose-500">{error}</p>}
+      {success && <p role="status" className="text-[10px] text-emerald-600 dark:text-emerald-400">{success}</p>}
     </div>
   )
 }

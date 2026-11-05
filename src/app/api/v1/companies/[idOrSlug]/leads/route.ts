@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq, and, desc, gte, lte, sql, ilike, or } from 'drizzle-orm'
+import { ensureMetaAdsTagForLead, extractMetaLeadIdentifiers } from '@/lib/meta-ads-lead-tag'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
 
   try {
     const body = await req.json()
+    const metaLeadIds = extractMetaLeadIdentifiers(body)
     const {
       name,
       phone,
@@ -104,6 +106,8 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         pipelineStage: stage || 'novo_contato',
         trackingSource: trackingSource || 'agente_ia',
         utmCampaign: utmCampaign || null,
+        metaFormId: metaLeadIds.formId,
+        metaLeadgenId: metaLeadIds.leadgenId,
         followUpDate: followUpDate ? new Date(followUpDate) : null,
         followUpNote: followUpNote ? String(followUpNote).trim() : null,
         responsibleAgent: actingAgent,
@@ -111,6 +115,19 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         lastActionAt: new Date(),
       })
       .returning()
+
+    await ensureMetaAdsTagForLead({
+      companyId: context.company.id,
+      leadId: lead.id,
+      evidence: {
+        trackingSource: lead.trackingSource,
+        platform: lead.platform,
+        eventType: lead.eventType,
+        metaFormId: lead.metaFormId,
+        metaLeadgenId: lead.metaLeadgenId,
+        rawPayload: body,
+      },
+    })
 
     // Registra log de auditoria do Agente (Luana / Renato)
     const { logAgentActivity } = await import('@/lib/agent-auth')

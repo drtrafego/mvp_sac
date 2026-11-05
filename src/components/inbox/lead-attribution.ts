@@ -8,6 +8,8 @@ export interface LeadAttributionInput {
   metaCampaignId?: string | null
   metaAdsetId?: string | null
   metaAdId?: string | null
+  metaFormId?: string | null
+  metaLeadgenId?: string | null
 }
 
 export interface LeadAttributionRow {
@@ -61,12 +63,14 @@ export function buildLeadAttributionRows(input: LeadAttributionInput): LeadAttri
   const campaignId = clean(input.metaCampaignId)
   const adsetId = clean(input.metaAdsetId)
   const adId = clean(input.metaAdId)
+  const formId = clean(input.metaFormId)
+  const leadgenId = clean(input.metaLeadgenId)
   const paid = source === 'meta_ads'
     || source === 'instagram_ad'
     || source === 'ig_ad'
     || source === 'nina_anuncio'
     || platform === 'meta_lead_ads'
-    || Boolean(campaignId || adsetId || adId || adset || ad)
+    || Boolean(campaignId || adsetId || adId || formId || leadgenId)
 
   return [
     { key: 'origin', label: 'Origem', value: originLabel(input, paid), available: Boolean(source || paid) },
@@ -75,5 +79,7 @@ export function buildLeadAttributionRows(input: LeadAttributionInput): LeadAttri
     { key: 'campaign', label: 'Campanha', value: idValue(campaign, campaignId), available: Boolean(campaign || campaignId) },
     { key: 'adset', label: 'Conjunto', value: idValue(adset, adsetId), available: Boolean(adset || adsetId) },
     { key: 'ad', label: 'Anúncio', value: idValue(ad, adId), available: Boolean(ad || adId) },
+    { key: 'form', label: 'Formulário', value: formId || 'Não informado', available: Boolean(formId) },
+    { key: 'leadgen', label: 'Leadgen', value: leadgenId || 'Não informado', available: Boolean(leadgenId) },
   ]
 }

@@ -17,6 +17,8 @@ test('card mostra Meta Ads, nomes e IDs preservados na persistência', () => {
     metaCampaignId: 'campaign-1',
     metaAdsetId: 'adset-2',
     metaAdId: 'ad-3',
+    metaFormId: 'form-9',
+    metaLeadgenId: 'lead-456',
   })
 
   assert.equal(card.origin.value, 'Meta Ads')
@@ -24,6 +26,8 @@ test('card mostra Meta Ads, nomes e IDs preservados na persistência', () => {
   assert.equal(card.campaign.value, '[ENG] Empresários · ID campaign-1')
   assert.equal(card.adset.value, 'Conjunto remarketing · ID adset-2')
   assert.equal(card.ad.value, 'Criativo depoimento · ID ad-3')
+  assert.equal(card.form.value, 'form-9')
+  assert.equal(card.leadgen.value, 'lead-456')
 })
 
 test('card não transforma contato orgânico em anúncio e deixa lacunas explícitas', () => {
@@ -42,6 +46,19 @@ test('IDs Meta isolados bastam para confirmar atribuição sem inventar nomes', 
   assert.equal(card.origin.value, 'Meta Ads')
   assert.equal(card.campaign.value, 'Não informado')
   assert.equal(card.ad.value, 'ID ad-99')
+})
+
+test('nome de campanha/conjunto/anúncio sem sinal factual não muda a origem', () => {
+  const card = rows({
+    platform: 'whatsapp',
+    channel: 'whatsapp',
+    trackingSource: 'whatsapp',
+    utmCampaign: 'Campanha orgânica',
+    adsetName: 'Conjunto nomeado',
+    adName: 'Anúncio citado no CRM',
+  })
+
+  assert.equal(card.origin.value, 'WhatsApp direto')
 })
 
 console.log('lead-attribution-card: ok')

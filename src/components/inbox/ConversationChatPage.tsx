@@ -145,6 +145,8 @@ export async function ConversationChatPage({
         metaCampaignId: lead.metaCampaignId ?? null,
         metaAdsetId: lead.metaAdsetId ?? null,
         metaAdId: lead.metaAdId ?? null,
+        metaFormId: lead.metaFormId ?? null,
+        metaLeadgenId: lead.metaLeadgenId ?? null,
         createdAt: lead.createdAt ? lead.createdAt.toISOString() : null,
         firstContactAt: lead.firstContactAt ? lead.firstContactAt.toISOString() : null,
         agentDisplayName: company.agentDisplayName ?? null,

@@ -11,6 +11,7 @@ import {
   rememberUniqueLeadLookup,
   resolvePhoneLeadLookup,
 } from '@/lib/contact-resolution'
+import { ensureMetaAdsTagForLead } from '@/lib/meta-ads-lead-tag'
 
 // ─── Decisão de arquitetura: cursores reais por fonte ───────────────────────
 // Este sync roda em produção a cada 10 minutos. Antes, os blocos de fonte
@@ -114,9 +115,14 @@ export interface OutreachMsgDbRow {
 export interface CtwaReferralDbRow {
   id?: string | null
   phone_norm: string
+  source_id?: string | null
   campaign_name: string | null
   adset_name: string | null
   ad_name: string | null
+  headline?: string | null
+  body?: string | null
+  source_url?: string | null
+  ctwa_clid?: string | null
   created_at?: string | null
   ts?: string | number | null
   synced_at?: string | null
@@ -2256,6 +2262,17 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
           if (Object.keys(attributionPatch).length > 0) {
             attributionPatch.updatedAt = new Date()
             await db.update(recoveryLeads).set(attributionPatch).where(eq(recoveryLeads.id, existingId))
+            if (resolvedSource === 'meta_ads') {
+              const tagResult = await ensureMetaAdsTagForLead({
+                companyId: scope.company.id,
+                leadId: existingId,
+                evidence: {
+                  trackingSource: resolvedSource,
+                  rawPayload: { source: 'crm_leads', campaign_source: l.campaign_source, utm_source: l.utm_source },
+                },
+              })
+              if (tagResult.error) details.push(`${scope.company.name}: falha ao aplicar tag Meta Ads (${tagResult.error}).`)
+            }
             attributedFromScope++
           }
           continue
@@ -2296,6 +2313,17 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
 
         if (cleanPhone) rememberPhoneLeadLookup(leadMap, ambiguousLeadKeys, scope.company.id, cleanPhone, newLead.id)
         if (email) rememberUniqueLeadLookup(leadMap, ambiguousLeadKeys, contactExactKey(scope.company.id, email), newLead.id)
+        if (resolvedSource === 'meta_ads') {
+          const tagResult = await ensureMetaAdsTagForLead({
+            companyId: scope.company.id,
+            leadId: newLead.id,
+            evidence: {
+              trackingSource: resolvedSource,
+              rawPayload: { source: 'crm_leads', campaign_source: l.campaign_source, utm_source: l.utm_source },
+            },
+          })
+          if (tagResult.error) details.push(`${scope.company.name}: falha ao aplicar tag Meta Ads (${tagResult.error}).`)
+        }
         leadsCreated++
         insertedFromScope++
       }
@@ -2315,7 +2343,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
   try {
     const ctwaCompanies = new Map(Array.from(agentScopes.values()).map((scope) => [scope.company.id, scope.company]))
     if (ctwaCompanies.size > 0) {
-      const ctwaColumns = await detectAgentsTableColumns('public', 'ctwa_referrals', ['id', 'ts', 'synced_at', 'adset_name'])
+      const ctwaColumns = await detectAgentsTableColumns('public', 'ctwa_referrals', [
+        'id', 'ts', 'synced_at', 'adset_name', 'source_id', 'headline', 'body', 'source_url', 'ctwa_clid',
+      ])
 
       if (ctwaColumns.has('ts') || ctwaColumns.has('synced_at')) {
         const ctwaSortCandidates = [
@@ -2338,9 +2368,14 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const ctwaSelectColumns = [
           ctwaColumns.has('id') ? 'id' : null,
           'phone_norm',
+          ctwaColumns.has('source_id') ? 'source_id' : 'null::text as source_id',
           'campaign_name',
           ctwaColumns.has('adset_name') ? 'adset_name' : 'null::text as adset_name',
           'ad_name',
+          ctwaColumns.has('headline') ? 'headline' : 'null::text as headline',
+          ctwaColumns.has('body') ? 'body' : 'null::text as body',
+          ctwaColumns.has('source_url') ? 'source_url' : 'null::text as source_url',
+          ctwaColumns.has('ctwa_clid') ? 'ctwa_clid' : 'null::text as ctwa_clid',
           ctwaColumns.has('ts') ? 'ts' : null,
           ctwaColumns.has('synced_at') ? 'synced_at' : null,
           `${ctwaSortExpr} as __sync_sort_at`,
@@ -2379,11 +2414,21 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const referralWindowStart = new Date(referralAt.getTime() - 72 * 60 * 60 * 1000)
             const referralWindowEnd = new Date(referralAt.getTime() + 72 * 60 * 60 * 1000)
 
+            const existingByPhone = await db
+              .select({ id: recoveryLeads.id })
+              .from(recoveryLeads)
+              .where(and(
+                eq(recoveryLeads.companyId, company.id),
+                sql`right(regexp_replace(${recoveryLeads.phone}, '[^0-9]', '', 'g'), 9) = right(${norm}, 9)`,
+              ))
+              .limit(1)
+
             const updated = await db.update(recoveryLeads).set({
               trackingSource: 'meta_ads',
               utmCampaign: r.campaign_name || undefined,
               adsetName: r.adset_name || undefined,
               adName: r.ad_name || undefined,
+              metaAdId: r.source_id || undefined,
               updatedAt: new Date(),
             }).where(and(
               eq(recoveryLeads.companyId, company.id),
@@ -2391,7 +2436,72 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               sql`coalesce(${recoveryLeads.firstContactAt}, ${recoveryLeads.createdAt}) between ${referralWindowStart.toISOString()}::timestamp and ${referralWindowEnd.toISOString()}::timestamp`
             )).returning({ id: recoveryLeads.id })
 
-            if (updated.length > 0) ctwaCount += updated.length
+            if (updated.length > 0) {
+              ctwaCount += updated.length
+              for (const row of updated) {
+                const tagResult = await ensureMetaAdsTagForLead({
+                  companyId: company.id,
+                  leadId: row.id,
+                  evidence: {
+                    trackingSource: 'meta_ads',
+                    rawPayload: {
+                      source: 'ctwa_referrals',
+                      referral: { source_id: r.source_id || null, ctwa_clid: r.ctwa_clid || null },
+                    },
+                  },
+                })
+                if (tagResult.error) details.push(`${company.name}: falha ao aplicar tag Meta Ads (${tagResult.error}).`)
+              }
+            } else if (existingByPhone.length === 0) {
+              const [created] = await db.insert(recoveryLeads).values({
+                companyId: company.id,
+                phone: norm,
+                name: `Atendimento ${norm.slice(-4)}`,
+                platform: 'sac',
+                channel: 'whatsapp',
+                eventType: 'nina_anuncio',
+                status: 'in_conversation',
+                trackingSource: 'meta_ads',
+                utmMedium: 'whatsapp',
+                utmCampaign: r.campaign_name || undefined,
+                adsetName: r.adset_name || undefined,
+                adName: r.ad_name || undefined,
+                metaAdId: r.source_id || undefined,
+                requestSummary: r.headline || undefined,
+                rawPayload: {
+                  source: 'ctwa_referrals',
+                  referral: {
+                    source_id: r.source_id || null,
+                    campaign_name: r.campaign_name || null,
+                    adset_name: r.adset_name || null,
+                    ad_name: r.ad_name || null,
+                    headline: r.headline || null,
+                    body: r.body || null,
+                    source_url: r.source_url || null,
+                    ctwa_clid: r.ctwa_clid || null,
+                  },
+                },
+                firstContactAt: referralAt,
+                createdAt: referralAt,
+                updatedAt: referralAt,
+                lastActionAt: referralAt,
+              }).returning({ id: recoveryLeads.id })
+              if (created?.id) {
+                ctwaCount += 1
+                const tagResult = await ensureMetaAdsTagForLead({
+                  companyId: company.id,
+                  leadId: created.id,
+                  evidence: {
+                    trackingSource: 'meta_ads',
+                    rawPayload: {
+                      source: 'ctwa_referrals',
+                      referral: { source_id: r.source_id || null, ctwa_clid: r.ctwa_clid || null },
+                    },
+                  },
+                })
+                if (tagResult.error) details.push(`${company.name}: falha ao aplicar tag Meta Ads (${tagResult.error}).`)
+              }
+            }
           }
           if (ctwaCount > 0) {
             details.push(`${company.name}: ${ctwaCount} leads identificados como Anúncios Meta (janela de 72h).`)

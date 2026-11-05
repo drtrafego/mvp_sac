@@ -9,6 +9,7 @@ import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import { extractHotmartToken } from '@/lib/hotmart-token'
 import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
+import { ensureMetaAdsTagForLead, extractMetaLeadIdentifiers } from '@/lib/meta-ads-lead-tag'
 
 async function logReceived(args: {
   companyId: number | null
@@ -367,6 +368,7 @@ export async function POST(
   const sequence = selectRecoverySequence(sequences, productId, productName)
 
   const phone = formatPhone(buyer?.checkout_phone_code, buyer?.checkout_phone ?? buyer?.phone ?? '')
+  const metaLeadIds = extractMetaLeadIdentifiers(body)
 
   const rawPaymentType = payment?.type?.toUpperCase() ?? ''
   const paymentTypeMap: Record<string, string> = {
@@ -421,6 +423,8 @@ export async function POST(
       approvedDate,
       isOrderBump: purchase?.order_bump?.is_order_bump ?? false,
       rawPayload: body,
+      metaFormId: metaLeadIds.formId,
+      metaLeadgenId: metaLeadIds.leadgenId,
       whatsappConsentStatus: hasExplicitWhatsAppConsent(body) ? 'opted_in' : 'unknown',
       status: mappedType === 'compra_aprovada' ? 'completed' : 'pending',
     })
@@ -451,6 +455,12 @@ export async function POST(
     })
     return NextResponse.json({ ok: true, duplicate: true })
   }
+
+  await ensureMetaAdsTagForLead({
+    companyId: company.id,
+    leadId: lead.id,
+    evidence: { trackingSource: purchase?.tracking?.source ?? null, rawPayload: body },
+  })
 
   // Cancelar jobs pendentes de recuperação quando chega compra_aprovada
   if (mappedType === 'compra_aprovada' && phone) {

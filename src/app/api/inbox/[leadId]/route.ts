@@ -125,6 +125,8 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
       metaCampaignId: lead.metaCampaignId,
       metaAdsetId: lead.metaAdsetId,
       metaAdId: lead.metaAdId,
+      metaFormId: lead.metaFormId,
+      metaLeadgenId: lead.metaLeadgenId,
       createdAt: lead.createdAt,
       firstContactAt: lead.firstContactAt,
       lastMessageAt: lastMsg?.createdAt?.toISOString() ?? null,

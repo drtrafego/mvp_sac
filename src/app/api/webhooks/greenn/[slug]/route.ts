@@ -8,6 +8,7 @@ import { canScheduleAutomaticRecoverySequence, hasExplicitWhatsAppConsent } from
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { maskedHeaders } from '@/lib/webhook-headers'
 import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
+import { ensureMetaAdsTagForLead, extractMetaLeadIdentifiers } from '@/lib/meta-ads-lead-tag'
 
 type SaleMeta = { meta_key?: string; meta_value?: string }
 
@@ -221,6 +222,7 @@ export async function POST(
   const sale = body.sale
   const metas = body.saleMetas
   const transactionId = sale?.transaction ?? sale?.id?.toString() ?? body.contract?.id?.toString() ?? null
+  const metaLeadIds = extractMetaLeadIdentifiers(body)
 
   const boletoCode = sale?.boleto_barcode ?? null
   const boletoUrl = sale?.boleto_url ?? null
@@ -271,6 +273,8 @@ export async function POST(
       metaCampaignId: getMeta(metas, 'campaign_id'),
       metaAdsetId: getMeta(metas, 'adset_id'),
       metaAdId: getMeta(metas, 'ad_id'),
+      metaFormId: metaLeadIds.formId,
+      metaLeadgenId: metaLeadIds.leadgenId,
       rawPayload: body,
       whatsappConsentStatus: hasExplicitWhatsAppConsent(body) ? 'opted_in' : 'unknown',
       status: mappedType === 'compra_aprovada' ? 'completed' : 'pending',
@@ -289,6 +293,18 @@ export async function POST(
     }
     return NextResponse.json({ ok: true, duplicate: true })
   }
+
+  await ensureMetaAdsTagForLead({
+    companyId: company.id,
+    leadId: lead.id,
+    evidence: {
+      trackingSource: getMeta(metas, 'utm_source'),
+      metaCampaignId: getMeta(metas, 'campaign_id'),
+      metaAdsetId: getMeta(metas, 'adset_id'),
+      metaAdId: getMeta(metas, 'ad_id'),
+      rawPayload: body,
+    },
+  })
 
   // Cancelar jobs pendentes e marcar como convertido quando chega compra_aprovada
   if (mappedType === 'compra_aprovada' && phone) {
