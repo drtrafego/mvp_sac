@@ -15,7 +15,7 @@ import { processInstagramComment, handleFollowCheckReply } from "@/lib/instagram
 import { fetchInstagramUserProfile } from "@/lib/instagram"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
-import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
+import { isUniqueViolation } from "@/lib/webhook-dedup"
 import { captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
 
 
@@ -311,12 +311,6 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             // comportamento real dela, não hipotético. Sem isso, o mesmo
             // evento reentregue grava duas linhas inbound iguais e dispara
             // DUAS respostas reais de IA pro mesmo cliente pra mesma mensagem.
-            if (message?.mid && await isInboundMessageAlreadyProcessed(company.id, message.mid)) {
-              await markInstagramItemLog({ processed: false, skipReason: 'mensagem já processada (reentrega da Meta)', decision: 'skip_duplicate' })
-              console.log(`[Instagram Webhook] mensagem já processada (reentrega da Meta), slug=${slug} mid=${message?.mid}, pulando`)
-              continue
-            }
-
             const igPhone = `ig_${sender.id}`
             const fallbackInstagramName = `Instagram Direct (${sender.id.slice(-4)})`
             let leadName = fallbackInstagramName
@@ -430,8 +424,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               .returning()
 
             try {
-              if (!lead?.id) throw new InstagramInboundPersistenceError('lead ausente')
-              await persistInstagramInboundWithTags({
+              if (!lead?.id) throw new InstagramInboundPersistenceError('mensagem', 'lead ausente')
+              const persistence = await persistInstagramInboundWithTags({
                 companyId: company.id,
                 leadId: lead.id,
                 text: inboundText,
@@ -452,6 +446,27 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 externalId: message?.mid ?? null,
                 },
               })
+              const tagFailureReason = persistence.tagFailures.length
+                ? `falha não bloqueante nas tags do inbound (${persistence.tagFailures.length}): ${persistence.tagFailures.map(({ error }) => error).join(' | ')}`
+                : null
+              if (!persistence.inserted) {
+                await markInstagramItemLog({
+                  processed: false,
+                  leadId: lead?.id ?? null,
+                  skipReason: 'mensagem já processada (reentrega da Meta)',
+                  decision: 'skip_duplicate',
+                  reason: tagFailureReason,
+                })
+                console.log(`[Instagram Webhook] mensagem já processada (reentrega da Meta), slug=${slug} mid=${message?.mid}, tags reavaliadas`)
+                continue
+              }
+              await markInstagramItemLog({
+                processed: true,
+                leadId: lead?.id ?? null,
+                errorMessage: tagFailureReason,
+                decision: isAd ? 'processed_as_instagram_ad' : 'processed_as_instagram_direct',
+                reason: tagFailureReason,
+              })
             } catch (err) {
               // Segunda camada (índice único parcial): corrida entre duas
               // requisições concorrentes que passaram pelo SELECT acima ao
@@ -464,8 +479,6 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               if (err instanceof InstagramInboundPersistenceError) throw err
               throw err
             }
-
-            await markInstagramItemLog({ processed: true, leadId: lead?.id ?? null, decision: isAd ? 'processed_as_instagram_ad' : 'processed_as_instagram_direct' })
 
             // Mensagem real trocada: se for a primeira, marca a abordagem do lead
             await markLeadContacted(lead?.id)

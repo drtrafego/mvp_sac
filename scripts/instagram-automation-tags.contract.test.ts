@@ -10,7 +10,7 @@ test('resposta de Story só avalia regras story_reply', () => {
   assert.deepEqual(getInstagramInboundTagTriggers(false), ['direct'])
 })
 
-test('webhook persiste tag e mensagem pelo contrato atômico antes do ACK', async () => {
+test('webhook persiste mensagem de forma idempotente antes do ACK e isola falhas de tag', async () => {
   for (const path of [
     'src/app/api/webhooks/instagram/route.ts',
     'src/app/api/webhooks/instagram/[slug]/route.ts',

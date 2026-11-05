@@ -1,5 +1,4 @@
 import { and, eq, sql } from 'drizzle-orm'
-import type { BatchItem } from 'drizzle-orm/batch'
 import { db } from '@/lib/db'
 import { instagramInboundTagRules, leadTags, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
@@ -18,11 +17,24 @@ const TAG_BY_INTERACTION: Record<InstagramInboundInteraction, string> = {
 }
 
 export class InstagramInboundPersistenceError extends Error {
-  constructor(cause: unknown) {
-    super('Não foi possível persistir atomicamente a mensagem e suas tags do Instagram.')
+  constructor(operation: 'mensagem' | 'regras de tags', cause: unknown) {
+    super(`Não foi possível persistir a ${operation} do inbound do Instagram: ${safePersistenceError(cause)}`)
     this.name = 'InstagramInboundPersistenceError'
     this.cause = cause
   }
+}
+
+export type InstagramInboundTagFailure = {
+  error: string
+}
+
+function safePersistenceError(error: unknown): string {
+  const name = error instanceof Error && error.name ? error.name : 'UnknownError'
+  const message = error instanceof Error ? error.message : String(error)
+  return `${name}: ${message}`
+    .replace(/(postgres(?:ql)?:\/\/)[^\s]+/gi, '$1[redacted]')
+    .replace(/\b(password|token|secret|authorization|cookie|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .slice(0, 500)
 }
 
 export function isInstagramStoryReply(message: unknown): boolean {
@@ -183,42 +195,69 @@ export async function persistInstagramInboundWithTags({
   isStoryReply: boolean
   additionalTags?: Array<{ tag: string; createdBy: string }>
   message: typeof whatsappMessages.$inferInsert
-}) {
-  try {
-    const matched = await findInstagramInboundTags({ companyId, text, isStoryReply, executor: db })
-    const ruleTags = matched.map(({ tag, trigger }) => ({
-      tag,
-      createdBy: `automation:instagram:${trigger}`,
-    }))
-    const tagValues = [...additionalTags, ...ruleTags]
-      .map(({ tag, createdBy }) => ({
-        leadId,
-        tag: normalizeTag(tag),
-        scopeChannel: 'instagram' as const,
-        createdBy,
-      }))
-      .filter(({ tag }) => Boolean(tag))
-    const tagStatements = tagValues.map((value) => db.insert(leadTags).values({
-      ...value,
-    }).onConflictDoNothing().returning({ id: leadTags.id }))
-    // The unique inbound external_id index is the database-level idempotency
-    // gate for concurrent Meta retries. A duplicate is success: tags remain
-    // deduplicated by their own unique index and no second message is made.
-    const messageStatement = db.insert(whatsappMessages).values(message).onConflictDoNothing()
-
-    // Neon HTTP does not support db.transaction(callback). Its batch API sends
-    // all statements in one database transaction and is the production-safe
-    // atomic path for the inbound message plus its tags.
-    const statements = [...tagStatements, messageStatement] as unknown as readonly [
-      BatchItem<'pg'>,
-      ...BatchItem<'pg'>[],
-    ]
-    const results = await db.batch(statements)
-    const applied = tagValues
-      .map(({ tag }, index) => results[index]?.length ? tag : null)
-      .filter((tag): tag is string => Boolean(tag))
-    return { matched: matched.map(({ tag }) => tag), applied }
-  } catch (error) {
-    throw new InstagramInboundPersistenceError(error)
+}): Promise<{
+  inserted: boolean
+  matched: string[]
+  applied: string[]
+  tagFailures: InstagramInboundTagFailure[]
+}> {
+  if (message.companyId !== companyId || message.leadId !== leadId) {
+    throw new InstagramInboundPersistenceError('mensagem', new Error('contexto de empresa ou lead inconsistente'))
   }
+
+  // The message is the idempotency boundary. It must commit independently of
+  // optional tag automation so a tag/database failure cannot prevent the AI
+  // reply from being scheduled. The unique inbound external_id index handles
+  // Meta re-delivery and concurrent webhook requests.
+  let inserted = false
+  try {
+    const [row] = await db.insert(whatsappMessages).values(message).onConflictDoNothing().returning({ id: whatsappMessages.id })
+    inserted = Boolean(row?.id)
+  } catch (error) {
+    throw new InstagramInboundPersistenceError('mensagem', error)
+  }
+
+  let matched: Array<{ tag: string; trigger: InstagramInboundTagTrigger }> = []
+  const tagFailures: InstagramInboundTagFailure[] = []
+  try {
+    matched = await findInstagramInboundTags({ companyId, text, isStoryReply, executor: db })
+  } catch (error) {
+    tagFailures.push({ error: `consulta de regras: ${safePersistenceError(error)}` })
+    console.error('[Instagram Inbound] falha ao consultar regras de tags', {
+      companyId,
+      leadId,
+      error: tagFailures[0].error,
+    })
+  }
+
+  const ruleTags = matched.map(({ tag, trigger }) => ({
+    tag,
+    createdBy: `automation:instagram:${trigger}`,
+  }))
+  const tagValues = [...additionalTags, ...ruleTags]
+    .map(({ tag, createdBy }) => ({
+      leadId,
+      tag: normalizeTag(tag),
+      scopeChannel: 'instagram' as const,
+      createdBy,
+    }))
+    .filter(({ tag }) => Boolean(tag))
+
+  const applied: string[] = []
+  for (const value of tagValues) {
+    try {
+      const [row] = await db.insert(leadTags).values(value).onConflictDoNothing().returning({ id: leadTags.id })
+      if (row?.id) applied.push(value.tag)
+    } catch (error) {
+      const safeError = safePersistenceError(error)
+      tagFailures.push({ error: safeError })
+      console.error('[Instagram Inbound] falha ao persistir tag', {
+        companyId,
+        leadId,
+        error: safeError,
+      })
+    }
+  }
+
+  return { inserted, matched: matched.map(({ tag }) => tag), applied, tagFailures }
 }

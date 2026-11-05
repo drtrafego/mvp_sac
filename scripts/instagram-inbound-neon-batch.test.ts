@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 
-let batchCalls = 0
-let batchStatementCount = 0
+let messageInserts = 0
+let tagInserts = 0
 
 const db = {
   select: () => ({
@@ -17,22 +17,24 @@ const db = {
     }),
   }),
   insert: () => ({
-    values: () => ({
+    values: (value: Record<string, unknown>) => ({
       onConflictDoNothing: () => ({
-        returning: async () => [{ id: 1 }],
+        returning: async () => {
+          if ('externalId' in value) {
+            messageInserts++
+            return [{ id: 1 }]
+          }
+          tagInserts++
+          return [{ id: 2 }]
+        },
       }),
     }),
   }),
-  batch: async (statements: readonly unknown[]) => {
-    batchCalls++
-    batchStatementCount = statements.length
-    return [[{ id: 1 }], []]
-  },
 }
 
 mock.module('@/lib/db', { namedExports: { db } })
 
-test('Instagram usa um único batch Neon para tags e mensagem', async () => {
+test('Instagram confirma a mensagem antes de aplicar tags', async () => {
   const { persistInstagramInboundWithTags } = await import('../src/lib/instagram-inbound-tags')
 
   const result = await persistInstagramInboundWithTags({
@@ -53,10 +55,12 @@ test('Instagram usa um único batch Neon para tags e mensagem', async () => {
     },
   })
 
-  assert.equal(batchCalls, 1)
-  assert.equal(batchStatementCount, 2)
+  assert.equal(messageInserts, 1)
+  assert.equal(tagInserts, 1)
   assert.deepEqual(result, {
+    inserted: true,
     matched: ['instagram_qualificado'],
     applied: ['instagram_qualificado'],
+    tagFailures: [],
   })
 })
