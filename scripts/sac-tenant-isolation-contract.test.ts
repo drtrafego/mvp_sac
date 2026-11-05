@@ -35,3 +35,13 @@ test('contexto de navegador falha fechado e respostas de inbox não podem ser ca
   assert.match(inbox, /Cache-Control.*no-store/)
   assert.match(counts, /Cache-Control.*no-store/)
 })
+
+test('admin com sessão de agente vinculada a uma empresa respeita a seleção assinada do tenant', () => {
+  const auth = fs.readFileSync(new URL('../src/lib/auth.ts', import.meta.url), 'utf8')
+  const adminBranch = auth.indexOf('const isAdmin = user.isAdmin')
+  const explicitAgentCompany = auth.indexOf('const agentCompanyId = explicitAgentCompanyId(user)')
+
+  assert.ok(adminBranch >= 0)
+  assert.ok(explicitAgentCompany > adminBranch)
+  assert.match(auth, /verifyTenantSelectionCookie\(cookieStore\.get\('tenant_viewing'\)/)
+})

@@ -89,12 +89,6 @@ export async function getCurrentCompany() {
   const user = await getCurrentUser()
   if (!user) return null
 
-  const agentCompanyId = explicitAgentCompanyId(user)
-  if (agentCompanyId !== null) {
-    const [company] = await db.select().from(companies).where(eq(companies.id, agentCompanyId)).limit(1)
-    return company ?? null
-  }
-
   const isAdmin = user.isAdmin || (user.primaryEmailVerified && checkIsAdmin(user.primaryEmail))
 
   if (isAdmin) {
@@ -137,6 +131,12 @@ export async function getCurrentCompany() {
       }
     }
     return null
+  }
+
+  const agentCompanyId = explicitAgentCompanyId(user)
+  if (agentCompanyId !== null) {
+    const [company] = await db.select().from(companies).where(eq(companies.id, agentCompanyId)).limit(1)
+    return company ?? null
   }
 
   const cookieStore = await cookies()
