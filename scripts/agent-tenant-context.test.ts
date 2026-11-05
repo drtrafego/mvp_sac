@@ -27,6 +27,7 @@ mockModule('@/lib/agent-session', {
     companyId: 42,
     exp: Date.now() + 60_000,
   }),
+  verifyTenantSelectionCookie: async () => null,
 })
 
 const resolvedCompany = { id: 42, slug: 'tenant-explicito', name: 'Tenant explícito' }

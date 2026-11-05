@@ -25,7 +25,10 @@ mockModule(require.resolve('server-only'),{})
 mockModule('@/lib/db',{ db:proxy })
 mockModule('@/stack',{ stackServerApp:{getUser:async()=>session} })
 mockModule('next/headers',{cookies:async()=>({get:()=>undefined})})
-mockModule('@/lib/agent-session',{verifyAgentSessionCookie:async()=>null})
+mockModule('@/lib/agent-session',{
+  verifyAgentSessionCookie:async()=>null,
+  verifyTenantSelectionCookie:async()=>null,
+})
 
 const NOW = new Date('2026-10-09T02:30:00Z') // still October 8 in São Paulo
 async function main() {

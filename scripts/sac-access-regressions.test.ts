@@ -86,7 +86,13 @@ mockModule(localRequire.resolve('server-only'), {})
 mockModule('@/lib/db', { db: databaseProxy })
 mockModule('@/stack', { stackServerApp: { getUser: async () => requestSession.getStore() ?? session } })
 mockModule('next/headers', { cookies: async () => ({ get: (name: string) => sessionCookies[name] ? { value: sessionCookies[name] } : undefined, delete: (name: string) => { delete sessionCookies[name] } }) })
-mockModule('@/lib/agent-session', { verifyAgentSessionCookie: async () => null })
+mockModule('@/lib/agent-session', {
+  verifyAgentSessionCookie: async () => null,
+  verifyTenantSelectionCookie: async (value: string | undefined) => {
+    const selected = Number(value)
+    return Number.isSafeInteger(selected) && selected > 0 ? selected : null
+  },
+})
 // PATCH imports these transports but must never call them.
 let externalCalls = 0
 const noExternal = async () => { externalCalls++; throw new Error('Nenhum envio externo permitido nestes testes') }
@@ -188,7 +194,7 @@ test('SAC: handlers reais com PostgreSQL PGlite', async (suite) => {
   await suite.test('e-mail administrativo sem verificação não vira admin de plataforma', async () => {
     await reset()
     session = { ...session, primaryEmail: 'dr.trafego@gmail.com', primaryEmailVerified: false }
-    sessionCookies.admin_viewing = '2'
+    sessionCookies.tenant_viewing = '2'
     const currentUser = await auth.getCurrentUser()
     assert.equal(currentUser?.isAdmin, false)
     const access = await auth.getCompanyAccess()
@@ -199,7 +205,7 @@ test('SAC: handlers reais com PostgreSQL PGlite', async (suite) => {
   await suite.test('admin de plataforma verificado assume com vínculo auditável na empresa selecionada', async () => {
     await reset('u-platform')
     session = { ...session, primaryEmail: 'dr.trafego@gmail.com', primaryEmailVerified: true }
-    sessionCookies.admin_viewing = '1'
+    sessionCookies.tenant_viewing = '1'
     const access = await auth.getCompanyAccess()
     assert.equal(access.role, 'platform_admin'); assert.equal(access.company.id, 1)
     const response = await claim.POST(request('/api/inbox/100/claim', 'POST', {}), leadParams())
@@ -213,7 +219,7 @@ test('SAC: handlers reais com PostgreSQL PGlite', async (suite) => {
       assert.equal(auth.checkIsAdmin(email), true)
       await reset('u-bot')
       session = { ...session, primaryEmail: email, primaryEmailVerified: true }
-      sessionCookies.admin_viewing = '2'
+      sessionCookies.tenant_viewing = '2'
       const currentUser = await auth.getCurrentUser()
       assert.equal(currentUser?.isAdmin, true)
       const access = await auth.getCompanyAccess()
