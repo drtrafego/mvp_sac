@@ -32,6 +32,7 @@ import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
 import { ConversationAiPanel } from './ConversationAiPanel'
 import { LeadTags } from './LeadTags'
+import { LeadAttributionCard } from './LeadAttributionCard'
 import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill, EmailEngagementBadge } from './ChannelBadge'
 import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { cn } from '@/lib/utils'
@@ -71,6 +72,9 @@ export interface ChatLead {
   utmCampaign: string | null
   adsetName: string | null
   adName: string | null
+  metaCampaignId: string | null
+  metaAdsetId: string | null
+  metaAdId: string | null
   createdAt: string | null
   firstContactAt: string | null
   lastMessageAt?: string | null
@@ -939,7 +943,7 @@ export function ChatWindow({
                   </button>
                 )}
                 <div className="studio-chat-badges flex items-center gap-1.5">
-                  <ChannelBadge channel={threadChannel} />
+                  <ChannelBadge channel={threadChannel} trackingSource={lead.trackingSource} />
                   <PlatformBadge platform={lead.platform || lead.trackingSource} eventType={lead.eventType} />
                   <EmailEngagementBadge engagement={lead.emailEngagement} />
                 </div>
@@ -1407,6 +1411,8 @@ export function ChatWindow({
           {/* ── ABA 1: CONTEXTO SAC (CARD APROVADO) ─────────────────────────── */}
           {sidePanelTab === 'context' && (
             <div className="space-y-3.5">
+              <LeadAttributionCard lead={lead} />
+
               {/* Bloco de Atendimento Humano & Bot */}
               <div className="rounded-xl border border-line-subtle bg-surface-inset p-3 space-y-2">
                 <div className="flex items-center justify-between">
