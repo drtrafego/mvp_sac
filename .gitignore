@@ -29,7 +29,7 @@ backups/
 artifacts/
 
 # Node / Next.js
-node_modules/
+node_modules
 .next/
 next-env.d.ts
 tsconfig.tsbuildinfo
