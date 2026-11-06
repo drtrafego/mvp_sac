@@ -169,8 +169,9 @@ test('opt-out de qualquer empresa e snapshot de lote incompleto são bloqueados'
   const cronSource = readFileSync(resolve(process.cwd(), 'src/app/api/cron/route.ts'), 'utf8')
 
   assert.match(webhookSource, /button_reply/)
-  assert.match(webhookSource, /if \(optOutRequested \|\| isWhatsAppOptOutText\(content\)\)/)
-  assert.doesNotMatch(webhookSource, /companyForOptOut/)
+  assert.match(webhookSource, /if \(optOutRequested \|\| textOptOut\)/)
+  assert.match(webhookSource, /type === 'button'/)
+  assert.match(webhookSource, /isabela-fanini' \n      ? isWhatsAppOptOutText\(content\)\n      : isWhatsAppOptOutExactText\(content\)/)
   assert.match(cronSource, /Snapshot de lote inválido: template obrigatório com nome/)
   assert.match(cronSource, /message\.messageType !== 'template'/)
 })
@@ -260,4 +261,14 @@ test('rota de disparo exige confirmação explícita e faz claim sob trava trans
   assert.match(executorSource, /message_snapshot/)
   assert.match(executorSource, /preview_matches/)
   assert.match(routeSource, /A sequência mudou depois do preview/)
+})
+
+import { isWhatsAppOptOutExactText, isWhatsAppOptOutText as isOptOutPrefix } from '../src/lib/recovery-sequence-policy'
+
+test('opt-out: botão de template aceito, texto livre fora da Isabela só com palavra exata', () => {
+  assert.equal(isOptOutPrefix('Parar promoções'), true)
+  assert.equal(isWhatsAppOptOutExactText('Sair do quarto até que horas?'), false)
+  assert.equal(isWhatsAppOptOutExactText('Parar de tomar o remédio antes do exame?'), false)
+  assert.equal(isWhatsAppOptOutExactText('sair'), true)
+  assert.equal(isWhatsAppOptOutExactText('PARAR'), true)
 })
