@@ -478,6 +478,17 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         continue
       }
 
+      if (lead.whatsappConsentStatus === 'opted_out') {
+        await db
+          .update(messageJobs)
+          .set({ status: 'cancelled', error: 'Lead com opt-out de WhatsApp antes do envio', processingStartedAt: null })
+          .where(and(
+            eq(messageJobs.leadId, job.leadId),
+            inArray(messageJobs.status, ['pending', 'processing'])
+          ))
+        continue
+      }
+
       if (isIsabelaJobType(job.jobType) && lead.whatsappConsentStatus !== 'opted_in') {
         await db.update(messageJobs).set({
           status: 'cancelled',
@@ -626,6 +637,18 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
       if (!message) {
         const error = job.massDispatchBatchId != null ? 'Missing immutable message snapshot' : 'Message not found'
         await db.update(messageJobs).set({ status: 'failed', error, processingStartedAt: null }).where(eq(messageJobs.id, job.id))
+        failed++
+        continue
+      }
+
+      if (job.massDispatchBatchId != null && (
+        message.messageType !== 'template' || !message.templateName?.trim()
+      )) {
+        await db.update(messageJobs).set({
+          status: 'failed',
+          error: 'Snapshot de lote inválido: template obrigatório com nome',
+          processingStartedAt: null,
+        }).where(eq(messageJobs.id, job.id))
         failed++
         continue
       }

@@ -145,12 +145,14 @@ test('productFilter usa a mesma regra do webhook e restringe destinatários', ()
   assert.match(routeSource, /count\(DISTINCT lead_id\)::int AS recipient_count/)
 })
 
-test('preview e enfileiramento excluem leads com bot pausado mesmo se estiverem em recipients', () => {
+test('preview e enfileiramento excluem leads pausados ou com opt-out mesmo se estiverem em recipients', () => {
   const queueSource = readFileSync(resolve(process.cwd(), 'src/lib/mass-dispatch.ts'), 'utf8')
   const routeSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/import/[batchId]/dispatch/route.ts'), 'utf8')
 
   assert.match(routeSource, /l\.bot_paused IS NOT TRUE/)
   assert.match(queueSource, /l\.bot_paused IS NOT TRUE/)
+  assert.match(routeSource, /l\.whatsapp_consent_status IS DISTINCT FROM 'opted_out'/)
+  assert.match(queueSource, /l\.whatsapp_consent_status IS DISTINCT FROM 'opted_out'/)
 })
 
 test('cron relê botPaused antes do envio e cancela jobs pendentes do lead pausado', () => {
@@ -160,6 +162,17 @@ test('cron relê botPaused antes do envio e cancela jobs pendentes do lead pausa
   assert.match(cronSource, /status:\s*'cancelled'/)
   assert.match(cronSource, /Lead com bot pausado antes do envio/)
   assert.match(cronSource, /inArray\(messageJobs\.status, \['pending', 'processing'\]\)/)
+})
+
+test('opt-out de qualquer empresa e snapshot de lote incompleto são bloqueados', () => {
+  const webhookSource = readFileSync(resolve(process.cwd(), 'src/app/api/webhooks/whatsapp/route.ts'), 'utf8')
+  const cronSource = readFileSync(resolve(process.cwd(), 'src/app/api/cron/route.ts'), 'utf8')
+
+  assert.match(webhookSource, /button_reply/)
+  assert.match(webhookSource, /if \(optOutRequested \|\| isWhatsAppOptOutText\(content\)\)/)
+  assert.doesNotMatch(webhookSource, /companyForOptOut/)
+  assert.match(cronSource, /Snapshot de lote inválido: template obrigatório com nome/)
+  assert.match(cronSource, /message\.messageType !== 'template'/)
 })
 
 test('falha de persistência após envio aceito vira sent_unconfirmed, nunca failed', async () => {
@@ -231,18 +244,18 @@ test('upload de CSV sozinho nunca envia nem cria message_jobs', () => {
   assert.match(importSource, /massDispatchRecipients/)
 })
 
-test('rota de disparo exige confirmação explícita e faz claim atômico', () => {
+test('rota de disparo exige confirmação explícita e faz claim sob trava transacional', () => {
   const routeSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/import/[batchId]/dispatch/route.ts'), 'utf8')
   const executorSource = readFileSync(resolve(process.cwd(), 'src/lib/mass-dispatch.ts'), 'utf8')
   assert.match(routeSource, /body\.confirm !== true/)
-  assert.match(executorSource, /WITH confirmation_lock AS/)
+  assert.match(executorSource, /withConfirmationTransaction/)
   assert.match(executorSource, /eligible_pairs AS/)
   assert.match(executorSource, /UPDATE mass_dispatch_batches/)
   assert.match(executorSource, /INSERT INTO message_jobs/)
   assert.match(executorSource, /b\.status = 'draft'/)
   assert.match(executorSource, /pg_advisory_xact_lock/)
-  assert.match(executorSource, /confirmation_lock AS/)
-  assert.doesNotMatch(executorSource, /return db\.transaction\(/)
+  assert.match(executorSource, /import \{ withConfirmationTransaction \}/)
+  assert.doesNotMatch(executorSource, /WITH confirmation_lock AS/)
   assert.match(executorSource, /cfg\.meta_phone_number_id/)
   assert.match(executorSource, /message_snapshot/)
   assert.match(executorSource, /preview_matches/)

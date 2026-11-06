@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
+import { withConfirmationTransaction } from '@/lib/mass-dispatch-transaction'
 
 export interface DispatchPreviewMessage {
   id: number
@@ -163,12 +164,6 @@ export type QueueMassDispatchResult =
   | { status: 'non_template'; nonTemplateCount: number }
   | { status: 'daily_limit'; requested: number; available: number }
 
-// Uma única query com CTEs de escrita é atômica no Postgres e funciona tanto
-// no neon-http quanto em drivers com transações. A trava fica DENTRO dela:
-// neon-http executa cada request em uma transação implícita, portanto uma
-// chamada separada a pg_advisory_xact_lock perderia o lock antes do claim.
-// O segundo request espera a primeira query terminar e então enxerga o lote
-// já claimed (e os jobs já reservados), sem duplicar o disparo.
 export async function queueMassDispatchBatch(
   batchId: number,
   companyId: number,
@@ -176,20 +171,20 @@ export async function queueMassDispatchBatch(
   approvedPreview: DispatchPreviewMessage[],
 ): Promise<QueueMassDispatchResult> {
   const dailyLimit = metaDailyMessageLimit()
-  const result = await db.execute<{
+  return withConfirmationTransaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(77421, hashtext(${metaPhoneNumberId}))`)
+    const result = await tx.execute<{
     batch_count: number
     eligible_job_count: number
     non_template_count: number
     preview_matches: boolean
     reserved_count: number
+    claimed_count: number
     jobs_created: number
   }>(sql`
-      WITH confirmation_lock AS (
-        SELECT pg_advisory_xact_lock(77421, hashtext(${metaPhoneNumberId})) AS acquired
-      ), target_batch AS (
+      WITH target_batch AS (
         SELECT b.*
         FROM mass_dispatch_batches b
-        CROSS JOIN confirmation_lock
         WHERE b.id = ${batchId}
           AND b.company_id = ${companyId}
           AND b.status = 'draft'
@@ -224,6 +219,7 @@ export async function queueMassDispatchBatch(
         ) rs ON true
         JOIN sequence_messages sm ON sm.sequence_id = rs.id AND sm.is_active = true
         WHERE l.bot_paused IS NOT TRUE
+          AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
           AND NOT EXISTS (
             SELECT 1 FROM message_jobs existing_job
             WHERE existing_job.lead_id = l.id
@@ -305,32 +301,34 @@ export async function queueMassDispatchBatch(
         RETURNING id
       )
       SELECT s.batch_count, s.eligible_job_count, s.non_template_count, s.preview_matches,
-             u.reserved_count, (SELECT count(*)::int FROM inserted) AS jobs_created
+             u.reserved_count, (SELECT count(*)::int FROM claimed) AS claimed_count,
+             (SELECT count(*)::int FROM inserted) AS jobs_created
       FROM summary s CROSS JOIN usage u
   `)
-  const [row] = rowsOf<{
+    const [row] = rowsOf<{
     batch_count: number
     eligible_job_count: number
     non_template_count: number
     preview_matches: boolean
     reserved_count: number
+    claimed_count: number
     jobs_created: number
   }>(result)
-  if (!row || Number(row.batch_count) === 0) return { status: 'not_found_or_claimed' }
-  if (Number(row.eligible_job_count) === 0) return { status: 'no_eligible_messages' }
-  if (!row.preview_matches) return { status: 'preview_changed' }
-  if (Number(row.non_template_count) > 0) {
-    return { status: 'non_template', nonTemplateCount: Number(row.non_template_count) }
-  }
-  const jobsCreated = Number(row.jobs_created)
-  if (jobsCreated === 0) {
-    return {
-      status: 'daily_limit',
-      requested: Number(row.eligible_job_count),
-      available: Math.max(0, dailyLimit - Number(row.reserved_count)),
+    if (!row || Number(row.batch_count) === 0) return { status: 'not_found_or_claimed' }
+    if (Number(row.eligible_job_count) === 0) return { status: 'no_eligible_messages' }
+    if (!row.preview_matches) return { status: 'preview_changed' }
+    if (Number(row.non_template_count) > 0) {
+      return { status: 'non_template', nonTemplateCount: Number(row.non_template_count) }
     }
-  }
-  return { status: 'queued', jobsCreated }
+    if (Number(row.claimed_count) === 0) {
+      return {
+        status: 'daily_limit',
+        requested: Number(row.eligible_job_count),
+        available: Math.max(0, dailyLimit - Number(row.reserved_count)),
+      }
+    }
+    return { status: 'queued', jobsCreated: Number(row.jobs_created) }
+  })
 }
 
 export async function queueDirectTemplateMassDispatchBatch(
@@ -340,19 +338,19 @@ export async function queueDirectTemplateMassDispatchBatch(
   approvedPreview: DispatchPreviewMessage[],
 ): Promise<QueueMassDispatchResult> {
   const dailyLimit = metaDailyMessageLimit()
-  const result = await db.execute<{
+  return withConfirmationTransaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(77421, hashtext(${metaPhoneNumberId}))`)
+    const result = await tx.execute<{
     batch_count: number
     eligible_job_count: number
     preview_matches: boolean
     reserved_count: number
+    claimed_count: number
     jobs_created: number
   }>(sql`
-      WITH confirmation_lock AS (
-        SELECT pg_advisory_xact_lock(77421, hashtext(${metaPhoneNumberId})) AS acquired
-      ), target_batch AS (
+      WITH target_batch AS (
         SELECT b.*
         FROM mass_dispatch_batches b
-        CROSS JOIN confirmation_lock
         WHERE b.id = ${batchId}
           AND b.company_id = ${companyId}
           AND b.status = 'draft'
@@ -363,6 +361,7 @@ export async function queueDirectTemplateMassDispatchBatch(
         JOIN mass_dispatch_recipients r ON r.batch_id = b.id
         JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = b.company_id
         WHERE l.bot_paused IS NOT TRUE
+          AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
           AND NOT EXISTS (
             SELECT 1 FROM message_jobs existing_job
             WHERE existing_job.lead_id = l.id
@@ -447,26 +446,28 @@ export async function queueDirectTemplateMassDispatchBatch(
         RETURNING id
       )
       SELECT s.batch_count, s.eligible_job_count, s.preview_matches,
-             u.reserved_count, (SELECT count(*)::int FROM inserted) AS jobs_created
+             u.reserved_count, (SELECT count(*)::int FROM claimed) AS claimed_count,
+             (SELECT count(*)::int FROM inserted) AS jobs_created
       FROM summary s CROSS JOIN usage u
   `)
-  const [row] = rowsOf<{
+    const [row] = rowsOf<{
     batch_count: number
     eligible_job_count: number
     preview_matches: boolean
     reserved_count: number
+    claimed_count: number
     jobs_created: number
   }>(result)
-  if (!row || Number(row.batch_count) === 0) return { status: 'not_found_or_claimed' }
-  if (Number(row.eligible_job_count) === 0) return { status: 'no_eligible_messages' }
-  if (!row.preview_matches) return { status: 'preview_changed' }
-  const jobsCreated = Number(row.jobs_created)
-  if (jobsCreated === 0) {
-    return {
-      status: 'daily_limit',
-      requested: Number(row.eligible_job_count),
-      available: Math.max(0, dailyLimit - Number(row.reserved_count)),
+    if (!row || Number(row.batch_count) === 0) return { status: 'not_found_or_claimed' }
+    if (Number(row.eligible_job_count) === 0) return { status: 'no_eligible_messages' }
+    if (!row.preview_matches) return { status: 'preview_changed' }
+    if (Number(row.claimed_count) === 0) {
+      return {
+        status: 'daily_limit',
+        requested: Number(row.eligible_job_count),
+        available: Math.max(0, dailyLimit - Number(row.reserved_count)),
+      }
     }
-  }
-  return { status: 'queued', jobsCreated }
+    return { status: 'queued', jobsCreated: Number(row.jobs_created) }
+  })
 }

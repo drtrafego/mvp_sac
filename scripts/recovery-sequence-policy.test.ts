@@ -98,6 +98,7 @@ test('cada fluxo da Isabela exige o catálogo exato de templates aprovados', () 
 test('opt-out reconhece comandos explícitos sem inferir a partir de texto comum', () => {
   assert.equal(isWhatsAppOptOutText('PARE de mandar mensagens'), true)
   assert.equal(isWhatsAppOptOutText('STOP'), true)
+  assert.equal(isWhatsAppOptOutText('optout'), true)
   assert.equal(isWhatsAppOptOutText('Quero continuar'), false)
   assert.equal(isWhatsAppOptOutText('não comecei ainda'), false)
 })

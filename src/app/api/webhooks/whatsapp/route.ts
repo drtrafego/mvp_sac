@@ -7,7 +7,7 @@ export const maxDuration = 180
 import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { db } from '@/lib/db'
-import { whatsappMessages, recoveryLeads, settings, messageJobs, sacAuditEvents, companies } from '@/lib/db/schema'
+import { whatsappMessages, recoveryLeads, settings, messageJobs, sacAuditEvents } from '@/lib/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { markLeadContacted } from '@/lib/leads'
@@ -82,8 +82,16 @@ function extractMeta(body: Record<string, unknown>) {
         let content: string | null = null
         let mediaUrl: string | null = null
         let messageType = 'text'
+        let optOutRequested = false
         if (type === 'text') {
           content = (msg.text as Record<string, string>)?.body ?? null
+        } else if (type === 'interactive') {
+          messageType = 'interactive_buttons'
+          const buttonReply = ((msg.interactive as Record<string, unknown> | undefined)?.button_reply ?? {}) as Record<string, unknown>
+          const buttonId = typeof buttonReply.id === 'string' ? buttonReply.id : null
+          const buttonTitle = typeof buttonReply.title === 'string' ? buttonReply.title : null
+          content = buttonTitle ?? buttonId
+          optOutRequested = isWhatsAppOptOutText(buttonTitle) || isWhatsAppOptOutText(buttonId)
         } else if (type === 'image') {
           messageType = 'image'
         } else if (type === 'audio') {
@@ -95,7 +103,7 @@ function extractMeta(body: Record<string, unknown>) {
         }
         const contacts = (value.contacts as Record<string, unknown>[]) ?? []
         const name = contacts[0] ? (contacts[0].profile as Record<string, string>)?.name ?? null : null
-        return { phone: normalizePhone(from), name, content, mediaUrl, messageType, externalId: msg.id as string | null, phoneNumberId, provider: 'meta' as const }
+        return { phone: normalizePhone(from), name, content, mediaUrl, messageType, externalId: msg.id as string | null, phoneNumberId, optOutRequested, provider: 'meta' as const }
       }
     }
   }
@@ -130,7 +138,7 @@ function extractUazapi(body: Record<string, unknown>) {
     messageType = 'video'
   }
 
-  return { phone, name, content, mediaUrl: null, messageType, externalId: key.id as string | null, instanceToken, provider: 'uazapi' as const }
+  return { phone, name, content, mediaUrl: null, messageType, externalId: key.id as string | null, instanceToken, optOutRequested: false, provider: 'uazapi' as const }
 }
 
 // ─── GET: verificação de webhook Meta ─────────────────────────────────────────
@@ -231,7 +239,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const parsed = extractMeta(body) ?? extractUazapi(body)
     if (!parsed || !parsed.phone) return NextResponse.json({ ok: true, skipped: true })
 
-    const { phone, name, content, mediaUrl, messageType, externalId } = parsed
+    const { phone, name, content, mediaUrl, messageType, externalId, optOutRequested } = parsed
 
     let companyId: number | null = null
 
@@ -331,11 +339,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Mensagem real trocada: se for a primeira, marca a abordagem do lead
     await markLeadContacted(leadId)
 
-    const [companyForOptOut] = await db.select({ slug: companies.slug })
-      .from(companies)
-      .where(eq(companies.id, companyId))
-      .limit(1)
-    if (companyForOptOut?.slug === 'isabela-fanini' && isWhatsAppOptOutText(content)) {
+    if (optOutRequested || isWhatsAppOptOutText(content)) {
       // Opt-out é persistente por telefone/empresa. A atualização cobre todos
       // os eventos de checkout do mesmo contato e cancela a fila antes de
       // qualquer nova tentativa do cron.

@@ -33,6 +33,7 @@ async function loadPreview(batchId: number, companyId: number) {
       JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = ${companyId}
       WHERE r.batch_id = ${batchId}
         AND l.bot_paused IS NOT TRUE
+        AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
         AND NOT EXISTS (
           SELECT 1 FROM message_jobs existing_job
           WHERE existing_job.lead_id = l.id
@@ -98,6 +99,7 @@ async function loadPreview(batchId: number, companyId: number) {
       WHERE b.id = ${batchId}
         AND b.company_id = ${companyId}
         AND l.bot_paused IS NOT TRUE
+        AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
         AND NOT EXISTS (
           SELECT 1 FROM message_jobs existing_job
           WHERE existing_job.lead_id = l.id

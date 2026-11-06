@@ -111,6 +111,8 @@ export function isWhatsAppOptOutText(text: string | null | undefined): boolean {
     'pare',
     'parar',
     'stop',
+    'optout',
+    'opt out',
     'sair',
     'descadastrar',
     'cancelar mensagens',

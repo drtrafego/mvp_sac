@@ -227,8 +227,10 @@ const fakeDb = {
     // transação, a confirmação falha exatamente como falhava na Vercel.
     if (phase === 'happy-confirm') {
       confirmationExecuteCalls++
-      // Cada POST recarrega o preview antes de executar o claim SQL.
-      if (confirmationExecuteCalls % 2 === 1) return [previewRow]
+      // Cada POST recarrega o preview, abre a transação, obtém a trava e só
+      // então executa o claim SQL.
+      if (confirmationExecuteCalls % 3 === 1) return [previewRow]
+      if (confirmationExecuteCalls % 3 === 2) return []
       confirmationAttempts++
       if (confirmationAttempts === 1) {
         queuedJobs = 1
@@ -280,6 +282,11 @@ const fakeDb = {
 }
 
 mock.module('@/lib/db', { namedExports: { db: fakeDb } })
+mock.module('@/lib/mass-dispatch-transaction', {
+  namedExports: {
+    withConfirmationTransaction: async (callback: (tx: { execute: typeof fakeDb.execute }) => Promise<unknown>) => callback({ execute: fakeDb.execute }),
+  },
+})
 mock.module('@/lib/auth', { namedExports: { requireCompany: async () => company } })
 mock.module('@/lib/whatsapp/meta', {
   namedExports: {
