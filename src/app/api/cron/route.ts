@@ -6,7 +6,7 @@ import { timingSafeEqual } from 'crypto'
 import { drizzle as postgresDrizzle } from 'drizzle-orm/postgres-js'
 import { db } from '@/lib/db'
 import * as schema from '@/lib/db/schema'
-import { agendaBlockedDates, companies, massDispatchPhoneCooldowns, messageJobs, nativeAvailabilitySchedules, recoveryLeads, sequenceMessages, settings, whatsappMessages } from '@/lib/db/schema'
+import { agendaBlockedDates, companies, massDispatchBatches, massDispatchPhoneCooldowns, messageJobs, nativeAvailabilitySchedules, recoveryLeads, sequenceMessages, settings, whatsappMessages } from '@/lib/db/schema'
 import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
@@ -20,6 +20,7 @@ import { evaluateSacPendingRules } from '@/lib/sac-pending-rules'
 import { recordPixFollowupSent } from '@/lib/pix-followup'
 import { isApprovedUtilityPixTemplate, isRealPendingPix, PIX_FOLLOWUP_JOB_TYPE } from '@/lib/pix-followup-policy'
 import { ISABELA_APPROVED_TEMPLATE_NAMES, isIsabelaJobType } from '@/lib/recovery-sequence-policy'
+import { renderMetaTemplate, renderMetaTemplateBody } from '@/lib/meta-template-utils'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
 
@@ -98,6 +99,18 @@ function interpolate(text: string | null | undefined, lead: {
     .replace(/\{pix_validade\}/gi, formatPixExpiry(lead.pixExpiry))
     .replace(/\{link_checkout\}/gi, lead.checkoutUrl ?? '')
     .replace(/\{afiliado\}/gi, lead.affiliateCode ?? '')
+}
+
+function templateSnapshotComponents(snapshot: unknown): unknown[] | null {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null
+  const components = (snapshot as { components?: unknown }).components
+  return Array.isArray(components) ? components : null
+}
+
+function templateSnapshotBodyText(snapshot: unknown): string {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return ''
+  const bodyText = (snapshot as { bodyText?: unknown }).bodyText
+  return typeof bodyText === 'string' ? bodyText : ''
 }
 
 async function recordJobOutcome(jobId: number, result: DispatchOutcome, metaPhoneNumberId?: string | null, transactionExecutor: any = db): Promise<void> {
@@ -727,6 +740,44 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         }
       }
 
+      let templateHistoryContent: string | null = null
+      if (msgType === 'template') {
+        let templateSnapshot = message.templateSnapshot
+        if (!templateSnapshot && job.massDispatchBatchId != null) {
+          const [batch] = await db.select({ templateSnapshot: massDispatchBatches.templateSnapshot })
+            .from(massDispatchBatches)
+            .where(eq(massDispatchBatches.id, job.massDispatchBatchId))
+            .limit(1)
+          templateSnapshot = batch?.templateSnapshot
+        }
+
+        let rendered = renderMetaTemplate(templateSnapshotComponents(templateSnapshot), templateVariableValues, templateVariableNames)
+        if (!rendered.complete && job.massDispatchBatchId == null && message.templateName) {
+          const [approvedTemplate] = await db.select({ components: schema.metaMessageTemplates.components })
+            .from(schema.metaMessageTemplates)
+            .where(and(
+              eq(schema.metaMessageTemplates.companyId, companyId),
+              eq(schema.metaMessageTemplates.name, message.templateName),
+              eq(schema.metaMessageTemplates.language, message.templateLanguage ?? 'pt_BR'),
+              eq(schema.metaMessageTemplates.status, 'APPROVED'),
+            ))
+            .limit(1)
+          rendered = renderMetaTemplate(approvedTemplate?.components, templateVariableValues, templateVariableNames)
+        }
+
+        if (rendered.complete) {
+          templateHistoryContent = rendered.content
+        } else {
+          const body = templateSnapshotBodyText(templateSnapshot) || message.content || ''
+          templateHistoryContent = renderMetaTemplateBody(interpolate(body, lead), templateVariableValues, templateVariableNames)
+          console.warn('[cron] histórico de template gravado só com BODY; componentes completos indisponíveis', {
+            jobId: job.id,
+            companyId,
+            templateName: message.templateName,
+          })
+        }
+      }
+
       if (hasDispatchedAny) {
         const spacingMs = calculateDispatchSpacingMs()
         if (spacingMs > 0) {
@@ -757,6 +808,21 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
       if (!providerAccepted) {
         if (outcome.status === 'failed') failed++
         continue
+      }
+      if (msgType === 'template' && templateHistoryContent != null && (outcome.status === 'sent' || outcome.status === 'sent_unconfirmed')) {
+        await db.insert(whatsappMessages).values({
+          companyId,
+          leadId: lead.id,
+          phone: lead.phone,
+          channel: 'whatsapp',
+          direction: 'outbound',
+          content: templateHistoryContent,
+          messageType: 'template',
+          sentBy: 'system',
+          externalId: outcome.externalWamid,
+          sendState: 'accepted',
+          createdAt: outcome.sentAt,
+        })
       }
       await db.update(recoveryLeads).set({ status: 'in_progress', updatedAt: new Date() }).where(eq(recoveryLeads.id, lead.id))
       // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead

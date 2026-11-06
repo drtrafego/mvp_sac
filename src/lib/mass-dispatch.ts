@@ -21,6 +21,7 @@ export interface MessageSnapshot {
   templateName: string | null
   templateLanguage: string | null
   templateVariablesMap: unknown
+  templateSnapshot?: unknown
   source?: string
 }
 
@@ -419,7 +420,7 @@ export async function queueDirectTemplateMassDispatchBatch(
           AND s.eligible_job_count > 0
           AND s.preview_matches
           AND u.reserved_count + s.eligible_job_count <= ${dailyLimit}
-        RETURNING b.id, b.template_name, b.template_language, b.template_variables_map
+        RETURNING b.id, b.template_name, b.template_language, b.template_variables_map, b.template_snapshot
       ), inserted AS (
         INSERT INTO message_jobs (
           lead_id, message_id, message_order, scheduled_for, status,
@@ -435,6 +436,7 @@ export async function queueDirectTemplateMassDispatchBatch(
             'templateName', c.template_name,
             'templateLanguage', c.template_language,
             'templateVariablesMap', c.template_variables_map,
+            'templateSnapshot', c.template_snapshot,
             'source', 'direct_template'
           )
         FROM claimed c

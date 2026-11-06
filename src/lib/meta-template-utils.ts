@@ -56,6 +56,64 @@ export function metaTemplateKey(name: string, language: string): string {
   return `${name}::${language}`
 }
 
+function textComponent(components: unknown[], type: string): string {
+  for (const value of components) {
+    const component = asComponent(value)
+    if (component && componentType(component) === type && typeof component.text === 'string') {
+      return component.text
+    }
+  }
+  return ''
+}
+
+function buttonLabels(components: unknown[]): string[] {
+  const labels: string[] = []
+  for (const value of components) {
+    const component = asComponent(value)
+    if (!component || componentType(component) !== 'BUTTONS' || !Array.isArray(component.buttons)) continue
+    for (const button of component.buttons) {
+      const candidate = asComponent(button)
+      if (candidate && typeof candidate.text === 'string' && candidate.text.trim()) labels.push(candidate.text)
+    }
+  }
+  return labels
+}
+
+function substituteTemplateVariables(text: string, values: readonly string[], variableNames?: readonly string[]): string {
+  return text.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_placeholder, rawKey: string) => {
+    const numericIndex = Number(rawKey)
+    const namedIndex = variableNames?.indexOf(rawKey) ?? -1
+    const value = Number.isInteger(numericIndex) && numericIndex > 0
+      ? values[numericIndex - 1]
+      : namedIndex >= 0 ? values[namedIndex] : undefined
+    return value ?? ''
+  })
+}
+
+export function renderMetaTemplate(components: unknown, variableValues: readonly string[] = [], variableNames?: readonly string[]): {
+  content: string
+  complete: boolean
+} {
+  if (!Array.isArray(components)) return { content: '', complete: false }
+  const body = textComponent(components, 'BODY')
+  if (!body) return { content: '', complete: false }
+  const header = components.map(asComponent).find(component => componentType(component ?? {}) === 'HEADER')
+  if (header && typeof header.text !== 'string') return { content: '', complete: false }
+
+  const sections = [
+    textComponent(components, 'HEADER'),
+    body,
+    textComponent(components, 'FOOTER'),
+    ...buttonLabels(components),
+  ].map(section => substituteTemplateVariables(section, variableValues, variableNames)).filter(Boolean)
+
+  return { content: sections.join('\n\n'), complete: true }
+}
+
+export function renderMetaTemplateBody(body: string, variableValues: readonly string[] = [], variableNames?: readonly string[]): string {
+  return substituteTemplateVariables(body, variableValues, variableNames)
+}
+
 export function buildCanonicalSnapshot(template: MetaTemplate) {
   return {
     name: template.name,
@@ -63,5 +121,6 @@ export function buildCanonicalSnapshot(template: MetaTemplate) {
     category: template.category,
     bodyText: bodyText(template.components ?? []),
     bodyVariableIndexes: extractBodyPlaceholders(template.components ?? []),
+    components: structuredClone(template.components ?? []),
   }
 }
