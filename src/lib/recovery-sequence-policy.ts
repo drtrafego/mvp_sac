@@ -98,28 +98,43 @@ export function isIsabelaJobType(jobType: string | null | undefined): boolean {
   return Boolean(jobType && ISABELA_FLOW_JOB_TYPES.has(jobType))
 }
 
-export function isWhatsAppOptOutText(text: string | null | undefined): boolean {
-  if (!text) return false
-  const normalized = text
+function normalizeOptOutText(text: string): string {
+  return text
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  return [
-    'pare',
-    'parar',
-    'stop',
-    'optout',
-    'opt out',
-    'sair',
-    'descadastrar',
-    'cancelar mensagens',
-    'nao quero receber',
-    'nao me mande mais',
-    'nao enviar mais',
-  ].some(pattern => normalized === pattern || normalized.startsWith(`${pattern} `))
+}
+
+const OPT_OUT_PATTERNS = [
+  'pare',
+  'parar',
+  'stop',
+  'optout',
+  'opt out',
+  'sair',
+  'descadastrar',
+  'cancelar mensagens',
+  'nao quero receber',
+  'nao me mande mais',
+  'nao enviar mais',
+]
+
+// Botão de opt-out e texto da Isabela: aceita a palavra seguida de complemento.
+export function isWhatsAppOptOutText(text: string | null | undefined): boolean {
+  if (!text) return false
+  const normalized = normalizeOptOutText(text)
+  return OPT_OUT_PATTERNS.some(pattern => normalized === pattern || normalized.startsWith(`${pattern} `))
+}
+
+// Texto livre fora da Isabela: só a palavra exata, para não pausar quem pergunta
+// "Sair do quarto até que horas?".
+export function isWhatsAppOptOutExactText(text: string | null | undefined): boolean {
+  if (!text) return false
+  const normalized = normalizeOptOutText(text)
+  return OPT_OUT_PATTERNS.some(pattern => normalized === pattern)
 }
 
 export function buildIsabelaBoletoIdempotencyKey(companyId: number, transactionId: string): string {

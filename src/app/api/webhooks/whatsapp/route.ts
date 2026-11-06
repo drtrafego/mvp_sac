@@ -7,14 +7,14 @@ export const maxDuration = 180
 import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { db } from '@/lib/db'
-import { whatsappMessages, recoveryLeads, settings, messageJobs, sacAuditEvents } from '@/lib/db/schema'
+import { whatsappMessages, recoveryLeads, settings, messageJobs, sacAuditEvents, companies } from '@/lib/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { markLeadContacted } from '@/lib/leads'
 import { verifyMetaSignature } from '@/lib/meta-signature'
 import { generateAndSendAiReply } from '@/lib/ai-reply'
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from '@/lib/webhook-dedup'
-import { isWhatsAppOptOutText } from '@/lib/recovery-sequence-policy'
+import { isWhatsAppOptOutExactText, isWhatsAppOptOutText } from '@/lib/recovery-sequence-policy'
 
 function normalizePhone(raw: string): string {
   return raw.replace(/[@+\s\-().]/g, '').replace(/@.*$/, '').replace(/^0+/, '')
@@ -92,6 +92,14 @@ function extractMeta(body: Record<string, unknown>) {
           const buttonTitle = typeof buttonReply.title === 'string' ? buttonReply.title : null
           content = buttonTitle ?? buttonId
           optOutRequested = isWhatsAppOptOutText(buttonTitle) || isWhatsAppOptOutText(buttonId)
+        } else if (type === 'button') {
+          // Clique em botão de TEMPLATE chega como type "button" (não "interactive").
+          messageType = 'button'
+          const button = (msg.button ?? {}) as Record<string, unknown>
+          const buttonText = typeof button.text === 'string' ? button.text : null
+          const buttonPayload = typeof button.payload === 'string' ? button.payload : null
+          content = buttonText ?? buttonPayload
+          optOutRequested = isWhatsAppOptOutText(buttonText) || isWhatsAppOptOutText(buttonPayload)
         } else if (type === 'image') {
           messageType = 'image'
         } else if (type === 'audio') {
@@ -339,7 +347,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Mensagem real trocada: se for a primeira, marca a abordagem do lead
     await markLeadContacted(leadId)
 
-    if (optOutRequested || isWhatsAppOptOutText(content)) {
+    const [companyForOptOut] = await db.select({ slug: companies.slug })
+      .from(companies).where(eq(companies.id, companyId)).limit(1)
+    const textOptOut = companyForOptOut?.slug === 'isabela-fanini'
+      ? isWhatsAppOptOutText(content)
+      : isWhatsAppOptOutExactText(content)
+    if (optOutRequested || textOptOut) {
       // Opt-out é persistente por telefone/empresa. A atualização cobre todos
       // os eventos de checkout do mesmo contato e cancela a fila antes de
       // qualquer nova tentativa do cron.
