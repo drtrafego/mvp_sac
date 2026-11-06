@@ -117,6 +117,7 @@ const OPT_OUT_PATTERNS = [
   'sair',
   'descadastrar',
   'cancelar mensagens',
+  'cancelar mensagem',
   'nao quero receber',
   'nao me mande mais',
   'nao enviar mais',

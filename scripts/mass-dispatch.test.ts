@@ -268,6 +268,8 @@ import { isWhatsAppOptOutExactText, isWhatsAppOptOutText as isOptOutPrefix } fro
 
 test('opt-out: botão de template aceito, texto livre fora da Isabela só com palavra exata', () => {
   assert.equal(isOptOutPrefix('Parar promoções'), true)
+  assert.equal(isOptOutPrefix('Cancelar Mensagem'), true)
+  assert.equal(isOptOutPrefix('Tenho Interesse'), false)
   assert.equal(isWhatsAppOptOutExactText('Sair do quarto até que horas?'), false)
   assert.equal(isWhatsAppOptOutExactText('Parar de tomar o remédio antes do exame?'), false)
   assert.equal(isWhatsAppOptOutExactText('sair'), true)
