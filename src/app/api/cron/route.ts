@@ -407,7 +407,9 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         continue
       }
 
-      if (!job.leadId || (!job.messageId && !job.upsellContent)) {
+      // Jobs de template direto em lote carregam o conteúdo no snapshot
+      // imutável e, por definição, não têm message_id de sequência.
+      if (!job.leadId || (!job.messageId && !job.upsellContent && job.massDispatchBatchId == null)) {
         await db.update(messageJobs).set({ status: 'failed', error: 'Missing lead or message', processingStartedAt: null }).where(eq(messageJobs.id, job.id))
         failed++
         continue

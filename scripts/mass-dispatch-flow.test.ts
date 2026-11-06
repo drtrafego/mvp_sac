@@ -14,7 +14,10 @@ type Phase =
 
 let phase: Phase = 'idle'
 let recoverySelectCount = 0
+let messageJobSelectCount = 0
 let queuedJobs = 0
+let confirmationAttempts = 0
+let confirmationExecuteCalls = 0
 let sendCalls = 0
 let releasedLocks = 0
 const recipientLeadIds = new Set<number>()
@@ -79,7 +82,9 @@ const messageSnapshot = {
 const queuedJob = {
   id: 501,
   leadId: validLead.id,
-  messageId: previewRow.id,
+  // Template direto de lote é persistido como snapshot e não referencia uma
+  // sequence_message. O cron precisa enviá-lo, não classificá-lo como inválido.
+  messageId: null,
   messageOrder: 1,
   scheduledFor: new Date('2026-10-01T10:00:00.000Z'),
   sentAt: null,
@@ -152,7 +157,12 @@ function resolveSelect(table: unknown): unknown[] {
 
   if (phase === 'cron') {
     if (table === schema.whatsappMessages || table === schema.agendaBlockedDates) return []
-    if (table === schema.messageJobs) return []
+    if (table === schema.messageJobs) {
+      messageJobSelectCount++
+      // O cron relê o estado antes de enviar e imediatamente antes do
+      // transporte; só a consulta final, de jobs remanescentes, fica vazia.
+      return messageJobSelectCount <= 2 ? [{ status: 'processing' }] : []
+    }
     if (table === schema.recoveryLeads) {
       recoverySelectCount++
       if (recoverySelectCount === 1) return [] // nenhuma compra posterior ao lead
@@ -211,28 +221,38 @@ const fakeDb = {
   select: () => selectBuilder(),
   insert: (table: unknown) => insertBuilder(table),
   update: (table: unknown) => updateBuilder(table),
-  execute: async () => phase === 'empty-preview' ? [] : [previewRow],
-  transaction: async (callback: (tx: any) => Promise<unknown>) => {
+  execute: async () => {
+    // O driver neon-http não oferece db.transaction. Este mock só expõe
+    // execute para a confirmação: se a implementação voltar a abrir uma
+    // transação, a confirmação falha exatamente como falhava na Vercel.
     if (phase === 'happy-confirm') {
-      let executeCount = 0
-      const tx = {
-        execute: async () => {
-          executeCount++
-          if (executeCount === 1) return [] // pg_advisory_xact_lock
-          queuedJobs = 1
-          return [{
-            batch_count: 1,
-            eligible_job_count: 1,
-            non_template_count: 0,
-            preview_matches: true,
-            reserved_count: 0,
-            jobs_created: 1,
-          }]
-        },
+      confirmationExecuteCalls++
+      // Cada POST recarrega o preview antes de executar o claim SQL.
+      if (confirmationExecuteCalls % 2 === 1) return [previewRow]
+      confirmationAttempts++
+      if (confirmationAttempts === 1) {
+        queuedJobs = 1
+        return [{
+          batch_count: 1,
+          eligible_job_count: 1,
+          non_template_count: 0,
+          preview_matches: true,
+          reserved_count: 0,
+          jobs_created: 1,
+        }]
       }
-      return callback(tx)
+      return [{
+        batch_count: 0,
+        eligible_job_count: 0,
+        non_template_count: 0,
+        preview_matches: false,
+        reserved_count: 1,
+        jobs_created: 0,
+      }]
     }
-
+    return phase === 'empty-preview' ? [] : [previewRow]
+  },
+  transaction: async (callback: (tx: any) => Promise<unknown>) => {
     if (phase === 'cron') {
       const tx = {
         update: (table: unknown) => updateBuilder(table),
@@ -286,6 +306,7 @@ mock.module('@/lib/whatsapp', {
         templateName: 'campanha_aprovada',
         templateLanguage: 'pt_BR',
         templateVariableValues: ['Lead Duplicado'],
+        templateVariableNames: undefined,
       })
       return 'wamid.mock.mass-dispatch'
     },
@@ -338,6 +359,7 @@ async function main() {
         items: [{ phone: 'sem telefone', name: 'Inválido' }],
         fileName: 'invalido.csv',
         createMassDispatch: true,
+        defaultEventType: 'carrinho_abandonado',
       }) as any)
       const result = await imported.json()
 
@@ -361,6 +383,9 @@ async function main() {
     await test('fluxo completo deduplica telefone, exige confirmação, enfileira e usa sender mockado', async () => {
       phase = 'import-happy'
       recoverySelectCount = 0
+      confirmationAttempts = 0
+      confirmationExecuteCalls = 0
+      queuedJobs = 0
       recipientLeadIds.clear()
       const imported = await importLeads(jsonRequest('https://sac.test/api/leads/import', {
         items: [
@@ -370,6 +395,7 @@ async function main() {
         ],
         fileName: 'leads.csv',
         createMassDispatch: true,
+        defaultEventType: 'carrinho_abandonado',
       }) as any)
       const importResult = await imported.json()
 
@@ -413,8 +439,18 @@ async function main() {
       assert.equal(queuedJobs, 1)
       assert.equal(sendCalls, 0, 'confirmar só enfileira; não chama o provedor')
 
+      const confirmedAgain = await confirmDispatch(jsonRequest('https://sac.test/api/leads/import/1/dispatch', {
+        confirm: true,
+        previewMessages: preview.messages,
+      }) as any, { params: Promise.resolve({ batchId: '1' }) })
+      assert.equal(confirmedAgain.status, 409)
+      assert.match((await confirmedAgain.json()).error, /confirmado por outra requisição/)
+      assert.equal(confirmationAttempts, 2)
+      assert.equal(queuedJobs, 1, 'dupla confirmação não cria um segundo job')
+
       phase = 'cron'
       recoverySelectCount = 0
+      messageJobSelectCount = 0
       const cronResponse = await runCron(new Request('https://sac.test/api/cron', {
         method: 'POST',
         headers: { Authorization: 'Bearer cron-secret-test' },
