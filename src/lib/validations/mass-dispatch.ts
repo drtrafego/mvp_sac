@@ -28,9 +28,23 @@ const templateVariablesMapSchema = z.record(z.string(), z.string().min(1).max(2_
   }
 })
 
+export function isSafeHeaderDocumentLink(value: string): boolean {
+  if (/[\u0000-\u001f\u007f\s]/.test(value)) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && !url.username && !url.password && Boolean(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+export function isSafeHeaderDocumentFilename(value: string): boolean {
+  return /^[\p{L}\p{N}][\p{L}\p{N} ._()-]{0,119}$/u.test(value) && !value.includes('..')
+}
+
 const templateHeaderDocumentSchema = z.object({
-  link: z.string().url().max(2_000),
-  filename: z.string().trim().min(1).max(255),
+  link: z.string().max(2_000).refine(isSafeHeaderDocumentLink, 'O link do documento deve ser https público, sem credenciais.'),
+  filename: z.string().refine(isSafeHeaderDocumentFilename, 'Nome de arquivo inválido.'),
 }).strict()
 
 export const MassDispatchTemplateSelection = z.object({

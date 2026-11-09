@@ -105,8 +105,19 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     if (recordOnly) {
       if (messageType !== 'template') return NextResponse.json({ error: 'recordOnly aceita somente messageType template.' }, { status: 400 })
       if (typeof content !== 'string') return NextResponse.json({ error: 'content é obrigatório para recordOnly.' }, { status: 400 })
-      if (typeof body.externalId !== 'string' || !body.externalId.trim()) return NextResponse.json({ error: 'externalId (wamid) é obrigatório para recordOnly.' }, { status: 400 })
+      if (typeof body.externalId !== 'string' || !/^wamid\.[A-Za-z0-9+/=_-]{10,300}$/.test(body.externalId.trim())) return NextResponse.json({ error: 'externalId deve ser um wamid válido para recordOnly.' }, { status: 400 })
       if (body.sendState != null && body.sendState !== 'accepted') return NextResponse.json({ error: 'recordOnly aceita somente sendState accepted.' }, { status: 400 })
+      const earlyRequestId =
+        (typeof body.clientRequestId === 'string' && body.clientRequestId.trim()) ||
+        req.headers.get('x-client-request-id')?.trim() ||
+        null
+      if (!earlyRequestId) return NextResponse.json({ error: 'clientRequestId é obrigatório para recordOnly.' }, { status: 400 })
+      if (earlyRequestId.length > 200) return NextResponse.json({ error: 'clientRequestId é muito longo.' }, { status: 400 })
+      if (body.createdAt != null) {
+        const parsed = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(body.createdAt) ? new Date(body.createdAt) : null
+        if (!parsed || Number.isNaN(parsed.getTime())) return NextResponse.json({ error: 'createdAt deve ser ISO UTC canônico (AAAA-MM-DDTHH:MM:SSZ).' }, { status: 400 })
+        if (parsed.getTime() < Date.UTC(2026, 0, 1) || parsed.getTime() > Date.now() + 5 * 60_000) return NextResponse.json({ error: 'createdAt fora da janela permitida.' }, { status: 400 })
+      }
     }
 
     let resolved: ResolvedLeadForContact
@@ -154,14 +165,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       null
 
     if (recordOnly) {
-      if (!clientRequestId) return NextResponse.json({ error: 'clientRequestId é obrigatório para recordOnly.' }, { status: 400 })
-      if (clientRequestId.length > 200) return NextResponse.json({ error: 'clientRequestId é muito longo.' }, { status: 400 })
-      let createdAt: Date | undefined
-      if (body.createdAt != null) {
-        if (!body.createdAt.endsWith('Z')) return NextResponse.json({ error: 'createdAt deve ser ISO UTC (terminado em Z).' }, { status: 400 })
-        createdAt = new Date(body.createdAt)
-        if (Number.isNaN(createdAt.getTime())) return NextResponse.json({ error: 'createdAt inválido.' }, { status: 400 })
-      }
+      const createdAt: Date | undefined = body.createdAt != null ? new Date(body.createdAt) : undefined
 
       // Registro histórico de uma aceitação que já ocorreu fora do SAC.
       // Não usa sendOutboundForLead: portanto não chama transporte, não toca
@@ -189,6 +193,16 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         ))
         .limit(1)
       if (!recorded) throw new Error('Não foi possível recuperar o registro idempotente.')
+      if (!inserted && (
+        recorded.leadId !== lead.id
+        || recorded.externalId !== body.externalId.trim()
+        || recorded.content !== content
+        || recorded.direction !== 'outbound'
+      )) {
+        return NextResponse.json({
+          error: 'Esta chave pertence a outro registro. Não reutilize clientRequestId para contato, wamid ou conteúdo diferentes.',
+        }, { status: 409 })
+      }
 
       return NextResponse.json({
         ok: true,

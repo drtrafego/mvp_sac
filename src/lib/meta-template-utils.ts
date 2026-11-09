@@ -1,4 +1,5 @@
 import type { MetaTemplate } from '@/lib/whatsapp/meta'
+import { isSafeHeaderDocumentFilename, isSafeHeaderDocumentLink } from '@/lib/validations/mass-dispatch'
 
 type TemplateComponent = Record<string, unknown>
 
@@ -53,7 +54,8 @@ export function templateHeaderDocument(snapshot: unknown): TemplateHeaderDocumen
   const value = (snapshot as { headerDocument?: unknown }).headerDocument
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const { link, filename } = value as { link?: unknown; filename?: unknown }
-  return typeof link === 'string' && link.trim() && typeof filename === 'string' && filename.trim()
+  return typeof link === 'string' && isSafeHeaderDocumentLink(link)
+    && typeof filename === 'string' && isSafeHeaderDocumentFilename(filename)
     ? { link, filename }
     : null
 }

@@ -20,12 +20,12 @@ function request(idOrSlug: string, body: Record<string, unknown>, apiKey?: strin
 
 const recordBody = {
   recordOnly: true,
-  externalId: 'wamid.record-only.001',
+  externalId: 'wamid.HBgMNTU2NTk5MTMzMzI1FQIAERgSQTQwODJBQjE5MjFGMjNEQTg2AA==',
   sendState: 'accepted',
   createdAt: '2026-11-08T14:30:00.000Z',
   messageType: 'template',
   content: 'Material Itero enviado.',
-  clientRequestId: 'record-only:498:wamid.record-only.001',
+  clientRequestId: 'record-only:498:wamid.HBgMNTU2NTk5MTMzMzI1FQIAERgSQTQwODJBQjE5MjFGMjNEQTg2AA==',
 }
 
 async function main() {
@@ -106,6 +106,36 @@ async function main() {
     ))
     assert.equal(rows.length, 0)
     assert.equal(transportCalls, 0)
+  })
+
+  await suite.test('rejects malformed input before creating any lead or message', async () => {
+    await reset()
+    const bad: Array<Record<string, unknown>> = [
+      { ...recordBody, externalId: 'not-a-wamid' },
+      { ...recordBody, createdAt: '9999-12-31T23:59:59.999Z' },
+      { ...recordBody, createdAt: '2026-11-08Z' },
+      { ...recordBody, clientRequestId: undefined },
+      { ...recordBody, sendState: 'failed' },
+    ]
+    for (const body of bad) {
+      const response = await route.POST(request('empresa-a', body, 'company-a-key'), params('empresa-a', '5511888887777'))
+      assert.equal(response.status, 400, JSON.stringify(body))
+    }
+    const leads = await database.db.select().from(schema.recoveryLeads)
+    assert.equal(leads.length, 1)
+    assert.equal((await database.db.select().from(schema.whatsappMessages)).length, 0)
+    assert.equal(transportCalls, 0)
+  })
+
+  await suite.test('reusing a clientRequestId for different content or wamid is a 409, not a replay', async () => {
+    await reset()
+    const first = await route.POST(request('empresa-a', recordBody, 'company-a-key'), params())
+    assert.equal(first.status, 201)
+    const other = await route.POST(request('empresa-a', { ...recordBody, externalId: 'wamid.HBgMNTU2NTk5Mjk5MDA2FQIAERgSOTkxOTMwRkY5OEUyMEZCRjBCAA==' }, 'company-a-key'), params())
+    assert.equal(other.status, 409)
+    const diffContent = await route.POST(request('empresa-a', { ...recordBody, content: 'outro texto' }, 'company-a-key'), params())
+    assert.equal(diffContent.status, 409)
+    assert.equal((await database.db.select().from(schema.whatsappMessages)).length, 1)
   })
   })
 }

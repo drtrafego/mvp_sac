@@ -187,3 +187,16 @@ test('template DOCUMENT serializes the Meta header and keeps the document in the
     globalThis.fetch = originalFetch
   }
 })
+
+test('header document link and filename are validated strictly', async () => {
+  const { MassDispatchTemplateSelection: S } = await import('../src/lib/validations/mass-dispatch')
+  const base = { templateName: 't', templateLanguage: 'pt_BR', templateVariablesMap: {} }
+  const ok = (d: { link: string; filename: string }) => S.safeParse({ ...base, templateHeaderDocument: d }).success
+  assert.equal(ok({ link: 'https://www.casaldotrafego.com/imersao.pdf', filename: 'Imersao iTero Dra Carolina Mattar.pdf' }), true)
+  assert.equal(ok({ link: 'http://example.com/a.pdf', filename: 'a.pdf' }), false)
+  assert.equal(ok({ link: 'ftp://example.com/a.pdf', filename: 'a.pdf' }), false)
+  assert.equal(ok({ link: 'https://user:pw@example.com/a.pdf', filename: 'a.pdf' }), false)
+  assert.equal(ok({ link: 'https://example.com/a.pdf', filename: '../../evil.pdf' }), false)
+  assert.equal(ok({ link: 'https://example.com/a.pdf', filename: 'a/b.pdf' }), false)
+  assert.equal(ok({ link: 'https://example.com/a.pdf', filename: 'ok.pdf\r\nX-Evil: yes' }), false)
+})
