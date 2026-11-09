@@ -113,11 +113,11 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         null
       if (!earlyRequestId) return NextResponse.json({ error: 'clientRequestId é obrigatório para recordOnly.' }, { status: 400 })
       if (earlyRequestId.length > 200) return NextResponse.json({ error: 'clientRequestId é muito longo.' }, { status: 400 })
-      if (body.createdAt != null) {
-        const parsed = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(body.createdAt) ? new Date(body.createdAt) : null
-        if (!parsed || Number.isNaN(parsed.getTime())) return NextResponse.json({ error: 'createdAt deve ser ISO UTC canônico (AAAA-MM-DDTHH:MM:SSZ).' }, { status: 400 })
-        if (parsed.getTime() < Date.UTC(2026, 0, 1) || parsed.getTime() > Date.now() + 5 * 60_000) return NextResponse.json({ error: 'createdAt fora da janela permitida.' }, { status: 400 })
+      const parsed = typeof body.createdAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(body.createdAt) ? new Date(body.createdAt) : null
+      if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 19) !== body.createdAt.slice(0, 19)) {
+        return NextResponse.json({ error: 'createdAt é obrigatório e deve ser ISO UTC canônico e existente (AAAA-MM-DDTHH:MM:SSZ).' }, { status: 400 })
       }
+      if (parsed.getTime() < Date.UTC(2026, 0, 1) || parsed.getTime() > Date.now() + 5 * 60_000) return NextResponse.json({ error: 'createdAt fora da janela permitida.' }, { status: 400 })
     }
 
     let resolved: ResolvedLeadForContact
@@ -170,7 +170,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       null
 
     if (recordOnly) {
-      const createdAt: Date | undefined = body.createdAt != null ? new Date(body.createdAt) : undefined
+      const createdAt = new Date(body.createdAt)
 
       // Registro histórico de uma aceitação que já ocorreu fora do SAC.
       // Não usa sendOutboundForLead: portanto não chama transporte, não toca

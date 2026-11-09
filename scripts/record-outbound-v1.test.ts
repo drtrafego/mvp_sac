@@ -114,6 +114,8 @@ async function main() {
       { ...recordBody, externalId: 'not-a-wamid' },
       { ...recordBody, createdAt: '9999-12-31T23:59:59.999Z' },
       { ...recordBody, createdAt: '2026-11-08Z' },
+      { ...recordBody, createdAt: '2026-02-30T00:00:00.000Z' },
+      { ...recordBody, createdAt: undefined },
       { ...recordBody, clientRequestId: undefined },
       { ...recordBody, sendState: 'failed' },
     ]
