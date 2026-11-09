@@ -7,7 +7,7 @@ import { isLeadChannel, MAX_TAG_LENGTH, normalizeTag, PESSOA_TAG, type LeadChann
 import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
 import { formatBrazilianPhone } from '@/lib/phone'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
-import { buildCanonicalSnapshot, extractBodyPlaceholders, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
+import { buildCanonicalSnapshot, extractBodyPlaceholders, hasDocumentHeader, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 
 function parseValueToCents(raw: string | number | null | undefined): number {
@@ -182,8 +182,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (!template) {
         return NextResponse.json({ error: 'O template selecionado não está aprovado na Meta' }, { status: 409 })
       }
-      if (hasUnsupportedDynamicComponents(template.components ?? [])) {
-        return NextResponse.json({ error: 'Templates com HEADER ou BUTTON dinâmico ainda não são suportados no disparo em massa' }, { status: 409 })
+      if (hasUnsupportedDynamicComponents(template.components ?? [], { allowDocumentHeader: true })) {
+        return NextResponse.json({ error: 'Templates com HEADER de mídia exceto DOCUMENT ou BUTTON dinâmico ainda não são suportados no disparo em massa' }, { status: 409 })
+      }
+      const documentHeaderRequired = hasDocumentHeader(template.components ?? [])
+      if (documentHeaderRequired !== Boolean(massDispatchTemplate.templateHeaderDocument)) {
+        return NextResponse.json({ error: documentHeaderRequired ? 'Informe link e filename do documento do HEADER do template.' : 'Este template não possui HEADER DOCUMENT.' }, { status: 400 })
       }
 
       const expectedIndexes = extractBodyPlaceholders(template.components ?? [])
@@ -195,7 +199,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         name: template.name,
         language: template.language,
         variablesMap: massDispatchTemplate.templateVariablesMap,
-        snapshot: buildCanonicalSnapshot(template),
+        snapshot: buildCanonicalSnapshot(template, { headerDocument: massDispatchTemplate.templateHeaderDocument }),
       }
     } catch (err) {
       console.error('[mass-dispatch] falha ao validar template da Meta antes da importação', err)

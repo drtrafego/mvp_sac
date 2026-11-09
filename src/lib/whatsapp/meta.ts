@@ -18,6 +18,11 @@ export interface MetaTemplate {
   rejected_reason?: string
 }
 
+export interface MetaTemplateDocumentHeader {
+  link: string
+  filename: string
+}
+
 function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '')
 }
@@ -124,15 +129,20 @@ export async function sendMetaTemplate(
   templateName: string,
   languageCode: string,
   variableValues: string[],  // valores interpolados em ordem: [valor_{{1}}, valor_{{2}}, ...]
-  variableNames?: string[]
+  variableNames?: string[],
+  headerDocument?: MetaTemplateDocumentHeader,
 ): Promise<string | null> {
   const parameters = variableValues.map((v, index) => ({
     type: 'text', text: v,
     ...(variableNames?.[index] ? { parameter_name: variableNames[index] } : {}),
   }))
-  const components = parameters.length > 0
-    ? [{ type: 'body', parameters }]
-    : []
+  const components = [
+    ...(headerDocument ? [{
+      type: 'header',
+      parameters: [{ type: 'document', document: { link: headerDocument.link, filename: headerDocument.filename } }],
+    }] : []),
+    ...(parameters.length > 0 ? [{ type: 'body', parameters }] : []),
+  ]
 
   return metaPost(config, {
     messaging_product: 'whatsapp',

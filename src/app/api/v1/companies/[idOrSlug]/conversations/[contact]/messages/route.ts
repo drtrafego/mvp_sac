@@ -85,18 +85,28 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: 'Informe um objeto JSON.' }, { status: 400 })
     }
-    for (const key of ['content', 'mediaUrl', 'messageType', 'clientRequestId', 'subject', 'senderName', 'channel']) {
+    for (const key of ['content', 'mediaUrl', 'messageType', 'clientRequestId', 'subject', 'senderName', 'channel', 'externalId', 'sendState', 'createdAt']) {
       if (body[key] != null && typeof body[key] !== 'string') {
         return NextResponse.json({ error: `O campo ${key} deve ser texto.` }, { status: 400 })
       }
+    }
+    if (body.recordOnly != null && typeof body.recordOnly !== 'boolean') {
+      return NextResponse.json({ error: 'O campo recordOnly deve ser booleano.' }, { status: 400 })
     }
     if (body.channel && !['whatsapp', 'instagram', 'email'].includes(body.channel)) {
       return NextResponse.json({ error: 'Canal inválido.' }, { status: 400 })
     }
     const { content, messageType = 'text', mediaUrl, channel: requestedChannel = 'whatsapp' } = body
+    const recordOnly = body.recordOnly === true
 
-    if (!content?.trim() && !mediaUrl) {
+    if (!recordOnly && !content?.trim() && !mediaUrl) {
       return NextResponse.json({ error: 'Conteúdo da mensagem ou mediaUrl é obrigatório' }, { status: 400 })
+    }
+    if (recordOnly) {
+      if (messageType !== 'template') return NextResponse.json({ error: 'recordOnly aceita somente messageType template.' }, { status: 400 })
+      if (typeof content !== 'string') return NextResponse.json({ error: 'content é obrigatório para recordOnly.' }, { status: 400 })
+      if (typeof body.externalId !== 'string' || !body.externalId.trim()) return NextResponse.json({ error: 'externalId (wamid) é obrigatório para recordOnly.' }, { status: 400 })
+      if (body.sendState != null && body.sendState !== 'accepted') return NextResponse.json({ error: 'recordOnly aceita somente sendState accepted.' }, { status: 400 })
     }
 
     let resolved: ResolvedLeadForContact
@@ -142,6 +152,51 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       (typeof body.clientRequestId === 'string' && body.clientRequestId.trim()) ||
       req.headers.get('x-client-request-id')?.trim() ||
       null
+
+    if (recordOnly) {
+      if (!clientRequestId) return NextResponse.json({ error: 'clientRequestId é obrigatório para recordOnly.' }, { status: 400 })
+      if (clientRequestId.length > 200) return NextResponse.json({ error: 'clientRequestId é muito longo.' }, { status: 400 })
+      let createdAt: Date | undefined
+      if (body.createdAt != null) {
+        if (!body.createdAt.endsWith('Z')) return NextResponse.json({ error: 'createdAt deve ser ISO UTC (terminado em Z).' }, { status: 400 })
+        createdAt = new Date(body.createdAt)
+        if (Number.isNaN(createdAt.getTime())) return NextResponse.json({ error: 'createdAt inválido.' }, { status: 400 })
+      }
+
+      // Registro histórico de uma aceitação que já ocorreu fora do SAC.
+      // Não usa sendOutboundForLead: portanto não chama transporte, não toca
+      // o lead e não inicia follow-up, IA ou qualquer automação.
+      const phone = lead.phone.replace(/\D/g, '')
+      if (!phone) return NextResponse.json({ error: 'Contato sem telefone válido para registro WhatsApp.' }, { status: 400 })
+      const [inserted] = await db.insert(whatsappMessages).values({
+        companyId: context.company.id,
+        leadId: lead.id,
+        phone,
+        channel: 'whatsapp',
+        direction: 'outbound',
+        content,
+        messageType: 'template',
+        sentBy: 'system',
+        externalId: body.externalId.trim(),
+        sendState: 'accepted',
+        clientRequestId,
+        createdAt,
+      }).onConflictDoNothing().returning()
+      const [recorded] = inserted ? [inserted] : await db.select().from(whatsappMessages)
+        .where(and(
+          eq(whatsappMessages.companyId, context.company.id),
+          eq(whatsappMessages.clientRequestId, clientRequestId),
+        ))
+        .limit(1)
+      if (!recorded) throw new Error('Não foi possível recuperar o registro idempotente.')
+
+      return NextResponse.json({
+        ok: true,
+        message: inserted ? 'Mensagem externa registrada sem envio.' : 'Registro externo já existente.',
+        idempotentReplay: !inserted,
+        sentMessage: recorded,
+      }, { status: inserted ? 201 : 200 })
+    }
 
     const sendResult = await sendOutboundForLead({
       companyId: context.company.id,

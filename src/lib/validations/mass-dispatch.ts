@@ -28,10 +28,16 @@ const templateVariablesMapSchema = z.record(z.string(), z.string().min(1).max(2_
   }
 })
 
+const templateHeaderDocumentSchema = z.object({
+  link: z.string().url().max(2_000),
+  filename: z.string().trim().min(1).max(255),
+}).strict()
+
 export const MassDispatchTemplateSelection = z.object({
   templateName: z.string().trim().min(1).max(512),
   templateLanguage: z.string().trim().min(1).max(64),
   templateVariablesMap: templateVariablesMapSchema,
+  templateHeaderDocument: templateHeaderDocumentSchema.optional(),
 }).strict()
 
 export type MassDispatchTemplateSelectionInput = z.infer<typeof MassDispatchTemplateSelection>

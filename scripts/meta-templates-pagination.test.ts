@@ -16,7 +16,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { listMetaTemplates, type MetaTemplate } from '../src/lib/whatsapp/meta'
+import { listMetaTemplates, sendMetaTemplate, type MetaTemplate } from '../src/lib/whatsapp/meta'
+import { buildCanonicalSnapshot, hasDocumentHeader, hasUnsupportedDynamicComponents, templateHeaderDocument } from '../src/lib/meta-template-utils'
 
 const WABA_ID = '999888777'
 const TOKEN = 'fake-token'
@@ -152,5 +153,37 @@ test('lista que esgota antes do teto NÃO dispara o warn (só o corte real avisa
   } finally {
     globalThis.fetch = originalFetch
     console.warn = originalWarn
+  }
+})
+
+test('template DOCUMENT serializes the Meta header and keeps the document in the batch snapshot', async () => {
+  const originalFetch = globalThis.fetch
+  let payload: Record<string, unknown> | undefined
+  const components = [{ type: 'HEADER', format: 'DOCUMENT' }, { type: 'BODY', text: 'Olá {{1}}' }]
+  const document = { link: 'https://files.example.test/material.pdf', filename: 'material.pdf' }
+  try {
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      payload = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return jsonResponse({ messages: [{ id: 'wamid.document.test' }] })
+    }) as typeof fetch
+
+    const wamid = await sendMetaTemplate(
+      { phoneNumberId: '111', accessToken: 'not-a-real-token' },
+      '+55 (11) 99999-0000', 'material_itero_pdf_v2', 'pt_BR', ['Carol'], undefined, document,
+    )
+    assert.equal(wamid, 'wamid.document.test')
+    assert.deepEqual((payload?.template as { components?: unknown[] }).components, [
+      { type: 'header', parameters: [{ type: 'document', document }] },
+      { type: 'body', parameters: [{ type: 'text', text: 'Carol' }] },
+    ])
+    assert.equal(hasDocumentHeader(components), true)
+    assert.equal(hasUnsupportedDynamicComponents(components), true)
+    assert.equal(hasUnsupportedDynamicComponents(components, { allowDocumentHeader: true }), false)
+    assert.deepEqual(
+      templateHeaderDocument(buildCanonicalSnapshot({ name: 'material_itero_pdf_v2', status: 'APPROVED', language: 'pt_BR', category: 'MARKETING', components }, { headerDocument: document })),
+      document,
+    )
+  } finally {
+    globalThis.fetch = originalFetch
   }
 })

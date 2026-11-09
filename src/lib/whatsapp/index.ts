@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { settings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
-import { sendMetaText, sendMetaMedia, sendMetaInteractiveButtons, sendMetaTemplate } from './meta'
+import { sendMetaText, sendMetaMedia, sendMetaInteractiveButtons, sendMetaTemplate, type MetaTemplateDocumentHeader } from './meta'
 import { sendUazApiText, sendUazApiMedia, sendUazApiButtons } from './uazapi'
 
 export interface ButtonOption {
@@ -20,6 +20,7 @@ interface MessagePayload {
   templateLanguage?: string
   templateVariableValues?: string[]  // valores interpolados em ordem posicional
   templateVariableNames?: string[]
+  templateHeaderDocument?: MetaTemplateDocumentHeader
 }
 
 import { formatBrazilianPhone } from '@/lib/phone'
@@ -55,6 +56,7 @@ export async function sendWhatsAppMessage(
         message.templateLanguage ?? 'pt_BR',
         message.templateVariableValues ?? [],
         message.templateVariableNames,
+        message.templateHeaderDocument,
       )
     } else if (message.type === 'interactive_buttons' && message.buttons?.length) {
       return sendMetaInteractiveButtons(metaConfig, normalized, message.content ?? '', message.buttons)

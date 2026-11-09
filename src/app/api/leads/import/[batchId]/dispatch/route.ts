@@ -9,7 +9,7 @@ import {
 } from '@/lib/db/schema'
 import { buildMassDispatchPreview, isApprovedTemplateOnlySequence, queueDirectTemplateMassDispatchBatch, queueMassDispatchBatch } from '@/lib/mass-dispatch'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
-import { buildCanonicalSnapshot, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
+import { buildCanonicalSnapshot, hasDocumentHeader, hasUnsupportedDynamicComponents, metaTemplateKey, templateHeaderDocument } from '@/lib/meta-template-utils'
 
 type Params = { params: Promise<{ batchId: string }> }
 
@@ -214,8 +214,13 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     if (!matchingDirectTemplate) {
       return NextResponse.json({ error: 'O template deste lote não está mais aprovado na Meta; nenhum disparo foi enfileirado' }, { status: 409 })
     }
-    if (hasUnsupportedDynamicComponents(matchingDirectTemplate.components ?? [])) {
-      return NextResponse.json({ error: 'O template passou a ter HEADER ou BUTTON dinâmico, que não é suportado neste disparo' }, { status: 409 })
+    if (hasUnsupportedDynamicComponents(matchingDirectTemplate.components ?? [], { allowDocumentHeader: true })) {
+      return NextResponse.json({ error: 'O template passou a ter HEADER de mídia exceto DOCUMENT ou BUTTON dinâmico, que não é suportado neste disparo' }, { status: 409 })
+    }
+    const documentHeaderRequired = hasDocumentHeader(matchingDirectTemplate.components ?? [])
+    const savedHeaderDocument = templateHeaderDocument(batch.templateSnapshot)
+    if (documentHeaderRequired !== Boolean(savedHeaderDocument)) {
+      return NextResponse.json({ error: documentHeaderRequired ? 'O documento do HEADER não está preservado no snapshot do lote; recrie o lote.' : 'Snapshot contém documento para template sem HEADER DOCUMENT.' }, { status: 409 })
     }
     const currentSnapshot = buildCanonicalSnapshot(matchingDirectTemplate)
     const savedSnapshot = batch.templateSnapshot as { bodyText?: string; bodyVariableIndexes?: number[]; category?: string } | null

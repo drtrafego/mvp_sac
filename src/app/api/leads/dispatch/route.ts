@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { massDispatchBatches, massDispatchRecipients, recoveryLeads, settings } from '@/lib/db/schema'
 import { getDateRange } from '@/lib/date-utils'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
-import { buildCanonicalSnapshot, extractBodyPlaceholders, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
+import { buildCanonicalSnapshot, extractBodyPlaceholders, hasDocumentHeader, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
 
@@ -100,7 +100,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Não foi possível validar o template aprovado na Meta' }, { status: 503 })
   }
   if (!template) return NextResponse.json({ error: 'O template selecionado não está aprovado na Meta' }, { status: 409 })
-  if (hasUnsupportedDynamicComponents(template.components ?? [])) return NextResponse.json({ error: 'Templates com HEADER de mídia ou componentes dinâmicos não são suportados' }, { status: 400 })
+  if (hasUnsupportedDynamicComponents(template.components ?? [], { allowDocumentHeader: true })) return NextResponse.json({ error: 'Templates com HEADER de mídia exceto DOCUMENT ou componentes dinâmicos não são suportados' }, { status: 400 })
+  const documentHeaderRequired = hasDocumentHeader(template.components ?? [])
+  if (documentHeaderRequired !== Boolean(parsedTemplate.data.templateHeaderDocument)) {
+    return NextResponse.json({ error: documentHeaderRequired ? 'Informe link e filename do documento do HEADER do template.' : 'Este template não possui HEADER DOCUMENT.' }, { status: 400 })
+  }
   const expectedIndexes = extractBodyPlaceholders(template.components ?? [])
   const mappedIndexes = Object.keys(parsedTemplate.data.templateVariablesMap).map(Number).sort((a, b) => a - b)
   if (expectedIndexes.length !== mappedIndexes.length || expectedIndexes.some((index, position) => index !== mappedIndexes[position])) {
@@ -130,7 +134,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const [batch] = await db.insert(massDispatchBatches).values({
     companyId: company.id, fileName: 'Seleção interna de leads', eventType: 'mass_dispatch', trackingSource: 'internal_leads', status: 'draft', recipientCount: leadIds.length,
     dispatchSource: 'direct_template', templateName: template.name, templateLanguage: template.language,
-    templateVariablesMap: parsedTemplate.data.templateVariablesMap, templateSnapshot: buildCanonicalSnapshot(template), updatedAt: new Date(),
+    templateVariablesMap: parsedTemplate.data.templateVariablesMap,
+    templateSnapshot: buildCanonicalSnapshot(template, { headerDocument: parsedTemplate.data.templateHeaderDocument }),
+    updatedAt: new Date(),
   }).returning({ id: massDispatchBatches.id })
   if (!batch) return NextResponse.json({ error: 'Não foi possível criar o lote' }, { status: 500 })
   await db.insert(massDispatchRecipients).values(leadIds.map(leadId => ({ batchId: batch.id, leadId }))).onConflictDoNothing()

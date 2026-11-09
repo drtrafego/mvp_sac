@@ -37,7 +37,28 @@ export function extractBodyPlaceholders(components: unknown[]): number[] {
   return [...indexes].sort((a, b) => a - b)
 }
 
-export function hasUnsupportedDynamicComponents(components: unknown[]): boolean {
+export type TemplateHeaderDocument = { link: string; filename: string }
+
+export function hasDocumentHeader(components: unknown[]): boolean {
+  return components.some(value => {
+    const component = asComponent(value)
+    return componentType(component ?? {}) === 'HEADER'
+      && typeof component?.format === 'string'
+      && component.format.toUpperCase() === 'DOCUMENT'
+  })
+}
+
+export function templateHeaderDocument(snapshot: unknown): TemplateHeaderDocument | null {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null
+  const value = (snapshot as { headerDocument?: unknown }).headerDocument
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const { link, filename } = value as { link?: unknown; filename?: unknown }
+  return typeof link === 'string' && link.trim() && typeof filename === 'string' && filename.trim()
+    ? { link, filename }
+    : null
+}
+
+export function hasUnsupportedDynamicComponents(components: unknown[], options?: { allowDocumentHeader?: boolean }): boolean {
   return components.some(value => {
     const component = asComponent(value)
     if (!component) return false
@@ -45,7 +66,8 @@ export function hasUnsupportedDynamicComponents(components: unknown[]): boolean 
     if (type === 'BUTTON' || type === 'BUTTONS') return containsPlaceholder(component)
     if (type === 'HEADER') {
       const format = typeof component.format === 'string' ? component.format.toUpperCase() : ''
-      if (format === 'IMAGE' || format === 'VIDEO' || format === 'DOCUMENT' || format === 'LOCATION') return true
+      if (format === 'DOCUMENT') return !options?.allowDocumentHeader
+      if (format === 'IMAGE' || format === 'VIDEO' || format === 'LOCATION') return true
       return containsPlaceholder(component)
     }
     return false
@@ -114,7 +136,7 @@ export function renderMetaTemplateBody(body: string, variableValues: readonly st
   return substituteTemplateVariables(body, variableValues, variableNames)
 }
 
-export function buildCanonicalSnapshot(template: MetaTemplate) {
+export function buildCanonicalSnapshot(template: MetaTemplate, options?: { headerDocument?: TemplateHeaderDocument }) {
   return {
     name: template.name,
     language: template.language,
@@ -122,5 +144,6 @@ export function buildCanonicalSnapshot(template: MetaTemplate) {
     bodyText: bodyText(template.components ?? []),
     bodyVariableIndexes: extractBodyPlaceholders(template.components ?? []),
     components: structuredClone(template.components ?? []),
+    ...(options?.headerDocument ? { headerDocument: structuredClone(options.headerDocument) } : {}),
   }
 }

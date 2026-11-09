@@ -20,7 +20,7 @@ import { evaluateSacPendingRules } from '@/lib/sac-pending-rules'
 import { recordPixFollowupSent } from '@/lib/pix-followup'
 import { isApprovedUtilityPixTemplate, isRealPendingPix, PIX_FOLLOWUP_JOB_TYPE } from '@/lib/pix-followup-policy'
 import { ISABELA_APPROVED_TEMPLATE_NAMES, isIsabelaJobType } from '@/lib/recovery-sequence-policy'
-import { renderMetaTemplate, renderMetaTemplateBody } from '@/lib/meta-template-utils'
+import { hasDocumentHeader, renderMetaTemplate, renderMetaTemplateBody, templateHeaderDocument as snapshotTemplateHeaderDocument } from '@/lib/meta-template-utils'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
 
@@ -766,6 +766,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
       }
 
       let templateHistoryContent: string | null = null
+      let templateHeaderDocument: { link: string; filename: string } | undefined
       if (msgType === 'template') {
         let templateSnapshot = message.templateSnapshot
         if (!templateSnapshot && job.massDispatchBatchId != null) {
@@ -774,6 +775,20 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
             .where(eq(massDispatchBatches.id, job.massDispatchBatchId))
             .limit(1)
           templateSnapshot = batch?.templateSnapshot
+        }
+
+        if (hasDocumentHeader(templateSnapshotComponents(templateSnapshot) ?? [])) {
+          const document = snapshotTemplateHeaderDocument(templateSnapshot)
+          if (!document) {
+            await db.update(messageJobs).set({
+              status: 'failed',
+              error: 'Snapshot de template DOCUMENT sem link e filename do cabeçalho',
+              processingStartedAt: null,
+            }).where(eq(messageJobs.id, job.id))
+            failed++
+            continue
+          }
+          templateHeaderDocument = document
         }
 
         let rendered = renderMetaTemplate(templateSnapshotComponents(templateSnapshot), templateVariableValues, templateVariableNames)
@@ -822,6 +837,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
           templateLanguage: message.templateLanguage ?? undefined,
           templateVariableValues,
           templateVariableNames,
+          ...(templateHeaderDocument ? { templateHeaderDocument } : {}),
         }, companyId),
         result => recordJobOutcome(job.id, result, metaPhoneNumberId, transactionalDb),
         undefined,
