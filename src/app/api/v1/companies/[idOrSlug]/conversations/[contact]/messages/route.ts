@@ -137,6 +137,11 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     // Encontra lead correspondente
     let lead = resolved.lead
 
+    // recordOnly nunca cria lead: só registra histórico de lead já existente.
+    if (!lead && recordOnly) {
+      return NextResponse.json({ error: 'Lead não encontrado para registro externo.' }, { status: 404 })
+    }
+
     // Se lead não existir, auto-cria
     if (!lead) {
       const [newLead] = await db

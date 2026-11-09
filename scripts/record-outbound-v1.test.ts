@@ -137,6 +137,16 @@ async function main() {
     assert.equal(diffContent.status, 409)
     assert.equal((await database.db.select().from(schema.whatsappMessages)).length, 1)
   })
+
+  await suite.test('recordOnly never creates a lead for an unknown contact, even under concurrency', async () => {
+    await reset()
+    const calls = await Promise.all([1, 2].map(() => route.POST(request('empresa-a', recordBody, 'company-a-key'), params('empresa-a', '5511777776666'))))
+    assert.deepEqual(calls.map(r => r.status), [404, 404])
+    const bad = await route.POST(request('empresa-a', recordBody, 'company-a-key'), params('empresa-a', 'sem-telefone'))
+    assert.ok([400, 404].includes(bad.status))
+    assert.equal((await database.db.select().from(schema.recoveryLeads)).length, 1)
+    assert.equal((await database.db.select().from(schema.whatsappMessages)).length, 0)
+  })
   })
 }
 
