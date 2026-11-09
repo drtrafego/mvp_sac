@@ -32,7 +32,15 @@ export function isSafeHeaderDocumentLink(value: string): boolean {
   if (/[\u0000-\u001f\u007f\s]/.test(value)) return false
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' && !url.username && !url.password && Boolean(url.hostname)
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+    const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+    const privateV4 = ipv4 !== null && (() => {
+      const [a, b] = [Number(ipv4[1]), Number(ipv4[2])]
+      return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224
+    })()
+    const blockedName = host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || !host.includes('.')
+    const ipv6 = host.includes(':')
+    return url.protocol === 'https:' && !url.username && !url.password && Boolean(host) && !privateV4 && !blockedName && !ipv6
   } catch {
     return false
   }

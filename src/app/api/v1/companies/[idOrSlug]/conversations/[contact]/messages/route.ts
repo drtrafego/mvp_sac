@@ -85,13 +85,13 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: 'Informe um objeto JSON.' }, { status: 400 })
     }
-    for (const key of ['content', 'mediaUrl', 'messageType', 'clientRequestId', 'subject', 'senderName', 'channel', 'externalId', 'sendState', 'createdAt']) {
+    if (body.recordOnly != null && typeof body.recordOnly !== 'boolean') {
+      return NextResponse.json({ error: 'O campo recordOnly deve ser booleano.' }, { status: 400 })
+    }
+    for (const key of ['content', 'mediaUrl', 'messageType', 'clientRequestId', 'subject', 'senderName', 'channel', ...(body.recordOnly === true ? ['externalId', 'sendState', 'createdAt'] : [])]) {
       if (body[key] != null && typeof body[key] !== 'string') {
         return NextResponse.json({ error: `O campo ${key} deve ser texto.` }, { status: 400 })
       }
-    }
-    if (body.recordOnly != null && typeof body.recordOnly !== 'boolean') {
-      return NextResponse.json({ error: 'O campo recordOnly deve ser booleano.' }, { status: 400 })
     }
     if (body.channel && !['whatsapp', 'instagram', 'email'].includes(body.channel)) {
       return NextResponse.json({ error: 'Canal inválido.' }, { status: 400 })
@@ -104,7 +104,8 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     }
     if (recordOnly) {
       if (messageType !== 'template') return NextResponse.json({ error: 'recordOnly aceita somente messageType template.' }, { status: 400 })
-      if (typeof content !== 'string') return NextResponse.json({ error: 'content é obrigatório para recordOnly.' }, { status: 400 })
+      if (typeof content !== 'string' || !content.trim()) return NextResponse.json({ error: 'content é obrigatório para recordOnly.' }, { status: 400 })
+      if (content.length > 4096) return NextResponse.json({ error: 'content excede 4096 caracteres.' }, { status: 400 })
       if (typeof body.externalId !== 'string' || !/^wamid\.[A-Za-z0-9+/=_-]{10,300}$/.test(body.externalId.trim())) return NextResponse.json({ error: 'externalId deve ser um wamid válido para recordOnly.' }, { status: 400 })
       if (body.sendState != null && body.sendState !== 'accepted') return NextResponse.json({ error: 'recordOnly aceita somente sendState accepted.' }, { status: 400 })
       const earlyRequestId =
@@ -177,6 +178,17 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       // o lead e não inicia follow-up, IA ou qualquer automação.
       const phone = lead.phone.replace(/\D/g, '')
       if (!phone) return NextResponse.json({ error: 'Contato sem telefone válido para registro WhatsApp.' }, { status: 400 })
+      const sameWamid = await db.select({ id: whatsappMessages.id, leadId: whatsappMessages.leadId, clientRequestId: whatsappMessages.clientRequestId })
+        .from(whatsappMessages)
+        .where(and(
+          eq(whatsappMessages.companyId, context.company.id),
+          eq(whatsappMessages.direction, 'outbound'),
+          eq(whatsappMessages.externalId, body.externalId.trim()),
+        ))
+        .limit(1)
+      if (sameWamid[0] && (sameWamid[0].leadId !== lead.id || sameWamid[0].clientRequestId !== clientRequestId)) {
+        return NextResponse.json({ error: 'Este wamid já está registrado em outro envio.' }, { status: 409 })
+      }
       const [inserted] = await db.insert(whatsappMessages).values({
         companyId: context.company.id,
         leadId: lead.id,

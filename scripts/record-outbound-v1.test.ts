@@ -149,6 +149,20 @@ async function main() {
     assert.equal((await database.db.select().from(schema.recoveryLeads)).length, 1)
     assert.equal((await database.db.select().from(schema.whatsappMessages)).length, 0)
   })
+
+  await suite.test('rejects oversize content, reused wamid on another lead, and private document links', async () => {
+    await reset()
+    const huge = await route.POST(request('empresa-a', { ...recordBody, content: 'x'.repeat(5000) }, 'company-a-key'), params())
+    assert.equal(huge.status, 400)
+    await database.db.insert(schema.recoveryLeads).values({ id: 11, companyId: 1, phone: '+55 (11) 98888-0000', name: 'Contato B', status: 'in_conversation', channel: 'whatsapp', eventType: 'api_outbound' })
+    assert.equal((await route.POST(request('empresa-a', recordBody, 'company-a-key'), params())).status, 201)
+    const other = await route.POST(request('empresa-a', { ...recordBody, clientRequestId: 'outro' }, 'company-a-key'), params('empresa-a', 'lead:11'))
+    assert.equal(other.status, 409)
+    assert.equal((await database.db.select().from(schema.whatsappMessages)).length, 1)
+    const { isSafeHeaderDocumentLink } = await import('../src/lib/validations/mass-dispatch')
+    for (const u of ['https://localhost/a.pdf', 'https://127.0.0.1/a.pdf', 'https://10.0.0.1/a.pdf', 'https://169.254.169.254/a.pdf', 'https://[::1]/a.pdf', 'https://intranet/a.pdf']) assert.equal(isSafeHeaderDocumentLink(u), false, u)
+    assert.equal(isSafeHeaderDocumentLink('https://www.casaldotrafego.com/a.pdf'), true)
+  })
   })
 }
 
