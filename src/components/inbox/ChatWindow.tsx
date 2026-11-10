@@ -33,6 +33,7 @@ import { MessageList, type InboxMessage } from './MessageBubble'
 import { ConversationAiPanel } from './ConversationAiPanel'
 import { LeadTags } from './LeadTags'
 import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill, EmailEngagementBadge } from './ChannelBadge'
+import { SOURCE_OPTIONS } from '@/components/leads/AddLeadModal'
 import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { cn } from '@/lib/utils'
 import { buildContextPatch, canStartComposerIntent, contextFromLead, draftAfterAccepted, fillReplyTemplate, mergeContextDraft, unresolvedReplyVariables, upsertInboxMessages, type ComposerIntent, type SacContextDraft } from './sac-inbox-state'
@@ -164,6 +165,9 @@ export function ChatWindow({
   const [editingName, setEditingName] = useState(lead.name ?? '')
   const [savingName, setSavingName] = useState(false)
   const [nameError, setNameError] = useState<string | null>(null)
+  const [originValue, setOriginValue] = useState<string | null>(lead.trackingSource)
+  const [savingOrigin, setSavingOrigin] = useState(false)
+  const [originError, setOriginError] = useState<string | null>(null)
 
   // Controle de Pausa do Bot
   const [botPaused, setBotPaused] = useState(lead.botPaused)
@@ -470,6 +474,27 @@ export function ChatWindow({
       setTimeout(() => setPauseToast(null), 4000)
     } finally {
       setPauseLoading(false)
+    }
+  }
+
+  async function saveLeadOrigin(next: string) {
+    if (savingOrigin || next === (originValue ?? '')) return
+    const previous = originValue
+    setOriginValue(next)
+    setOriginError(null)
+    setSavingOrigin(true)
+    try {
+      const res = await fetch(`/api/leads/${lead.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trackingSource: next }),
+      })
+      if (!res.ok) throw new Error('Falha ao salvar a origem')
+    } catch {
+      setOriginValue(previous)
+      setOriginError('Não foi possível salvar a origem.')
+    } finally {
+      setSavingOrigin(false)
     }
   }
 
@@ -953,6 +978,27 @@ export function ChatWindow({
                 {lead.phone}
                 {lead.productName ? <span className="text-fg-muted font-sans font-medium"> · {lead.productName}</span> : null}
               </p>
+              <label className="mt-1 flex items-center gap-1.5 text-[10px] text-fg-subtle">
+                <span className="font-semibold uppercase tracking-wider text-fg-faint">Origem:</span>
+                <select
+                  aria-label="Origem do lead"
+                  data-testid="lead-origin-select"
+                  value={originValue ?? ''}
+                  disabled={savingOrigin}
+                  onChange={event => void saveLeadOrigin(event.target.value)}
+                  className="max-w-[220px] rounded-md border border-line-subtle bg-surface-inset px-1.5 py-0.5 text-[11px] text-fg disabled:opacity-60"
+                >
+                  {originValue && !(originValue in SOURCE_OPTIONS) && (
+                    <option value={originValue}>{originValue} (atual)</option>
+                  )}
+                  {!originValue && <option value="">Sem origem</option>}
+                  {Object.entries(SOURCE_OPTIONS).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+                {savingOrigin && <Loader2 size={11} className="animate-spin" />}
+                {originError && <span className="font-medium text-red-500">{originError}</span>}
+              </label>
               {availableThreadChannels.length > 1 && (
                 <div className="mt-2 flex flex-wrap items-center gap-1" aria-label="Conversas por canal">
                   <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-fg-faint">Conversas:</span>
