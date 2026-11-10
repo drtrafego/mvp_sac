@@ -34,7 +34,7 @@ function fixture() {
     readLead: async () => ({ ...lead }),
     readConfig: async () => ({ companyId: 7, aiSystemPrompt: 'gate', aiAgentKey: 'autonomia' }) as Awaited<ReturnType<AiReplyDependencies['readConfig']>>,
     readCompany: async () => ({ id: 7, slug: 'autonomia' }) as Awaited<ReturnType<AiReplyDependencies['readCompany']>>,
-    readHistory: async () => [{ id: 100, direction: 'inbound', content: 'Quero marcar', messageType: 'text', sendState: null, externalId: null, createdAt: new Date('2026-10-08T12:00:00Z') }],
+    readHistory: async () => [{ id: 100, direction: 'inbound', content: 'Quero marcar', messageType: 'text', mediaUrl: null, sendState: null, externalId: null, createdAt: new Date('2026-10-08T12:00:00Z') }],
     readIntent: async () => intent,
     persistSchedule: async (_lead, state) => { lead = { ...lead, aiScheduleState: state } },
     pauseIfUnchanged: async (_lead, version, reason) => {
@@ -171,7 +171,7 @@ for (const state of ['pending', 'uncertain']) {
 test('rodada usa a última mensagem recebida mesmo com outbound posterior', async () => {
   const f = fixture()
   const read = f.deps.readHistory
-  f.deps.readHistory = async (...args) => [{ id: 101, direction: 'outbound', content: 'Aviso anterior', messageType: 'text', sendState: null, externalId: null, createdAt: new Date('2026-10-08T13:00:00Z') }, ...await read(...args)]
+  f.deps.readHistory = async (...args) => [{ id: 101, direction: 'outbound', content: 'Aviso anterior', messageType: 'text', mediaUrl: null, sendState: null, externalId: null, createdAt: new Date('2026-10-08T13:00:00Z') }, ...await read(...args)]
   f.deps.generate = async opts => {
     assert.equal(opts.mensagem, 'Quero marcar')
     return { ok: true, resposta: { ok: true, status: 'ok', resposta: 'Resposta à solicitação' } }
@@ -180,15 +180,35 @@ test('rodada usa a última mensagem recebida mesmo com outbound posterior', asyn
   assert.equal(f.intent()?.clientRequestId, 'ai-reply:7:20:100')
 })
 
+test('áudio Meta vazio passa o id à ponte e persiste somente a transcrição devolvida', async () => {
+  const f = fixture()
+  f.deps.readConfig = async () => ({ companyId: 7, aiSystemPrompt: 'gate', aiAgentKey: 'autonomia', metaPhoneNumberId: '10987654321' }) as Awaited<ReturnType<AiReplyDependencies['readConfig']>>
+  f.deps.readHistory = async () => [{
+    id: 101, direction: 'inbound', content: null, messageType: 'audio', mediaUrl: 'wa-media:1234567890',
+    sendState: null, externalId: null, createdAt: new Date('2026-10-08T12:00:00Z'),
+  }]
+  let transcription: { companyId: number; messageId: number; value: string } | null = null
+  f.deps.persistInboundAudioTranscription = async (companyId, messageId, value) => { transcription = { companyId, messageId, value } }
+  f.deps.generate = async opts => {
+    assert.equal(opts.mensagem, '[áudio recebido]')
+    assert.equal(opts.audioMediaId, '1234567890')
+    assert.equal(opts.phoneNumberId, '10987654321')
+    return { ok: true, resposta: { ok: true, status: 'ok', resposta: 'Entendi.', transcricao: 'Quero agendar.' } }
+  }
+
+  await generateAndSendAiReply(20, f.deps)
+  assert.deepEqual(transcription, { companyId: 7, messageId: 101, value: 'Quero agendar.' })
+})
+
 
 test('intentos falhos, pendentes ou incertos não viram falas no histórico nem no detector', async () => {
   const f = fixture()
   const read = f.deps.readHistory
   const old = new Date('2026-10-08T11:00:00Z')
   f.deps.readHistory = async (...args) => [...await read(...args),
-    ...['failed', 'pending', 'uncertain'].map((sendState, index) => ({ id: 90 + index, direction: 'outbound', content: 'Nunca enviado', messageType: 'text', sendState, externalId: null, createdAt: old })),
-    { id: 80, direction: 'outbound', content: 'Enviado e aceito', messageType: 'text', sendState: 'accepted', externalId: 'provider-id', createdAt: old },
-    { id: 70, direction: 'outbound', content: 'Histórico legado comprovado', messageType: 'text', sendState: null, externalId: 'legacy-provider-id', createdAt: old },
+    ...['failed', 'pending', 'uncertain'].map((sendState, index) => ({ id: 90 + index, direction: 'outbound', content: 'Nunca enviado', messageType: 'text', mediaUrl: null, sendState, externalId: null, createdAt: old })),
+    { id: 80, direction: 'outbound', content: 'Enviado e aceito', messageType: 'text', mediaUrl: null, sendState: 'accepted', externalId: 'provider-id', createdAt: old },
+    { id: 70, direction: 'outbound', content: 'Histórico legado comprovado', messageType: 'text', mediaUrl: null, sendState: null, externalId: 'legacy-provider-id', createdAt: old },
   ]
   f.deps.detectBot = lines => { assert.equal(lines.some(line => line.text === 'Nunca enviado'), false); return { bot: false, sinais: [], pontos: 0, msgsLead: 1 } }
   f.deps.generate = async opts => {

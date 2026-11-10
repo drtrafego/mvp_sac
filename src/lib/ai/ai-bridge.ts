@@ -73,6 +73,7 @@ export type RespostaBridge = {
   resposta?: string | null
   acao_detectada?: AcaoDetectada | null
   encerrar?: { motivo?: string } | null
+  transcricao?: string | null
 }
 
 export type ResultadoBridge =
@@ -128,12 +129,14 @@ function parseBridgeResponse(value: unknown): RespostaBridge | null {
 
   const resposta = raw.resposta == null ? null : stringField(raw.resposta, 8_000)
   if (raw.resposta != null && resposta === undefined) return null
+  const transcricao = stringField(raw.transcricao, 4_000) ?? null
   return {
     ok: true,
     status: raw.status as RespostaBridge['status'],
     resposta,
     acao_detectada: acao,
     encerrar,
+    transcricao,
   }
 }
 
@@ -165,14 +168,32 @@ async function atualizarStatusChamada(id: number, status: string): Promise<void>
   }
 }
 
-export async function gerarResposta(opts: {
+export type BridgeRequestOptions = {
   bot: Bot
   mensagem: string
   historico: HistoricoTurno[]
   nomeContato?: string
   waId?: string
   agendamentoAtual?: Record<string, unknown> | null
-}): Promise<ResultadoBridge> {
+  audioMediaId?: string
+  phoneNumberId?: string
+}
+
+/** Pure payload boundary for the Luana bridge contract. */
+export function buildBridgeRequestBody(opts: BridgeRequestOptions) {
+  return {
+    bot: opts.bot,
+    mensagem: opts.mensagem,
+    historico: opts.historico,
+    nome_contato: opts.nomeContato || undefined,
+    wa_id: opts.waId || undefined,
+    agendamento_atual: opts.agendamentoAtual ?? null,
+    ...(opts.audioMediaId ? { audio_media_id: opts.audioMediaId } : {}),
+    ...(opts.phoneNumberId ? { phone_number_id: opts.phoneNumberId } : {}),
+  }
+}
+
+export async function gerarResposta(opts: BridgeRequestOptions): Promise<ResultadoBridge> {
   const bridge = bridgeConfig(opts.bot)
   if (!bridge.url || !bridge.token) {
     console.error(`[AI Bridge] ponte não configurada para bot=${opts.bot}, abortando (fail-closed)`)
@@ -198,14 +219,7 @@ export async function gerarResposta(opts: {
         Authorization: `Bearer ${bridge.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        bot: opts.bot,
-        mensagem: opts.mensagem,
-        historico: opts.historico,
-        nome_contato: opts.nomeContato || undefined,
-        wa_id: opts.waId || undefined,
-        agendamento_atual: opts.agendamentoAtual ?? null,
-      }),
+      body: JSON.stringify(buildBridgeRequestBody(opts)),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
 

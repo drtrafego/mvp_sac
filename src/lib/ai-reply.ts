@@ -158,7 +158,7 @@ const productionDependencies: AiReplyDependencies = {
     return company
   },
   async readHistory(companyId, leadId) {
-    return db.select({ id: whatsappMessages.id, direction: whatsappMessages.direction, content: whatsappMessages.content, messageType: whatsappMessages.messageType, createdAt: whatsappMessages.createdAt, sendState: whatsappMessages.sendState, externalId: whatsappMessages.externalId })
+    return db.select({ id: whatsappMessages.id, direction: whatsappMessages.direction, content: whatsappMessages.content, messageType: whatsappMessages.messageType, mediaUrl: whatsappMessages.mediaUrl, createdAt: whatsappMessages.createdAt, sendState: whatsappMessages.sendState, externalId: whatsappMessages.externalId })
       .from(whatsappMessages).where(and(eq(whatsappMessages.companyId, companyId), eq(whatsappMessages.leadId, leadId), or(
         eq(whatsappMessages.direction, 'inbound'),
         and(eq(whatsappMessages.direction, 'outbound'), or(eq(whatsappMessages.sendState, 'accepted'), and(isNull(whatsappMessages.sendState), isNotNull(whatsappMessages.externalId)))),
@@ -169,6 +169,15 @@ const productionDependencies: AiReplyDependencies = {
     const [intent] = await db.select().from(whatsappMessages)
       .where(and(eq(whatsappMessages.companyId, companyId), eq(whatsappMessages.clientRequestId, requestId))).limit(1)
     return intent
+  },
+  async persistInboundAudioTranscription(companyId, messageId, transcription) {
+    await db.update(whatsappMessages).set({ content: transcription }).where(and(
+      eq(whatsappMessages.companyId, companyId),
+      eq(whatsappMessages.id, messageId),
+      eq(whatsappMessages.direction, 'inbound'),
+      eq(whatsappMessages.messageType, 'audio'),
+      sql`coalesce(btrim(${whatsappMessages.content}), '') = ''`,
+    ))
   },
   async persistSchedule(lead, state) {
     await db.update(recoveryLeads).set({ aiScheduleState: state })

@@ -5,6 +5,7 @@
 export const maxDuration = 180
 
 import { extractAdReferral } from '@/lib/whatsapp/ad-referral'
+import { extractAudioMedia } from '@/lib/whatsapp/audio-media'
 import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { db } from '@/lib/db'
@@ -105,6 +106,8 @@ function extractMeta(body: Record<string, unknown>) {
           messageType = 'image'
         } else if (type === 'audio') {
           messageType = 'audio'
+          const mediaId = extractAudioMedia(msg.audio)
+          if (mediaId) mediaUrl = `wa-media:${mediaId}`
         } else if (type === 'video') {
           messageType = 'video'
         } else if (type === 'document') {

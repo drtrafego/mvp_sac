@@ -71,6 +71,8 @@ export function MessageCard({ message, onEdit, onDelete, onToggle }: MessageCard
     preview = `Template: ${message.templateName}`
   } else if (message.content) {
     preview = message.content.slice(0, 80) + (message.content.length > 80 ? '...' : '')
+  } else if (msgType === 'audio' && message.mediaUrl?.startsWith('wa-media:')) {
+    preview = '🎤 Áudio recebido (aguardando transcrição)'
   } else if (message.mediaUrl) {
     preview = message.mediaUrl.slice(0, 60) + '...'
   }

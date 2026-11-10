@@ -3,12 +3,13 @@ import type { gerarResposta, Bot, HistoricoTurno } from './ai-bridge'
 import type { executarAcaoDetectada, AiScheduleState } from './agenda-actions'
 import type { detectarBotDoOutroLado } from './bot-detector'
 import type { sendOutboundForLead } from '@/lib/outbound-send'
+import { extractAudioMediaId } from '@/lib/whatsapp/audio-media'
 
 type Lead = typeof recoveryLeads.$inferSelect
 type Config = typeof settings.$inferSelect
 type Company = typeof companies.$inferSelect
 type Message = typeof whatsappMessages.$inferSelect
-export type AiReplyHistoryRow = Pick<Message, 'id' | 'direction' | 'content' | 'messageType' | 'createdAt' | 'sendState' | 'externalId'>
+export type AiReplyHistoryRow = Pick<Message, 'id' | 'direction' | 'content' | 'messageType' | 'mediaUrl' | 'createdAt' | 'sendState' | 'externalId'>
 
 /** The production handler and tests share this workflow. External effects are injected. */
 export interface AiReplyDependencies {
@@ -19,6 +20,7 @@ export interface AiReplyDependencies {
   readCompany(companyId: number): Promise<Company | undefined>
   readHistory(companyId: number, leadId: number): Promise<AiReplyHistoryRow[]>
   readIntent(companyId: number, requestId: string): Promise<Message | undefined>
+  persistInboundAudioTranscription?(companyId: number, messageId: number, transcription: string): Promise<void>
   persistSchedule(lead: Lead, state: AiScheduleState): Promise<void>
   schedulePortalTemplate?(lead: Lead, state: FunilCursosState): Promise<void>
   pauseIfUnchanged(lead: Lead, expectedVersion: number, reason: string): Promise<Lead | undefined>
@@ -127,7 +129,10 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
       const state: AiScheduleState = (lead.aiScheduleState as AiScheduleState) || {}
       const isFunilCursos = bot === 'bela' || (state as Record<string, unknown>)?.funnel_name === 'funil_cursos'
       let currentFunnelState: FunilCursosState | undefined
-      let outgoingMessage = textOf(current)
+      const audioMediaId = current.direction === 'inbound' && !current.content?.trim()
+        ? extractAudioMediaId(current.mediaUrl)
+        : null
+      let outgoingMessage = audioMediaId ? '[áudio recebido]' : textOf(current)
 
       if (isFunilCursos) {
         const existingFunnel = (state as Record<string, unknown>)?.funnel_name === 'funil_cursos'
@@ -142,8 +147,9 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
           humanTakeover: lead.botPaused || Boolean(lead.humanOwnerMemberId),
         })
 
-        // Injeta [FUNIL_CURSOS] antes de cada resposta conforme especificação
-        outgoingMessage = `${formatFunilCursosContext(currentFunnelState)}\n\n${textOf(current)}`
+        // Áudios precisam manter o contrato exato da ponte, que pede a mídia
+        // pelo id; os demais turnos continuam recebendo o contexto do funil.
+        if (!audioMediaId) outgoingMessage = `${formatFunilCursosContext(currentFunnelState)}\n\n${textOf(current)}`
       }
 
       const history: HistoricoTurno[] = previous.map(row => ({ role: row.direction === 'inbound' ? 'lead' : 'bot', text: textOf(row) }))
@@ -154,6 +160,7 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
         nomeContato: lead.name || '',
         waId: lead.phone,
         agendamentoAtual: currentFunnelState ? (currentFunnelState as unknown as Record<string, unknown>) : Object.keys(state).length ? state : null,
+        ...(audioMediaId ? { audioMediaId, phoneNumberId: config.metaPhoneNumberId || undefined } : {}),
       })
       await audit({
         type: 'ai_reply_interpreted',
@@ -165,6 +172,9 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
           actionType: generated.ok ? generated.resposta.acao_detectada?.tipo ?? null : null,
         },
       })
+      if (generated.ok && audioMediaId && generated.resposta.transcricao) {
+        await deps.persistInboundAudioTranscription?.(lead.companyId, current.id, generated.resposta.transcricao)
+      }
       if (!generated.ok || !await controlAllowsEffects()) return
       const envelope = generated.resposta
       if (envelope.status === 'sem_resposta') return

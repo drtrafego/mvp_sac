@@ -84,6 +84,9 @@ export function MessageBubble({
 
   const [copiedTranscription, setCopiedTranscription] = useState(false)
   const isAudio = message.messageType === 'audio' || media.some(m => m.kind === 'audio')
+  const audioUrl = message.mediaUrl?.startsWith('wa-media:')
+    ? undefined
+    : message.mediaUrl || media.find(m => m.kind === 'audio')?.file
 
   function handleCopyTranscription() {
     if (!text) return
@@ -154,15 +157,12 @@ export function MessageBubble({
         {/* Áudio Original + Transcrição Revisável */}
         {isAudio && (
           <div className="my-2 space-y-2">
-            <div className="bg-surface-base border border-line-subtle rounded-xl p-2 flex items-center gap-2">
-              <Volume2 className="size-4 text-brand-ink shrink-0" />
-              <audio
-                controls
-                preload="none"
-                src={message.mediaUrl || media.find(m => m.kind === 'audio')?.file}
-                className="h-7 w-52 max-w-full"
-              />
-            </div>
+            {audioUrl && (
+              <div className="bg-surface-base border border-line-subtle rounded-xl p-2 flex items-center gap-2">
+                <Volume2 className="size-4 text-brand-ink shrink-0" />
+                <audio controls preload="none" src={audioUrl} className="h-7 w-52 max-w-full" />
+              </div>
+            )}
 
             {text ? (
               <div className="bg-surface-base/80 border border-brand-solid/30 rounded-xl p-2.5 text-[0.875rem] leading-relaxed">
@@ -187,13 +187,13 @@ export function MessageBubble({
                   </div>
                 </div>
                 <p className="whitespace-pre-wrap break-words select-text text-fg text-[13px] leading-relaxed">
-                  {text}
+                  🎤 {text}
                 </p>
               </div>
             ) : (
               <div className="flex items-center gap-1.5 text-[11px] text-fg-faint italic px-1">
                 <Mic className="size-3 shrink-0" />
-                <span>Áudio recebido sem transcrição textual</span>
+                <span>🎤 Áudio recebido (aguardando transcrição)</span>
               </div>
             )}
           </div>
