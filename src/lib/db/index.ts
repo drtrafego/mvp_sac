@@ -2,11 +2,15 @@ import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
 import { randomBytes } from 'crypto'
 import * as schema from './schema'
+import { createNeonDbPair } from './neon-client'
 import { NINA_SOUL } from '../souls/nina'
 
 type Db = ReturnType<typeof drizzle<typeof schema>>
 
 let _db: Db | undefined
+let _rawDb: Db | undefined
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _rawClient: any
 let _migrationPromise: Promise<void> | null = null
 
 // ─── Consolidação AutonomIA: transferência + delete ATÔMICOS ─────────────────
@@ -1291,23 +1295,17 @@ export const db = new Proxy({} as Db, {
     if (!_db) {
       const rawClient: any = neon(process.env.DATABASE_URL!)
 
-      const wrappedClient = new Proxy(rawClient, {
-        apply(target, thisArg, argArray) {
-          return ensureSchema(rawClient).then(() => Reflect.apply(target, thisArg, argArray))
-        },
-        get(target, p, receiver) {
-          if (p === 'query') {
-            const orig = typeof target.query === 'function' ? target.query.bind(target) : target.bind(target)
-            return async function (...args: any[]) {
-              await ensureSchema(rawClient)
-              return orig(...args)
-            }
-          }
-          return Reflect.get(target, p, receiver)
-        },
-      })
-
-      _db = drizzle(wrappedClient, { schema })
+      const pair = createNeonDbPair(rawClient, ensureSchema)
+      _db = pair.wrapped
+      _rawDb = pair.raw
+      _rawClient = rawClient
+    }
+    if (prop === 'batch') {
+      // batch precisa do cliente neon sem embrulho (ver neon-client.ts).
+      return async (queries: Parameters<Db['batch']>[0]) => {
+        await ensureSchema(_rawClient)
+        return _rawDb!.batch(queries)
+      }
     }
     return Reflect.get(_db, prop)
   },
