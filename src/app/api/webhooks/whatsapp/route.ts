@@ -4,6 +4,7 @@
 // finally que libera o lock de concorrência nunca roda.
 export const maxDuration = 180
 
+import { extractAdReferral } from '@/lib/whatsapp/ad-referral'
 import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { db } from '@/lib/db'
@@ -111,7 +112,7 @@ function extractMeta(body: Record<string, unknown>) {
         }
         const contacts = (value.contacts as Record<string, unknown>[]) ?? []
         const name = contacts[0] ? (contacts[0].profile as Record<string, string>)?.name ?? null : null
-        return { phone: normalizePhone(from), name, content, mediaUrl, messageType, externalId: msg.id as string | null, phoneNumberId, optOutRequested, provider: 'meta' as const }
+        return { phone: normalizePhone(from), name, content, mediaUrl, messageType, externalId: msg.id as string | null, phoneNumberId, optOutRequested, referral: extractAdReferral(msg), provider: 'meta' as const }
       }
     }
   }
@@ -248,6 +249,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (!parsed || !parsed.phone) return NextResponse.json({ ok: true, skipped: true })
 
     const { phone, name, content, mediaUrl, messageType, externalId, optOutRequested } = parsed
+    const adReferral = 'referral' in parsed ? parsed.referral : null
 
     let companyId: number | null = null
 
@@ -299,7 +301,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         channel: 'whatsapp',
         eventType: 'atendimento',
         status: 'in_conversation',
-        trackingSource: 'whatsapp_direto',
+        trackingSource: adReferral ? 'meta_ads' : 'whatsapp_direto',
+        ...(adReferral ? { metaAdId: adReferral.metaAdId, adName: adReferral.adName, utmMedium: 'whatsapp' } : {}),
       })
       .onConflictDoUpdate({
         target: [recoveryLeads.companyId, recoveryLeads.phone],
@@ -314,6 +317,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           lastActionAt: new Date(),
           status: 'in_conversation',
           ...(name ? { name: sql`COALESCE(NULLIF(${recoveryLeads.name}, ''), ${name})` } : {}),
+          // Anúncio Click-to-WhatsApp só marca origem quando o lead ainda era
+          // "direto"/sem origem: não apaga mineração nem outra origem real.
+          ...(adReferral ? {
+            trackingSource: sql`CASE WHEN ${recoveryLeads.trackingSource} IS NULL OR ${recoveryLeads.trackingSource} = 'whatsapp_direto' THEN 'meta_ads' ELSE ${recoveryLeads.trackingSource} END`,
+            metaAdId: sql`COALESCE(${recoveryLeads.metaAdId}, ${adReferral.metaAdId})`,
+            adName: sql`COALESCE(NULLIF(${recoveryLeads.adName}, ''), ${adReferral.adName})`,
+          } : {}),
         },
       })
       .returning()
