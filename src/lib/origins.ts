@@ -156,7 +156,7 @@ export function normalizeOrigin(
   // mineração já venceu acima, e só depois tráfego pago vence colisões com
   // canais orgânicos como "instagram_ads_agosto". Todas as buscas novas usam
   // a borda à esquerda (`hasWordBoundary`), não `.includes()` solto.
-  if (combined.includes('instagram_ad') || combined.includes('ig_ad') || hasGoogleAdsSignal() || hasMetaAdsSignal()) {
+  if (((combined.includes('instagram_ad') || combined.includes('ig_ad')) && !hasWordBoundary('unattributed')) || hasGoogleAdsSignal() || hasMetaAdsSignal()) {
     if (hasGoogleAdsSignal()) {
       return {
         key: 'google_ads',

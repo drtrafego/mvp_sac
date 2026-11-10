@@ -2380,13 +2380,16 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const referralWindowEnd = new Date(referralAt.getTime() + 72 * 60 * 60 * 1000)
 
             const updated = await db.update(recoveryLeads).set({
-              trackingSource: sql`CASE WHEN ${recoveryLeads.trackingSource} IS NULL OR ${recoveryLeads.trackingSource} IN ('whatsapp_direto', 'meta_messaging_unattributed', 'agente_ia', 'meta_ads') THEN 'meta_ads' ELSE ${recoveryLeads.trackingSource} END`,
+              trackingSource: 'meta_ads',
               utmCampaign: r.campaign_name || undefined,
               adsetName: r.adset_name || undefined,
               adName: r.ad_name || undefined,
               updatedAt: new Date(),
             }).where(and(
               eq(recoveryLeads.companyId, company.id),
+              // Só origem genérica/sem origem recebe a atribuição CTWA: mineração,
+              // Instagram nativo e outras origens reais ficam intactas (campos e contagem).
+              sql`(${recoveryLeads.trackingSource} IS NULL OR ${recoveryLeads.trackingSource} IN ('whatsapp_direto', 'meta_messaging_unattributed', 'agente_ia', 'meta_ads'))`,
               sql`right(regexp_replace(${recoveryLeads.phone}, '[^0-9]', '', 'g'), 9) = right(${norm}, 9)`,
               sql`coalesce(${recoveryLeads.firstContactAt}, ${recoveryLeads.createdAt}) between ${referralWindowStart.toISOString()}::timestamp and ${referralWindowEnd.toISOString()}::timestamp`
             )).returning({ id: recoveryLeads.id })

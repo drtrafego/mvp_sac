@@ -55,7 +55,13 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
   if (body.eventType !== undefined) updateData.eventType = String(body.eventType)
   if (body.paymentType !== undefined) updateData.paymentType = body.paymentType ? String(body.paymentType) : null
   if (body.platform !== undefined) updateData.platform = body.platform ? String(body.platform) : null
-  if (body.trackingSource !== undefined) updateData.trackingSource = body.trackingSource ? String(body.trackingSource) : null
+  if (body.trackingSource !== undefined) {
+    const nextSource = body.trackingSource ? String(body.trackingSource).trim() : null
+    if (nextSource !== null && !/^[A-Za-z0-9_.\- ]{1,80}$/.test(nextSource)) {
+      return NextResponse.json({ error: 'Origem inválida.' }, { status: 400 })
+    }
+    updateData.trackingSource = nextSource
+  }
   if (body.utmMedium !== undefined) updateData.utmMedium = body.utmMedium ? String(body.utmMedium) : null
   if (body.notes !== undefined) updateData.notes = body.notes ? String(body.notes) : null
 
