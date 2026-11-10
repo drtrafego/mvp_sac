@@ -35,3 +35,9 @@ test('template sem HEADER DOCUMENT não exige campos de documento', () => {
 
   assert.deepEqual(result, { isValid: true, linkError: null, filenameError: null })
 })
+
+test('quebra de linha no fim do nome ou do link é recusada (igual ao servidor)', () => {
+  assert.equal(validateTemplateHeaderDocument({ link: 'https://example.com/a.pdf', filename: 'Material.pdf\n' }, true).isValid, false)
+  assert.equal(validateTemplateHeaderDocument({ link: 'https://example.com/a.pdf\n', filename: 'Material.pdf' }, true).isValid, false)
+  assert.equal(validateTemplateHeaderDocument({ link: 'https://example.com/a.pdf', filename: 'Material.pdf' }, true).isValid, true)
+})

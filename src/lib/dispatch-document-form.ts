@@ -27,8 +27,9 @@ export function validateTemplateHeaderDocument(
     return { isValid: true, linkError: null, filenameError: null }
   }
 
-  const link = document.link.trim()
-  const filename = document.filename.trim()
+  // Só espaços simples nas pontas são removidos; quebra de linha/tab NÃO: o valor validado é o que o servidor recebe.
+  const link = document.link.replace(/^ +| +$/g, '')
+  const filename = document.filename.replace(/^ +| +$/g, '')
   const linkError = !link
     ? 'Informe o link público do PDF.'
     : !isSafeHeaderDocumentLink(link)
