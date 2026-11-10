@@ -88,6 +88,7 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
   const [pipelineStage, setPipelineStage] = useState("")
   const [paymentType, setPaymentType] = useState("pix")
   const [trackingSource, setTrackingSource] = useState("indicacao")
+  const [trackingSourceTouched, setTrackingSourceTouched] = useState(false)
   const [utmMedium, setUtmMedium] = useState("indicacao")
   const [platform, setPlatform] = useState("")
   const [notes, setNotes] = useState("")
@@ -116,6 +117,7 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
     setPipelineStage(lead.pipelineStage || "")
     setPaymentType(lead.paymentType || "pix")
     setTrackingSource(lead.trackingSource || "indicacao")
+    setTrackingSourceTouched(false)
     setUtmMedium(lead.utmMedium || "indicacao")
     setPlatform(lead.platform || "")
     setNotes(lead.notes || "")
@@ -158,7 +160,7 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
           pipelineStage: pipelineStage || undefined,
           paymentType,
           // Só envia a origem se a pessoa mudou: lead sem origem não vira "Indicação" por editar outro campo.
-          ...(trackingSource !== (lead?.trackingSource || "indicacao") ? { trackingSource } : {}),
+          ...(trackingSourceTouched ? { trackingSource } : {}),
           utmMedium,
           platform: platform.trim() || null,
           notes: notes.trim() || null,
@@ -358,7 +360,7 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
                 <Label className="text-micro font-semibold text-fg flex items-center gap-1.5">
                   <Compass size={13} className="text-blue-400" /> Origem
                 </Label>
-                <Select value={trackingSource} onValueChange={(v) => v && setTrackingSource(v)} items={SOURCE_OPTIONS}>
+                <Select value={trackingSource} onValueChange={(v) => { if (v) { setTrackingSource(v); setTrackingSourceTouched(true) } }} items={SOURCE_OPTIONS}>
                   <SelectTrigger className="bg-surface-inset border-line-subtle h-10 text-xs sm:text-sm w-full font-medium">
                     <SelectValue />
                   </SelectTrigger>
