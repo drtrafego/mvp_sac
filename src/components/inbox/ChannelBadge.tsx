@@ -222,12 +222,14 @@ export function parseOriginItem(raw: string | null | undefined): OriginItem | nu
   }
 
   if (
+    !norm.includes('unattributed') && (
     norm.includes('meta') ||
     norm.includes('facebook') ||
     norm.includes('fb') ||
     norm.includes('anuncio') ||
     norm.includes('anúncio') ||
     (norm.includes('ads') && !norm.includes('google'))
+    )
   ) {
     const label = norm.includes('lucas') ? 'Meta Ads Dr. Lucas' : norm.includes('insta') ? 'Instagram Ads' : 'Meta Ads'
     return {

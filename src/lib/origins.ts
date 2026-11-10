@@ -63,6 +63,7 @@ export function normalizeOrigin(
     hasAnyWordBoundary(['google_ads', 'gclid', 'adwords', 'gads', 'google'])
 
   const hasMetaAdsSignal = () =>
+    !hasWordBoundary('unattributed') &&
     hasAnyWordBoundary(['meta_ads', 'fb_ads', 'facebook_ads', 'meta', 'facebook', 'fb', 'anuncio', 'ads'])
 
   // Regra prioritária de proteção médica / Dr. Lucas: NUNCA é Mineração

@@ -48,6 +48,9 @@ interface CategoryRule {
   channelEquals?: string
   platformEquals?: string
   trackingIncludes: string[]
+  // Origem que anula só os sinais de trackingSource (ex.: 'unattributed' = a Meta
+  // não atribuiu a nenhum anúncio; começa com 'meta' mas NÃO é anúncio).
+  trackingExcludes?: string[]
   phonePrefix?: string
 }
 
@@ -137,6 +140,7 @@ const CATEGORY_RULES: CategoryRule[] = [
       'ads',
       'instagram_ad',
     ],
+    trackingExcludes: ['unattributed'],
   },
   {
     name: 'email',
@@ -257,7 +261,9 @@ function ruleConditionSql(rule: CategoryRule): SQL {
   for (const needle of rule.trackingIncludes) {
     // ~* = regex POSIX case-insensitive (Postgres já case-fold a classe
     // [^a-z] sob ~*, confirmado com teste direto contra o banco).
-    parts.push(sql`${trackingSource} ~* ${wordBoundaryPattern(needle)}`)
+    const hit = sql`${trackingSource} ~* ${wordBoundaryPattern(needle)}`
+    const excluded = (rule.trackingExcludes ?? []).map(ex => sql`coalesce(${trackingSource} ~* ${wordBoundaryPattern(ex)}, false)`)
+    parts.push(excluded.length ? sql`(${hit} and not (${or(...excluded)}))` : hit)
   }
   if (rule.phonePrefix) {
     parts.push(sql`left(lower(${phone}), ${rule.phonePrefix.length}) = ${rule.phonePrefix}`)
@@ -373,7 +379,8 @@ function matchesRule(rule: CategoryRule, fields: ChannelFields): boolean {
 
   if (rule.channelEquals && ch === rule.channelEquals) return true
   if (rule.platformEquals && pl === rule.platformEquals) return true
-  if (rule.trackingIncludes.some(needle => matchesWordBoundary(src, needle))) return true
+  const trackingExcluded = (rule.trackingExcludes ?? []).some(needle => matchesWordBoundary(src, needle))
+  if (!trackingExcluded && rule.trackingIncludes.some(needle => matchesWordBoundary(src, needle))) return true
   if (rule.phonePrefix && phone.startsWith(rule.phonePrefix)) return true
   return false
 }
