@@ -157,7 +157,8 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
           status,
           pipelineStage: pipelineStage || undefined,
           paymentType,
-          trackingSource,
+          // Só envia a origem se a pessoa mudou: lead sem origem não vira "Indicação" por editar outro campo.
+          ...(trackingSource !== (lead?.trackingSource || "indicacao") ? { trackingSource } : {}),
           utmMedium,
           platform: platform.trim() || null,
           notes: notes.trim() || null,
