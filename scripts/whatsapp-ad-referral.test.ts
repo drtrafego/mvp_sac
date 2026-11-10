@@ -11,7 +11,8 @@ test('sem referral, post orgânico ou lixo: não é anúncio', () => {
   assert.equal(extractAdReferral({}), null)
   assert.equal(extractAdReferral(null), null)
   assert.equal(extractAdReferral({ referral: [] }), null)
-  assert.equal(extractAdReferral({ referral: { source_type: 'post', source_id: '123456', ctwa_clid: 'x' } }), null)
+  assert.equal(extractAdReferral({ referral: { source_type: 'post', source_id: '123456' } }), null)
+  assert.equal(extractAdReferral({ referral: { source_type: 'post', source_id: '123456', ctwa_clid: 'x' } })?.metaAdId, '123456')
   assert.equal(extractAdReferral({ referral: { source_type: 'other' } }), null)
 })
 

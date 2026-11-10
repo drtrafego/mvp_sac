@@ -320,9 +320,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           // Anúncio Click-to-WhatsApp só marca origem quando o lead ainda era
           // "direto"/sem origem: não apaga mineração nem outra origem real.
           ...(adReferral ? {
-            trackingSource: sql`CASE WHEN ${recoveryLeads.trackingSource} IS NULL OR ${recoveryLeads.trackingSource} = 'whatsapp_direto' THEN 'meta_ads' ELSE ${recoveryLeads.trackingSource} END`,
-            metaAdId: sql`COALESCE(${recoveryLeads.metaAdId}, ${adReferral.metaAdId})`,
-            adName: sql`COALESCE(NULLIF(${recoveryLeads.adName}, ''), ${adReferral.adName})`,
+            trackingSource: sql`CASE WHEN ${recoveryLeads.trackingSource} IS NULL OR ${recoveryLeads.trackingSource} IN ('whatsapp_direto', 'meta_messaging_unattributed', 'agente_ia') THEN 'meta_ads' ELSE ${recoveryLeads.trackingSource} END`,
+            metaAdId: sql`CASE WHEN ${recoveryLeads.trackingSource} IS NULL OR ${recoveryLeads.trackingSource} IN ('whatsapp_direto', 'meta_messaging_unattributed', 'agente_ia', 'meta_ads') THEN COALESCE(${recoveryLeads.metaAdId}, ${adReferral.metaAdId}) ELSE ${recoveryLeads.metaAdId} END`,
+            adName: sql`CASE WHEN ${recoveryLeads.trackingSource} IS NULL OR ${recoveryLeads.trackingSource} IN ('whatsapp_direto', 'meta_messaging_unattributed', 'agente_ia', 'meta_ads') THEN COALESCE(NULLIF(${recoveryLeads.adName}, ''), ${adReferral.adName}) ELSE ${recoveryLeads.adName} END`,
           } : {}),
         },
       })

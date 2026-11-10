@@ -22,9 +22,9 @@ export function extractAdReferral(message: unknown): WhatsAppAdReferral | null {
   const referral = raw as Record<string, unknown>
   const sourceType = clean(referral.source_type, 20)?.toLowerCase() ?? null
   const ctwaClid = clean(referral.ctwa_clid, 300)
-  // Publicação orgânica ("post") não é anúncio pago.
-  if (sourceType === 'post') return null
-  if (sourceType !== 'ad' && !ctwaClid) return null
+  // ctwa_clid só existe em clique de anúncio Click-to-WhatsApp, inclusive quando
+  // source_type é "post" (publicação impulsionada). Sem clid, só "ad" vale.
+  if (!ctwaClid && sourceType !== 'ad') return null
   const sourceId = clean(referral.source_id, 40)
   return {
     metaAdId: sourceId && /^\d{5,40}$/.test(sourceId) ? sourceId : null,

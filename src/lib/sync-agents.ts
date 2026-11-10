@@ -2380,7 +2380,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const referralWindowEnd = new Date(referralAt.getTime() + 72 * 60 * 60 * 1000)
 
             const updated = await db.update(recoveryLeads).set({
-              trackingSource: 'meta_ads',
+              trackingSource: sql`CASE WHEN ${recoveryLeads.trackingSource} IS NULL OR ${recoveryLeads.trackingSource} IN ('whatsapp_direto', 'meta_messaging_unattributed', 'agente_ia', 'meta_ads') THEN 'meta_ads' ELSE ${recoveryLeads.trackingSource} END`,
               utmCampaign: r.campaign_name || undefined,
               adsetName: r.adset_name || undefined,
               adName: r.ad_name || undefined,
