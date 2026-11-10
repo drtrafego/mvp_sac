@@ -5,6 +5,7 @@ import { eq, and } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { nullableDate, SacInputError } from '@/lib/sac-access'
 import { followupDayToIso } from '@/lib/sac-followup-date'
+import { EDITABLE_LEAD_SOURCES } from '@/lib/lead-origins'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -57,8 +58,18 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
   if (body.platform !== undefined) updateData.platform = body.platform ? String(body.platform) : null
   if (body.trackingSource !== undefined) {
     const nextSource = body.trackingSource ? String(body.trackingSource).trim() : null
-    if (nextSource !== null && !/^[A-Za-z0-9_.\- ]{1,80}$/.test(nextSource)) {
-      return NextResponse.json({ error: 'Origem inválida.' }, { status: 400 })
+    if (nextSource !== null && !(EDITABLE_LEAD_SOURCES as readonly string[]).includes(nextSource)) {
+      // Origens automáticas (whatsapp_direto, meta_ads com campanha, mineração
+      // etc.) não estão na lista editável: o formulário reenvia o valor atual,
+      // então só se aceita um valor fora da lista se for IGUAL ao já gravado.
+      const [current] = await db
+        .select({ trackingSource: recoveryLeads.trackingSource })
+        .from(recoveryLeads)
+        .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, company.id)))
+      if (!current) return NextResponse.json({ error: 'Lead não encontrado' }, { status: 404 })
+      if (current.trackingSource !== nextSource) {
+        return NextResponse.json({ error: 'Origem inválida.' }, { status: 400 })
+      }
     }
     updateData.trackingSource = nextSource
   }

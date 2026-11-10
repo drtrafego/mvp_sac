@@ -116,7 +116,7 @@ function getLeadOriginBadge(lead: KanbanLead) {
   }
 
   // 2. Meta Ads / Tráfego Pago
-  if (((src.includes('meta') && !src.includes('unattributed')) || src.includes('facebook') || src.includes('ads') || lead.utmCampaign) && !seenKeys.has('meta')) {
+  if (!src.includes('unattributed') && (src.includes('meta') || src.includes('facebook') || src.includes('ads') || lead.utmCampaign) && !seenKeys.has('meta')) {
     seenKeys.add('meta')
     const label = lead.utmCampaign ? lead.utmCampaign.slice(0, 18) : (lead.trackingSource || 'Meta Ads')
     badges.push(
@@ -392,7 +392,7 @@ export function KanbanBoard({
         const src = (lead.trackingSource || '').toLowerCase()
         const plat = (lead.platform || '').toLowerCase()
 
-        if (filterOrigin === 'meta' && !(src.includes('meta') && !src.includes('unattributed')) && !src.includes('facebook') && !lead.utmCampaign) return false
+        if (filterOrigin === 'meta' && (src.includes('unattributed') || (!src.includes('meta') && !src.includes('facebook') && !lead.utmCampaign))) return false
         if (filterOrigin === 'google' && !src.includes('google')) return false
         if (filterOrigin === 'checkout' && !plat.includes('hotmart') && !plat.includes('kiwify') && !plat.includes('greenn') && !plat.includes('zouti')) return false
       }
