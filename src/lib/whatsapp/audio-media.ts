@@ -16,3 +16,12 @@ export function extractAudioMediaId(mediaUrl: string | null | undefined): string
   const id = mediaUrl.slice('wa-media:'.length)
   return META_MEDIA_ID.test(id) ? id : null
 }
+
+/**
+ * Returns the authenticated SAC audio endpoint for an internally stored Meta
+ * media marker. The marker itself must never be exposed as an audio source.
+ */
+export function audioPlayerUrl(messageId: number | null | undefined, mediaUrl: string | null | undefined): string | null {
+  if (typeof messageId !== 'number' || !Number.isSafeInteger(messageId) || messageId <= 0 || !extractAudioMediaId(mediaUrl)) return null
+  return `/api/inbox/messages/${messageId}/audio`
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test, mock } from 'node:test'
-import { extractAudioMedia, extractAudioMediaId } from '../src/lib/whatsapp/audio-media'
+import { audioPlayerUrl, extractAudioMedia, extractAudioMediaId } from '../src/lib/whatsapp/audio-media'
 
 mock.module('@/lib/db', { namedExports: { db: {} } })
 
@@ -13,6 +13,15 @@ test('extrai somente ids de mídia de áudio Meta válidos', () => {
   assert.equal(extractAudioMedia(null), null)
   assert.equal(extractAudioMediaId('wa-media:12345'), '12345')
   assert.equal(extractAudioMediaId('wa-media:invalid'), null)
+})
+
+test('monta URL do player somente para mensagem e marcador Meta válidos', () => {
+  assert.equal(audioPlayerUrl(42, 'wa-media:12345'), '/api/inbox/messages/42/audio')
+  assert.equal(audioPlayerUrl(0, 'wa-media:12345'), null)
+  assert.equal(audioPlayerUrl(-1, 'wa-media:12345'), null)
+  assert.equal(audioPlayerUrl(42.5, 'wa-media:12345'), null)
+  assert.equal(audioPlayerUrl(42, 'wa-media:invalido'), null)
+  assert.equal(audioPlayerUrl(42, 'https://example.test/audio.ogg'), null)
 })
 
 async function main() {

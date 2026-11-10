@@ -4,6 +4,7 @@ import React, { useState } from 'react'
 import { User, Bot, UserCog, FileText, Volume2, Brain, Mail, Mic, Copy, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { cleanMessage } from '@/lib/clean-content'
+import { audioPlayerUrl } from '@/lib/whatsapp/audio-media'
 import { ChannelIcon } from './ChannelBadge'
 
 export interface InboxMessage {
@@ -83,10 +84,11 @@ export function MessageBubble({
       : 'Atendente Humano'
 
   const [copiedTranscription, setCopiedTranscription] = useState(false)
+  const [audioUnavailable, setAudioUnavailable] = useState(false)
   const isAudio = message.messageType === 'audio' || media.some(m => m.kind === 'audio')
-  const audioUrl = message.mediaUrl?.startsWith('wa-media:')
-    ? undefined
-    : message.mediaUrl || media.find(m => m.kind === 'audio')?.file
+  const proxyAudioUrl = isInbound ? audioPlayerUrl(message.id, message.mediaUrl) : null
+  const audioUrl = proxyAudioUrl
+    ?? (message.mediaUrl?.startsWith('wa-media:') ? undefined : message.mediaUrl || media.find(m => m.kind === 'audio')?.file)
 
   function handleCopyTranscription() {
     if (!text) return
@@ -157,11 +159,15 @@ export function MessageBubble({
         {/* Áudio Original + Transcrição Revisável */}
         {isAudio && (
           <div className="my-2 space-y-2">
-            {audioUrl && (
+            {audioUrl && !audioUnavailable && (
               <div className="bg-surface-base border border-line-subtle rounded-xl p-2 flex items-center gap-2">
                 <Volume2 className="size-4 text-brand-ink shrink-0" />
-                <audio controls preload="none" src={audioUrl} className="h-7 w-52 max-w-full" />
+                <audio controls preload="none" src={audioUrl} onError={() => setAudioUnavailable(true)} className="h-7 w-52 max-w-full" />
               </div>
+            )}
+
+            {audioUnavailable && (
+              <p className="text-[11px] text-fg-faint italic px-1">{proxyAudioUrl ? 'Áudio indisponível (a Meta guarda a mídia por 30 dias).' : 'Não foi possível carregar o áudio.'}</p>
             )}
 
             {text ? (
