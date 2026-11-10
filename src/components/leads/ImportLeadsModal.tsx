@@ -23,9 +23,10 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import type { MetaTemplate } from '@/lib/whatsapp/meta'
-import { extractBodyPlaceholders, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
+import { extractBodyPlaceholders, hasDocumentHeader, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
 import { SUPPORTED_VARIABLES, interpolateVariable } from '@/lib/lead-template-variables'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
+import { validateTemplateHeaderDocument } from '@/lib/dispatch-document-form'
 
 interface ImportLeadsModalProps {
   open: boolean
@@ -166,6 +167,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
   const [selectedTemplateName, setSelectedTemplateName] = useState('')
   const [selectedTemplateLanguage, setSelectedTemplateLanguage] = useState('')
   const [templateVariablesMap, setTemplateVariablesMap] = useState<Record<string, string>>({})
+  const [templateHeaderDocument, setTemplateHeaderDocument] = useState({ link: '', filename: '' })
 
   // Resultados
   const [importResult, setImportResult] = useState<{
@@ -237,7 +239,9 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     metaTemplateKey(template.name, template.language) === metaTemplateKey(selectedTemplateName, selectedTemplateLanguage)
   ) ?? null, [metaTemplates, selectedTemplateName, selectedTemplateLanguage])
   const templatePlaceholders = useMemo(() => selectedTemplate ? extractBodyPlaceholders(selectedTemplate.components ?? []) : [], [selectedTemplate])
-  const templateHasUnsupportedComponents = selectedTemplate ? hasUnsupportedDynamicComponents(selectedTemplate.components ?? []) : false
+  const templateHasDocumentHeader = selectedTemplate ? hasDocumentHeader(selectedTemplate.components ?? []) : false
+  const templateHasUnsupportedComponents = selectedTemplate ? hasUnsupportedDynamicComponents(selectedTemplate.components ?? [], { allowDocumentHeader: true }) : false
+  const templateHeaderDocumentValidation = useMemo(() => validateTemplateHeaderDocument(templateHeaderDocument, templateHasDocumentHeader), [templateHeaderDocument, templateHasDocumentHeader])
   const selectedTemplateBody = useMemo(() => {
     const body = selectedTemplate?.components.find(component =>
       component !== null && typeof component === 'object' && !Array.isArray(component)
@@ -287,6 +291,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
   }, [csvLeads, templatePlaceholders, templateVariablesMap])
 
   const hasCompleteTemplateMapping = templatePlaceholders.every(index => Boolean(templateVariablesMap[String(index)]?.trim()))
+  const hasCompleteTemplateSelection = hasCompleteTemplateMapping && templateHeaderDocumentValidation.isValid
 
   const continueToTemplate = () => {
     if (!phoneCol) {
@@ -337,7 +342,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       alert('Por favor, selecione a coluna correspondente ao Telefone / WhatsApp.')
       return
     }
-    if (createMassDispatch && (!selectedTemplate || !hasCompleteTemplateMapping || templateHasUnsupportedComponents)) {
+    if (createMassDispatch && (!selectedTemplate || !hasCompleteTemplateSelection || templateHasUnsupportedComponents)) {
       alert('Selecione um template aprovado e mapeie todas as suas variáveis antes de importar.')
       return
     }
@@ -345,6 +350,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       templateName: selectedTemplateName,
       templateLanguage: selectedTemplateLanguage,
       templateVariablesMap,
+      ...(templateHasDocumentHeader && templateHeaderDocumentValidation.value ? { templateHeaderDocument: templateHeaderDocumentValidation.value } : {}),
     }).success) {
       alert('Revise o mapeamento das variáveis do template.')
       return
@@ -403,6 +409,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
             templateName: selectedTemplateName,
             templateLanguage: selectedTemplateLanguage,
             templateVariablesMap,
+            ...(templateHasDocumentHeader && templateHeaderDocumentValidation.value ? { templateHeaderDocument: templateHeaderDocumentValidation.value } : {}),
           } : undefined,
           tag: batchTag.trim() || undefined,
           scopeChannel: batchTag.trim() && tagScopeChannel ? tagScopeChannel : undefined,
@@ -493,6 +500,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     setSelectedTemplateName('')
     setSelectedTemplateLanguage('')
     setTemplateVariablesMap({})
+    setTemplateHeaderDocument({ link: '', filename: '' })
     setImportResult(null)
     setDispatchPreview(null)
     setDispatchConfirmed(false)
@@ -1093,6 +1101,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                       setSelectedTemplateName(template?.name ?? '')
                       setSelectedTemplateLanguage(template?.language ?? '')
                       setTemplateVariablesMap({})
+                      setTemplateHeaderDocument({ link: '', filename: '' })
                     }}
                     items={{ __none__: 'Selecione o template...', ...Object.fromEntries(metaTemplates.map(template => [metaTemplateKey(template.name, template.language), `${template.name} (${template.language})`])) }}
                   >
@@ -1117,7 +1126,9 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                       <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-body text-amber-300">
                         Este template usa componentes dinâmicos no cabeçalho ou botões que ainda não são suportados.
                       </div>
-                    ) : templatePlaceholders.map(index => {
+                    ) : <>
+                      {templateHasDocumentHeader && <div className="grid grid-cols-1 gap-3 rounded-[var(--r-md)] border border-line-subtle bg-surface-panel p-3 sm:grid-cols-2"><div className="space-y-1"><label className="text-micro font-bold text-fg" htmlFor="import-template-document-link">Link do PDF (https público) *</label><Input id="import-template-document-link" type="url" value={templateHeaderDocument.link} onChange={event => setTemplateHeaderDocument(previous => ({ ...previous, link: event.target.value }))} aria-invalid={Boolean(templateHeaderDocumentValidation.linkError)} aria-describedby={templateHeaderDocumentValidation.linkError ? 'import-template-document-link-error' : undefined} placeholder="https://exemplo.com/Material.pdf" className={cn(FIELD, CONTROL_H, 'text-body')} />{templateHeaderDocumentValidation.linkError && <p id="import-template-document-link-error" className="text-micro text-rose-300">{templateHeaderDocumentValidation.linkError}</p>}</div><div className="space-y-1"><label className="text-micro font-bold text-fg" htmlFor="import-template-document-filename">Nome do arquivo (ex.: Material.pdf) *</label><Input id="import-template-document-filename" value={templateHeaderDocument.filename} onChange={event => setTemplateHeaderDocument(previous => ({ ...previous, filename: event.target.value }))} aria-invalid={Boolean(templateHeaderDocumentValidation.filenameError)} aria-describedby={templateHeaderDocumentValidation.filenameError ? 'import-template-document-filename-error' : undefined} placeholder="Material.pdf" className={cn(FIELD, CONTROL_H, 'text-body')} />{templateHeaderDocumentValidation.filenameError && <p id="import-template-document-filename-error" className="text-micro text-rose-300">{templateHeaderDocumentValidation.filenameError}</p>}</div></div>}
+                      {templatePlaceholders.map(index => {
                       const currentValue = templateVariablesMap[String(index)] ?? ''
                       const isFixed = Boolean(currentValue) && !SUPPORTED_VARIABLES.some(variable => variable.token === currentValue)
                       return (
@@ -1145,7 +1156,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                           {isFixed && <div className="space-y-1"><label className="text-micro font-bold text-fg">Valor fixo</label><Input value={currentValue} onChange={event => setTemplateVariablesMap(previous => ({ ...previous, [String(index)]: event.target.value }))} className={cn(FIELD, CONTROL_H, 'text-body')} /></div>}
                         </div>
                       )
-                    })}
+                      })}
 
                     {rowsWithEmptyTemplateVariables > 0 && (
                       <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-micro text-amber-300">
@@ -1154,8 +1165,10 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                     )}
                     <div className="rounded-[var(--r-md)] border border-cyan-500/30 bg-cyan-500/5 p-3">
                       <p className="text-micro font-bold text-cyan-300">Prévia com a primeira linha do CSV</p>
+                      {templateHasDocumentHeader && <p className="mt-2 text-body text-fg">[Documento] {templateHeaderDocumentValidation.value?.filename || templateHeaderDocument.filename || 'Nome do arquivo pendente'}</p>}
                       <p className="mt-2 whitespace-pre-wrap text-body text-fg">{templatePreviewText || '(sem conteúdo)'}</p>
                     </div>
+                    </>}
                   </div>
                 )}
               </>
@@ -1163,7 +1176,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
 
             <div className="flex justify-between gap-2 pt-3 border-t border-line-subtle">
               <Button variant="ghost" onClick={() => setStep('mapping')} className={cn(CONTROL_H, 'px-4')}><ArrowLeft size={14} className="mr-1.5" /> Voltar</Button>
-              <Button onClick={handleImport} disabled={!selectedTemplate || !hasCompleteTemplateMapping || templateHasUnsupportedComponents || rowsWithEmptyTemplateVariables > 0 || isProcessing} className={cn(CONTROL_H, 'px-5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold')}>
+              <Button onClick={handleImport} disabled={!selectedTemplate || !hasCompleteTemplateSelection || templateHasUnsupportedComponents || rowsWithEmptyTemplateVariables > 0 || isProcessing} className={cn(CONTROL_H, 'px-5 bg-cyan-500 hover:bg-cyan-400 text-black font-bold')}>
                 Importar e Preparar Disparo
               </Button>
             </div>
@@ -1274,6 +1287,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                   <p className="text-micro font-bold text-cyan-300">Template aprovado</p>
                   <p className="text-body text-fg">{selectedTemplate.name} · {selectedTemplate.language}</p>
                 </div>
+                {templateHasDocumentHeader && <p className="text-body text-fg">[Documento] {templateHeaderDocumentValidation.value?.filename || templateHeaderDocument.filename || 'Nome do arquivo pendente'}</p>}
                 <p className="whitespace-pre-wrap rounded-[var(--r-sm)] bg-black/35 p-3 font-mono text-micro text-fg">{templatePreviewText}</p>
                 {templatePlaceholders.length > 0 && (
                   <div className="text-micro text-fg-muted space-y-1">
