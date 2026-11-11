@@ -16,7 +16,7 @@ import { markLeadContacted } from '@/lib/leads'
 import { verifyMetaSignature } from '@/lib/meta-signature'
 import { generateAndSendAiReply } from '@/lib/ai-reply'
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from '@/lib/webhook-dedup'
-import { isWhatsAppOptOutExactText, isWhatsAppOptOutText } from '@/lib/recovery-sequence-policy'
+import { isWhatsAppOptOutButtonLabel, isWhatsAppOptOutExactText, isWhatsAppOptOutText, isWhatsAppPossibleOptOutText } from '@/lib/recovery-sequence-policy'
 
 function normalizePhone(raw: string): string {
   return raw.replace(/[@+\s\-().]/g, '').replace(/@.*$/, '').replace(/^0+/, '')
@@ -94,6 +94,7 @@ function extractMeta(body: Record<string, unknown>) {
           const buttonTitle = typeof buttonReply.title === 'string' ? buttonReply.title : null
           content = buttonTitle ?? buttonId
           optOutRequested = isWhatsAppOptOutText(buttonTitle) || isWhatsAppOptOutText(buttonId)
+            || isWhatsAppOptOutButtonLabel(buttonTitle) || isWhatsAppOptOutButtonLabel(buttonId)
         } else if (type === 'button') {
           // Clique em botão de TEMPLATE chega como type "button" (não "interactive").
           messageType = 'button'
@@ -102,6 +103,7 @@ function extractMeta(body: Record<string, unknown>) {
           const buttonPayload = typeof button.payload === 'string' ? button.payload : null
           content = buttonText ?? buttonPayload
           optOutRequested = isWhatsAppOptOutText(buttonText) || isWhatsAppOptOutText(buttonPayload)
+            || isWhatsAppOptOutButtonLabel(buttonText) || isWhatsAppOptOutButtonLabel(buttonPayload)
         } else if (type === 'image') {
           messageType = 'image'
         } else if (type === 'audio') {
@@ -401,6 +403,32 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         payload: { source: parsed.provider },
       }).catch(error => console.error('[WhatsApp Webhook] falha ao auditar opt-out', { companyId, leadId, error }))
       return NextResponse.json({ ok: true, optedOut: true })
+    }
+
+    if (companyForOptOut?.slug !== 'isabela-fanini'
+      && messageType === 'text'
+      && isWhatsAppPossibleOptOutText(content)) {
+      // Preserva o consentimento. Pausa todos os registros do contato nesta
+      // empresa para revisão humana e interrompe a fila ainda pendente.
+      await db.update(recoveryLeads).set({
+        botPaused: true,
+        botPausedAt: new Date(),
+        botPausedBy: 'revisao_possivel_optout',
+        botControlVersion: sql`coalesce(${recoveryLeads.botControlVersion}, 0) + 1`,
+        updatedAt: new Date(),
+      }).where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, phone)))
+      await db.execute(sql`
+        UPDATE message_jobs
+        SET status = 'cancelled',
+            error = 'Possível opt-out de WhatsApp aguardando revisão humana',
+            processing_started_at = NULL
+        WHERE lead_id IN (
+          SELECT id FROM recovery_leads
+          WHERE company_id = ${companyId} AND phone = ${phone}
+        )
+          AND status = 'pending'
+      `)
+      return NextResponse.json({ ok: true, optOutReview: true })
     }
 
     // Resposta automática de IA (Fase 1): roda DEPOIS do 200 sair pra Meta,

@@ -138,6 +138,50 @@ export function isWhatsAppOptOutExactText(text: string | null | undefined): bool
   return OPT_OUT_PATTERNS.some(pattern => normalized === pattern)
 }
 
+// Exclusivo dos campos de botão. A variante sem acento converge para a mesma
+// chave; id/payload com esse rótulo também passa, nunca por prefixo.
+const OPT_OUT_BUTTON_LABELS = ['nao receber mensagens', 'no recibir mensajes']
+
+export function isWhatsAppOptOutButtonLabel(text: string | null | undefined): boolean {
+  return Boolean(text && OPT_OUT_BUTTON_LABELS.includes(normalizeOptOutText(text)))
+}
+
+/**
+ * Sinal para revisão humana, nunca uma alteração de consentimento.
+ * Negação de recebimento ou pedido de remoção (negação implícita da lista).
+ * Complementos ambíguos pausam; exceções são objetos claramente diferentes.
+ * Cada ocorrência é avaliada separadamente: mencionar uma lista de espera
+ * não deve esconder outro pedido explícito de parar de receber mensagens.
+ * Não usar no texto da Isabela nem para interpretar botões.
+ */
+export function isWhatsAppPossibleOptOutText(text: string | null | undefined): boolean {
+  if (!text) return false
+  const normalized = normalizeOptOutText(text)
+  const requests = [
+    {
+      pattern: /\b(?:nao (?:quero (?:mais )?)?receber|no (?:quiero (?:mas )?)?recibir)(?: (?:mais|mas))?\b/g,
+      unrelated: /^(?:(?:visitas?|ligacoes|llamadas|erros?|errores)\b|(?:mensagens?|mensajes?) (?:de (?:erro|error)|no meu site|en la web)\b)/,
+    },
+    {
+      pattern: /\b(?:nao quero (?:mais )?mensagens|no quiero (?:mas )?mensajes)\b/g,
+      unrelated: /^(?:de (?:erro|error)|no meu site|en la web)\b/,
+    },
+    {
+      pattern: /\b(?:me (?:tira|tire|retire|remove|remova) da lista|(?:sacame|saqueme|bajame) de la lista|dame de baja)\b/g,
+      unrelated: /^(?:temporada|(?:de )?(?:espera|devedores|morosos)|(?:el |mi )?plan)\b/,
+    },
+    {
+      pattern: /\b(?:remover|remova|retirar|retire) meu numero\b/g,
+      unrelated: /^antigo do cadastro e cadastrar o novo\b/,
+    },
+  ]
+  return requests.some(({ pattern, unrelated }) =>
+    Array.from(normalized.matchAll(pattern)).some(match =>
+      !unrelated.test(normalized.slice(match.index! + match[0].length).trim()),
+    ),
+  )
+}
+
 export function buildIsabelaBoletoIdempotencyKey(companyId: number, transactionId: string): string {
   return `${ISABELA_BOLETO_JOB_TYPE}:${companyId}:${transactionId.trim()}`
 }
