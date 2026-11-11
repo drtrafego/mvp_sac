@@ -54,7 +54,7 @@ async function main() {
   mock.module('@/lib/leads', { namedExports: { markLeadContacted: async () => undefined } })
   mock.module('@/lib/sac-pending-rules', { namedExports: { evaluateSacPendingRules: async () => ({}) } })
 
-  let authCompany = { id: 2, name: 'Isabela', slug: 'isabela-fanini' }
+  const authCompany = { id: 2, name: 'Isabela', slug: 'isabela-fanini' }
   mock.module('@/lib/auth', { namedExports: { requireCompany: async () => authCompany, getCurrentUser: async () => ({ displayName: 'Op', primaryEmail: 'op@teste.local' }) } })
 
   const cron = await import('../src/app/api/cron/route')
