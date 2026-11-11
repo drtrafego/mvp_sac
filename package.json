@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:gabi-pause-mirror": "node --experimental-test-module-mocks --import tsx --test scripts/gabi-pause-mirror.test.ts scripts/agent-message-sender.test.ts",
     "test:bot-pause-switch": "node --experimental-test-module-mocks --import tsx --test scripts/bot-pause-switch.test.ts",
     "test:bot-pause-transactional": "node --experimental-test-module-mocks --import tsx --test scripts/bot-pause-transactional.test.ts",
     "test:sidebar-messages": "node --import tsx --test scripts/sidebar-messages-nav.test.ts",

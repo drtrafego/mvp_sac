@@ -8,6 +8,7 @@ import { eq, and, or, sql } from 'drizzle-orm'
 
 import { resolveLeadForContact } from '@/lib/contact-resolution'
 import { getBlockingPauseSwitch } from '@/lib/bot-pause'
+import { mirrorGabiLeadPause } from '@/lib/gabi-pause-mirror'
 
 type Params = { params: Promise<{ idOrSlug: string; contact: string }> }
 
@@ -100,11 +101,18 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     },
   })
 
+  // Gramado Plaza: a Gabi lê a pausa por conversa no banco central.
+  const gabi = await mirrorGabiLeadPause({
+    company: context.company, channel: updated.channel, phone: updated.phone, paused: pause, leadId: updated.id,
+    by: `${context.agentName} (Agente IA)`,
+  })
+
   return NextResponse.json({
     ok: true,
     botPaused: updated.botPaused,
     contact: updated.phone,
     leadId: updated.id,
     actionBy: `${context.agentName} (Agente IA)`,
+    ...(gabi.skipped ? {} : { gabi }),
   })
 }

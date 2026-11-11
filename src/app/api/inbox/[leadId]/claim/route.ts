@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads, sacAuditEvents } from '@/lib/db/schema'
 import { eq, and, sql, or, isNull } from 'drizzle-orm'
 import { requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
+import { mirrorGabiLeadPause } from '@/lib/gabi-pause-mirror'
 import { parseSacObject, parsePositiveId, parseExpectedVersion, sacEpisodeForState, SacInputError } from '@/lib/sac-access'
 
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
@@ -68,10 +69,17 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
       },
     }).catch(() => { console.error('[SAC audit] assume_case not recorded', { companyId: company.id, leadId: id }) })
 
+    // Gramado Plaza: assumir o atendimento cala a Gabi (ela lê a pausa por
+    // conversa no banco central). Nunca lança; o resultado vai na resposta.
+    const gabi = await mirrorGabiLeadPause({
+      company, channel: updatedLead.channel, phone: updatedLead.phone, paused: true, by: actorName, leadId: updatedLead.id,
+    })
+
     return noStoreJson({
       success: true,
       lead: { ...updatedLead, humanOwnerName: actorName, humanOwnerUserId: actorId },
       botControlVersion: nextBotVersion,
+      ...(gabi.skipped ? {} : { gabi }),
     })
   } catch (err: unknown) {
     if (err instanceof SacInputError || err instanceof ForbiddenError || err instanceof AuthError) return noStoreJson({ error: err.message }, { status: err.status })

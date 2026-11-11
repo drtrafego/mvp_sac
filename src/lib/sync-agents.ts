@@ -12,6 +12,7 @@ import {
   rememberUniqueLeadLookup,
   resolvePhoneLeadLookup,
 } from '@/lib/contact-resolution'
+import { senderForAgentMessage } from '@/lib/agent-message-sender'
 
 // ─── Decisão de arquitetura: cursores reais por fonte ───────────────────────
 // Este sync roda em produção a cada 10 minutos. Antes, os blocos de fonte
@@ -1551,7 +1552,9 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
                 direction: isUser ? 'inbound' : 'outbound',
                 content: m.content || '',
                 messageType: 'text',
-                sentBy: isUser ? 'user' : 'bot',
+                // Fala do dono do restaurante (celular) vem do bot com prefixo:
+                // rotula como humana (ver agent-message-sender.ts).
+                sentBy: senderForAgentMessage({ schema, role: m.role, content: m.content }),
                 reasoning: m.reasoning || null,
                 sentEmail: m.sent_email || null,
                 externalId,

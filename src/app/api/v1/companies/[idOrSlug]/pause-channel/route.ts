@@ -6,6 +6,7 @@ import { recoveryLeads } from '@/lib/db/schema'
 import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { eq, and, sql } from 'drizzle-orm'
 import { getPauseSwitchMap, setPauseSwitch } from '@/lib/bot-pause'
+import { syncGabiGlobalPause } from '@/lib/gabi-pause-mirror'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -112,6 +113,11 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     details: { channel, reason, affected: updated.length, scope: channel, switchActive: action === 'pause', actionBy },
   })
 
+  // Gramado Plaza: só o canal whatsapp (e a pausa geral) alcança a Gabi; o
+  // espelho lê as chaves e grava o estado resultante, então instagram/email
+  // não a pausam nem a liberam por engano. Ver gabi-pause-mirror.ts.
+  const gabi = channel === 'whatsapp' ? await syncGabiGlobalPause(context.company) : null
+
   return NextResponse.json({
     ok: true,
     action,
@@ -119,6 +125,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     affected: updated.length,
     switchActive: action === 'pause',
     actionBy,
+    ...(gabi && !gabi.skipped ? { gabi } : {}),
   })
 }
 

@@ -7,6 +7,7 @@ import { syncAgentsAndCompanies } from '@/lib/sync-agents'
 import { db } from '@/lib/db'
 import { companies, settings, whatsappMessages } from '@/lib/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
+import { GABI_COMPANY_SLUG, reconcileGabiPause } from '@/lib/gabi-pause-mirror'
 
 const HORAS_SILENCIO_ALARME = 6
 
@@ -32,6 +33,32 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const auth = req.headers.get('Authorization') ?? ''
   if (!safeEqual(auth, `Bearer ${cronSecret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Pausa do SAC -> Gabi (Gramado Plaza): reaplica as chaves e as pausas
+  // individuais no banco central que a Gabi lê. Rede de segurança para o que
+  // não passa pelas rotas com gancho e retry de falha de banco no clique.
+  // FICA ANTES do sync e em try próprio: se o sync de agentes demorar (o cron
+  // tem 60 s) ou falhar, a pausa ainda é refeita. Nunca derruba o cron.
+  // O log traz estoqueAntigo (pausas individuais anteriores a
+  // GABI_PAUSE_MIRROR_SINCE, que NÃO são espelhadas) para medir o estoque.
+  try {
+    const [gramado] = await db
+      .select({ id: companies.id, slug: companies.slug })
+      .from(companies)
+      .where(eq(companies.slug, GABI_COMPANY_SLUG))
+      .limit(1)
+    if (gramado) {
+      // teto de 20 s: banco central lento não pode consumir os 60 s do cron e matar o sync
+      const pausa = await Promise.race([
+        reconcileGabiPause(gramado),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('reconcile da pausa passou de 20 s')), 20_000)),
+      ])
+      console.log('[Cron Sync Agents] Pausa SAC->Gabi:', JSON.stringify(pausa))
+      if (!pausa.ok) console.error('[Cron Sync Agents] Pausa SAC->Gabi INCOMPLETA: a Gabi pode não ter sabido de uma pausa do SAC')
+    }
+  } catch (err) {
+    console.error('[Cron Sync Agents] Pausa SAC->Gabi falhou:', err instanceof Error ? err.message : err)
   }
 
   try {

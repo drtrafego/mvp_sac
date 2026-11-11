@@ -25,6 +25,8 @@ import {
 import { cn } from '@/lib/utils'
 import { HealthFeaturesSection } from '@/components/settings/HealthFeaturesSection'
 
+const GABI_AVISO = 'A pausa valeu no SAC, mas a Gabi (WhatsApp do restaurante) NÃO foi avisada. Repita a ação em instantes; o sistema também tenta refazer sozinho.'
+
 /*
   Os selects do Base UI mostram o valor cru no gatilho quando o Root não recebe
   `items`, então o cargo aparecia como "membro" e o provedor como "meta".
@@ -543,6 +545,8 @@ function PausarTudoSection({ slug }: { slug: string }) {
             ? `Atendimento pausado para todos os canais (${json.affected} lead(s) atuais). Leads novos também entram pausados.`
             : `Atendimento reativado para todos os canais (${json.affected} lead(s)). Leads novos voltam a entrar com o bot ativo.`
         )
+        // Gramado Plaza: a Gabi roda fora do SAC e lê a pausa no banco central.
+        if (json.gabi && json.gabi.ok === false) setError(`${json.gabi.detail || ''} ${GABI_AVISO}`.trim())
       } else {
         const body: Record<string, unknown> = {
           action: confirmAction,
@@ -567,6 +571,7 @@ function PausarTudoSection({ slug }: { slug: string }) {
             ? `Bot pausado no canal ${targetLabel} (${json.affected} lead(s) atuais). Leads novos também entram pausados.`
             : `Bot reativado no canal ${targetLabel} (${json.affected} lead(s)). Leads novos voltam a entrar com o bot ativo.`
         )
+        if (json.gabi && json.gabi.ok === false) setError(`${json.gabi.detail || ''} ${GABI_AVISO}`.trim())
       }
 
       setReason('')

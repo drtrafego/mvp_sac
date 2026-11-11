@@ -458,12 +458,15 @@ export function ChatWindow({
       if (res.ok) {
         const data = await res.json()
         setBotPaused(data.botPaused)
+        // Gramado Plaza: se a gravação no banco da Gabi falhou, não mostrar sucesso.
         setPauseToast(
-          data.botPaused
-            ? '⏸️ Bot pausado! O atendimento foi assumido por operador humano.'
-            : '🟢 Bot retomado! O assistente virtual voltará a responder automaticamente.'
+          data.gabi?.ok === false
+            ? '⚠️ Pausa salva no SAC, mas a Gabi NÃO foi avisada. Repita em instantes.'
+            : data.botPaused
+              ? '⏸️ Bot pausado! O atendimento foi assumido por operador humano.'
+              : '🟢 Bot retomado! O assistente virtual voltará a responder automaticamente.'
         )
-        setTimeout(() => setPauseToast(null), 4000)
+        setTimeout(() => setPauseToast(null), data.gabi?.ok === false ? 9000 : 4000)
       } else {
         const errData = await res.json().catch(() => ({}))
         setPauseToast(`❌ ${errData.error || 'Não foi possível alterar a pausa do bot.'}`)
@@ -700,8 +703,10 @@ export function ChatWindow({
       if (!response.ok) throw new Error(data.error || 'Não foi possível assumir este atendimento.')
       if (data.lead) hydrateContext(data.lead)
       setBotPaused(data.lead?.botPaused ?? data.botPaused ?? botPaused)
-      setPauseToast('Atendimento assumido pelo responsável autenticado.')
-      setTimeout(() => setPauseToast(null), 3500)
+      setPauseToast(data.gabi?.ok === false
+        ? '⚠️ Atendimento assumido no SAC, mas a Gabi NÃO foi avisada. Pause a conversa de novo em instantes.'
+        : 'Atendimento assumido pelo responsável autenticado.')
+      setTimeout(() => setPauseToast(null), data.gabi?.ok === false ? 9000 : 3500)
     } catch (error) {
       setContextError(error instanceof Error ? error.message : 'Erro de conexão ao assumir o atendimento.')
     } finally {
@@ -736,6 +741,7 @@ export function ChatWindow({
         const pauseData = await pauseResponse.json().catch(() => ({}))
         if (!pauseResponse.ok) throw new Error(pauseData.error || 'O atendimento foi enviado para a fila, mas não foi possível pausar o bot.')
         setBotPaused(Boolean(pauseData.botPaused))
+        if (pauseData.gabi?.ok === false) setContextError('Enviado para a fila, mas a Gabi NÃO foi avisada da pausa. Repita a pausa em instantes.')
       }
 
       setPauseToast('Enviado para Atender agora. O bot ficará pausado até alguém assumir.')

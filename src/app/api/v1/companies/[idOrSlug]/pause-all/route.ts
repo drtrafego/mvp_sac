@@ -6,6 +6,7 @@ import { recoveryLeads } from '@/lib/db/schema'
 import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { eq, and, sql } from 'drizzle-orm'
 import { getPauseSwitchMap, setPauseSwitch } from '@/lib/bot-pause'
+import { syncGabiGlobalPause } from '@/lib/gabi-pause-mirror'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -102,12 +103,18 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     details: { reason, affected: updated.length, scope: 'all', switchActive: action === 'pause', actionBy },
   })
 
+  // Gramado Plaza: a Gabi roda fora do SAC e lê a pausa no banco central. Sem
+  // este espelho o "Pausar tudo" não a alcança. Nunca lança; `gabi.ok=false`
+  // quer dizer "pausou no SAC, a Gabi ainda NÃO soube" (o cron refaz em minutos).
+  const gabi = await syncGabiGlobalPause(context.company)
+
   return NextResponse.json({
     ok: true,
     action,
     affected: updated.length,
     switchActive: action === 'pause',
     actionBy,
+    ...(gabi.skipped ? {} : { gabi }),
   })
 }
 
