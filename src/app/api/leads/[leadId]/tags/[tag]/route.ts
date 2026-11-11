@@ -7,6 +7,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { normalizeTag, PESSOA_TAG, BOT_PAUSED_BY_TAG_PESSOA, isLeadChannel } from '@/lib/lead-tags'
 import { notifyNaoResponder } from '@/lib/nao-responder'
+import { ensureLeadPausedBySwitch, getBlockingPauseSwitch, pauseFieldsFromSwitch, type PauseSwitchState } from '@/lib/bot-pause'
 
 type Params = { params: Promise<{ leadId: string; tag: string }> }
 
@@ -134,6 +135,48 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
       return NextResponse.json({ ok: true, tags, botPaused })
     }
 
+    // Chave de pausa da empresa/canal (company_pause_switches): com ela ligada,
+    // tirar a tag "pessoa" NÃO devolve o lead ao bot (a inbox responde 409 pelo
+    // mesmo motivo). Não avisa a Nina pra voltar a responder e a pausa continua,
+    // agora com a chave como dona (botPausedAll/botPausedChannel), pra o
+    // "Reativar tudo/canal" conseguir soltar o lead depois. Erro ao ler a chave
+    // = fail-closed: mantém pausado.
+    let companySwitch: PauseSwitchState | null = null
+    let switchReadFailed = false
+    try {
+      companySwitch = await getBlockingPauseSwitch(company.id, lead.channel)
+    } catch (err) {
+      switchReadFailed = true
+      console.error(`[Tags] Empresa ${company.id}, lead ${id}: falha ao ler a chave de pausa; lead mantido pausado:`, err instanceof Error ? err.message : err)
+    }
+
+    if (companySwitch || switchReadFailed) {
+      if (companySwitch && pauseSnapshot?.botPausedBy === BOT_PAUSED_BY_TAG_PESSOA) {
+        await db
+          .update(recoveryLeads)
+          .set({ ...pauseFieldsFromSwitch(companySwitch), updatedAt: new Date() })
+          .where(and(
+            eq(recoveryLeads.id, id),
+            eq(recoveryLeads.botPausedBy, pauseSnapshot.botPausedBy),
+            pauseSnapshot.botPausedAt === null
+              ? isNull(recoveryLeads.botPausedAt)
+              : eq(recoveryLeads.botPausedAt, pauseSnapshot.botPausedAt),
+          ))
+      }
+      const [fresh] = await db.select({ botPaused: recoveryLeads.botPaused }).from(recoveryLeads).where(eq(recoveryLeads.id, id))
+      const tags = await db.select().from(leadTags).where(eq(leadTags.leadId, id))
+      return NextResponse.json({
+        ok: true,
+        tags,
+        botPaused: switchReadFailed ? true : fresh?.botPaused ?? true,
+        pauseSwitchActive: true,
+        ...(companySwitch ? { switchScope: companySwitch.scope } : {}),
+        warning: switchReadFailed
+          ? 'Não foi possível confirmar a pausa da empresa; o lead foi mantido pausado.'
+          : 'A pausa da empresa segue ativa para este canal; o lead continua pausado. Reative em Configurações para liberar.',
+      })
+    }
+
     const result = await notifyNaoResponder(lead.phone, 'desmarcar', lead.channel)
     if (!result.ok) warning = result.warning
 
@@ -164,7 +207,10 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
       : []
 
     if (updated) {
-      botPaused = updated.botPaused
+      // A chave pode ter sido ligada durante o await da Nina: se ligou, o lead
+      // volta a constar pausado (e o isBotBlocked já barrava o envio).
+      const reBlocked = await ensureLeadPausedBySwitch(updated)
+      botPaused = reBlocked.botPaused
     } else {
       // Ninguém foi afetado: ou já não estava pausado por 'tag:pessoa', ou
       // outra coisa mudou o estado durante o await — outro motivo assumiu

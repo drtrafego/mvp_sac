@@ -53,17 +53,20 @@ async function main() {
   const activities: Activity[] = []
   const company = { id: 1, name: 'Empresa Pausa', slug: 'empresa-pausa' }
   let duringFollowCheck: (() => Promise<void>) | null = null
+  let followCheckFollows = true
+  const naoResponderCalls: string[] = []
 
   mock.method(globalThis, 'fetch', async () => { throw new Error('Rede proibida no teste') })
   mock.module('@/lib/db', { namedExports: { db } })
   mock.module('next/server', { namedExports: { NextRequest, NextResponse, after: () => undefined } })
+  mock.module('@/lib/nao-responder', { namedExports: { notifyNaoResponder: async (_phone: string, action: string) => { naoResponderCalls.push(action); return { ok: true } } } })
   mock.module('@/lib/leads', { namedExports: { markLeadContacted: async () => undefined } })
   mock.module('@/lib/ai-reply', { namedExports: { generateAndSendAiReply: async (leadId: number) => { aiReplies.push(leadId) } } })
   mock.module('@/lib/instagram', {
     namedExports: {
       sendInstagramPrivateReply: async (p: { commentId: string; text: string; companyId: number }) => { privateReplies.push(p); return { ok: true, messageId: `mid_${privateReplies.length}` } },
       sendInstagramMessage: async (p: { recipientId: string; text?: string }) => { directMessages.push(p); return { ok: true, messageId: `dm_${directMessages.length}` } },
-      checkInstagramUserFollowsBusiness: async () => { if (duringFollowCheck) await duringFollowCheck(); return { ok: true, follows: true } },
+      checkInstagramUserFollowsBusiness: async () => { if (duringFollowCheck) await duringFollowCheck(); return { ok: true, follows: followCheckFollows } },
       replyInstagramCommentPublic: async () => ({ ok: true }),
       hideInstagramComment: async () => ({ ok: true }),
       getInstagramCommentCreatedAt: async () => ({ ok: true, createdAt: new Date() }),
@@ -83,7 +86,8 @@ async function main() {
     },
   })
 
-  const { processInstagramComment } = await import('../src/lib/instagram-comment-processor')
+  const { processInstagramComment, handleFollowCheckReply } = await import('../src/lib/instagram-comment-processor')
+  const tagRoute = await import('../src/app/api/leads/[leadId]/tags/[tag]/route')
   const { captureInstagramInboundInteraction } = await import('../src/lib/instagram-inbound-tags')
   const { ensureLeadPausedBySwitch, isBotBlocked, getBlockingPauseSwitch, pickBlockingSwitch, pauseScopesForChannel } = await import('../src/lib/bot-pause')
   const pauseAll = await import('../src/app/api/v1/companies/[idOrSlug]/pause-all/route')
@@ -379,6 +383,116 @@ async function main() {
         duringFollowCheck = null
         await db.update(schema.instagramCommentAutomations).set({ requireFollowCheck: false })
       }
+    })
+
+    await test('(1b) gate de seguidor, LIBERAÇÃO: pausa ligada enquanto a Graph API responde NÃO envia o conteúdo e devolve o gate; depois de reativar, libera', async () => {
+      await reset()
+      const [auto] = await db.insert(schema.instagramCommentAutomations).values({
+        companyId: company.id, name: 'Gate', keywords: 'GATE', matchType: 'contains',
+        dmMessage: 'Conteúdo do gate', isActive: true, requireFollowCheck: true,
+      }).returning()
+      const [lead] = await db.insert(schema.recoveryLeads).values({
+        companyId: company.id, phone: 'ig_8001', name: 'Gate', channel: 'instagram', platform: 'instagram', eventType: 'x',
+        status: 'in_conversation', botPaused: false, pendingFollowCheckAutomationId: auto.id, pendingFollowCheckAttempts: 0,
+      }).returning()
+      const args = { companyId: company.id, leadId: lead.id, igsid: '8001', automationId: auto.id }
+      followCheckFollows = true
+      duringFollowCheck = async () => { await callPauseChannel('instagram', 'pause') }
+      try {
+        const res = await handleFollowCheckReply(args)
+        assert.equal(res.status, 'ignorado_pausa')
+        assert.equal(directMessages.length, 0, 'nada pode sair com a pausa ligada no meio')
+        assert.equal(await db.select().from(schema.whatsappMessages).then(r => r.length), 0, 'nada gravado como enviado')
+        const after = await db.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id)).then(r => r[0])
+        assert.equal(after.pendingFollowCheckAutomationId, auto.id, 'o gate volta pendente pra não perder a promessa ao lead')
+      } finally { duringFollowCheck = null }
+
+      await callPauseChannel('instagram', 'unpause')
+      const res2 = await handleFollowCheckReply(args)
+      assert.equal(res2.status, 'released')
+      assert.equal(directMessages.length, 1)
+      assert.equal(directMessages[0].text, 'Conteúdo do gate')
+      await db.delete(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.id, auto.id))
+    })
+
+    await test('(1c) gate de seguidor, REFORÇO (não segue): pausa ligada durante a Graph API NÃO envia e não gasta tentativa', async () => {
+      await reset()
+      const [auto] = await db.insert(schema.instagramCommentAutomations).values({
+        companyId: company.id, name: 'Gate2', keywords: 'GATE2', matchType: 'contains',
+        dmMessage: 'Conteúdo do gate 2', isActive: true, requireFollowCheck: true,
+      }).returning()
+      const [lead] = await db.insert(schema.recoveryLeads).values({
+        companyId: company.id, phone: 'ig_8002', name: 'Gate2', channel: 'instagram', platform: 'instagram', eventType: 'x',
+        status: 'in_conversation', botPaused: false, pendingFollowCheckAutomationId: auto.id, pendingFollowCheckAttempts: 0,
+      }).returning()
+      const args = { companyId: company.id, leadId: lead.id, igsid: '8002', automationId: auto.id }
+      followCheckFollows = false
+      duringFollowCheck = async () => { await callPauseAll('pause') }
+      try {
+        const res = await handleFollowCheckReply(args)
+        assert.equal(res.status, 'ignorado_pausa')
+        assert.equal(directMessages.length, 0)
+        assert.equal(await db.select().from(schema.whatsappMessages).then(r => r.length), 0)
+        const after = await db.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id)).then(r => r[0])
+        assert.equal(after.pendingFollowCheckAttempts, 0, 'a tentativa contada é desfeita')
+        assert.equal(after.pendingFollowCheckAutomationId, auto.id)
+      } finally { duringFollowCheck = null; followCheckFollows = true }
+
+      // Sem pausa e sem corrida o reforço continua saindo normalmente (não regrediu).
+      await callPauseAll('unpause')
+      followCheckFollows = false
+      const res2 = await handleFollowCheckReply(args)
+      followCheckFollows = true
+      assert.equal(res2.status, 'still_pending')
+      assert.equal(directMessages.length, 1)
+      await db.delete(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.id, auto.id))
+    })
+
+    await test('(2b) remover a tag "pessoa" com a chave da empresa/canal ligada mantém o lead pausado; sem chave, despausa como antes', async () => {
+      await reset()
+      naoResponderCalls.length = 0
+      const mkLead = async (phone: string, channel: string) => {
+        const now = new Date()
+        const [l] = await db.insert(schema.recoveryLeads).values({
+          companyId: company.id, phone, name: 'Pessoa', channel, platform: channel, eventType: 'x', status: 'in_conversation',
+          botPaused: true, botPausedBy: 'tag:pessoa', botPausedAt: now,
+        }).returning()
+        await db.insert(schema.leadTags).values({ leadId: l.id, tag: 'pessoa', createdBy: 'teste' })
+        return l
+      }
+      const del = (leadId: number) => tagRoute.DELETE(
+        new NextRequest(`http://localhost/api/leads/${leadId}/tags/pessoa`, { method: 'DELETE' }),
+        { params: Promise.resolve({ leadId: String(leadId), tag: 'pessoa' }) },
+      )
+
+      // Chave do canal instagram ligada: lead do instagram segue pausado e passa a pertencer à chave.
+      await callPauseChannel('instagram', 'pause')
+      const igLead = await mkLead('ig_9001', 'instagram')
+      const res = await del(igLead.id)
+      assert.equal(res.status, 200)
+      const json = await res.json()
+      assert.equal(json.botPaused, true)
+      assert.equal(json.pauseSwitchActive, true)
+      assert.equal(json.switchScope, 'instagram')
+      assert.match(json.warning, /pausa da empresa segue ativa/)
+      assert.equal(naoResponderCalls.length, 0, 'a Nina não é avisada pra voltar a responder')
+      const kept = await db.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, igLead.id)).then(r => r[0])
+      assert.equal(kept.botPaused, true)
+      assert.equal(kept.botPausedChannel, 'instagram', 'dono da pausa agora é a chave: reativar o canal solta o lead')
+      assert.equal(await db.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, igLead.id)).then(r => r.length), 0, 'a tag foi removida mesmo assim')
+
+      // Canal WhatsApp NÃO está pausado: o lead de whatsapp despausa normalmente.
+      const waLead = await mkLead('5511999990901', 'whatsapp')
+      const res2 = await del(waLead.id)
+      const json2 = await res2.json()
+      assert.equal(json2.botPaused, false)
+      assert.equal(json2.pauseSwitchActive, undefined)
+      assert.deepEqual(naoResponderCalls, ['desmarcar'])
+
+      // Reativar o canal solta o lead que a chave segurou.
+      await callPauseChannel('instagram', 'unpause')
+      const released = await db.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, igLead.id)).then(r => r[0])
+      assert.equal(released.botPaused, false)
     })
 
     await test('chave de empresa A não vaza para empresa B', async () => {

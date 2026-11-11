@@ -631,6 +631,31 @@ function unwrapExecRows<T>(result: unknown): T[] {
 }
 
 /**
+ * Releitura da pausa COLADA no envio do gate de seguidor. A checagem da entrada
+ * de handleFollowCheckReply vale antes da Graph API, mas a pausa pode ligar
+ * enquanto ela responde. true = NÃO enviar (pausa ligada ou leitura falhou:
+ * fail-closed, nenhuma mensagem sai no escuro).
+ */
+async function followCheckSendBlocked(companyId: number, leadId: number, where: string): Promise<boolean> {
+  try {
+    const [pausedLead] = await db
+      .select({ botPaused: recoveryLeads.botPaused })
+      .from(recoveryLeads)
+      .where(eq(recoveryLeads.id, leadId))
+      .limit(1)
+    const decision = await isBotBlocked({ companyId, channel: 'instagram', leadBotPaused: pausedLead?.botPaused ?? false })
+    if (decision.blocked) {
+      console.warn(`[Follow Check] Empresa ${companyId}, lead ${leadId}: ignorado_pausa antes do envio (${where}); nada enviado.`)
+      return true
+    }
+    return false
+  } catch (err) {
+    console.error(`[Follow Check] Empresa ${companyId}, lead ${leadId}: falha ao reler a pausa antes do envio (${where}); nada enviado:`, err)
+    return true
+  }
+}
+
+/**
  * Segunda etapa do gate de seguidor (24/09/2026): chamado pelo webhook
  * inbound do Instagram (route.ts e [slug]/route.ts) quando o lead que
  * respondeu tem `pendingFollowCheckAutomationId` setado (e o bot não está
@@ -748,6 +773,20 @@ export async function handleFollowCheckReply({
       return { status: 'already_claimed' }
     }
 
+    // Segunda leitura da pausa, colada no envio. O claim acima já zerou o estado
+    // pendente; se a pausa ligou enquanto a Graph API respondia, devolve o gate
+    // (só se ninguém mexeu nele) pra próxima resposta, depois da reativação, ainda
+    // liberar o conteúdo. Nada é enviado nem gravado como enviado.
+    if (await followCheckSendBlocked(companyId, leadId, 'liberação')) {
+      await db.execute(sql`
+        UPDATE recovery_leads
+        SET pending_follow_check_automation_id = ${automationId},
+            updated_at = now()
+        WHERE id = ${leadId} AND pending_follow_check_automation_id IS NULL
+      `)
+      return { status: 'ignorado_pausa' }
+    }
+
     const sendResult = await sendInstagramMessage({
       recipientId: igsid,
       text: automation.dmMessage,
@@ -853,6 +892,16 @@ export async function handleFollowCheckReply({
     .where(eq(settings.companyId, companyId))
     .limit(1)
   const deniedText = buildFollowCheckDenied(config?.instagramUsername)
+
+  // Segunda leitura da pausa, colada no envio do reforço. A tentativa que acabou
+  // de ser contada não pode penalizar o lead por uma pausa: desfaz o incremento.
+  if (await followCheckSendBlocked(companyId, leadId, 'reforço')) {
+    await db
+      .update(recoveryLeads)
+      .set({ pendingFollowCheckAttempts: sql`greatest(coalesce(${recoveryLeads.pendingFollowCheckAttempts}, 0) - 1, 0)` })
+      .where(and(eq(recoveryLeads.id, leadId), eq(recoveryLeads.pendingFollowCheckAutomationId, automationId)))
+    return { status: 'ignorado_pausa' }
+  }
 
   const sendResult = await sendInstagramMessage({
     recipientId: igsid,
