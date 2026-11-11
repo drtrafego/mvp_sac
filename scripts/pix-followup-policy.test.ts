@@ -29,6 +29,13 @@ test('Pix real pendente só passa com código, validade e consentimento explíci
   assert.equal(isRealPendingPix({ ...baseLead, approvedDate: new Date() }).eligible, false)
 })
 
+test('Pix pendente é aviso transacional: pausa do bot não barra, opt-out barra', () => {
+  assert.deepEqual(isRealPendingPix({ ...baseLead, botPaused: true, botPausedBy: 'Administrador (Agente IA)' }), { eligible: true })
+  assert.deepEqual(isRealPendingPix({ ...baseLead, botPaused: true, botPausedBy: 'auto (pausa geral ativa)' }), { eligible: true })
+  assert.equal(isRealPendingPix({ ...baseLead, botPaused: true, botPausedBy: 'optout_whatsapp' }).eligible, false)
+  assert.equal(isRealPendingPix({ ...baseLead, botPaused: true, botPausedBy: 'revisao_possivel_optout' }).eligible, false)
+})
+
 test('configuração exige uma única mensagem template, 60 minutos e dados reais', () => {
   const valid = validatePixFollowupMessage({
     messageType: 'template',

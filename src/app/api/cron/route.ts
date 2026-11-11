@@ -10,7 +10,8 @@ import { agendaBlockedDates, companies, massDispatchBatches, massDispatchPhoneCo
 import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
-import { isBotBlocked } from '@/lib/bot-pause'
+import { isBotBlocked, type BotBlockDecision } from '@/lib/bot-pause'
+import { classifyMessageJob, isOptOutPause, pauseAppliesToJob } from '@/lib/message-job-class'
 import { MAX_JOBS_PER_RUN, checkMetaWindowForJob, calculateDispatchSpacingMs } from '@/lib/message-jobs-policy'
 import { executeAndRecordDispatch, type DispatchOutcome, type MessageSnapshot } from '@/lib/mass-dispatch'
 import { releaseCronDispatchLock, tryAcquireCronDispatchLock } from '@/lib/cron-advisory-lock'
@@ -481,11 +482,35 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         .limit(1)
       if (currentJob?.status !== 'processing') continue
 
-      // Pausa do lead OU chave da empresa (geral/WhatsApp). O transporte do
-      // cron é sempre WhatsApp, então o canal consultado é 'whatsapp'. Erro de
-      // leitura lança e o catch do job marca failed: nada sai no escuro.
-      const botBlock = await isBotBlocked({ companyId, channel: 'whatsapp', leadBotPaused: lead.botPaused })
+      // Pausa do bot (lead, chave geral/WhatsApp da empresa) vale para o que o
+      // bot conversacional manda: follow-up de IA, upsell, disparo em massa,
+      // outreach manual. NÃO vale para mensagem de evento transacional do
+      // checkout (compra, boleto, Pix, cartão recusado, funil pós-compra): o
+      // cliente precisa receber mesmo com o atendimento por IA desligado.
+      // Pausa por pedido de parar do cliente (opt-out) bloqueia até o
+      // transacional, e o consentimento é conferido logo abaixo. O transporte
+      // do cron é sempre WhatsApp. Erro de leitura lança e o catch do job marca
+      // failed: nada sai no escuro.
+      const jobClass = classifyMessageJob(job, lead)
+      const botBlock: BotBlockDecision = pauseAppliesToJob(jobClass)
+        ? await isBotBlocked({ companyId, channel: 'whatsapp', leadBotPaused: lead.botPaused })
+        : isOptOutPause(lead)
+          ? { blocked: true, reason: 'lead' }
+          : { blocked: false, reason: null }
       if (botBlock.blocked) {
+        // Cancela só o que a pausa alcança: o transacional pendente do mesmo
+        // lead (ex.: sequência de evento ao lado de um upsell) segue na fila.
+        const pendingOfLead = await db
+          .select({ id: messageJobs.id, jobType: messageJobs.jobType, massDispatchBatchId: messageJobs.massDispatchBatchId, upsellContent: messageJobs.upsellContent })
+          .from(messageJobs)
+          .where(and(
+            eq(messageJobs.leadId, job.leadId),
+            inArray(messageJobs.status, ['pending', 'processing'])
+          ))
+        const cancelIds = new Set<number>([job.id])
+        for (const pending of pendingOfLead) {
+          if (isOptOutPause(lead) || pauseAppliesToJob(classifyMessageJob(pending, lead))) cancelIds.add(pending.id)
+        }
         await db
           .update(messageJobs)
           .set({
@@ -496,7 +521,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
             processingStartedAt: null,
           })
           .where(and(
-            eq(messageJobs.leadId, job.leadId),
+            inArray(messageJobs.id, [...cancelIds]),
             inArray(messageJobs.status, ['pending', 'processing'])
           ))
         continue

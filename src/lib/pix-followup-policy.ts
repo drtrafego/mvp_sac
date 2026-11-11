@@ -1,3 +1,5 @@
+import { isOptOutPause } from '@/lib/message-job-class'
+
 export const PIX_FOLLOWUP_JOB_TYPE = 'pix_followup_60m'
 export const PIX_FOLLOWUP_TEMPLATE_NAME = 'pix_despertar_nao_pago'
 export const PIX_FOLLOWUP_TEMPLATE_LANGUAGE = 'pt_BR'
@@ -22,6 +24,7 @@ export type PixFollowupLead = {
   status?: string | null
   approvedDate?: Date | null
   botPaused?: boolean | null
+  botPausedBy?: string | null
   whatsappConsentStatus?: string | null
 }
 
@@ -67,8 +70,10 @@ export function isRealPendingPix(lead: PixFollowupLead): PixFollowupGateResult {
   if (lead.status === 'completed' || lead.status === 'converted' || lead.approvedDate) {
     return { eligible: false, reason: 'pagamento já confirmado' }
   }
-  if (lead.botPaused === true) {
-    return { eligible: false, reason: 'lead pausado pelo atendimento' }
+  // Pix pendente é aviso transacional de pagamento: a pausa do bot conversacional
+  // (lead, canal, geral) não o barra. Só pausa por pedido de parar do cliente.
+  if (isOptOutPause(lead)) {
+    return { eligible: false, reason: 'lead pausado por pedido de parar mensagens' }
   }
   if (lead.whatsappConsentStatus !== 'opted_in') {
     return { eligible: false, reason: 'consentimento WhatsApp não confirmado' }
