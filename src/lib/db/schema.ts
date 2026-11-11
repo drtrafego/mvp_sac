@@ -889,7 +889,7 @@ export const instagramCommentLogs = pgTable('instagram_comment_logs', {
   mediaId: text('media_id'),
   commentText: text('comment_text'),
   matchedKeyword: text('matched_keyword'),
-  status: text('status').notNull(),                       // 'sent' | 'failed' | 'skipped' | 'rate_limited'
+  status: text('status').notNull(),                       // 'sent' | 'failed' | 'skipped' | 'rate_limited' | 'ignorado_pausa'
   errorMessage: text('error_message'),
   sentAt: timestamp('sent_at'),
   createdAt: timestamp('created_at').defaultNow(),
@@ -1084,6 +1084,25 @@ export const sacPendingItems = pgTable('sac_pending_items', {
   uniqueIndex('sac_pending_items_company_lead_rule_source_unique')
     .on(table.companyId, table.leadId, table.ruleType, table.sourceKey),
   index('sac_pending_items_company_state_due_idx').on(table.companyId, table.state, table.dueAt),
+])
+
+// Chave persistente de pausa do bot por empresa e escopo (all | whatsapp |
+// instagram | email). Vale para leads existentes E futuros: pause-all e
+// pause-channel só marcavam os leads que já existiam, então lead novo e
+// comentário automático do Instagram saíam do bot mesmo com a empresa
+// "pausada". Toda criação de lead herda a chave e todo envio automático a
+// consulta antes de sair (ver src/lib/bot-pause.ts).
+export const companyPauseSwitches = pgTable('company_pause_switches', {
+  id: serial('id').primaryKey(),
+  companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),
+  scope: text('scope').notNull(), // 'all' | 'whatsapp' | 'instagram' | 'email'
+  active: boolean('active').notNull().default(false),
+  pausedAt: timestamp('paused_at'),
+  pausedBy: text('paused_by'),
+  reason: text('reason'),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, table => [
+  uniqueIndex('company_pause_switches_company_scope_unique').on(table.companyId, table.scope),
 ])
 
 // Durable condition observations, independent of an operator acknowledging an alert.

@@ -422,6 +422,8 @@ interface PauseAllCounts {
   paused: number
   pausedByMassAction: number
   pausedIndividually: number
+  // Chave persistente da empresa (company_pause_switches, escopo 'all').
+  switchActive: boolean
 }
 
 interface ChannelCounts {
@@ -429,7 +431,29 @@ interface ChannelCounts {
   active: number
   paused: number
   pausedByChannel: number
+  pausedByGeneral: number
+  // Pausas manuais/outras (atendente, opt-out, anti-loop). Não inclui as
+  // pausas do canal nem da pausa geral.
   pausedIndividually: number
+  // Chave persistente do canal: leads novos e comentários automáticos entram pausados.
+  switchActive: boolean
+}
+
+const EMPTY_CHANNEL_COUNTS: ChannelCounts = {
+  total: 0, active: 0, paused: 0, pausedByChannel: 0, pausedByGeneral: 0, pausedIndividually: 0, switchActive: false,
+}
+
+function SwitchBadge({ active, loading, scopeLabel }: { active: boolean; loading: boolean; scopeLabel: string }) {
+  if (loading) return <p className="text-micro text-fg-subtle">Verificando a chave…</p>
+  return active ? (
+    <p className="text-micro font-semibold text-st-atencao" data-testid={`pause-switch-${scopeLabel}`}>
+      Chave LIGADA: leads novos entram pausados e o bot não envia comentário automático nem mensagem.
+    </p>
+  ) : (
+    <p className="text-micro text-fg-subtle" data-testid={`pause-switch-${scopeLabel}`}>
+      Chave desligada: leads novos entram com o bot ativo.
+    </p>
+  )
 }
 
 function PausarTudoSection({ slug }: { slug: string }) {
@@ -458,6 +482,7 @@ function PausarTudoSection({ slug }: { slug: string }) {
           paused: json.paused ?? 0,
           pausedByMassAction: json.pausedByMassAction ?? 0,
           pausedIndividually: json.pausedIndividually ?? 0,
+          switchActive: json.switchActive === true,
         })
       }
       if (chanRes.ok) {
@@ -513,8 +538,8 @@ function PausarTudoSection({ slug }: { slug: string }) {
         }
         setFeedback(
           confirmAction === 'pause'
-            ? `Atendimento pausado para todos os canais (${json.affected} lead(s)).`
-            : `Atendimento reativado para todos os canais (${json.affected} lead(s)).`
+            ? `Atendimento pausado para todos os canais (${json.affected} lead(s) atuais). Leads novos também entram pausados.`
+            : `Atendimento reativado para todos os canais (${json.affected} lead(s)). Leads novos voltam a entrar com o bot ativo.`
         )
       } else {
         const body: Record<string, unknown> = {
@@ -537,8 +562,8 @@ function PausarTudoSection({ slug }: { slug: string }) {
         const targetLabel = confirmTarget === 'whatsapp' ? 'WhatsApp' : 'Instagram'
         setFeedback(
           confirmAction === 'pause'
-            ? `Bot pausado no canal ${targetLabel} (${json.affected} lead(s)).`
-            : `Bot reativado no canal ${targetLabel} (${json.affected} lead(s)).`
+            ? `Bot pausado no canal ${targetLabel} (${json.affected} lead(s) atuais). Leads novos também entram pausados.`
+            : `Bot reativado no canal ${targetLabel} (${json.affected} lead(s)). Leads novos voltam a entrar com o bot ativo.`
         )
       }
 
@@ -553,15 +578,18 @@ function PausarTudoSection({ slug }: { slug: string }) {
   }
 
   const activeCount = counts ? counts.total - counts.paused : 0
-  const wa = channelCounts?.whatsapp || { total: 0, active: 0, paused: 0, pausedByChannel: 0, pausedIndividually: 0 }
-  const ig = channelCounts?.instagram || { total: 0, active: 0, paused: 0, pausedByChannel: 0, pausedIndividually: 0 }
-  const instagramOperationalStatus = ig.total === 0
-    ? 'Sem conversas'
-    : ig.active === 0
-      ? 'Bot pausado'
-      : ig.paused === 0
-        ? 'Bot ativo'
-        : 'Pausa parcial'
+  const wa = channelCounts?.whatsapp || EMPTY_CHANNEL_COUNTS
+  const ig = channelCounts?.instagram || EMPTY_CHANNEL_COUNTS
+  const generalSwitchActive = counts?.switchActive === true
+  const instagramOperationalStatus = ig.switchActive || generalSwitchActive
+    ? 'Bot pausado (chave ligada)'
+    : ig.total === 0
+      ? 'Sem conversas'
+      : ig.active === 0
+        ? 'Bot pausado'
+        : ig.paused === 0
+          ? 'Bot ativo'
+          : 'Pausa parcial'
 
   const targetTitle =
     confirmTarget === 'all'
@@ -582,6 +610,8 @@ function PausarTudoSection({ slug }: { slug: string }) {
       <p className="text-body text-fg-muted">
         Controle o bot de IA de forma isolada por canal (apenas WhatsApp ou apenas Instagram) ou para a empresa inteira.
         Pausas manuais feitas individualmente por atendentes continuam preservadas e nunca são sobrescritas.
+        Ao pausar, a chave fica ligada: <strong className="text-fg">leads novos entram pausados</strong> e o bot também
+        não envia resposta automática a comentários do Instagram até você reativar.
       </p>
 
       {/* Seção por Canal */}
@@ -598,26 +628,31 @@ function PausarTudoSection({ slug }: { slug: string }) {
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
             <div className="p-2 rounded bg-surface border border-line-subtle">
               <p className="text-micro text-fg-subtle uppercase">Ativos</p>
               <p className="num text-body font-bold text-st-positivo">{loadingCounts ? '—' : wa.active}</p>
             </div>
             <div className="p-2 rounded bg-surface border border-line-subtle">
-              <p className="text-micro text-fg-subtle uppercase">Pausa Canal</p>
+              <p className="text-micro text-fg-subtle uppercase">Pausa do canal</p>
               <p className="num text-body font-bold text-st-atencao">{loadingCounts ? '—' : wa.pausedByChannel}</p>
             </div>
             <div className="p-2 rounded bg-surface border border-line-subtle">
-              <p className="text-micro text-fg-subtle uppercase">Individual</p>
+              <p className="text-micro text-fg-subtle uppercase">Pausa geral</p>
+              <p className="num text-body font-bold text-st-atencao">{loadingCounts ? '—' : wa.pausedByGeneral}</p>
+            </div>
+            <div className="p-2 rounded bg-surface border border-line-subtle" title="Pausados por um atendente, opt-out ou anti-loop. Não inclui a pausa do canal nem a pausa geral.">
+              <p className="text-micro text-fg-subtle uppercase">Manual / outras</p>
               <p className="num text-body font-bold text-fg">{loadingCounts ? '—' : wa.pausedIndividually}</p>
             </div>
           </div>
+          <SwitchBadge active={wa.switchActive || generalSwitchActive} loading={loadingCounts} scopeLabel="wa" />
 
           <div className="flex items-center gap-2 pt-1">
             <Button
               size="sm"
               onClick={() => openConfirm('whatsapp', 'pause')}
-              disabled={loadingCounts || wa.active === 0}
+              disabled={loadingCounts || wa.switchActive}
               className="flex-1 focus-ring h-9 bg-st-negativo text-white hover:bg-st-negativo/90"
             >
               <PauseCircle size={14} />
@@ -626,7 +661,7 @@ function PausarTudoSection({ slug }: { slug: string }) {
             <Button
               size="sm"
               onClick={() => openConfirm('whatsapp', 'unpause')}
-              disabled={loadingCounts || wa.pausedByChannel === 0}
+              disabled={loadingCounts || !(wa.switchActive || wa.pausedByChannel > 0)}
               variant="outline"
               className="flex-1 focus-ring h-9 border-line-default"
             >
@@ -648,26 +683,31 @@ function PausarTudoSection({ slug }: { slug: string }) {
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
             <div className="p-2 rounded bg-surface border border-line-subtle">
               <p className="text-micro text-fg-subtle uppercase">Ativos</p>
               <p className="num text-body font-bold text-st-positivo">{loadingCounts ? '—' : ig.active}</p>
             </div>
             <div className="p-2 rounded bg-surface border border-line-subtle">
-              <p className="text-micro text-fg-subtle uppercase">Pausa Canal</p>
+              <p className="text-micro text-fg-subtle uppercase">Pausa do canal</p>
               <p className="num text-body font-bold text-st-atencao">{loadingCounts ? '—' : ig.pausedByChannel}</p>
             </div>
             <div className="p-2 rounded bg-surface border border-line-subtle">
-              <p className="text-micro text-fg-subtle uppercase">Individual</p>
+              <p className="text-micro text-fg-subtle uppercase">Pausa geral</p>
+              <p className="num text-body font-bold text-st-atencao">{loadingCounts ? '—' : ig.pausedByGeneral}</p>
+            </div>
+            <div className="p-2 rounded bg-surface border border-line-subtle" title="Pausados por um atendente, opt-out ou anti-loop. Não inclui a pausa do canal nem a pausa geral.">
+              <p className="text-micro text-fg-subtle uppercase">Manual / outras</p>
               <p className="num text-body font-bold text-fg">{loadingCounts ? '—' : ig.pausedIndividually}</p>
             </div>
           </div>
+          <SwitchBadge active={ig.switchActive || generalSwitchActive} loading={loadingCounts} scopeLabel="ig" />
 
           <div className="flex items-center gap-2 pt-1">
             <Button
               size="sm"
               onClick={() => openConfirm('instagram', 'pause')}
-              disabled={loadingCounts || ig.active === 0}
+              disabled={loadingCounts || ig.switchActive}
               className="flex-1 focus-ring h-9 bg-st-negativo text-white hover:bg-st-negativo/90"
             >
               <PauseCircle size={14} />
@@ -676,7 +716,7 @@ function PausarTudoSection({ slug }: { slug: string }) {
             <Button
               size="sm"
               onClick={() => openConfirm('instagram', 'unpause')}
-              disabled={loadingCounts || ig.pausedByChannel === 0}
+              disabled={loadingCounts || !(ig.switchActive || ig.pausedByChannel > 0)}
               variant="outline"
               className="flex-1 focus-ring h-9 border-line-default"
             >
@@ -692,6 +732,7 @@ function PausarTudoSection({ slug }: { slug: string }) {
       {/* Pausa Geral (Todos os Canais) */}
       <div className="space-y-3">
         <h3 className="text-body font-semibold text-fg">Pausa Geral (Todos os canais)</h3>
+        <SwitchBadge active={generalSwitchActive} loading={loadingCounts} scopeLabel="all" />
         {/* Contadores ao vivo */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
@@ -707,7 +748,7 @@ function PausarTudoSection({ slug }: { slug: string }) {
             <p className="num text-h2 text-st-atencao">{loadingCounts ? '—' : counts?.pausedByMassAction ?? 0}</p>
           </div>
           <div className="rounded-[var(--r-md)] bg-surface-inset border border-line-subtle p-3">
-            <p className="text-micro text-fg-subtle uppercase">Pausados individualmente</p>
+            <p className="text-micro text-fg-subtle uppercase" title="Pausados por atendente, por canal, opt-out ou anti-loop (tudo que não veio da pausa geral)">Manual / por canal</p>
             <p className="num text-h2 text-fg">{loadingCounts ? '—' : counts?.pausedIndividually ?? 0}</p>
           </div>
         </div>
@@ -728,7 +769,7 @@ function PausarTudoSection({ slug }: { slug: string }) {
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <Button
             onClick={() => openConfirm('all', 'pause')}
-            disabled={loadingCounts || activeCount === 0}
+            disabled={loadingCounts || generalSwitchActive}
             className="focus-ring h-11 lg:h-9 bg-st-negativo text-white hover:bg-st-negativo/90"
           >
             <PauseCircle size={15} />
@@ -736,7 +777,7 @@ function PausarTudoSection({ slug }: { slug: string }) {
           </Button>
           <Button
             onClick={() => openConfirm('all', 'unpause')}
-            disabled={loadingCounts || !counts?.pausedByMassAction}
+            disabled={loadingCounts || !(generalSwitchActive || counts?.pausedByMassAction)}
             variant="outline"
             className="focus-ring h-11 lg:h-9 border-line-default"
           >
@@ -758,12 +799,14 @@ function PausarTudoSection({ slug }: { slug: string }) {
                 confirmTarget === 'all' ? (
                   <>
                     O bot de IA vai parar de responder <strong className="text-fg">{activeCount}</strong> lead(s)
-                    ativo(s) em todos os canais. Quem já está pausado por decisão individual não é afetado.
+                    ativo(s) em todos os canais e a chave geral fica ligada: leads novos também entram pausados.
+                    Quem já está pausado por decisão individual não é afetado.
                   </>
                 ) : (
                   <>
                     O bot de IA vai parar de responder <strong className="text-fg">{confirmTarget === 'whatsapp' ? wa.active : ig.active}</strong> lead(s)
                     ativo(s) no canal <strong className="text-fg">{confirmTarget === 'whatsapp' ? 'WhatsApp' : 'Instagram'}</strong>.
+                    A chave do canal fica ligada: leads novos desse canal também entram pausados.
                     Os demais canais e pausas individuais não serão afetados.
                   </>
                 )

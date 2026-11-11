@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { getInheritedPauseFields } from '@/lib/bot-pause'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
@@ -91,6 +92,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     const [lead] = await db
       .insert(recoveryLeads)
       .values({
+        ...(await getInheritedPauseFields(context.company.id, channel || 'whatsapp')),
         companyId: context.company.id,
         name: name ? String(name).trim() : null,
         phone: cleanPhone || phone,

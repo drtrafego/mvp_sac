@@ -21,6 +21,7 @@ import { gerarResposta } from '@/lib/ai/ai-bridge'
 import { executarAcaoDetectada } from '@/lib/ai/agenda-actions'
 import { detectarBotDoOutroLado } from '@/lib/ai/bot-detector'
 import { sendOutboundForLead } from '@/lib/outbound-send'
+import { getBlockingPauseSwitch } from '@/lib/bot-pause'
 import { createAiReplyHandler, type AiReplyDependencies } from '@/lib/ai/ai-reply-flow'
 import type { FunilCursosState } from '@/lib/funnels/funil-cursos'
 import { isConfiguredIsabelaFlow } from '@/lib/recovery-sequence-policy'
@@ -148,6 +149,9 @@ const productionDependencies: AiReplyDependencies = {
   async readLead(id) {
     const [lead] = await db.select().from(recoveryLeads).where(eq(recoveryLeads.id, id)).limit(1)
     return lead
+  },
+  async isCompanyPaused(companyId, channel) {
+    return (await getBlockingPauseSwitch(companyId, channel)) !== null
   },
   async readConfig(companyId) {
     const [config] = await db.select().from(settings).where(eq(settings.companyId, companyId)).limit(1)

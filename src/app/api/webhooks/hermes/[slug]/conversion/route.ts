@@ -103,6 +103,7 @@
  * bloqueante.
  */
 
+import { getInheritedPauseFields } from '@/lib/bot-pause'
 import { NextRequest, NextResponse, after } from 'next/server'
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
@@ -315,6 +316,7 @@ export async function POST(
     const [inserted] = await db
       .insert(recoveryLeads)
       .values({
+        ...(await getInheritedPauseFields(company.id, 'whatsapp')),
         companyId: company.id,
         platform: 'hermes',
         eventType: webhookEvent,

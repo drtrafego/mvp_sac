@@ -7,6 +7,7 @@ import { authenticateAgentRequest } from '@/lib/agent-auth'
 import { eq, and, or, sql } from 'drizzle-orm'
 
 import { resolveLeadForContact } from '@/lib/contact-resolution'
+import { getBlockingPauseSwitch } from '@/lib/bot-pause'
 
 type Params = { params: Promise<{ idOrSlug: string; contact: string }> }
 
@@ -44,6 +45,21 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
         ? Boolean(body.paused)
         : true
 
+  // Chave de pausa da empresa/canal ligada: reativar um lead individual não
+  // faria o bot responder (o envio continua barrado), então falha explícita.
+  if (!pause) {
+    const blockingSwitch = await getBlockingPauseSwitch(context.company.id, resolved.lead.channel)
+    if (blockingSwitch) {
+      return NextResponse.json(
+        {
+          error: 'A pausa da empresa está ligada para este canal. Desligue a chave (pause-all/pause-channel unpause) antes de reativar um lead individual.',
+          switchScope: blockingSwitch.scope,
+        },
+        { status: 409 },
+      )
+    }
+  }
+
   const [updated] = await db
     .update(recoveryLeads)
     .set({
@@ -78,6 +94,9 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     details: {
       phone: updated.phone,
       reason: body.reason || null,
+      source: 'api',
+      previousBotPaused: resolved.lead.botPaused ?? false,
+      actionBy: `${context.agentName} (Agente IA)`,
     },
   })
 

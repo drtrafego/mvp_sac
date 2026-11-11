@@ -1,3 +1,4 @@
+import { getInheritedPauseFields } from '@/lib/bot-pause'
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { db } from '@/lib/db'
@@ -399,6 +400,7 @@ export async function POST(
     [lead] = await db
       .insert(recoveryLeads)
       .values({
+        ...(await getInheritedPauseFields(company.id, 'whatsapp')),
         companyId: company.id,
         platform: 'zouti',
         eventType: mappedType,

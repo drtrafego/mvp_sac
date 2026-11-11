@@ -28,8 +28,10 @@ function fixture() {
   let releaseCount = 0
   const auditEvents: Array<{ type: string; payload?: Record<string, unknown> }> = []
   let failNotice = false
+  let companyPaused = false
   const deps: AiReplyDependencies = {
     acquireLock: async () => true,
+    isCompanyPaused: async () => companyPaused,
     releaseLock: async () => { releaseCount++ },
     readLead: async () => ({ ...lead }),
     readConfig: async () => ({ companyId: 7, aiSystemPrompt: 'gate', aiAgentKey: 'autonomia' }) as Awaited<ReturnType<AiReplyDependencies['readConfig']>>,
@@ -56,7 +58,7 @@ function fixture() {
     },
     audit: async input => { auditEvents.push({ type: input.type, payload: input.payload }) },
   }
-  return { deps, lead: () => lead, intent: () => intent, audit: () => auditEvents, pause: () => { lead = { ...lead, botPaused: true, botPausedBy: 'Operador', botControlVersion: (lead.botControlVersion ?? 0) + 1 } }, resume: () => { lead = { ...lead, botPaused: false, botPausedBy: null, botControlVersion: (lead.botControlVersion ?? 0) + 1 } }, fail: (value: boolean) => { failNotice = value }, setIntentState: (value: string) => { if (intent) intent = { ...intent, sendState: value } }, counts: () => ({ generateCount, actionCount, sendCount, transportCount, releaseCount }) }
+  return { deps, setCompanyPaused: (value: boolean) => { companyPaused = value }, lead: () => lead, intent: () => intent, audit: () => auditEvents, pause: () => { lead = { ...lead, botPaused: true, botPausedBy: 'Operador', botControlVersion: (lead.botControlVersion ?? 0) + 1 } }, resume: () => { lead = { ...lead, botPaused: false, botPausedBy: null, botControlVersion: (lead.botControlVersion ?? 0) + 1 } }, fail: (value: boolean) => { failNotice = value }, setIntentState: (value: string) => { if (intent) intent = { ...intent, sendState: value } }, counts: () => ({ generateCount, actionCount, sendCount, transportCount, releaseCount }) }
 }
 
 test('handler real envia resposta normal e libera lock', async () => {
@@ -70,6 +72,38 @@ test('handler real envia resposta normal e libera lock', async () => {
     'ai_reply_interpreted',
     'ai_reply_sent',
   ])
+})
+
+test('chave de pausa da empresa ligada: não gera, não executa ação e não envia, mesmo com o lead despausado', async () => {
+  const f = fixture()
+  f.setCompanyPaused(true)
+  await generateAndSendAiReply(20, f.deps)
+  assert.equal(f.lead().botPaused, false, 'o lead não estava marcado: só a chave da empresa barra')
+  assert.deepEqual(f.counts(), { generateCount: 0, actionCount: 0, sendCount: 0, transportCount: 0, releaseCount: 1 })
+  assert.deepEqual(f.audit().map(event => event.type), ['ai_reply_skipped_company_pause'])
+})
+
+test('chave de pausa ligada DURANTE a geração descarta a resposta antes do transporte', async () => {
+  const f = fixture()
+  let release!: (value: Awaited<ReturnType<AiReplyDependencies['generate']>>) => void
+  let started!: () => void
+  const generating = new Promise<void>(resolve => { started = resolve })
+  const bridge = new Promise<Awaited<ReturnType<AiReplyDependencies['generate']>>>(resolve => { release = resolve })
+  f.deps.generate = () => { started(); return bridge }
+  const work = generateAndSendAiReply(20, f.deps)
+  await generating
+  f.setCompanyPaused(true)
+  release({ ok: true, resposta: { ok: true, status: 'ok', resposta: 'Não deve sair' } })
+  await work
+  assert.equal(f.counts().transportCount, 0)
+})
+
+test('falha ao ler a chave de pausa não envia (fail-closed)', async () => {
+  const f = fixture()
+  f.deps.isCompanyPaused = async () => { throw new Error('banco indisponível') }
+  await generateAndSendAiReply(20, f.deps) // o handler registra o erro e encerra a rodada sem enviar
+  assert.equal(f.counts().transportCount, 0)
+  assert.equal(f.counts().generateCount, 0)
 })
 
 test('encerramento próprio pausa e ainda envia a confirmação final', async () => {

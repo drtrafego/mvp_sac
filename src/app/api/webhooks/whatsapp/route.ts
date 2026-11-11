@@ -4,6 +4,7 @@
 // finally que libera o lock de concorrência nunca roda.
 export const maxDuration = 180
 
+import { ensureLeadPausedBySwitch, getInheritedPauseFields } from '@/lib/bot-pause'
 import { extractAdReferral } from '@/lib/whatsapp/ad-referral'
 import { extractAudioMedia } from '@/lib/whatsapp/audio-media'
 import { NextRequest, NextResponse } from 'next/server'
@@ -296,9 +297,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // parcial recovery_leads_chat_company_phone_unique (ver schema.ts) fecha
     // essa corrida no banco. Nome só é sobrescrito se o lead ainda não tinha
     // um (mesma regra de antes: NULLIF trata string vazia como "sem nome").
-    const [lead] = await db
+    const inheritedPause = await getInheritedPauseFields(companyId, 'whatsapp')
+    const [upsertedLead] = await db
       .insert(recoveryLeads)
       .values({
+        ...inheritedPause,
         companyId,
         phone,
         name: name || `WhatsApp ${phone.slice(-4)}`,
@@ -333,6 +336,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       })
       .returning()
 
+    // Lead que já existia despausado e foi tocado com a chave da empresa
+    // ligada passa a constar como pausado (o UPDATE só pega bot_paused = false).
+    const lead = await ensureLeadPausedBySwitch(upsertedLead)
     const leadId = lead.id
 
     try {

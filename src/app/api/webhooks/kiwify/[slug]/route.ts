@@ -1,3 +1,4 @@
+import { getInheritedPauseFields } from '@/lib/bot-pause'
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { companies, settings, recoverySequences, sequenceMessages, recoveryLeads, messageJobs, webhookReceived, metaMessageTemplates, sacAuditEvents } from '@/lib/db/schema'
@@ -718,6 +719,7 @@ export async function POST(
       [lead] = await db
         .insert(recoveryLeads)
         .values({
+          ...(await getInheritedPauseFields(company.id, 'whatsapp')),
           companyId: company.id,
           platform: 'kiwify',
           eventType: mappedType,

@@ -17,6 +17,7 @@ import {
   getInstagramCommentCreatedAt,
 } from '@/lib/instagram'
 import { generateAndSendAiReply } from '@/lib/ai-reply'
+import { getInheritedPauseFields, isBotBlocked } from '@/lib/bot-pause'
 import { eq, and, gte, sql } from 'drizzle-orm'
 import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
 import { normalizeTag } from '@/lib/lead-tags'
@@ -262,6 +263,46 @@ export async function processInstagramComment(event: CommentEventData) {
     return { status: 'skipped', reason: 'no_keyword_matched' }
   }
 
+  // Trava de pausa: ANTES de qualquer chamada à Graph API (follow check, janela
+  // da Meta) e antes de reivindicar o comentário. Vale a chave da empresa para
+  // o canal Instagram (leads existentes E futuros) e o lead.botPaused de quem
+  // comentou. Pausado = não envia DM nem resposta pública nem oculta o
+  // comentário; só registra o log da regra como 'ignorado_pausa'. Erro ao ler
+  // a pausa também não envia (fail-closed): um envio automático nunca sai no escuro.
+  let pauseDecision: Awaited<ReturnType<typeof isBotBlocked>>
+  try {
+    const [commenterLead] = await db
+      .select({ botPaused: recoveryLeads.botPaused })
+      .from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, `ig_${commenterId}`)))
+      .limit(1)
+    pauseDecision = await isBotBlocked({
+      companyId,
+      channel: 'instagram',
+      leadBotPaused: commenterLead?.botPaused ?? false,
+    })
+  } catch (err) {
+    console.error(`[Comment-to-DM Pause Check Error] Empresa ${companyId}, comment ${commentId}:`, err)
+    return { status: 'blocked', reason: 'pause_check_failed' }
+  }
+  if (pauseDecision.blocked) {
+    await db.insert(instagramCommentLogs).values({
+      companyId,
+      automationId: matchedRule.id,
+      commentId,
+      commenterId,
+      commenterUsername,
+      mediaId,
+      commentText,
+      matchedKeyword: matchedKeywordFound,
+      status: 'ignorado_pausa',
+      errorMessage: pauseDecision.reason === 'switch'
+        ? `Bot pausado na empresa (chave ${pauseDecision.scope}). Nenhuma mensagem enviada.`
+        : 'Bot pausado para este lead. Nenhuma mensagem enviada.',
+    }).onConflictDoNothing()
+    return { status: 'ignored', reason: 'ignorado_pausa' }
+  }
+
   const isPreparedTemplate = matchedRule.templateId === INSTAGRAM_COMMENT_DM_TEMPLATE_ID
   if (isPreparedTemplate) {
     const invalidRegistration =
@@ -389,6 +430,28 @@ export async function processInstagramComment(event: CommentEventData) {
     sentText = buildFollowCheckDenied(config?.instagramUsername)
   }
 
+  // Segunda leitura da pausa, colada no envio: a Graph API do follow check e
+  // as consultas acima levam tempo, e uma pausa ligada nesse intervalo tem que
+  // valer. Leitura com erro também não envia.
+  let lastPauseDecision: Awaited<ReturnType<typeof isBotBlocked>> | null = null
+  try {
+    const [commenterLeadNow] = await db
+      .select({ botPaused: recoveryLeads.botPaused })
+      .from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, `ig_${commenterId}`)))
+      .limit(1)
+    lastPauseDecision = await isBotBlocked({ companyId, channel: 'instagram', leadBotPaused: commenterLeadNow?.botPaused ?? false })
+  } catch (err) {
+    console.error(`[Comment-to-DM Pause Recheck Error] Empresa ${companyId}, comment ${commentId}:`, err)
+  }
+  if (!lastPauseDecision || lastPauseDecision.blocked) {
+    await db.update(instagramCommentLogs).set({
+      status: 'ignorado_pausa',
+      errorMessage: lastPauseDecision ? 'Bot pausado antes do envio. Nenhuma mensagem enviada.' : 'Não foi possível confirmar a pausa antes do envio. Nenhuma mensagem enviada.',
+    }).where(eq(instagramCommentLogs.id, claim.id))
+    return { status: 'ignored', reason: 'ignorado_pausa' }
+  }
+
   const dmResult = await sendInstagramPrivateReply({
     commentId,
     text: sentText,
@@ -459,9 +522,11 @@ export async function processInstagramComment(event: CommentEventData) {
       .limit(1)
 
     if (!lead) {
+      const inheritedPause = await getInheritedPauseFields(companyId, 'instagram')
       const [newLead] = await db
         .insert(recoveryLeads)
         .values({
+          ...inheritedPause,
           companyId,
           platform: 'instagram',
           channel: 'instagram',
@@ -592,6 +657,23 @@ export async function handleFollowCheckReply({
   igsid: string
   automationId: number
 }): Promise<{ status: string; error?: string }> {
+  // Trava de pausa defensiva: os webhooks já só chamam isto com !lead.botPaused,
+  // mas a chave da empresa (Instagram/geral) também vale aqui, e a pausa pode
+  // ter sido ligada entre o webhook e este after(). Pausado = não consulta a
+  // Graph API, não envia nada e mantém o estado pendente do gate.
+  try {
+    const [pausedLead] = await db
+      .select({ botPaused: recoveryLeads.botPaused })
+      .from(recoveryLeads)
+      .where(eq(recoveryLeads.id, leadId))
+      .limit(1)
+    const decision = await isBotBlocked({ companyId, channel: 'instagram', leadBotPaused: pausedLead?.botPaused ?? false })
+    if (decision.blocked) return { status: 'ignorado_pausa' }
+  } catch (err) {
+    console.error(`[Follow Check] Empresa ${companyId}, lead ${leadId}: falha ao ler a pausa; nada enviado:`, err)
+    return { status: 'pause_check_failed' }
+  }
+
   const [automation] = await db
     .select()
     .from(instagramCommentAutomations)

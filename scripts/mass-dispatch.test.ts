@@ -158,7 +158,10 @@ test('preview e enfileiramento excluem leads pausados ou com opt-out mesmo se es
 test('cron relê botPaused antes do envio e cancela jobs pendentes do lead pausado', () => {
   const cronSource = readFileSync(resolve(process.cwd(), 'src/app/api/cron/route.ts'), 'utf8')
 
-  assert.match(cronSource, /if \(lead\.botPaused\)/)
+  // A trava cobre o lead (botPaused) E a chave da empresa/canal (company_pause_switches).
+  assert.match(cronSource, /isBotBlocked\(\{ companyId, channel: 'whatsapp', leadBotPaused: lead\.botPaused \}\)/)
+  assert.match(cronSource, /if \(botBlock\.blocked\)/)
+  assert.match(cronSource, /Pausa da empresa/)
   assert.match(cronSource, /status:\s*'cancelled'/)
   assert.match(cronSource, /Lead com bot pausado antes do envio/)
   assert.match(cronSource, /inArray\(messageJobs\.status, \['pending', 'processing'\]\)/)

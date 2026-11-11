@@ -4,6 +4,7 @@
 // finally que libera o lock de concorrência nunca roda.
 export const maxDuration = 180
 
+import { ensureLeadPausedBySwitch, getInheritedPauseFields } from '@/lib/bot-pause'
 import { NextRequest, NextResponse } from "next/server"
 import { after } from "next/server"
 import { db } from "@/lib/db"
@@ -371,7 +372,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             // distintos pro mesmo telefone). O índice único parcial
             // recovery_leads_chat_company_phone_unique (ver schema.ts)
             // fecha essa corrida no banco.
-            const [lead] = await db
+            const inheritedPause = await getInheritedPauseFields(company.id, 'instagram')
+            const [upsertedLead] = await db
               .insert(recoveryLeads)
               .values({
                 companyId: company.id,
@@ -390,6 +392,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                       botPausedChannel: 'instagram',
                     }
                   : {}),
+                ...inheritedPause,
                 ...(metaAdId ? { metaAdId: String(metaAdId) } : {}),
                 ...(adName ? { adName: String(adName) } : {}),
                 ...(metaCampaignId ? { metaCampaignId: String(metaCampaignId) } : {}),
@@ -428,6 +431,10 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
                 },
               })
               .returning()
+
+            // Lead que já existia despausado e foi tocado com a chave da empresa ligada
+            // passa a constar como pausado (o UPDATE só pega bot_paused = false).
+            const lead = upsertedLead ? await ensureLeadPausedBySwitch(upsertedLead) : upsertedLead
 
             try {
               if (!lead?.id) throw new InstagramInboundPersistenceError('lead ausente')

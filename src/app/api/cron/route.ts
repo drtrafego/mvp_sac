@@ -10,6 +10,7 @@ import { agendaBlockedDates, companies, massDispatchBatches, massDispatchPhoneCo
 import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
+import { isBotBlocked } from '@/lib/bot-pause'
 import { MAX_JOBS_PER_RUN, checkMetaWindowForJob, calculateDispatchSpacingMs } from '@/lib/message-jobs-policy'
 import { executeAndRecordDispatch, type DispatchOutcome, type MessageSnapshot } from '@/lib/mass-dispatch'
 import { releaseCronDispatchLock, tryAcquireCronDispatchLock } from '@/lib/cron-advisory-lock'
@@ -480,10 +481,20 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         .limit(1)
       if (currentJob?.status !== 'processing') continue
 
-      if (lead.botPaused) {
+      // Pausa do lead OU chave da empresa (geral/WhatsApp). O transporte do
+      // cron é sempre WhatsApp, então o canal consultado é 'whatsapp'. Erro de
+      // leitura lança e o catch do job marca failed: nada sai no escuro.
+      const botBlock = await isBotBlocked({ companyId, channel: 'whatsapp', leadBotPaused: lead.botPaused })
+      if (botBlock.blocked) {
         await db
           .update(messageJobs)
-          .set({ status: 'cancelled', error: 'Lead com bot pausado antes do envio', processingStartedAt: null })
+          .set({
+            status: 'cancelled',
+            error: botBlock.reason === 'switch'
+              ? `Pausa da empresa (${botBlock.scope}) ativa antes do envio`
+              : 'Lead com bot pausado antes do envio',
+            processingStartedAt: null,
+          })
           .where(and(
             eq(messageJobs.leadId, job.leadId),
             inArray(messageJobs.status, ['pending', 'processing'])

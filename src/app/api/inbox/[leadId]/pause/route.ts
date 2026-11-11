@@ -5,6 +5,8 @@ import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
+import { logAgentActivity } from '@/lib/agent-auth'
+import { getBlockingPauseSwitch } from '@/lib/bot-pause'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -37,6 +39,22 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   const nextPaused = typeof body.paused === 'boolean' ? body.paused : !lead.botPaused
   const operatorName = user?.displayName || user?.primaryEmail?.split('@')[0] || 'humano'
 
+  // Com a chave de pausa da empresa/canal ligada, reativar UM lead não adianta
+  // (o bot continuaria barrado no envio) e deixaria a tela mentindo. Falha
+  // explícita em vez de "despausar" só no papel.
+  if (!nextPaused) {
+    const blockingSwitch = await getBlockingPauseSwitch(company.id, lead.channel)
+    if (blockingSwitch) {
+      return NextResponse.json(
+        {
+          error: 'A pausa da empresa está ligada para este canal. Reative em Configurações antes de liberar um lead individual.',
+          switchScope: blockingSwitch.scope,
+        },
+        { status: 409 },
+      )
+    }
+  }
+
   const [updated] = await db
     .update(recoveryLeads)
     .set({
@@ -52,6 +70,15 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     })
     .where(eq(recoveryLeads.id, id))
     .returning()
+
+  await logAgentActivity({
+    companyId: company.id,
+    agentName: operatorName,
+    action: nextPaused ? 'pause_bot' : 'resume_bot',
+    entityType: 'lead',
+    entityId: String(updated.id),
+    details: { source: 'inbox', channel: lead.channel ?? null, previousBotPaused: lead.botPaused ?? false, actionBy: operatorName },
+  })
 
   return NextResponse.json({
     ok: true,

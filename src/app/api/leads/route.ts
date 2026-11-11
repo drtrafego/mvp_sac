@@ -1,3 +1,4 @@
+import { getInheritedPauseFields } from '@/lib/bot-pause'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs } from '@/lib/db/schema'
@@ -335,6 +336,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const [created] = await db
       .insert(recoveryLeads)
       .values({
+        ...(await getInheritedPauseFields(company.id, 'whatsapp')),
         companyId: company.id,
         phone,
         name: cleanName || null,

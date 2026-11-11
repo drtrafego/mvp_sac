@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic'
 
+import { getBlockingPauseSwitch } from '@/lib/bot-pause'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
@@ -91,6 +92,28 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
 
     updateData.lastActionBy = `${context.agentName} (Agente IA)`
     updateData.lastActionAt = new Date()
+
+    // Chave de pausa da empresa/canal ligada: reativar um lead individual não
+    // faria o bot responder (o envio continua barrado), então falha explícita.
+    if (body.botPaused !== undefined && !Boolean(body.botPaused)) {
+      const [current] = await db
+        .select({ channel: recoveryLeads.channel })
+        .from(recoveryLeads)
+        .where(and(eq(recoveryLeads.id, id), eq(recoveryLeads.companyId, context.company.id)))
+        .limit(1)
+      if (current) {
+        const blockingSwitch = await getBlockingPauseSwitch(context.company.id, current.channel)
+        if (blockingSwitch) {
+          return NextResponse.json(
+            {
+              error: 'A pausa da empresa está ligada para este canal. Desligue a chave (pause-all/pause-channel unpause) antes de reativar um lead individual.',
+              switchScope: blockingSwitch.scope,
+            },
+            { status: 409 },
+          )
+        }
+      }
+    }
 
     const [updated] = await db
       .update(recoveryLeads)

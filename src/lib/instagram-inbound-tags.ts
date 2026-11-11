@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { instagramInboundTagRules, leadTags, recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
 import { normalizeTag } from '@/lib/lead-tags'
+import { ensureLeadPausedBySwitch, getInheritedPauseFields } from '@/lib/bot-pause'
 
 export type InstagramInboundTagTrigger = 'direct' | 'story_reply'
 export type InstagramInboundInteraction = 'comment' | 'direct' | 'story_reply' | 'story_reaction'
@@ -149,7 +150,11 @@ export async function captureInstagramInboundInteraction({
   const phone = `ig_${cleanUserId}`
   const name = username?.trim() ? `@${username.trim().replace(/^@/, '')}` : `Instagram (${cleanUserId.slice(-4)})`
   const now = new Date()
+  // Lead de comentário/reação nasce já pausado se a chave da empresa (geral ou
+  // Instagram) estiver ligada; antes nascia sempre despausado.
+  const inheritedPause = await getInheritedPauseFields(companyId, 'instagram')
   const [lead] = await db.insert(recoveryLeads).values({
+    ...inheritedPause,
     companyId,
     platform: 'instagram',
     channel: 'instagram',
@@ -164,6 +169,10 @@ export async function captureInstagramInboundInteraction({
     targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')`,
     set: { updatedAt: now, lastActionAt: now, channel: 'instagram' },
   }).returning({ id: recoveryLeads.id })
+
+  // Lead que já existia despausado e foi tocado com a chave ligada passa a
+  // constar como pausado (o UPDATE só pega bot_paused = false).
+  if (lead?.id) await ensureLeadPausedBySwitch({ id: lead.id, companyId, channel: 'instagram', botPaused: false })
 
   await applyInstagramInboundTag(lead?.id, interaction)
   return lead?.id ?? null

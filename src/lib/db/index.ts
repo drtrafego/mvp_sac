@@ -1258,6 +1258,24 @@ export function ensureSchema(client: any): Promise<void> {
               END IF;
             END $$
           `
+          // Chave persistente de pausa do bot por empresa/escopo (aditivo,
+          // idempotente; espelha drizzle/0041_company_pause_switches.sql).
+          await client`
+            CREATE TABLE IF NOT EXISTS company_pause_switches (
+              id SERIAL PRIMARY KEY,
+              company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+              scope TEXT NOT NULL,
+              active BOOLEAN NOT NULL DEFAULT FALSE,
+              paused_at TIMESTAMP,
+              paused_by TEXT,
+              reason TEXT,
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `
+          await client`
+            CREATE UNIQUE INDEX IF NOT EXISTS company_pause_switches_company_scope_unique
+            ON company_pause_switches (company_id, scope)
+          `
           await client`
             CREATE TABLE IF NOT EXISTS sac_rule_states (
               company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,

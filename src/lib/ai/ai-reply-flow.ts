@@ -16,6 +16,12 @@ export interface AiReplyDependencies {
   acquireLock(leadId: number): Promise<boolean>
   releaseLock(leadId: number): Promise<void>
   readLead(leadId: number): Promise<Lead | undefined>
+  /**
+   * Chave persistente de pausa da empresa/canal (company_pause_switches). Vale
+   * além de lead.botPaused: protege lead que existe sem estar marcado. Se lançar,
+   * a resposta NÃO sai (fail-closed). Opcional só para os testes antigos.
+   */
+  isCompanyPaused?(companyId: number, channel: string | null): Promise<boolean>
   readConfig(companyId: number): Promise<Config | undefined>
   readCompany(companyId: number): Promise<Company | undefined>
   readHistory(companyId: number, leadId: number): Promise<AiReplyHistoryRow[]>
@@ -78,12 +84,18 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
       const lead = await deps.readLead(leadId)
       if (!lead || lead.botPaused) return
       auditCompanyId = lead.companyId
+      if (deps.isCompanyPaused && await deps.isCompanyPaused(lead.companyId, lead.channel ?? null)) {
+        await audit({ type: 'ai_reply_skipped_company_pause', payload: { channel: lead.channel ?? null } })
+        return
+      }
       const version = lead.botControlVersion ?? 0
       let ownClosure: { version: number; reason: string } | undefined
       const controlAllowsEffects = async () => {
         const current = await deps.readLead(leadId)
         if (!current || current.companyId !== lead.companyId) return false
         if (ownClosure) return current.botPaused === true && current.botPausedBy === ownClosure.reason && (current.botControlVersion ?? 0) === ownClosure.version
+        // A chave da empresa pode ter sido ligada depois do início da geração.
+        if (deps.isCompanyPaused && await deps.isCompanyPaused(current.companyId, current.channel ?? null)) return false
         return !current.botPaused && (current.botControlVersion ?? 0) === version
       }
       const config = await deps.readConfig(lead.companyId)

@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
 import { authenticateAgentRequest, logAgentActivity } from '@/lib/agent-auth'
 import { eq, and, sql } from 'drizzle-orm'
+import { getPauseSwitchMap, setPauseSwitch } from '@/lib/bot-pause'
 
 type Params = { params: Promise<{ idOrSlug: string }> }
 
@@ -22,6 +23,12 @@ type Params = { params: Promise<{ idOrSlug: string }> }
  * DESPAUSAR: reverte só quem esta MESMA ação em massa pausou (bot_paused_all
  * = true). Uma pausa individual feita por um humano por motivo próprio (ex.:
  * já está atendendo aquele cliente na mão) não é revertida por engano.
+ *
+ * CHAVE PERSISTENTE (company_pause_switches, escopo 'all'): pausar LIGA a
+ * chave antes de marcar os leads, então lead novo e comentário automático do
+ * Instagram que chegarem durante e depois da ação também ficam sem bot.
+ * Despausar DESLIGA a chave antes de liberar os leads. Os leads já existentes
+ * continuam sendo marcados como antes (a inbox lê bot_paused deles).
  */
 export async function POST(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { idOrSlug } = await params
@@ -46,6 +53,10 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   const companyId = context.company.id
   const actionBy = `${context.agentName} (Agente IA)`
   const now = new Date()
+
+  // Ordem importa: pausar liga a chave ANTES de marcar os leads (nenhum lead
+  // novo escapa na janela); despausar desliga a chave ANTES de liberar.
+  await setPauseSwitch({ companyId, scope: 'all', active: action === 'pause', by: actionBy, reason })
 
   const updated = action === 'pause'
     ? await db
@@ -88,13 +99,14 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     action: action === 'pause' ? 'pause_all' : 'unpause_all',
     entityType: 'company',
     entityId: String(companyId),
-    details: { reason, affected: updated.length },
+    details: { reason, affected: updated.length, scope: 'all', switchActive: action === 'pause', actionBy },
   })
 
   return NextResponse.json({
     ok: true,
     action,
     affected: updated.length,
+    switchActive: action === 'pause',
     actionBy,
   })
 }
@@ -124,9 +136,13 @@ export async function GET(req: NextRequest, { params }: Params): Promise<NextRes
   const total = counts?.total ?? 0
   const paused = counts?.paused ?? 0
   const pausedByMassAction = counts?.pausedByMassAction ?? 0
+  const switches = await getPauseSwitchMap(companyId)
 
   return NextResponse.json({
     ok: true,
+    switchActive: switches.all.active,
+    switchPausedAt: switches.all.pausedAt,
+    switchPausedBy: switches.all.pausedBy,
     total,
     paused,
     pausedByMassAction,

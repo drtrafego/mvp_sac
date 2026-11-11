@@ -1,3 +1,4 @@
+import { getInheritedPauseFields } from '@/lib/bot-pause'
 import { db } from '@/lib/db'
 import { appointmentMirror, companies, settings, syncCursors, recoveryLeads, whatsappMessages, gramadoReservations } from '@/lib/db/schema'
 import { queryAgentsDb, getAgentsDbUrl, getAgentsDbSourceDiagnostic } from '@/lib/db/agents-db'
@@ -1420,6 +1421,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
               const [newLead] = await db
                 .insert(recoveryLeads)
                 .values({
+                  ...(await getInheritedPauseFields(company.id, channelType)),
                   companyId: company.id,
                   phone: cleanPhone,
                   name: resolvedName.name,
@@ -2029,6 +2031,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
             const [newLead] = await db
               .insert(recoveryLeads)
               .values({
+                ...(await getInheritedPauseFields(comp.id, ch)),
                 companyId: comp.id,
                 phone,
                 email: isEmail ? rawHandle : null,
@@ -2266,6 +2269,7 @@ export async function syncAgentsAndCompanies(): Promise<SyncReport> {
         const prodVal = l.value ? Math.round(Number(l.value) * 100) : null
         const stage = l.status === 'converted' ? 'fechado' : (l.follow_up_date ? 'agendado' : 'qualificado')
         const [newLead] = await db.insert(recoveryLeads).values({
+          ...(await getInheritedPauseFields(scope.company.id, cleanPhone ? 'whatsapp' : 'email')),
           companyId: scope.company.id,
           phone: cleanPhone || email || '',
           email: email || undefined,
