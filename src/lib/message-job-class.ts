@@ -2,6 +2,7 @@
 // importar as constantes de volta criaria ciclo (TDZ). Os literais de jobType abaixo
 // são conferidos contra PIX_FOLLOWUP_JOB_TYPE / ISABELA_BOLETO_JOB_TYPE no teste.
 
+
 /**
  * Classificação dos jobs de mensagem do cron para a PAUSA DO BOT.
  *
@@ -16,32 +17,46 @@
  *                     bloqueando, ver cron e isOptOutPause)
  *   conversational -> nasce da conversa/IA (ex.: convite do Portal depois do
  *                     desafio): a pausa bloqueia
- *   promotional    -> upsell, disparo em massa, outreach manual, qualquer job
- *                     que não prove ser evento de checkout: a pausa bloqueia
+ *   promotional    -> upsell, disparo em massa, outreach manual, job sem
+ *                     jobType, qualquer job fora da lista de permissão: a
+ *                     pausa bloqueia
  *
- * Regra de dúvida: sem prova de origem de checkout, é promocional (bloqueado).
+ * Regra de dúvida: fora da lista de permissão, é promocional (bloqueado).
  */
 export type MessageJobClass = 'transactional' | 'conversational' | 'promotional'
 
-/** Jobs gravados pelos webhooks de checkout com jobType próprio. */
-export const TRANSACTIONAL_JOB_TYPES: ReadonlySet<string> = new Set([
-  'isabela_purchase_sequence', // funil pós-compra (boas-vindas, D+1, D+10)
-  'boleto_followup_immediate', // boleto emitido (ISABELA_BOLETO_JOB_TYPE)
-  'isabela_cartao_recusado', // cartão recusado
-  'pix_followup_60m', // Pix não pago, 60 min (PIX_FOLLOWUP_JOB_TYPE)
-])
+/**
+ * LISTA DE PERMISSÃO do bypass transacional (a ordem do Gastão cobre só o
+ * funil de evento da Kiwify da Isabela). Um job escapa da pausa SOMENTE se a
+ * empresa, a plataforma do lead e o jobType EXPLÍCITO do job estão aqui. Nada
+ * é deduzido do estado do lead (eventType/platform são sobrescrevíveis por
+ * POST /api/leads), e job sem jobType nunca escapa. Recuperação de carrinho de
+ * Hotmart/Greenn/Zouti e de outras empresas segue bloqueada pela pausa, como
+ * antes. Para liberar outra empresa/plataforma, acrescente uma entrada aqui
+ * (e garanta que o webhook dela grave jobType explícito).
+ */
+export interface TransactionalBypassRule {
+  companySlug: string
+  platform: string
+  jobTypes: readonly string[]
+}
+
+export const TRANSACTIONAL_BYPASS_ALLOWLIST: readonly TransactionalBypassRule[] = [
+  {
+    companySlug: 'isabela-fanini',
+    platform: 'kiwify',
+    jobTypes: [
+      'isabela_purchase_sequence', // funil pós-compra (boas-vindas, D+1, D+10)
+      'boleto_followup_immediate', // boleto emitido (ISABELA_BOLETO_JOB_TYPE)
+      'isabela_cartao_recusado', // cartão recusado
+      'pix_followup_60m', // Pix não pago, 60 min (PIX_FOLLOWUP_JOB_TYPE)
+    ],
+  },
+]
 
 /** Jobs que nascem da conversa/IA, não de um evento de checkout. */
 export const CONVERSATIONAL_JOB_TYPES: ReadonlySet<string> = new Set([
   'isabela_portal_after_challenge', // agendado por scheduleIsabelaPortalTemplate (ai-reply.ts)
-])
-
-/** Plataformas de checkout cujos webhooks criam lead e job (recovery_leads.platform). */
-export const CHECKOUT_EVENT_PLATFORMS: ReadonlySet<string> = new Set(['kiwify', 'hotmart', 'greenn', 'zouti'])
-
-/** Eventos de checkout (recovery_leads.event_type) que disparam mensagem de evento. */
-export const CHECKOUT_EVENT_TYPES: ReadonlySet<string> = new Set([
-  'compra_aprovada', 'boleto', 'pix', 'cartao_recusado', 'carrinho_abandonado',
 ])
 
 /** botPausedBy de pausa causada por pedido de parar do cliente: continua bloqueando evento transacional. */
@@ -58,34 +73,65 @@ export interface ClassifiableJob {
 
 export interface ClassifiableLead {
   platform?: string | null
-  eventType?: string | null
 }
 
-export function classifyMessageJob(job: ClassifiableJob, lead: ClassifiableLead): MessageJobClass {
+/** O job (empresa + plataforma do lead + jobType explícito) está na lista de permissão? */
+export function isPauseBypassAllowed(
+  job: { jobType?: string | null },
+  lead: ClassifiableLead,
+  companySlug: string | null | undefined,
+): boolean {
+  const jobType = job.jobType ?? null
+  if (!jobType || !companySlug || !lead.platform) return false
+  return TRANSACTIONAL_BYPASS_ALLOWLIST.some(rule =>
+    rule.companySlug === companySlug && rule.platform === lead.platform && rule.jobTypes.includes(jobType))
+}
+
+export function classifyMessageJob(
+  job: ClassifiableJob,
+  lead: ClassifiableLead,
+  companySlug: string | null | undefined,
+): MessageJobClass {
   if (job.massDispatchBatchId != null) return 'promotional'
   if (job.upsellContent) return 'promotional'
-  const jobType = job.jobType ?? null
-  if (jobType && TRANSACTIONAL_JOB_TYPES.has(jobType)) return 'transactional'
-  if (jobType && CONVERSATIONAL_JOB_TYPES.has(jobType)) return 'conversational'
-  // Job de sequência sem jobType (webhooks Hotmart/Greenn/Zouti/Kiwify de
-  // outras empresas): só é de evento se o lead veio de checkout com evento de
-  // checkout. Lead manual/importado com sequência disparada à mão não é.
-  if (
-    jobType == null
-    && lead.platform
-    && CHECKOUT_EVENT_PLATFORMS.has(lead.platform)
-    && lead.eventType
-    && CHECKOUT_EVENT_TYPES.has(lead.eventType)
-  ) return 'transactional'
+  if (isPauseBypassAllowed(job, lead, companySlug)) return 'transactional'
+  if (job.jobType && CONVERSATIONAL_JOB_TYPES.has(job.jobType)) return 'conversational'
   return 'promotional'
 }
 
-/** A pausa (lead/canal/geral/chave) bloqueia este job? Só o transacional escapa. */
+/** A pausa (lead/canal/geral/chave) bloqueia este job? Só o transacional da lista escapa. */
 export function pauseAppliesToJob(jobClass: MessageJobClass): boolean {
   return jobClass !== 'transactional'
 }
 
+type PauseState = {
+  botPaused?: boolean | null
+  botPausedBy?: string | null
+  botPausedAll?: boolean | null
+  botPausedChannel?: string | null
+}
+
 /** Lead pausado por pedido de parar do cliente: bloqueia até o job transacional. */
-export function isOptOutPause(lead: { botPaused?: boolean | null; botPausedBy?: string | null }): boolean {
+export function isOptOutPause(lead: PauseState): boolean {
   return lead.botPaused === true && lead.botPausedBy != null && OPT_OUT_PAUSE_REASONS.has(lead.botPausedBy)
+}
+
+/**
+ * Pausa gerada pela chave/"Pausar tudo"/"Pausar canal" (ou herdada por lead
+ * novo sob a chave), a única que o bypass transacional ignora. Pausa
+ * individual de atendente (humano assumiu), tag pessoa e anti-loop NÃO são
+ * dessa origem e continuam bloqueando.
+ */
+export function isSwitchGeneratedPause(lead: PauseState): boolean {
+  if (lead.botPaused !== true) return false
+  if (isOptOutPause(lead)) return false
+  return lead.botPausedAll === true
+    || (lead.botPausedChannel != null && lead.botPausedChannel !== '')
+    || (lead.botPausedBy != null && lead.botPausedBy.startsWith('auto (pausa geral'))
+    || (lead.botPausedBy != null && lead.botPausedBy.startsWith('auto (canal '))
+}
+
+/** Pausa do lead que NENHUM job (nem o transacional) pode ignorar: opt-out ou pausa individual. */
+export function isHardLeadPause(lead: PauseState): boolean {
+  return lead.botPaused === true && !isSwitchGeneratedPause(lead)
 }

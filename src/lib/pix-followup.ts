@@ -1,6 +1,7 @@
 import { and, asc, eq, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import {
+  companies,
   metaMessageTemplates,
   messageJobs,
   recoveryLeads,
@@ -20,6 +21,7 @@ import {
   validatePixFollowupMessage,
 } from '@/lib/pix-followup-policy'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
+import { isPauseBypassAllowed } from '@/lib/message-job-class'
 
 type DatabaseLead = typeof recoveryLeads.$inferSelect
 
@@ -60,7 +62,10 @@ async function auditPixEvent(args: {
 }
 
 export async function schedulePixFollowup(lead: DatabaseLead, now = new Date()): Promise<PixScheduleResult> {
-  const eligibility = isRealPendingPix(lead)
+  const [company] = await db.select({ slug: companies.slug }).from(companies).where(eq(companies.id, lead.companyId)).limit(1)
+  const eligibility = isRealPendingPix(lead, {
+    ignoreSwitchPause: isPauseBypassAllowed({ jobType: PIX_FOLLOWUP_JOB_TYPE }, lead, company?.slug),
+  })
   if (!eligibility.eligible) {
     await auditPixEvent({
       companyId: lead.companyId,

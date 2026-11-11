@@ -1,4 +1,4 @@
-import { isOptOutPause } from '@/lib/message-job-class'
+import { isOptOutPause, isSwitchGeneratedPause } from '@/lib/message-job-class'
 
 export const PIX_FOLLOWUP_JOB_TYPE = 'pix_followup_60m'
 export const PIX_FOLLOWUP_TEMPLATE_NAME = 'pix_despertar_nao_pago'
@@ -25,6 +25,8 @@ export type PixFollowupLead = {
   approvedDate?: Date | null
   botPaused?: boolean | null
   botPausedBy?: string | null
+  botPausedAll?: boolean | null
+  botPausedChannel?: string | null
   whatsappConsentStatus?: string | null
 }
 
@@ -51,7 +53,10 @@ function nonEmpty(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-export function isRealPendingPix(lead: PixFollowupLead): PixFollowupGateResult {
+export function isRealPendingPix(
+  lead: PixFollowupLead,
+  options: { ignoreSwitchPause?: boolean } = {},
+): PixFollowupGateResult {
   if (lead.eventType !== 'pix' || lead.paymentType !== 'pix') {
     return { eligible: false, reason: 'evento não é Pix pendente' }
   }
@@ -70,10 +75,15 @@ export function isRealPendingPix(lead: PixFollowupLead): PixFollowupGateResult {
   if (lead.status === 'completed' || lead.status === 'converted' || lead.approvedDate) {
     return { eligible: false, reason: 'pagamento já confirmado' }
   }
-  // Pix pendente é aviso transacional de pagamento: a pausa do bot conversacional
-  // (lead, canal, geral) não o barra. Só pausa por pedido de parar do cliente.
+  // Opt-out sempre barra. Pausa individual (atendente) sempre barra. A pausa
+  // gerada pela chave/"Pausar tudo"/"Pausar canal" só é ignorada quando quem
+  // chama prova que o job está na lista de permissão (Kiwify da Isabela,
+  // ver message-job-class.ts); para as demais empresas o gate é o de antes.
   if (isOptOutPause(lead)) {
     return { eligible: false, reason: 'lead pausado por pedido de parar mensagens' }
+  }
+  if (lead.botPaused === true && !(options.ignoreSwitchPause === true && isSwitchGeneratedPause(lead))) {
+    return { eligible: false, reason: 'lead pausado pelo atendimento' }
   }
   if (lead.whatsappConsentStatus !== 'opted_in') {
     return { eligible: false, reason: 'consentimento WhatsApp não confirmado' }

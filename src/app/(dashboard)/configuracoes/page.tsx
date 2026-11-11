@@ -447,7 +447,9 @@ function SwitchBadge({ active, loading, scopeLabel }: { active: boolean; loading
   if (loading) return <p className="text-micro text-fg-subtle">Verificando a chave…</p>
   return active ? (
     <p className="text-micro font-semibold text-st-atencao" data-testid={`pause-switch-${scopeLabel}`}>
-      Chave LIGADA: leads novos entram pausados e o bot de IA não responde nem envia comentário automático. Mensagens de evento do checkout (compra, boleto, Pix, cartão recusado, funil pós-compra) continuam sendo enviadas.
+      {scopeLabel === 'ig'
+        ? 'Chave LIGADA: leads novos entram pausados e o bot não envia comentário automático nem mensagem no Instagram.'
+        : 'Chave LIGADA: leads novos entram pausados e o bot de IA não responde, não faz follow-up e não envia disparo promocional. Na conta da Isabela, os avisos de evento da Kiwify (compra, boleto, Pix, cartão recusado, funil pós-compra) continuam sendo enviados, desde que o cliente tenha dado opt-in, não tenha pedido para parar e dentro da janela de atendimento; pausa individual de atendente também os bloqueia.'}
     </p>
   ) : (
     <p className="text-micro text-fg-subtle" data-testid={`pause-switch-${scopeLabel}`}>
@@ -612,8 +614,9 @@ function PausarTudoSection({ slug }: { slug: string }) {
         Pausas manuais feitas individualmente por atendentes continuam preservadas e nunca são sobrescritas.
         Ao pausar, a chave fica ligada: <strong className="text-fg">leads novos entram pausados</strong> e o bot também
         não envia resposta automática a comentários do Instagram até você reativar.{' '}
-        A pausa <strong className="text-fg">não bloqueia as mensagens de evento do checkout</strong> (compra aprovada,
-        boleto, Pix, cartão recusado e funil pós-compra): essas continuam sendo enviadas.
+        Na conta da Isabela, a pausa <strong className="text-fg">não bloqueia os avisos de evento da Kiwify</strong> (compra
+        aprovada, boleto, Pix, cartão recusado e funil pós-compra): esses continuam sendo enviados, desde que o cliente tenha dado opt-in, não tenha pedido para parar e dentro da janela de atendimento; pausa individual de atendente também os bloqueia.
+        Nas demais contas, a pausa bloqueia todo envio automático.
       </p>
 
       {/* Seção por Canal */}
@@ -802,16 +805,16 @@ function PausarTudoSection({ slug }: { slug: string }) {
                   <>
                     O bot de IA vai parar de responder <strong className="text-fg">{activeCount}</strong> lead(s)
                     ativo(s) em todos os canais e a chave geral fica ligada: leads novos também entram pausados.
-                    Quem já está pausado por decisão individual não é afetado. As mensagens de evento do checkout
-                    (compra, boleto, Pix, cartão recusado, funil pós-compra) continuam sendo enviadas.
+                    Quem já está pausado por decisão individual não é afetado. Na conta da Isabela, os avisos de evento
+                    da Kiwify (compra, boleto, Pix, cartão recusado, funil pós-compra) continuam sendo enviados, desde que o cliente tenha dado opt-in, não tenha pedido para parar e dentro da janela de atendimento; pausa individual de atendente também os bloqueia.
                   </>
                 ) : (
                   <>
                     O bot de IA vai parar de responder <strong className="text-fg">{confirmTarget === 'whatsapp' ? wa.active : ig.active}</strong> lead(s)
                     ativo(s) no canal <strong className="text-fg">{confirmTarget === 'whatsapp' ? 'WhatsApp' : 'Instagram'}</strong>.
                     A chave do canal fica ligada: leads novos desse canal também entram pausados.
-                    Os demais canais e pausas individuais não serão afetados. As mensagens de evento do checkout
-                    (compra, boleto, Pix, cartão recusado, funil pós-compra) continuam sendo enviadas.
+                    Os demais canais e pausas individuais não serão afetados. Na conta da Isabela, os avisos de evento
+                    da Kiwify (compra, boleto, Pix, cartão recusado, funil pós-compra) continuam sendo enviados no WhatsApp, desde que o cliente tenha dado opt-in, não tenha pedido para parar e dentro da janela de atendimento; pausa individual de atendente também os bloqueia.
                   </>
                 )
               ) : confirmTarget === 'all' ? (

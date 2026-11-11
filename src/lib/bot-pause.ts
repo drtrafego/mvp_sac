@@ -14,11 +14,12 @@ import { companyPauseSwitches, recoveryLeads } from '@/lib/db/schema'
  *   - todo envio automático consulta a chave E lead.botPaused (isBotBlocked).
  *
  * A pausa é do bot CONVERSACIONAL (IA respondendo, follow-up de IA, comentário
- * automático, upsell, disparo em massa). NÃO é do funil de evento do checkout:
- * mensagem de compra aprovada, boleto, Pix, cartão recusado e funil pós-compra
- * passa por cima da pausa (ver message-job-class.ts: classifyMessageJob). Por
- * isso "lead nasce pausado" significa "a IA não conversa com ele", nunca "ele
- * não recebe o funil". Só pausa por opt-out bloqueia o transacional.
+ * automático, upsell, disparo em massa). NÃO é do funil de evento da Kiwify da
+ * Isabela: os jobs com jobType explícito da lista de permissão
+ * (message-job-class.ts: TRANSACTIONAL_BYPASS_ALLOWLIST) passam por cima da
+ * pausa GERADA pela chave/"Pausar tudo"/"Pausar canal". Pausa individual de
+ * atendente e opt-out bloqueiam sempre. Para todo o resto a pausa vale como
+ * antes. "Lead nasce pausado" significa "a IA não conversa com ele".
  *
  * Escopos: 'all' (geral) vale para qualquer canal; 'whatsapp', 'instagram' e
  * 'email' valem só para leads daquele canal (canal A pausado não afeta B).
