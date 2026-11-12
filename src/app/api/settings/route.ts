@@ -21,7 +21,10 @@ import { isInstagramInboxPlacement } from '@/lib/instagram-inbox-placement'
 async function webhookTokenParaAdmin(): Promise<string | null> {
   const user = await getCurrentUser()
   if (!user?.isAdmin) return null
-  return process.env.RECUPERAVENDAS_WEBHOOK_SECRET ?? null
+  // Mesma resolução de checkWebhookToken (webhook-auth.ts): o segredo que o webhook de fato
+  // aceita. Antes só lia RECUPERAVENDAS_WEBHOOK_SECRET e a URL exibida ao admin saía sem token
+  // quando a variável em uso era SAC_WEBHOOK_SECRET.
+  return process.env.SAC_WEBHOOK_SECRET || process.env.RECUPERAVENDAS_WEBHOOK_SECRET || process.env.WEBHOOK_SECRET || null
 }
 
 const WRITABLE_SETTING_FIELDS = [
