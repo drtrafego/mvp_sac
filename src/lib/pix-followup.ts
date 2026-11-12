@@ -76,7 +76,8 @@ export async function schedulePixFollowup(lead: DatabaseLead, now = new Date()):
     return { scheduled: false, reason: eligibility.reason }
   }
 
-  if (await hasApprovedPurchaseForOrder(lead.companyId, lead.transactionId)) {
+  // Só para o fluxo allowlistado (Isabela/Kiwify): outras empresas mantêm o comportamento anterior.
+  if (allowlisted && await hasApprovedPurchaseForOrder(lead.companyId, lead.transactionId)) {
     return await blockPixSchedule(lead, 'pedido já tem compra aprovada')
   }
 

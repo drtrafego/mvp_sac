@@ -93,3 +93,10 @@ test('order_reference sem order_ref usa os 8 primeiros caracteres do order_id, n
   assert.equal(isabelaOrderReference({ rawPayload: { order_ref: 'Ab12Cd7' }, transactionId: '0a1b2c3d-0000-4000-8000-000000000001' }), 'Ab12Cd7')
   assert.equal(isabelaOrderReference({ rawPayload: null, transactionId: null }), '')
 })
+
+test('a variável nunca recua o corte para antes do padrão (piso)', () => {
+  for (const value of ['0000-01-01T00:00:00Z', '2026-01-01T00:00:00Z']) {
+    assert.equal(getIsabelaForwardOnlyCutoff({ ISABELA_FORWARD_ONLY_SINCE: value }), ISABELA_FORWARD_ONLY_DEFAULT_CUTOFF_AT)
+  }
+  assert.equal(getIsabelaForwardOnlyCutoff({ ISABELA_FORWARD_ONLY_SINCE: '2026-11-13T00:00:00-03:00' })?.toISOString(), '2026-11-13T03:00:00.000Z')
+})

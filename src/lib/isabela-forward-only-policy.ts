@@ -25,7 +25,8 @@ export function getIsabelaForwardOnlyCutoff(env: Record<string, string | undefin
   // Rejeita dia inexistente (ex.: 2026-02-31, que o Date empurra para março).
   const calendar = new Date(Date.UTC(Number(y), month - 1, day))
   if (calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) return null
-  return parsed
+  // Piso: a variável nunca pode recuar o corte para antes do padrão (evita reabrir o retroativo).
+  return parsed.getTime() < ISABELA_FORWARD_ONLY_DEFAULT_CUTOFF_AT.getTime() ? ISABELA_FORWARD_ONLY_DEFAULT_CUTOFF_AT : parsed
 }
 
 export type IsabelaForwardOnlyGate =

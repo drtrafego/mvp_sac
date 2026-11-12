@@ -79,3 +79,5 @@ MÉDIO 3) Pix/boleto/cartão chegando depois do order_approved do mesmo order_id
   Prova: teste "pedido já pago": pix_created, billet_created e order_rejected após order_approved geram 0 jobs de cobrança, só a sequência da compra; cobrança já na fila é cancelada no cron.
 BAIXO 4) order_reference sem order_ref usa os 8 primeiros caracteres do order_id (antes UUID de 36). Prova: teste unitário e de webhook+cron ('0a1b2c3d').
 Saídas após as correções: test:isabela-kiwify-events 36/36 | bot-pause-transactional 12/12 | bot-pause-switch 16/16 | pix-followup 5/5 | message-jobs-policy 8/8 | gabi-pause-mirror 19/19 | tsc --noEmit exit 0 | next build: exit 0 (Compiled, TypeScript ok, 23 páginas estáticas).
+
+9. ENDURECIMENTOS APOS 2o QA (PASSA): (a) checagem de pedido ja pago em schedulePixFollowup agora so vale para o fluxo allowlistado (Isabela/Kiwify); outras empresas ficam como no baseline; (b) ISABELA_FORWARD_ONLY_SINCE tem piso no corte padrao (valor antigo como 0000-01-01 nao reabre o retroativo). Testes 37/37 em TZ=UTC e America/Sao_Paulo.
