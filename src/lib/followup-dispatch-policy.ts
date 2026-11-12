@@ -193,6 +193,12 @@ export function shouldApplyFollowupDispatchWindow(job: {
   // janela comercial do bot não pode transformar 60 minutos em um atraso
   // arbitrário. O cron ainda aplica a política de janela Meta ao job.
   if (job.jobType === 'pix_followup_60m') return false
+  // Mensagens de confirmação de operação da Isabela (template Meta aprovado) não esperam o
+  // horário comercial: cartão recusado (30 min depois do evento) e a primeira mensagem da
+  // compra aprovada (boas-vindas, atraso 0). Os passos tardios da compra (D1, D10) seguem
+  // na janela.
+  if (job.jobType === 'isabela_cartao_recusado') return false
+  if (job.jobType === 'isabela_purchase_sequence' && job.messageOrder === 1) return false
   return job.messageOrder != null || Boolean(job.upsellContent)
 }
 

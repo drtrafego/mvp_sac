@@ -162,6 +162,16 @@ test('política de horário só se aplica a follow-up, não a disparo em massa',
   assert.equal(shouldApplyFollowupDispatchWindow({ messageOrder: null, massDispatchBatchId: null }), false)
 })
 
+test('confirmação de operação da Isabela não espera o horário comercial', () => {
+  assert.equal(shouldApplyFollowupDispatchWindow({ messageOrder: 1, jobType: 'isabela_cartao_recusado' }), false)
+  assert.equal(shouldApplyFollowupDispatchWindow({ messageOrder: 1, jobType: 'isabela_purchase_sequence' }), false)
+  // passos tardios da compra continuam na janela
+  assert.equal(shouldApplyFollowupDispatchWindow({ messageOrder: 2, jobType: 'isabela_purchase_sequence' }), true)
+  assert.equal(shouldApplyFollowupDispatchWindow({ messageOrder: 3, jobType: 'isabela_purchase_sequence' }), true)
+  // outros tipos seguem como antes
+  assert.equal(shouldApplyFollowupDispatchWindow({ messageOrder: 1, jobType: null }), true)
+})
+
 test('passo atrasado respeita o espaçamento desde o follow-up anterior enviado', () => {
   const retryAt = retryAtAfterPreviousFollowupStep({
     previousSentAt: new Date('2026-09-28T13:00:00.000Z'),
