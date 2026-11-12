@@ -16,8 +16,7 @@ export function isabelaFirstName(fullName: string | null | undefined): string {
 
 /**
  * Referência do pedido para o cliente: o order_ref curto da Kiwify quando o
- * payload tem, senão o transactionId (order_id, UUID de 36 caracteres, que só
- * serve de último recurso).
+ * payload tem, senão os 8 primeiros caracteres do transactionId (order_id, UUID de 36).
  */
 export function isabelaOrderReference(lead: { rawPayload?: unknown; transactionId?: string | null }): string {
   const raw = lead.rawPayload
@@ -25,7 +24,8 @@ export function isabelaOrderReference(lead: { rawPayload?: unknown; transactionI
     const ref = (raw as Record<string, unknown>).order_ref
     if (typeof ref === 'string' && ref.trim()) return ref.trim()
   }
-  return lead.transactionId ?? ''
+  // Sem order_ref: os 8 primeiros caracteres do order_id em vez do UUID inteiro (36).
+  return (lead.transactionId ?? '').trim().slice(0, 8)
 }
 
 /** dd/MM/yyyy no fuso de São Paulo (o vencimento é 23:59 BRT; em UTC viraria o dia seguinte). */

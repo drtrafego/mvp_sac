@@ -22,6 +22,7 @@ import {
 } from '@/lib/pix-followup-policy'
 import { selectRecoverySequence } from '@/lib/recovery-sequence'
 import { isPauseBypassAllowed } from '@/lib/message-job-class'
+import { hasApprovedPurchaseForOrder } from '@/lib/order-paid-check'
 
 type DatabaseLead = typeof recoveryLeads.$inferSelect
 
@@ -73,6 +74,10 @@ export async function schedulePixFollowup(lead: DatabaseLead, now = new Date()):
       payload: { reason: eligibility.reason },
     })
     return { scheduled: false, reason: eligibility.reason }
+  }
+
+  if (await hasApprovedPurchaseForOrder(lead.companyId, lead.transactionId)) {
+    return await blockPixSchedule(lead, 'pedido já tem compra aprovada')
   }
 
   const [config] = await db

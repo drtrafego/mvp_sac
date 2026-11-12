@@ -305,6 +305,89 @@ async function main() {
       assert.equal(sent.length, 0)
     })
 
+    await test('convite do Portal (não é evento Kiwify): o corte de data NÃO se aplica; resultado idêntico ao baseline (opt-in segue exigido)', async () => {
+      await reset()
+      await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: false, by: 'teste' })
+      try {
+        const [portalSeq] = await db.insert(schema.recoverySequences).values({ companyId: isabela.id, eventType: 'portal_apos_desafio', name: 'Portal', isActive: true }).returning()
+        const [portalMsg] = await db.insert(schema.sequenceMessages).values({
+          sequenceId: portalSeq.id, order: 1, delayMinutes: 0, messageType: 'template', templateName: 'convite_portal_apos_desafio',
+          templateLanguage: 'pt_BR', templateVariablesMap: { customer_name: '{nome}' }, isActive: true,
+        }).returning()
+        const buyer = async (phone: string, consent: string) => (await db.insert(schema.recoveryLeads).values({
+          companyId: isabela.id, platform: 'kiwify', eventType: 'compra_aprovada', phone, name: 'Compradora Antiga', status: 'completed',
+          transactionId: `portal-${phone}`, orderDate: new Date('2026-11-01T12:00:00Z'), approvedDate: new Date('2026-11-01T12:00:00Z'), whatsappConsentStatus: consent,
+        }).returning())[0]
+        const optedIn = await buyer('5565999990020', 'opted_in')
+        const unknown = await buyer('5565999990021', 'unknown')
+        const job = async (leadId: number, key: string) => (await db.insert(schema.messageJobs).values({
+          leadId, messageId: portalMsg.id, scheduledFor: new Date(Date.now() - 60_000), status: 'pending', jobType: 'isabela_portal_after_challenge', idempotencyKey: key,
+        }).returning())[0]
+        const optedInJob = await job(optedIn.id, 'portal-ok')
+        const unknownJob = await job(unknown.id, 'portal-sem-optin')
+        await runCron()
+        const [a] = await db.select().from(schema.messageJobs).where(eq(schema.messageJobs.id, optedInJob.id))
+        const [b] = await db.select().from(schema.messageJobs).where(eq(schema.messageJobs.id, unknownJob.id))
+        // Nenhum dos dois é cancelado pelo corte (comprou em 01/11, antes do corte).
+        assert.doesNotMatch(a.error ?? '', /corte/)
+        assert.doesNotMatch(b.error ?? '', /corte/)
+        // Baseline (origin/main, medido): o comprador com opted_in passa pelo gate de consentimento e é cancelado
+        // só pelo gate de template do Portal (categoryOk UTILITY x portalCategoryOk MARKETING, contradição que já
+        // existe no baseline e fica fora do escopo); sem opt_in segue cancelado por consentimento.
+        assert.match(a.error ?? '', /Template explícito/)
+        assert.match(b.error ?? '', /opted_in/)
+      } finally {
+        await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'teste' })
+      }
+    })
+
+    await test('pedido já pago: pix/boleto/cartão chegando DEPOIS do order_approved do mesmo order_id não agenda; job de cobrança já na fila é cancelado no cron', async () => {
+      await reset()
+      const approved = base(30, {
+        webhook_event_type: 'order_approved', order_status: 'paid', payment_method: 'pix', approved_date: nowSp(), Customer: customer('+55 65 99999-0030'),
+      })
+      await postKiwify(isabela.slug, approved)
+      const late = (extra: Record<string, unknown>) => ({ ...approved, ...extra, webhook_event_type: extra.webhook_event_type })
+      await postKiwify(isabela.slug, late({ webhook_event_type: 'pix_created', order_status: 'waiting_payment', pix_code: 'abc', pix_expiration: '31/12/2030 20:30' }))
+      await postKiwify(isabela.slug, late({ webhook_event_type: 'billet_created', order_status: 'waiting_payment', payment_method: 'boleto', boleto_barcode: '123', boleto_expiry_date: '31/12/2030' }))
+      await postKiwify(isabela.slug, late({ webhook_event_type: 'order_rejected', order_status: 'refused', payment_method: 'credit_card' }))
+      const jobs = await jobsOf(ORDER_ID(30))
+      assert.deepEqual(jobs.map(j => j.jobType).sort(), ['isabela_purchase_sequence', 'isabela_purchase_sequence', 'isabela_purchase_sequence'], 'só a sequência da compra; nenhuma cobrança')
+      const skips = await lastWebhookSkip()
+      assert.equal(skips.filter(reason => reason === 'pedido_ja_pago_compra_aprovada').length, 3, JSON.stringify(skips))
+      await releaseAll()
+      assert.equal((await runCron()).sent, 1)
+      assert.equal(sent[0].templateName, 'boas_vindas_despertar_pos_compra')
+      assert.equal(sent.some(m => ['pix_despertar_nao_pago', 'boleto_despertar_nao_pago', 'cartao_despertar_recusado'].includes(m.templateName ?? '')), false)
+
+      // Defesa no cron: cobrança agendada antes de o order_approved existir.
+      await reset()
+      const [pixLead] = await db.insert(schema.recoveryLeads).values({
+        companyId: isabela.id, platform: 'kiwify', eventType: 'pix', phone: '5565999990031', name: 'Maria', status: 'pending', paymentType: 'pix', pixCode: 'abc',
+        pixExpiry: new Date(Date.now() + 3600_000), transactionId: 'pedido-pago-1', orderDate: new Date(), whatsappConsentStatus: 'unknown',
+      }).returning()
+      await db.insert(schema.recoveryLeads).values({
+        companyId: isabela.id, platform: 'kiwify', eventType: 'compra_aprovada', phone: '5565999990031', name: 'Maria', status: 'completed',
+        transactionId: 'pedido-pago-1', orderDate: new Date(), approvedDate: new Date(), whatsappConsentStatus: 'unknown',
+      })
+      const [pixMsg] = await db.select().from(schema.sequenceMessages).where(eq(schema.sequenceMessages.templateName, 'pix_despertar_nao_pago'))
+      const [pixJob] = await db.insert(schema.messageJobs).values({
+        leadId: pixLead.id, messageId: pixMsg.id, scheduledFor: new Date(Date.now() - 60_000), status: 'pending', jobType: 'pix_followup_60m', idempotencyKey: 'pago-pix',
+      }).returning()
+      assert.equal((await runCron()).sent, 0)
+      const [after] = await db.select().from(schema.messageJobs).where(eq(schema.messageJobs.id, pixJob.id))
+      assert.equal(after.status, 'cancelled')
+      assert.match(after.error ?? '', /já pago/)
+    })
+
+    await test('order_reference sem order_ref usa os 8 primeiros caracteres do order_id', async () => {
+      await reset()
+      await postKiwify(isabela.slug, { ...base(31, { webhook_event_type: 'order_rejected', order_status: 'refused', payment_method: 'credit_card', Customer: customer('+55 65 99999-0032') }), order_ref: undefined })
+      await releaseAll()
+      assert.equal((await runCron()).sent, 1, JSON.stringify(sent))
+      assert.equal(lastParams(sent[0]).order_reference, '0a1b2c3d')
+    })
+
     await test('pausa geral continua bloqueando o que está fora da lista: job sem jobType, upsell e Portal sem opt_in', async () => {
       await reset()
       const [lead] = await db.insert(schema.recoveryLeads).values({

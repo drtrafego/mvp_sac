@@ -16,6 +16,7 @@ import {
 import { shouldScheduleKiwifyMessageJobs } from '@/lib/kiwify-purchase-policy'
 import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
 import { evaluateIsabelaForwardOnlyEvent } from '@/lib/isabela-forward-only-policy'
+import { hasApprovedPurchaseForOrder } from '@/lib/order-paid-check'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
 // Fonte: docs.kiwify.com.br, exemplos oficiais de payload e captura real do
@@ -866,11 +867,18 @@ export async function POST(
       company.slug,
       mappedType === 'compra_aprovada' ? (draft.approvedDate ?? draft.orderDate) : draft.orderDate,
     )
+    // Entrega fora de ordem: pix/boleto/cartão chegando depois do order_approved do
+    // mesmo pedido não pode cobrar quem já pagou (só Isabela, comportamento das demais igual).
+    const alreadyPaid = isIsabela && ['pix', 'boleto', 'cartao_recusado'].includes(mappedType)
+      && await hasApprovedPurchaseForOrder(company.id, draft.transactionId)
+    const scheduleAllowed = forwardOnlyGate.allowed && !alreadyPaid
     const isImmediateIsabelaBoleto = isIsabela && mappedType === 'boleto'
     const isIsabelaCardRecovery = isIsabela && mappedType === 'cartao_recusado'
     let followupSkipReason: string | null = null
     if (!forwardOnlyGate.allowed) {
       followupSkipReason = forwardOnlyGate.reason
+    } else if (alreadyPaid) {
+      followupSkipReason = 'pedido_ja_pago_compra_aprovada'
     } else if (mappedType === 'carrinho_abandonado') {
       followupSkipReason = 'carrinho_abandonado_registrado_sem_agendamento'
     }
@@ -919,7 +927,7 @@ export async function POST(
     // Compra aprovada do Despertar agenda somente os templates aprovados e
     // consentidos da sequência configurada no SAC. O webhook continua sendo
     // idempotente por transação; cada job também recebe uma chave própria.
-    if (isFunilEligible && forwardOnlyGate.allowed) {
+    if (isFunilEligible && scheduleAllowed) {
       const initialFunnelState = createInitialFunilCursosState({
         transactionId: draft.transactionId!,
         productName: draft.productName,
@@ -990,7 +998,7 @@ export async function POST(
     // Sem telefone: grava o lead (serve para analytics e receita) mas NÃO agenda
     // job nenhum, senão o cron criaria mensagem que falha e sujaria o painel.
     // Acontece quando a cliente desabilitou o campo de celular no checkout.
-    if (forwardOnlyGate.allowed && shouldScheduleKiwifyMessageJobs(mappedType) && mappedType !== 'pix' && canScheduleAutomaticRecoverySequence(mappedType) && !isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
+    if (scheduleAllowed && shouldScheduleKiwifyMessageJobs(mappedType) && mappedType !== 'pix' && canScheduleAutomaticRecoverySequence(mappedType) && !isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
       const messages = await db
         .select()
         .from(sequenceMessages)
@@ -1120,13 +1128,13 @@ export async function POST(
           checkBeforeSend: false,
         })
       }
-    } else if (forwardOnlyGate.allowed && isImmediateIsabelaBoleto) {
+    } else if (scheduleAllowed && isImmediateIsabelaBoleto) {
       followupSkipReason = !sequence
         ? 'boleto_followup_sem_sequencia_ativa'
         : !draft.phone
           ? 'boleto_followup_sem_telefone'
           : 'boleto_followup_nao_elegivel'
-    } else if (forwardOnlyGate.allowed && isIsabelaCardRecovery) {
+    } else if (scheduleAllowed && isIsabelaCardRecovery) {
       followupSkipReason = !sequence
         ? 'cartao_recusado_sem_sequencia_ativa'
         : !draft.phone
@@ -1138,7 +1146,7 @@ export async function POST(
     // cuja condição exclui mappedType 'pix', então nunca executava e nenhum Pix
     // da Kiwify gerava follow-up. Agora roda fora do bloco, só para a Isabela
     // (as demais empresas continuam como antes) e respeita opt-out e o corte.
-    if (isIsabela && mappedType === 'pix' && forwardOnlyGate.allowed) {
+    if (isIsabela && mappedType === 'pix' && scheduleAllowed) {
       if (!draft.phone) {
         followupSkipReason = 'pix_followup_sem_telefone'
       } else if (!canSendEventMessage) {
@@ -1153,7 +1161,7 @@ export async function POST(
     }
 
     // Notificação interna (fire-and-forget).
-    if (config?.notificationPhone && forwardOnlyGate.allowed) {
+    if (config?.notificationPhone && scheduleAllowed) {
       const label = eventTypeLabels[mappedType] ?? mappedType
       const nome = draft.name ?? 'Desconhecido'
       const produto = draft.productName ?? ''

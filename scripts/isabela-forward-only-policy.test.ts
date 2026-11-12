@@ -62,3 +62,34 @@ test('valores dos templates da Isabela: primeiro nome, order_ref curto e data no
   assert.equal(formatDateSaoPaulo(new Date('2030-12-31T23:59:00-03:00')), '31/12/2030')
   assert.equal(formatDateSaoPaulo(null), '')
 })
+
+test('ISABELA_FORWARD_ONLY_SINCE aceita só ISO 8601 completo com Z ou ±hh:mm; qualquer outro valor não vazio vira null (bloqueia tudo), em qualquer fuso do runtime', () => {
+  const bad = ['2026', '2026-11-12', '0', '11/12/2026', '2026-11-12T14:20:00', '2026-11-12 14:20:00-03:00', '2026-11-12T14:20', 'amanha',
+    '2026-13-01T00:00:00Z', '2026-02-31T00:00:00Z', '2026-11-12T25:00:00Z', '2026-11-12T14:20:00-0300', '1762968000000', 'null']
+  for (const value of bad) {
+    assert.equal(getIsabelaForwardOnlyCutoff({ ISABELA_FORWARD_ONLY_SINCE: value }), null, value)
+    assert.deepEqual(
+      evaluateIsabelaForwardOnlyEvent('isabela-fanini', new Date('2020-01-01T00:00:00Z'), { ISABELA_FORWARD_ONLY_SINCE: value }),
+      { allowed: false, reason: 'evento_isabela_corte_invalido' },
+      value,
+    )
+  }
+  const good: [string, string][] = [
+    ['2026-11-12T14:20:00-03:00', '2026-11-12T17:20:00.000Z'],
+    ['2026-11-12T17:20:00Z', '2026-11-12T17:20:00.000Z'],
+    ['2026-11-12T17:20Z', '2026-11-12T17:20:00.000Z'],
+    ['2026-11-12T17:20:00.500+00:00', '2026-11-12T17:20:00.500Z'],
+  ]
+  for (const [value, iso] of good) assert.equal(getIsabelaForwardOnlyCutoff({ ISABELA_FORWARD_ONLY_SINCE: value })?.toISOString(), iso, value)
+  // ausente ou só espaços: corte padrão
+  for (const value of [undefined, '', '   ']) {
+    assert.equal(getIsabelaForwardOnlyCutoff({ ISABELA_FORWARD_ONLY_SINCE: value }), ISABELA_FORWARD_ONLY_DEFAULT_CUTOFF_AT)
+  }
+  assert.equal(ISABELA_FORWARD_ONLY_DEFAULT_CUTOFF_AT.toISOString(), '2026-11-12T17:20:00.000Z')
+})
+
+test('order_reference sem order_ref usa os 8 primeiros caracteres do order_id, não o UUID inteiro', () => {
+  assert.equal(isabelaOrderReference({ rawPayload: {}, transactionId: '0a1b2c3d-0000-4000-8000-000000000001' }), '0a1b2c3d')
+  assert.equal(isabelaOrderReference({ rawPayload: { order_ref: 'Ab12Cd7' }, transactionId: '0a1b2c3d-0000-4000-8000-000000000001' }), 'Ab12Cd7')
+  assert.equal(isabelaOrderReference({ rawPayload: null, transactionId: null }), '')
+})

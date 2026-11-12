@@ -23,6 +23,7 @@ import { recordPixFollowupSent } from '@/lib/pix-followup'
 import { isApprovedUtilityPixTemplate, isRealPendingPix, PIX_FOLLOWUP_JOB_TYPE } from '@/lib/pix-followup-policy'
 import { ISABELA_APPROVED_TEMPLATE_NAMES, isConsentExemptKiwifyEventJob, isIsabelaJobType } from '@/lib/recovery-sequence-policy'
 import { evaluateIsabelaForwardOnlyEvent } from '@/lib/isabela-forward-only-policy'
+import { hasApprovedPurchaseForOrder } from '@/lib/order-paid-check'
 import { formatDateSaoPaulo, isabelaFirstName, isabelaOrderReference } from '@/lib/isabela-template-values'
 import { hasDocumentHeader, renderMetaTemplate, renderMetaTemplateBody, templateHeaderDocument as snapshotTemplateHeaderDocument } from '@/lib/meta-template-utils'
 
@@ -491,7 +492,9 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
       // o job, o cron nunca chama a Meta para evento da Isabela anterior ao
       // corte. A data é a de OCORRÊNCIA do evento (approved_date da compra,
       // created_at dos demais), não a de chegada ao SAC; sem data, falha fechada.
-      if (isabelaEventJob) {
+      // Só os jobs de evento da Kiwify: o convite do Portal (isabela_portal_after_challenge)
+      // nasce da conversa e não é evento de checkout, então não sofre o corte.
+      if (isabelaEventJob && isConsentExemptKiwifyEventJob(job.jobType)) {
         const forwardOnlyGate = evaluateIsabelaForwardOnlyEvent(
           companySlug,
           lead.eventType === 'compra_aprovada' ? (lead.approvedDate ?? lead.orderDate) : lead.orderDate,
@@ -515,6 +518,18 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
           }).catch(() => {})
           continue
         }
+      }
+
+      // Entrega fora de ordem da Kiwify: Pix/boleto/cartão cujo pedido já tem
+      // compra aprovada (order_approved chegou antes) nunca cobra quem já pagou.
+      if (isabelaEventJob && isConsentExemptKiwifyEventJob(job.jobType) && job.jobType !== 'isabela_purchase_sequence'
+        && await hasApprovedPurchaseForOrder(companyId, lead.transactionId)) {
+        await db.update(messageJobs).set({
+          status: 'cancelled',
+          error: 'Pedido já pago (compra_aprovada) antes do envio da cobrança',
+          processingStartedAt: null,
+        }).where(eq(messageJobs.id, job.id))
+        continue
       }
 
       // Pausa do bot (lead, chave geral/WhatsApp da empresa) vale para o que o

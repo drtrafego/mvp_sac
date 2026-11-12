@@ -64,3 +64,18 @@ Precisa rodar DEPOIS do deploy desta branch (o catálogo antigo rejeitaria os no
 Deploy da branch; setar ISABELA_FORWARD_ONLY_SINCE no instante do deploy; rodar o SQL do item 6; sincronizar templates no SAC se faltar algum.
 Pós-deploy: no próximo webhook real conferir webhook_received (skip_reason vazio) e message_jobs (jobType e parâmetros).
 Fora do escopo, só relato: Hotmart/Greenn/Zouti chamam schedulePixFollowup direto e não têm o código morto do Kiwify.
+
+8. CORREÇÕES DO QA (novo commit por cima de 519232c; QA bloqueou o primeiro)
+ALTO 1) Corte de data cancelava o convite do Portal. Corrigido: o gate de corte no cron só vale para isConsentExemptKiwifyEventJob (os 4 jobTypes de evento Kiwify).
+  Prova: teste "convite do Portal" (comprador de 01/11) falha com o gate antigo e passa agora; o Portal não é mais cancelado por 'corte'.
+  ACHADO IMPORTANTE: no baseline origin/main (medido com teste temporário) o Portal com opted_in JÁ é cancelado pelo gate de template do cron
+  ("Template explícito da Isabela deixou de estar aprovado..."), porque categoryOk exige UTILITY e portalCategoryOk exige MARKETING (contradição que já existe).
+  Logo o Portal nunca foi ENVIADO no baseline e continua igual; o teste afirma o resultado idêntico ao baseline. Corrigir isso é mudança de comportamento (passaria a enviar convites): NÃO feito, decidir à parte.
+ALTO 2) ISABELA_FORWARD_ONLY_SINCE aceita só ISO 8601 completo terminando em Z ou ±hh:mm (regex + datas/horas válidas, rejeita 2026-02-31). Qualquer outro valor não vazio retorna null e o código bloqueia tudo
+  (evento_isabela_corte_invalido). Ausente/vazio/só espaços mantém o padrão 2026-11-12T14:20:00-03:00.
+  Prova: teste com 14 valores ruins ("2026", "2026-11-12", "0", "11/12/2026", ISO sem offset, "-0300", epoch...) e 4 bons; rodado com TZ=UTC e TZ=America/Sao_Paulo (18/18 em cada).
+MÉDIO 3) Pix/boleto/cartão chegando depois do order_approved do mesmo order_id: webhook (Isabela) não agenda (skip 'pedido_ja_pago_compra_aprovada'); schedulePixFollowup também pula
+  (todas as empresas que o chamam: só age se existir compra_aprovada do mesmo company_id+transaction_id); o cron cancela cobrança já agendada ('Pedido já pago ...'). Helper: src/lib/order-paid-check.ts.
+  Prova: teste "pedido já pago": pix_created, billet_created e order_rejected após order_approved geram 0 jobs de cobrança, só a sequência da compra; cobrança já na fila é cancelada no cron.
+BAIXO 4) order_reference sem order_ref usa os 8 primeiros caracteres do order_id (antes UUID de 36). Prova: teste unitário e de webhook+cron ('0a1b2c3d').
+Saídas após as correções: test:isabela-kiwify-events 36/36 | bot-pause-transactional 12/12 | bot-pause-switch 16/16 | pix-followup 5/5 | message-jobs-policy 8/8 | gabi-pause-mirror 19/19 | tsc --noEmit exit 0 | next build: exit 0 (Compiled, TypeScript ok, 23 páginas estáticas).
