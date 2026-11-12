@@ -34,6 +34,13 @@ export interface CommentDmLeadPauseState {
   botPausedBy?: string | null
   botPausedAll?: boolean | null
   botPausedChannel?: string | null
+  /**
+   * O lead tem a tag "pessoa" (lead_tags, qualquer escopo). pauseBotForPessoaTag
+   * só grava botPausedBy='tag:pessoa' se o lead NÃO estava pausado; um lead já
+   * pausado pela chave e depois marcado "pessoa" continua com a origem da chave.
+   * A tag é a prova de que um humano assumiu: bloqueia sempre.
+   */
+  hasPessoaTag?: boolean
 }
 
 export type CommentDmPauseBypassDecision =
@@ -65,6 +72,7 @@ export function getCommentDmPauseBypassCutoff(env: Record<string, string | undef
  */
 function isIndividualLeadPause(lead: CommentDmLeadPauseState): boolean {
   if (lead.botPaused !== true) return false
+  if (lead.hasPessoaTag === true) return true
   const by = (lead.botPausedBy ?? '').trim().toLowerCase()
   if (by.startsWith('tag:') || by.startsWith('anti-loop') || by.includes('optout') || by.includes('opt-out') || by.includes('opt_out')) return true
   return !isSwitchGeneratedPause(lead)
@@ -89,6 +97,7 @@ export function evaluateCommentDmPauseBypass(input: {
     return { bypass: false, reason: 'empresa_fora_da_lista' }
   }
   const lead = input.lead
+  if (lead?.hasPessoaTag === true) return { bypass: false, reason: 'pausa_individual_do_lead' }
   if (lead?.botPaused === true) {
     if (isIndividualLeadPause(lead)) return { bypass: false, reason: 'pausa_individual_do_lead' }
     if (!input.switchBlocking) return { bypass: false, reason: 'pausa_do_lead_sem_chave_ativa' }

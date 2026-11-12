@@ -25,7 +25,8 @@ import {
 } from '@/lib/instagram-comment-pause-bypass'
 import { eq, and, gte, sql } from 'drizzle-orm'
 import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
-import { normalizeTag } from '@/lib/lead-tags'
+import { normalizeTag, PESSOA_TAG } from '@/lib/lead-tags'
+import { isUniqueViolation } from '@/lib/webhook-dedup'
 import {
   INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
   INSTAGRAM_COMMENT_DM_TEMPLATE_KEYWORD,
@@ -164,6 +165,7 @@ async function resolveCommentPauseDecision(
 ): Promise<CommentPauseDecision> {
   const [commenterLead] = await db
     .select({
+      id: recoveryLeads.id,
       botPaused: recoveryLeads.botPaused,
       botPausedBy: recoveryLeads.botPausedBy,
       botPausedAll: recoveryLeads.botPausedAll,
@@ -187,9 +189,20 @@ async function resolveCommentPauseDecision(
   if (!company || !COMMENT_DM_PAUSE_BYPASS_COMPANY_SLUGS.includes(company.slug)) return decision
 
   const blockingSwitch = await getBlockingPauseSwitch(companyId, 'instagram')
+  // Tag "pessoa" (qualquer escopo) = humano assumiu, mesmo que a origem gravada
+  // da pausa seja a da chave (a tag não sobrescreve lead já pausado).
+  let hasPessoaTag = false
+  if (commenterLead?.id) {
+    const [pessoaTag] = await db
+      .select({ id: leadTags.id })
+      .from(leadTags)
+      .where(and(eq(leadTags.leadId, commenterLead.id), eq(leadTags.tag, PESSOA_TAG)))
+      .limit(1)
+    hasPessoaTag = Boolean(pessoaTag)
+  }
   const bypass = evaluateCommentDmPauseBypass({
     companySlug: company.slug,
-    lead: commenterLead ?? null,
+    lead: commenterLead ? { ...commenterLead, hasPessoaTag } : null,
     switchBlocking: blockingSwitch !== null,
     commentCreatedAt: await resolveCommentCreatedAt(),
   })
@@ -213,6 +226,56 @@ async function auditCommentPauseBypass(companyId: number, commentId: string, pay
     })
   } catch (error) {
     console.error('[Comment-to-DM Pause Bypass Audit Error]:', error)
+  }
+}
+
+/**
+ * Reaproveita o log 'ignorado_pausa' (e só ele) de (automação, pessoa, mídia)
+ * como claim do comentário novo. Só para a empresa da lista do bypass; as
+ * demais mantêm onConflictDoNothing. UPDATE condicionado ao status = atômico.
+ * Violação do índice por comment_id (corrida) vira "já reivindicado".
+ */
+async function reuseIgnoredPauseClaim(input: {
+  companyId: number
+  automationId: number
+  commentId: string
+  commenterId: string
+  commenterUsername?: string
+  mediaId: string
+  commentText: string
+  matchedKeyword?: string
+}): Promise<{ id: number } | null> {
+  const [company] = await db
+    .select({ slug: companies.slug })
+    .from(companies)
+    .where(eq(companies.id, input.companyId))
+    .limit(1)
+  if (!company || !COMMENT_DM_PAUSE_BYPASS_COMPANY_SLUGS.includes(company.slug)) return null
+  try {
+    const [row] = await db
+      .update(instagramCommentLogs)
+      .set({
+        commentId: input.commentId,
+        commenterUsername: input.commenterUsername,
+        commentText: input.commentText,
+        matchedKeyword: input.matchedKeyword,
+        status: 'processing',
+        errorMessage: null,
+        sentAt: null,
+        createdAt: new Date(),
+      })
+      .where(and(
+        eq(instagramCommentLogs.companyId, input.companyId),
+        eq(instagramCommentLogs.automationId, input.automationId),
+        eq(instagramCommentLogs.commenterId, input.commenterId),
+        eq(instagramCommentLogs.mediaId, input.mediaId),
+        eq(instagramCommentLogs.status, 'ignorado_pausa'),
+      ))
+      .returning({ id: instagramCommentLogs.id })
+    return row ?? null
+  } catch (err) {
+    if (isUniqueViolation(err)) return null
+    throw err
   }
 }
 
@@ -480,7 +543,7 @@ export async function processInstagramComment(event: CommentEventData) {
   // A claim is written before the external call. The unique comment index
   // makes concurrent Meta webhook deliveries idempotent and prevents two DMs
   // from leaving the process at the same time.
-  const [claim] = await db.insert(instagramCommentLogs).values({
+  let [claim] = await db.insert(instagramCommentLogs).values({
     companyId,
     automationId: matchedRule.id,
     commentId,
@@ -491,7 +554,20 @@ export async function processInstagramComment(event: CommentEventData) {
     matchedKeyword: matchedKeywordFound,
     status: 'processing',
   }).onConflictDoNothing().returning({ id: instagramCommentLogs.id })
-  if (!claim) return { status: 'skipped', reason: 'comment_claim_already_exists' }
+  if (!claim) {
+    // Índice único (automação, pessoa, mídia): o log 'ignorado_pausa' de um
+    // comentário ANTERIOR da mesma pessoa no mesmo post ocupa a vaga e barrava
+    // para sempre o comentário novo, mesmo depois do bypass. Só na empresa da
+    // lista do bypass e só quando o status existente é 'ignorado_pausa' (nunca
+    // enviado/falha/processando) a linha é reaproveitada, com UPDATE atômico
+    // condicionado ao status: entregas concorrentes disputam e só uma vence.
+    const reused = await reuseIgnoredPauseClaim({
+      companyId, automationId: matchedRule.id, commentId, commenterId, commenterUsername, mediaId, commentText,
+      matchedKeyword: matchedKeywordFound,
+    })
+    if (!reused) return { status: 'skipped', reason: 'comment_claim_already_exists' }
+    claim = reused
+  }
 
   // 6. Disparo da Resposta Privada (Private Reply) via Graph API.
   // A verificação de seguidor já aconteceu acima, no próprio comentário.
@@ -526,14 +602,6 @@ export async function processInstagramComment(event: CommentEventData) {
     return { status: 'ignored', reason: 'ignorado_pausa' }
   }
 
-  if (pauseDecision.bypassed || lastPauseDecision.bypassed) {
-    await auditCommentPauseBypass(companyId, commentId, {
-      automationId: matchedRule.id,
-      mediaId,
-      reason: 'disparo_comentario_vira_dm_nao_e_bot',
-    })
-  }
-
   const dmResult = await sendInstagramPrivateReply({
     commentId,
     text: sentText,
@@ -556,6 +624,15 @@ export async function processInstagramComment(event: CommentEventData) {
   // 7. Sucesso no Envio da DM: grava log e incrementa contador da automação
   const now = new Date()
   await db.update(instagramCommentLogs).set({ status: 'sent', sentAt: now, errorMessage: null }).where(eq(instagramCommentLogs.id, claim.id))
+
+  // Auditoria do bypass só com o envio confirmado (DM que falhou não vira "disparo liberado").
+  if (pauseDecision.bypassed || lastPauseDecision.bypassed) {
+    await auditCommentPauseBypass(companyId, commentId, {
+      automationId: matchedRule.id,
+      mediaId,
+      reason: 'disparo_comentario_vira_dm_nao_e_bot',
+    })
+  }
 
   if (isPreparedTemplate) {
     await auditPreparedTemplate(companyId, 'instagram_comment_dm_sent', commentId, {

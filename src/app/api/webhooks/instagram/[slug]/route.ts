@@ -545,7 +545,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
               commenterUsername,
               mediaId,
               commentText,
-              commentCreatedAt: val.timestamp as string | undefined,
+              // O value do comentário não traz timestamp (payload real); entry.time (segundos) é o instante do evento.
+              commentCreatedAt: (val.timestamp ?? entry.time) as string | number | undefined,
             }).catch(err => console.error(`[Comment-to-DM Webhook ${slug} Error]:`, err))
           }
         }
