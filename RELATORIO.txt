@@ -1,0 +1,66 @@
+RELATORIO: Isabela (company 2, isabela-fanini) disparando os eventos Kiwify
+Branch: isabela-disparo-fix (a partir de origin/main ef4e694). Sem push, sem deploy, sem escrita em produção, nenhum envio a lead.
+Data: 12/11/2026. Executor: dev do Renato.
+
+0. LIMITES DESTA ENTREGA (honestidade)
+- Sem credencial do banco do SAC neste servidor (nem da Vercel). Não li a configuração atual de sequence_messages/webhook_received de produção
+  e não usei payload real dos 160 eventos: os testes usam payloads sintéticos no formato documentado da Kiwify, anonimizados.
+- Templates conferidos na Meta por readback (MCP WhatsApp Business, somente leitura, conta Isabella Fanini): nomes, idioma, categoria e corpo abaixo.
+- A sequência de compra aprovada em produção é DADO (sequence_messages), não código. Está descrita no SQL (item 6), NÃO executado.
+
+1. ACHADOS CONFIRMADOS NO CÓDIGO
+a) Catálogo de compra aprovada apontava para isabela_formulario_d1_20261031_corrigida (POSITIONAL, texto com "[nome ]" literal, sem variável).
+b) Webhook exigia opt_in (hasExplicitWhatsAppConsent ou opted_in) em compra, boleto e cartão; o cron cancelava qualquer job Isabela com status != opted_in; o Pix também.
+c) {boleto_validade} usava toLocaleDateString sem fuso (o vencimento 23:59 BRT vira o dia seguinte em UTC). {nome} ia inteiro. {transacao} ia com o UUID de 36 caracteres.
+d) BUG NOVO, não estava na auditoria: o agendamento do Pix da Kiwify (schedulePixFollowup) estava dentro de um bloco cujo if exclui mappedType 'pix': código morto,
+   nenhum Pix da Kiwify gerava follow-up. Corrigido só para a Isabela.
+e) cancelPixFollowupsForPayment usava "$4 IS NULL" sem tipo (quebra no Postgres do teste); agora "$4::text IS NULL". Comportamento idêntico.
+
+2. O QUE MUDOU (9 arquivos alterados + 5 novos; +238/-58 nos existentes)
+- src/lib/recovery-sequence-policy.ts: catálogo compra_aprovada = boas_vindas_despertar_pos_compra, formulario_desafio_d1, acompanhamento_desafio_d10 (NOMEADOS);
+  isabela_formulario_d1_20261031_corrigida sai de ISABELA_APPROVED_TEMPLATE_NAMES; a sequência só passa com templateVariablesMap = {customer_name: '{nome}'};
+  lista explícita ISABELA_CONSENT_EXEMPT_JOB_TYPES (isabela_purchase_sequence, boleto_followup_immediate, isabela_cartao_recusado, pix_followup_60m) com comentário do porquê.
+- src/app/api/webhooks/kiwify/[slug]/route.ts: remove o gate de opt_in dos 4 eventos (só opt-out persistido bloqueia; opt-in explícito no evento reabre, como antes);
+  trava de data; Pix agendado fora do bloco morto; skip reasons novos (..._opt_out_whatsapp, evento_isabela_anterior_ao_corte).
+- src/app/api/cron/route.ts: isenção de opt_in só quando empresa isabela-fanini + plataforma kiwify + jobType da lista (isPauseBypassAllowed); Portal e demais jobs Isabela continuam
+  exigindo opted_in; opt-out antes do envio continua cancelando; trava de data repetida no cron (defesa em profundidade); interpolação específica da Isabela:
+  {nome} = primeiro nome (Maria), {transacao} = order_ref curto (cai para o order_id só se faltar), {boleto_validade} em America/Sao_Paulo. Outras empresas: interpolate idêntico.
+- src/lib/pix-followup-policy.ts / pix-followup.ts: opção consentNotRequired (só com a lista de permissão); opted_out sempre barra; default igual ao de antes.
+- src/lib/isabela-forward-only-policy.ts (novo): corte padrão 2026-11-12T14:20-03:00. NO DEPLOY definir ISABELA_FORWARD_ONLY_SINCE (ISO com offset) = instante exato da
+  publicação (variável inválida falha fechada). Usa approved_date/created_at do payload, nunca a hora de chegada; sem data = bloqueia. Só vale para isabela-fanini.
+- src/lib/isabela-template-values.ts (novo): primeiro nome, order_ref, data em SP.
+- Testes: isabela-kiwify-events.test.ts (novo, 9 cenários PGlite webhook+cron), isabela-forward-only-policy.test.ts (novo), recovery-sequence-policy, pix-followup-policy,
+  bot-pause-transactional (atualizados). package.json: script test:isabela-kiwify-events.
+
+3. TEMPLATES (Meta, 12/11/2026, pt_BR, APPROVED)
+boas_vindas_despertar_pos_compra MARKETING {{customer_name}} | formulario_desafio_d1 MARKETING {{customer_name}} (botão URL) | acompanhamento_desafio_d10 UTILITY {{customer_name}}
+boleto_despertar_nao_pago UTILITY {customer_name, order_reference, payment_due_date} | pix_despertar_nao_pago UTILITY {customer_name, order_reference, pix_expiry}
+cartao_despertar_recusado UTILITY {customer_name, order_reference}. Todos parameter_format NAMED. coringa v2 e *_20261031 ficam fora dos fluxos.
+ATENÇÃO: boas_vindas e formulario_desafio_d1 são MARKETING na Meta (boas_vindas foi reclassificado de UTILITY). Pela decisão do Gastão saem sem opt_in; o risco é de qualidade/denúncia
+na Meta, não de bloqueio técnico. O footer do formulario diz "responda SAIR": isso gera opt-out e o código respeita.
+
+4. RECONFERIDO POR INTEIRO (itens a-e)
+a) Pix, boleto e cartão: cenários de teste enviam cada um com parâmetros certos, sem opt-in; test:bot-pause-transactional 12/12, test:pix-followup 5/5. Pix passa a agendar (antes não).
+b) Pausa 'all' ligada em todos os cenários: eventos da lista saem; job sem jobType, upsell e Portal sem opt-in cancelados (teste 8 do arquivo novo + 4 e 5 do existente).
+c) Outras empresas: lógica nova só com slug isabela-fanini; teste com empresa genérica (Pix typed sem opt-in segue cancelado, boleto Kiwify antigo continua gerando job). test:bot-pause-switch 16/16.
+d) Job legado sem jobType continua bloqueado (testes acima).
+e) Nada retroativo: pedido antigo, sem data, e job antigo já na fila são bloqueados/cancelados no webhook e no cron.
+Sempre bloqueiam: opt-out (pré e pós-agendamento), pausa individual de atendente, trava de data.
+
+5. SAÍDAS DOS COMANDOS
+- tsc --noEmit: exit 0. next build: exit 0 (Compiled 100s, TypeScript ok, 23 páginas estáticas).
+- Suíte completa (47 scripts test:* não-live): 35 passam; 12 falham IGUAL no baseline origin/main limpo (mesmo "# fail" por script, causa 'getCompanyAccess is not a function' e afins):
+  sac-lote1, sac-atender-agora, inbox-pagination, inbox-message-history, sync-agents-ctwa-multi-company, inbox-email-engagement, settings-agent-display-name, lead-tags,
+  hotmart/greenn/kiwify/zouti-disabled-state. Nenhuma falha nova. Passam todos os scripts de pausa, pix, mass-dispatch, message-jobs-policy, meta-templates.
+- test:isabela-kiwify-events 31/31 (inclui policy, pix, forward-only, kiwify-purchase-policy).
+
+6. docs/isabela-restaurar-sequencia-compra-aprovada.sql (NÃO executado, NÃO roda sozinho)
+ALTERA DADOS de produção quando executado por alguém: em uma transação, desativa as sequence_messages ativas da sequência compra_aprovada da company 2, insere 3 mensagens
+(boas_vindas delay 0, formulario_desafio_d1 delay 1440, acompanhamento_desafio_d10 delay 14400, variáveis {"customer_name":"{nome}"}) e reativa a sequência. Começa com 2 SELECTs de conferência
+(estado atual e se os 3 templates estão sincronizados APPROVED em meta_message_templates) e termina com SELECT antes do COMMIT. Sem DROP/DELETE; reversível reativando as mensagens antigas.
+Precisa rodar DEPOIS do deploy desta branch (o catálogo antigo rejeitaria os nomes novos) e com ok do Gastão.
+
+7. PARA PUBLICAR (nada feito)
+Deploy da branch; setar ISABELA_FORWARD_ONLY_SINCE no instante do deploy; rodar o SQL do item 6; sincronizar templates no SAC se faltar algum.
+Pós-deploy: no próximo webhook real conferir webhook_received (skip_reason vazio) e message_jobs (jobType e parâmetros).
+Fora do escopo, só relato: Hotmart/Greenn/Zouti chamam schedulePixFollowup direto e não têm o código morto do Kiwify.

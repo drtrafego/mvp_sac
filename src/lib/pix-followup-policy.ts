@@ -55,7 +55,7 @@ function nonEmpty(value: string | null | undefined): boolean {
 
 export function isRealPendingPix(
   lead: PixFollowupLead,
-  options: { ignoreSwitchPause?: boolean } = {},
+  options: { ignoreSwitchPause?: boolean; consentNotRequired?: boolean } = {},
 ): PixFollowupGateResult {
   if (lead.eventType !== 'pix' || lead.paymentType !== 'pix') {
     return { eligible: false, reason: 'evento não é Pix pendente' }
@@ -85,7 +85,13 @@ export function isRealPendingPix(
   if (lead.botPaused === true && !(options.ignoreSwitchPause === true && isSwitchGeneratedPause(lead))) {
     return { eligible: false, reason: 'lead pausado pelo atendimento' }
   }
-  if (lead.whatsappConsentStatus !== 'opted_in') {
+  // Pix não pago da Kiwify da Isabela é aviso da própria compra e dispensa
+  // opt_in (decisão do Gastão, 12/11/2026); quem chama prova isso com a lista de
+  // permissão. Opt-out explícito bloqueia em qualquer caso.
+  if (
+    lead.whatsappConsentStatus !== 'opted_in'
+    && !(options.consentNotRequired === true && lead.whatsappConsentStatus !== 'opted_out')
+  ) {
     return { eligible: false, reason: 'consentimento WhatsApp não confirmado' }
   }
   return { eligible: true }

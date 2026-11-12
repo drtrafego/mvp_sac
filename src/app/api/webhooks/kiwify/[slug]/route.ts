@@ -15,6 +15,7 @@ import {
 } from '@/lib/funnels/funil-cursos'
 import { shouldScheduleKiwifyMessageJobs } from '@/lib/kiwify-purchase-policy'
 import { cancelPixFollowupsForPayment, schedulePixFollowup } from '@/lib/pix-followup'
+import { evaluateIsabelaForwardOnlyEvent } from '@/lib/isabela-forward-only-policy'
 
 // ─── Tipos do payload Kiwify ─────────────────────────────────────────────────
 // Fonte: docs.kiwify.com.br, exemplos oficiais de payload e captura real do
@@ -857,10 +858,20 @@ export async function POST(
 
     const isRecovery = RECOVERY_TYPES.includes(mappedType)
     const now = new Date()
+    // Nada retroativo: created_at/approved_date é o instante de OCORRÊNCIA
+    // enviado pela Kiwify, nunca a hora em que um webhook atrasado ou refeito
+    // chegou ao SAC. Evento da Isabela anterior ao corte (ou sem data) é
+    // registrado, mas não agenda nem notifica.
+    const forwardOnlyGate = evaluateIsabelaForwardOnlyEvent(
+      company.slug,
+      mappedType === 'compra_aprovada' ? (draft.approvedDate ?? draft.orderDate) : draft.orderDate,
+    )
     const isImmediateIsabelaBoleto = isIsabela && mappedType === 'boleto'
     const isIsabelaCardRecovery = isIsabela && mappedType === 'cartao_recusado'
     let followupSkipReason: string | null = null
-    if (mappedType === 'carrinho_abandonado') {
+    if (!forwardOnlyGate.allowed) {
+      followupSkipReason = forwardOnlyGate.reason
+    } else if (mappedType === 'carrinho_abandonado') {
       followupSkipReason = 'carrinho_abandonado_registrado_sem_agendamento'
     }
 
@@ -875,6 +886,11 @@ export async function POST(
     // Um opt-in explícito no evento atual pode reabrir o contato; fora disso,
     // qualquer opt-out persistido vence o histórico de compras do telefone.
     const hasConsent = payloadConsent || (!hasStoredOptOut && hasStoredOptIn)
+    // Compra aprovada, boleto, Pix e cartão recusado da Isabela são avisos da
+    // própria compra (templates aprovados de confirmação de operação) e NÃO
+    // exigem opt_in (decisão do Gastão, 12/11/2026). Só o opt-out persistido
+    // bloqueia, e um opt-in explícito no evento atual continua podendo reabrir.
+    const canSendEventMessage = !hasStoredOptOut || payloadConsent
     const approvedIsabelaTemplates = isIsabela
       ? new Map((await db
         .select({
@@ -903,7 +919,7 @@ export async function POST(
     // Compra aprovada do Despertar agenda somente os templates aprovados e
     // consentidos da sequência configurada no SAC. O webhook continua sendo
     // idempotente por transação; cada job também recebe uma chave própria.
-    if (isFunilEligible) {
+    if (isFunilEligible && forwardOnlyGate.allowed) {
       const initialFunnelState = createInitialFunilCursosState({
         transactionId: draft.transactionId!,
         productName: draft.productName,
@@ -924,15 +940,15 @@ export async function POST(
           .orderBy(sequenceMessages.order)
         : []
       const canDispatch = Boolean(draft.phone && sequence)
-        && hasConsent
+        && canSendEventMessage
         && isConfiguredIsabelaFlow(messages, 'compra_aprovada', approvedIsabelaTemplates)
 
       if (!draft.phone) {
         followupSkipReason = 'sequencia_isabela_sem_telefone'
       } else if (!sequence) {
         followupSkipReason = 'sequencia_isabela_sem_sequencia_ativa'
-      } else if (!hasConsent) {
-        followupSkipReason = 'sequencia_isabela_sem_consentimento_whatsapp_explicito'
+      } else if (!canSendEventMessage) {
+        followupSkipReason = 'sequencia_isabela_opt_out_whatsapp'
       } else if (!canDispatch) {
         followupSkipReason = 'sequencia_isabela_sem_template_aprovado_configurado'
       } else {
@@ -955,7 +971,8 @@ export async function POST(
             eventType: 'compra_aprovada',
             templateNames: messages.map(message => message.templateName),
             messageCount: scheduledJobs.length,
-            consent: true,
+            consentRequired: false,
+            optedIn: hasConsent,
           },
         })
         if (!audited) {
@@ -973,7 +990,7 @@ export async function POST(
     // Sem telefone: grava o lead (serve para analytics e receita) mas NÃO agenda
     // job nenhum, senão o cron criaria mensagem que falha e sujaria o painel.
     // Acontece quando a cliente desabilitou o campo de celular no checkout.
-    if (shouldScheduleKiwifyMessageJobs(mappedType) && mappedType !== 'pix' && canScheduleAutomaticRecoverySequence(mappedType) && !isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
+    if (forwardOnlyGate.allowed && shouldScheduleKiwifyMessageJobs(mappedType) && mappedType !== 'pix' && canScheduleAutomaticRecoverySequence(mappedType) && !isFunilEligible && sequence && mappedType !== 'disputa' && draft.phone) {
       const messages = await db
         .select()
         .from(sequenceMessages)
@@ -992,21 +1009,21 @@ export async function POST(
           ))).map(template => template.name))
         : new Set<string>()
       const canDispatch = isImmediateIsabelaBoleto
-        ? hasConsent
+        ? canSendEventMessage
           && Boolean(draft.transactionId && draft.boletoCode && draft.boletoExpiry)
           && isApprovedImmediateIsabelaBoletoSequence(messages, approvedUtilityTemplateNames)
-        : !isIsabela || hasConsent
+        : !isIsabela || canSendEventMessage
           && Boolean(draft.transactionId)
           && isConfiguredIsabelaFlow(messages, mappedType === 'cartao_recusado' ? 'cartao_recusado' : mappedType as 'pix' | 'boleto', approvedIsabelaTemplates)
 
-      if (isImmediateIsabelaBoleto && !hasConsent) {
-        followupSkipReason = 'boleto_followup_sem_consentimento_whatsapp_explicito'
+      if (isImmediateIsabelaBoleto && !canSendEventMessage) {
+        followupSkipReason = 'boleto_followup_opt_out_whatsapp'
       } else if (isImmediateIsabelaBoleto && (!draft.transactionId || !draft.boletoCode || !draft.boletoExpiry)) {
         followupSkipReason = 'boleto_followup_sem_referencia_ou_vencimento_real'
       } else if (isImmediateIsabelaBoleto && !isApprovedImmediateIsabelaBoletoSequence(messages, approvedUtilityTemplateNames)) {
         followupSkipReason = 'boleto_followup_sem_sequencia_utility_aprovada_unica_imediata'
-      } else if (isIsabela && !hasConsent) {
-        followupSkipReason = 'sequencia_isabela_sem_consentimento_whatsapp_explicito'
+      } else if (isIsabela && !canSendEventMessage) {
+        followupSkipReason = 'sequencia_isabela_opt_out_whatsapp'
       } else if (isIsabela && !canDispatch) {
         followupSkipReason = 'sequencia_isabela_sem_template_aprovado_configurado'
       }
@@ -1079,7 +1096,8 @@ export async function POST(
               eventType: 'cartao_recusado',
               templateNames: messages.map(message => message.templateName),
               messageCount: scheduledJobs.length,
-              consent: true,
+              consentRequired: false,
+              optedIn: hasConsent,
             },
           })
           if (!audited) {
@@ -1092,11 +1110,6 @@ export async function POST(
         }
     }
 
-    if (mappedType === 'pix') {
-      const [fullLead] = await db.select().from(recoveryLeads).where(eq(recoveryLeads.id, leadId)).limit(1)
-      if (fullLead) await schedulePixFollowup(fullLead)
-    }
-
       if (!isRecovery && !isIsabela && sequence.upsellMessage) {
         const upsellDelayMs = (sequence.upsellDelayMinutes ?? 1440) * 60 * 1000
         await db.insert(messageJobs).values({
@@ -1107,13 +1120,13 @@ export async function POST(
           checkBeforeSend: false,
         })
       }
-    } else if (isImmediateIsabelaBoleto) {
+    } else if (forwardOnlyGate.allowed && isImmediateIsabelaBoleto) {
       followupSkipReason = !sequence
         ? 'boleto_followup_sem_sequencia_ativa'
         : !draft.phone
           ? 'boleto_followup_sem_telefone'
           : 'boleto_followup_nao_elegivel'
-    } else if (isIsabelaCardRecovery) {
+    } else if (forwardOnlyGate.allowed && isIsabelaCardRecovery) {
       followupSkipReason = !sequence
         ? 'cartao_recusado_sem_sequencia_ativa'
         : !draft.phone
@@ -1121,8 +1134,26 @@ export async function POST(
           : 'cartao_recusado_nao_elegivel'
     }
 
+    // Pix não pago da Isabela. Este agendamento ficava DENTRO do bloco acima,
+    // cuja condição exclui mappedType 'pix', então nunca executava e nenhum Pix
+    // da Kiwify gerava follow-up. Agora roda fora do bloco, só para a Isabela
+    // (as demais empresas continuam como antes) e respeita opt-out e o corte.
+    if (isIsabela && mappedType === 'pix' && forwardOnlyGate.allowed) {
+      if (!draft.phone) {
+        followupSkipReason = 'pix_followup_sem_telefone'
+      } else if (!canSendEventMessage) {
+        followupSkipReason = 'pix_followup_opt_out_whatsapp'
+      } else {
+        const [fullLead] = await db.select().from(recoveryLeads).where(eq(recoveryLeads.id, leadId)).limit(1)
+        if (fullLead) {
+          const pixResult = await schedulePixFollowup(fullLead, now)
+          if (!pixResult.scheduled) followupSkipReason = `pix_followup_nao_agendado:${pixResult.reason}`
+        }
+      }
+    }
+
     // Notificação interna (fire-and-forget).
-    if (config?.notificationPhone) {
+    if (config?.notificationPhone && forwardOnlyGate.allowed) {
       const label = eventTypeLabels[mappedType] ?? mappedType
       const nome = draft.name ?? 'Desconhecido'
       const produto = draft.productName ?? ''

@@ -11,7 +11,7 @@ export const ISABELA_BOLETO_JOB_TYPE = 'boleto_followup_immediate'
 
 export const ISABELA_APPROVED_TEMPLATE_NAMES = [
   'boas_vindas_despertar_pos_compra',
-  'isabela_formulario_d1_20261031_corrigida',
+  'formulario_desafio_d1',
   'acompanhamento_desafio_d10',
   'convite_portal_apos_desafio',
   'pix_despertar_nao_pago',
@@ -27,9 +27,12 @@ export type IsabelaFlow = 'compra_aprovada' | 'portal_apos_desafio' | 'pix' | 'b
  * catálogo e na sequência explícita do fluxo correspondente.
  */
 export const ISABELA_FLOW_TEMPLATE_NAMES: Readonly<Record<IsabelaFlow, readonly string[]>> = {
+  // Templates NOMEADOS ({{customer_name}}) aprovados na Meta. Os *_20261031
+  // (inclusive isabela_formulario_d1_20261031_corrigida, POSITIONAL com o
+  // literal "[nome ]" no texto) e o coringa v2 ficam fora de propósito.
   compra_aprovada: [
     'boas_vindas_despertar_pos_compra',
-    'isabela_formulario_d1_20261031_corrigida',
+    'formulario_desafio_d1',
     'acompanhamento_desafio_d10',
   ],
   portal_apos_desafio: ['convite_portal_apos_desafio'],
@@ -53,10 +56,54 @@ export const ISABELA_FLOW_JOB_TYPES = new Set([
   'isabela_cartao_recusado',
 ])
 
+/**
+ * jobTypes dos eventos de checkout da Kiwify da Isabela (compra aprovada, boleto,
+ * Pix, cartão recusado). Decisão do Gastão em 12/11/2026: são mensagens sobre a
+ * operação da PRÓPRIA compra, então NÃO exigem whatsapp_consent_status =
+ * 'opted_in'. O opt-out do cliente (botão "Não receber mensagens"/palavra de
+ * parar), a pausa individual de atendente e a trava de data continuam
+ * bloqueando. Lista explícita: nenhum outro jobType (ex.: convite do Portal,
+ * 'isabela_portal_after_challenge', que nasce da conversa) herda a isenção, e
+ * outras empresas/plataformas não passam pelo cron com esses jobTypes
+ * (ver isPauseBypassAllowed em message-job-class.ts, que exige empresa + kiwify).
+ */
+export const ISABELA_CONSENT_EXEMPT_JOB_TYPES: ReadonlySet<string> = new Set([
+  'isabela_purchase_sequence',
+  ISABELA_BOLETO_JOB_TYPE,
+  'isabela_cartao_recusado',
+  'pix_followup_60m',
+])
+
+export function isConsentExemptKiwifyEventJob(jobType: string | null | undefined): boolean {
+  return Boolean(jobType && ISABELA_CONSENT_EXEMPT_JOB_TYPES.has(jobType))
+}
+
 export type ApprovedIsabelaTemplate = {
   name: string
   language?: string | null
   category?: string | null
+}
+
+/**
+ * Parâmetros nomeados dos templates da compra aprovada, conferidos na Meta em
+ * 12/11/2026 (parameter_format NAMED, corpo com {{customer_name}}). Mapa
+ * enviado sem esse nome é recusado pela Meta, então a sequência só passa com
+ * o parâmetro certo apontando para o nome do comprador.
+ */
+const PURCHASE_TEMPLATE_NAMED_PARAMS: Readonly<Record<string, readonly string[]>> = {
+  boas_vindas_despertar_pos_compra: ['customer_name'],
+  formulario_desafio_d1: ['customer_name'],
+  acompanhamento_desafio_d10: ['customer_name'],
+}
+const PURCHASE_CUSTOMER_NAME_VALUES = new Set(['{nome}', '{primeiro_nome}'])
+
+function hasExpectedNamedParams(templateName: string, variablesMap: unknown): boolean {
+  const expected = PURCHASE_TEMPLATE_NAMED_PARAMS[templateName]
+  if (!expected) return true
+  if (!variablesMap || typeof variablesMap !== 'object' || Array.isArray(variablesMap)) return false
+  const map = variablesMap as Record<string, unknown>
+  if (Object.keys(map).sort().join('|') !== [...expected].sort().join('|')) return false
+  return PURCHASE_CUSTOMER_NAME_VALUES.has(String(map.customer_name ?? '').trim().toLowerCase())
 }
 
 /** A sequência só passa quando contém exatamente os templates do seu fluxo. */
@@ -76,6 +123,7 @@ export function isConfiguredIsabelaFlow(
       || !name
       || name !== expected[index]
       || (message.templateLanguage ?? 'pt_BR') !== 'pt_BR'
+      || !hasExpectedNamedParams(name, message.templateVariablesMap)
     ) return false
 
     const approved = approvedTemplates.get(name)

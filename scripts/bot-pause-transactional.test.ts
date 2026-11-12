@@ -88,7 +88,9 @@ async function main() {
     const [lead] = await db.insert(schema.recoveryLeads).values({
       companyId, platform: 'kiwify', eventType: 'boleto', phone: String(++phoneSeq), name: 'Cliente Teste',
       productName: 'Produto', status: 'pending', channel: 'whatsapp', whatsappConsentStatus: 'opted_in',
-      transactionId: `tx-${phoneSeq}`, ...values,
+      transactionId: `tx-${phoneSeq}`,
+      // Corte de data da Isabela (nada retroativo): o evento do lead de teste ocorreu agora.
+      orderDate: new Date(), ...values,
     }).returning()
     return lead
   }
@@ -334,21 +336,24 @@ async function main() {
       assert.equal((await jobById(foJob2.id)).status, 'sent', 'chave de outro canal não bloqueia o WhatsApp')
     })
 
-    await test('opt-out e consentimento continuam bloqueando o transacional', async () => {
+    await test('opt-out e pausa de atendente continuam bloqueando o transacional; status unknown (sem opt_in) NÃO bloqueia mais evento de compra (decisão do Gastão, 12/11)', async () => {
       await reset()
-      const mk = async (values: Partial<typeof schema.recoveryLeads.$inferInsert>, key: string) => {
+      const mk = async (values: Partial<typeof schema.recoveryLeads.$inferInsert>, key: string, jobType = 'isabela_purchase_sequence', msg = welcomeMsg.id) => {
         const l = await newLead(isabela.id, { eventType: 'compra_aprovada', ...values })
-        return newJob(l.id, welcomeMsg.id, { jobType: 'isabela_purchase_sequence', idempotencyKey: key })
+        return newJob(l.id, msg, { jobType, idempotencyKey: key })
       }
-      const jobs = [
+      const blocked = [
         await mk({ ...SWITCH_PAUSE, botPausedBy: 'optout_whatsapp', whatsappConsentStatus: 'opted_out' }, 'o1'),
         await mk({ ...SWITCH_PAUSE, botPausedBy: 'revisao_possivel_optout' }, 'o2'),
         await mk({ whatsappConsentStatus: 'opted_out' }, 'o3'),
-        await mk({ whatsappConsentStatus: 'unknown' }, 'o4'),
+        // O convite do Portal nasce da conversa e continua exigindo opt_in.
+        await mk({ whatsappConsentStatus: 'unknown' }, 'o5', 'isabela_portal_after_challenge', portalMsg.id),
       ]
+      const exempt = await mk({ whatsappConsentStatus: 'unknown' }, 'o4')
       const result = await runCron()
-      assert.equal(result.sent, 0, JSON.stringify(sent))
-      for (const j of jobs) assert.equal((await jobById(j.id)).status, 'cancelled')
+      assert.equal(result.sent, 1, JSON.stringify(sent))
+      for (const j of blocked) assert.equal((await jobById(j.id)).status, 'cancelled')
+      assert.equal((await jobById(exempt.id)).status, 'sent')
     })
 
     await test('ponta a ponta Isabela: webhook Kiwify (boleto, opt-in explícito) com a chave ligada cria lead pausado, agenda job com jobType explícito e o cron ENVIA', async () => {
@@ -357,7 +362,7 @@ async function main() {
       const payload = {
         webhook_event_type: 'billet_created', order_id: 'ORDER-E2E-1', order_status: 'waiting_payment', payment_method: 'boleto',
         boleto_URL: 'https://boleto.exemplo/1', boleto_barcode: '123456789', boleto_expiry_date: '30/12/2030',
-        created_at: '2026-11-11 10:00', whatsapp_opt_in: true,
+        created_at: new Date().toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 16), whatsapp_opt_in: true,
         Product: { product_id: 'p1', product_name: 'Despertar das Bellas' },
         Customer: { full_name: 'Cliente E2E', mobile: '+55 51 99999-1234', email: 'e2e@exemplo.test' },
         Commissions: { charge_amount: 9700 },

@@ -10,6 +10,7 @@
     "test:gabi-pause-mirror": "node --experimental-test-module-mocks --import tsx --test scripts/gabi-pause-mirror.test.ts scripts/agent-message-sender.test.ts",
     "test:bot-pause-switch": "node --experimental-test-module-mocks --import tsx --test scripts/bot-pause-switch.test.ts",
     "test:bot-pause-transactional": "node --experimental-test-module-mocks --import tsx --test scripts/bot-pause-transactional.test.ts",
+    "test:isabela-kiwify-events": "node --experimental-test-module-mocks --import tsx --test scripts/isabela-kiwify-events.test.ts scripts/isabela-forward-only-policy.test.ts scripts/recovery-sequence-policy.test.ts scripts/pix-followup-policy.test.ts scripts/kiwify-purchase-policy.test.ts",
     "test:sidebar-messages": "node --import tsx --test scripts/sidebar-messages-nav.test.ts",
     "test:sac-lote1": "node --experimental-test-module-mocks --import tsx --test --test-concurrency=1 scripts/sac-outbound-regressions.test.ts scripts/sac-outbound-database.test.ts scripts/sac-inbox-regressions.test.ts scripts/sac-access-regressions.test.ts scripts/sac-ai-reply-flow.test.ts scripts/sac-channel-send-metrics.test.ts scripts/sac-pending-regressions.test.ts scripts/sac-pipeline-save.test.ts scripts/sac-schema-regressions.test.ts",
     "test:sac-atender-agora": "node --experimental-test-module-mocks --import tsx --test --test-concurrency=1 scripts/sac-attention-regressions.test.ts scripts/sac-attention-review.test.ts scripts/sac-attention-navigation.test.ts scripts/sac-pending-regressions.test.ts scripts/sac-access-regressions.test.ts",

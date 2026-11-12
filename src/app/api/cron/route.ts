@@ -11,7 +11,7 @@ import { eq, lte, and, gt, desc, inArray, or, sql } from 'drizzle-orm'
 import { sendWhatsAppMessage } from '@/lib/whatsapp'
 import { markLeadContacted } from '@/lib/leads'
 import { isBotBlocked, type BotBlockDecision } from '@/lib/bot-pause'
-import { classifyMessageJob, isHardLeadPause, pauseAppliesToJob } from '@/lib/message-job-class'
+import { classifyMessageJob, isHardLeadPause, isPauseBypassAllowed, pauseAppliesToJob } from '@/lib/message-job-class'
 import { MAX_JOBS_PER_RUN, checkMetaWindowForJob, calculateDispatchSpacingMs } from '@/lib/message-jobs-policy'
 import { executeAndRecordDispatch, type DispatchOutcome, type MessageSnapshot } from '@/lib/mass-dispatch'
 import { releaseCronDispatchLock, tryAcquireCronDispatchLock } from '@/lib/cron-advisory-lock'
@@ -21,7 +21,9 @@ import { shouldSyncHermesAgenda } from '@/lib/hermes-control-panel'
 import { evaluateSacPendingRules } from '@/lib/sac-pending-rules'
 import { recordPixFollowupSent } from '@/lib/pix-followup'
 import { isApprovedUtilityPixTemplate, isRealPendingPix, PIX_FOLLOWUP_JOB_TYPE } from '@/lib/pix-followup-policy'
-import { ISABELA_APPROVED_TEMPLATE_NAMES, isIsabelaJobType } from '@/lib/recovery-sequence-policy'
+import { ISABELA_APPROVED_TEMPLATE_NAMES, isConsentExemptKiwifyEventJob, isIsabelaJobType } from '@/lib/recovery-sequence-policy'
+import { evaluateIsabelaForwardOnlyEvent } from '@/lib/isabela-forward-only-policy'
+import { formatDateSaoPaulo, isabelaFirstName, isabelaOrderReference } from '@/lib/isabela-template-values'
 import { hasDocumentHeader, renderMetaTemplate, renderMetaTemplateBody, templateHeaderDocument as snapshotTemplateHeaderDocument } from '@/lib/meta-template-utils'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
@@ -77,9 +79,10 @@ function interpolate(text: string | null | undefined, lead: {
   checkoutUrl?: string | null
   trackingSource?: string | null
   affiliateCode?: string | null
-}): string {
+  rawPayload?: unknown
+}, isabelaEvent = false): string {
   if (!text) return ''
-  const nome = lead.name ?? 'Cliente'
+  const nome = isabelaEvent ? isabelaFirstName(lead.name) : (lead.name ?? 'Cliente')
   const primNome = nome.split(' ')[0]
   return text
     .replace(/\{nome\}/gi, nome)
@@ -87,7 +90,7 @@ function interpolate(text: string | null | undefined, lead: {
     .replace(/\{email\}/gi, lead.email ?? '')
     .replace(/\{telefone\}/gi, lead.phone ?? '')
     .replace(/\{produto\}/gi, lead.productName ?? '')
-    .replace(/\{transacao\}/gi, lead.transactionId ?? '')
+    .replace(/\{transacao\}/gi, isabelaEvent ? isabelaOrderReference(lead) : (lead.transactionId ?? ''))
     .replace(/\{cpf\}/gi, lead.cpfCnpj ?? '')
     .replace(/\{cidade\}/gi, lead.city ?? '')
     .replace(/\{estado\}/gi, lead.state ?? '')
@@ -96,7 +99,7 @@ function interpolate(text: string | null | undefined, lead: {
     .replace(/\{forma_pagamento\}/gi, lead.paymentType ?? '')
     .replace(/\{boleto_codigo\}/gi, lead.boletoCode ?? '')
     .replace(/\{boleto_url\}/gi, lead.boletoUrl ?? '')
-    .replace(/\{boleto_validade\}/gi, formatDate(lead.boletoExpiry))
+    .replace(/\{boleto_validade\}/gi, isabelaEvent ? formatDateSaoPaulo(lead.boletoExpiry) : formatDate(lead.boletoExpiry))
     .replace(/\{pix_codigo\}/gi, lead.pixCode ?? '')
     .replace(/\{pix_validade\}/gi, formatPixExpiry(lead.pixExpiry))
     .replace(/\{link_checkout\}/gi, lead.checkoutUrl ?? '')
@@ -482,6 +485,38 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         .limit(1)
       if (currentJob?.status !== 'processing') continue
 
+      const isabelaEventJob = companySlug === 'isabela-fanini' && isIsabelaJobType(job.jobType)
+
+      // Nada retroativo: mesmo que um replay antigo ou outro handler tenha criado
+      // o job, o cron nunca chama a Meta para evento da Isabela anterior ao
+      // corte. A data é a de OCORRÊNCIA do evento (approved_date da compra,
+      // created_at dos demais), não a de chegada ao SAC; sem data, falha fechada.
+      if (isabelaEventJob) {
+        const forwardOnlyGate = evaluateIsabelaForwardOnlyEvent(
+          companySlug,
+          lead.eventType === 'compra_aprovada' ? (lead.approvedDate ?? lead.orderDate) : lead.orderDate,
+        )
+        if (!forwardOnlyGate.allowed) {
+          await db.update(messageJobs).set({
+            status: 'cancelled',
+            error: `Fluxo da Isabela cancelado: ${forwardOnlyGate.reason}`,
+            processingStartedAt: null,
+          }).where(eq(messageJobs.id, job.id))
+          await db.insert(schema.sacAuditEvents).values({
+            companyId,
+            leadId: lead.id,
+            type: 'isabela_dispatch_blocked',
+            actorType: 'system',
+            actorId: 'isabela_forward_only_cron',
+            actorName: 'SAC Isabela',
+            referenceType: 'message_job',
+            referenceId: String(job.id),
+            payload: { reason: forwardOnlyGate.reason, jobType: job.jobType },
+          }).catch(() => {})
+          continue
+        }
+      }
+
       // Pausa do bot (lead, chave geral/WhatsApp da empresa) vale para o que o
       // bot conversacional manda: follow-up de IA, upsell, disparo em massa,
       // outreach manual. NÃO vale para mensagem de evento transacional do
@@ -543,7 +578,13 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         continue
       }
 
-      if (isIsabelaJobType(job.jobType) && lead.whatsappConsentStatus !== 'opted_in') {
+      // Eventos da Kiwify da Isabela (compra, boleto, Pix, cartão recusado) são
+      // avisos da própria compra e dispensam opt_in (decisão do Gastão,
+      // 12/11/2026); o opt-out acima já bloqueou quem pediu para parar. Qualquer
+      // outro job da Isabela (ex.: convite do Portal) segue exigindo opt_in.
+      const consentNotRequired = isabelaEventJob && isConsentExemptKiwifyEventJob(job.jobType)
+        && isPauseBypassAllowed(job, lead, companySlug)
+      if (isIsabelaJobType(job.jobType) && !consentNotRequired && lead.whatsappConsentStatus !== 'opted_in') {
         await db.update(messageJobs).set({
           status: 'cancelled',
           error: 'Fluxo da Isabela cancelado: consentimento de WhatsApp não está opted_in',
@@ -564,7 +605,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
       }
 
       if (job.jobType === PIX_FOLLOWUP_JOB_TYPE) {
-        const pixGate = isRealPendingPix(lead, { ignoreSwitchPause: !pauseAppliesToJob(jobClass) })
+        const pixGate = isRealPendingPix(lead, { ignoreSwitchPause: !pauseAppliesToJob(jobClass), consentNotRequired })
         if (!pixGate.eligible) {
           await db.update(messageJobs).set({
             status: 'cancelled',
@@ -799,10 +840,10 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
         const numericKeys = Object.keys(varMap).filter(key => /^\d+$/.test(key)).sort((a, b) => Number(a) - Number(b))
         if (numericKeys.length > 0) {
           const maxIndex = Math.max(...numericKeys.map(Number), 0)
-          templateVariableValues = Array.from({ length: maxIndex }, (_, i) => interpolate(varMap[String(i + 1)] ?? '', lead))
+          templateVariableValues = Array.from({ length: maxIndex }, (_, i) => interpolate(varMap[String(i + 1)] ?? '', lead, isabelaEventJob))
         } else {
           templateVariableNames = Object.keys(varMap)
-          templateVariableValues = templateVariableNames.map(name => interpolate(varMap[name], lead))
+          templateVariableValues = templateVariableNames.map(name => interpolate(varMap[name], lead, isabelaEventJob))
         }
       }
 
@@ -850,7 +891,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
           templateHistoryContent = rendered.content
         } else {
           const body = templateSnapshotBodyText(templateSnapshot) || message.content || ''
-          templateHistoryContent = renderMetaTemplateBody(interpolate(body, lead), templateVariableValues, templateVariableNames)
+          templateHistoryContent = renderMetaTemplateBody(interpolate(body, lead, isabelaEventJob), templateVariableValues, templateVariableNames)
           console.warn('[cron] histórico de template gravado só com BODY; componentes completos indisponíveis', {
             jobId: job.id,
             companyId,
@@ -870,9 +911,9 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
       const outcome = await executeAndRecordDispatch(
         () => sendWhatsAppMessage(lead.phone, {
           type: msgType,
-          content: interpolate(message.content, lead),
+          content: interpolate(message.content, lead, isabelaEventJob),
           mediaUrl: message.mediaUrl ?? undefined,
-          caption: interpolate(message.caption, lead),
+          caption: interpolate(message.caption, lead, isabelaEventJob),
           buttons,
           templateName: message.templateName ?? undefined,
           templateLanguage: message.templateLanguage ?? undefined,

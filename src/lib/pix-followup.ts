@@ -63,9 +63,8 @@ async function auditPixEvent(args: {
 
 export async function schedulePixFollowup(lead: DatabaseLead, now = new Date()): Promise<PixScheduleResult> {
   const [company] = await db.select({ slug: companies.slug }).from(companies).where(eq(companies.id, lead.companyId)).limit(1)
-  const eligibility = isRealPendingPix(lead, {
-    ignoreSwitchPause: isPauseBypassAllowed({ jobType: PIX_FOLLOWUP_JOB_TYPE }, lead, company?.slug),
-  })
+  const allowlisted = isPauseBypassAllowed({ jobType: PIX_FOLLOWUP_JOB_TYPE }, lead, company?.slug)
+  const eligibility = isRealPendingPix(lead, { ignoreSwitchPause: allowlisted, consentNotRequired: allowlisted })
   if (!eligibility.eligible) {
     await auditPixEvent({
       companyId: lead.companyId,
@@ -198,7 +197,7 @@ export async function cancelPixFollowupsForPayment(args: {
         WHERE lead.company_id = ${args.companyId}
           AND lead.event_type = 'pix'
           AND lead.phone = ${args.phone}
-          AND (${args.transactionId ?? null} IS NULL OR lead.transaction_id = ${args.transactionId ?? null})
+          AND (${args.transactionId ?? null}::text IS NULL OR lead.transaction_id = ${args.transactionId ?? null})
       )
     RETURNING job.id, job.lead_id
   `)
