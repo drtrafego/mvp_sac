@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import {
+  companies,
   instagramCommentAutomations,
   instagramCommentLogs,
   sacAuditEvents,
@@ -17,7 +18,11 @@ import {
   getInstagramCommentCreatedAt,
 } from '@/lib/instagram'
 import { generateAndSendAiReply } from '@/lib/ai-reply'
-import { getInheritedPauseFields, isBotBlocked } from '@/lib/bot-pause'
+import { getBlockingPauseSwitch, getInheritedPauseFields, isBotBlocked } from '@/lib/bot-pause'
+import {
+  COMMENT_DM_PAUSE_BYPASS_COMPANY_SLUGS,
+  evaluateCommentDmPauseBypass,
+} from '@/lib/instagram-comment-pause-bypass'
 import { eq, and, gte, sql } from 'drizzle-orm'
 import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
 import { normalizeTag } from '@/lib/lead-tags'
@@ -138,6 +143,76 @@ async function auditFollowCheck(
     })
   } catch (error) {
     console.error('[Instagram Follow Check Audit Error]:', error)
+  }
+}
+
+type CommentPauseDecision = Awaited<ReturnType<typeof isBotBlocked>> & { bypassed?: boolean }
+
+/**
+ * Decisão de pausa do disparo "comentário vira DM". Igual a isBotBlocked, com
+ * UMA exceção (ordem do Gastão, 12/11/2026): na empresa da lista de
+ * instagram-comment-pause-bypass.ts, a pausa gerada pela chave da empresa
+ * ("Pausar tudo"/"Pausar canal", inclusive a herdada pelo lead) não barra a DM
+ * da regra, só para comentário posterior ao corte. Pausa individual do lead
+ * (humano, opt-out, tag pessoa, anti-loop) e qualquer outra empresa seguem
+ * bloqueando. Lança em erro de banco: quem chama decide (fail-closed).
+ */
+async function resolveCommentPauseDecision(
+  companyId: number,
+  commenterId: string,
+  resolveCommentCreatedAt: () => Promise<Date | null>,
+): Promise<CommentPauseDecision> {
+  const [commenterLead] = await db
+    .select({
+      botPaused: recoveryLeads.botPaused,
+      botPausedBy: recoveryLeads.botPausedBy,
+      botPausedAll: recoveryLeads.botPausedAll,
+      botPausedChannel: recoveryLeads.botPausedChannel,
+    })
+    .from(recoveryLeads)
+    .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, `ig_${commenterId}`)))
+    .limit(1)
+  const decision = await isBotBlocked({
+    companyId,
+    channel: 'instagram',
+    leadBotPaused: commenterLead?.botPaused ?? false,
+  })
+  if (!decision.blocked) return decision
+
+  const [company] = await db
+    .select({ slug: companies.slug })
+    .from(companies)
+    .where(eq(companies.id, companyId))
+    .limit(1)
+  if (!company || !COMMENT_DM_PAUSE_BYPASS_COMPANY_SLUGS.includes(company.slug)) return decision
+
+  const blockingSwitch = await getBlockingPauseSwitch(companyId, 'instagram')
+  const bypass = evaluateCommentDmPauseBypass({
+    companySlug: company.slug,
+    lead: commenterLead ?? null,
+    switchBlocking: blockingSwitch !== null,
+    commentCreatedAt: await resolveCommentCreatedAt(),
+  })
+  if (!bypass.bypass) {
+    console.warn(`[Comment-to-DM Pause] Empresa ${companyId}: bypass negado (${bypass.reason}); pausa mantida.`)
+    return decision
+  }
+  return { blocked: false, reason: null, bypassed: true }
+}
+
+async function auditCommentPauseBypass(companyId: number, commentId: string, payload: Record<string, unknown>) {
+  try {
+    await db.insert(sacAuditEvents).values({
+      companyId,
+      actorType: 'system',
+      actorId: 'instagram-comment-automation',
+      type: 'instagram_comment_dm_pause_bypass',
+      referenceType: 'instagram_comment',
+      referenceId: commentId,
+      payload,
+    })
+  } catch (error) {
+    console.error('[Comment-to-DM Pause Bypass Audit Error]:', error)
   }
 }
 
@@ -269,18 +344,22 @@ export async function processInstagramComment(event: CommentEventData) {
   // comentou. Pausado = não envia DM nem resposta pública nem oculta o
   // comentário; só registra o log da regra como 'ignorado_pausa'. Erro ao ler
   // a pausa também não envia (fail-closed): um envio automático nunca sai no escuro.
-  let pauseDecision: Awaited<ReturnType<typeof isBotBlocked>>
+  // Timestamp do comentário, lido sob demanda (só o bypass precisa) e uma vez só.
+  let commentCreatedAtCache: Date | null | undefined
+  const resolveCommentCreatedAt = async (): Promise<Date | null> => {
+    if (commentCreatedAtCache !== undefined) return commentCreatedAtCache
+    let createdAt = parseCommentCreatedAt(event.commentCreatedAt)
+    if (!createdAt) {
+      const timestamp = await getInstagramCommentCreatedAt({ commentId, companyId })
+      if (timestamp.ok) createdAt = timestamp.createdAt ?? null
+    }
+    commentCreatedAtCache = createdAt
+    return createdAt
+  }
+
+  let pauseDecision: CommentPauseDecision
   try {
-    const [commenterLead] = await db
-      .select({ botPaused: recoveryLeads.botPaused })
-      .from(recoveryLeads)
-      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, `ig_${commenterId}`)))
-      .limit(1)
-    pauseDecision = await isBotBlocked({
-      companyId,
-      channel: 'instagram',
-      leadBotPaused: commenterLead?.botPaused ?? false,
-    })
+    pauseDecision = await resolveCommentPauseDecision(companyId, commenterId, resolveCommentCreatedAt)
   } catch (err) {
     console.error(`[Comment-to-DM Pause Check Error] Empresa ${companyId}, comment ${commentId}:`, err)
     return { status: 'blocked', reason: 'pause_check_failed' }
@@ -433,14 +512,9 @@ export async function processInstagramComment(event: CommentEventData) {
   // Segunda leitura da pausa, colada no envio: a Graph API do follow check e
   // as consultas acima levam tempo, e uma pausa ligada nesse intervalo tem que
   // valer. Leitura com erro também não envia.
-  let lastPauseDecision: Awaited<ReturnType<typeof isBotBlocked>> | null = null
+  let lastPauseDecision: CommentPauseDecision | null = null
   try {
-    const [commenterLeadNow] = await db
-      .select({ botPaused: recoveryLeads.botPaused })
-      .from(recoveryLeads)
-      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, `ig_${commenterId}`)))
-      .limit(1)
-    lastPauseDecision = await isBotBlocked({ companyId, channel: 'instagram', leadBotPaused: commenterLeadNow?.botPaused ?? false })
+    lastPauseDecision = await resolveCommentPauseDecision(companyId, commenterId, resolveCommentCreatedAt)
   } catch (err) {
     console.error(`[Comment-to-DM Pause Recheck Error] Empresa ${companyId}, comment ${commentId}:`, err)
   }
@@ -450,6 +524,14 @@ export async function processInstagramComment(event: CommentEventData) {
       errorMessage: lastPauseDecision ? 'Bot pausado antes do envio. Nenhuma mensagem enviada.' : 'Não foi possível confirmar a pausa antes do envio. Nenhuma mensagem enviada.',
     }).where(eq(instagramCommentLogs.id, claim.id))
     return { status: 'ignored', reason: 'ignorado_pausa' }
+  }
+
+  if (pauseDecision.bypassed || lastPauseDecision.bypassed) {
+    await auditCommentPauseBypass(companyId, commentId, {
+      automationId: matchedRule.id,
+      mediaId,
+      reason: 'disparo_comentario_vira_dm_nao_e_bot',
+    })
   }
 
   const dmResult = await sendInstagramPrivateReply({

@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test:gabi-pause-mirror": "node --experimental-test-module-mocks --import tsx --test scripts/gabi-pause-mirror.test.ts scripts/agent-message-sender.test.ts",
     "test:bot-pause-switch": "node --experimental-test-module-mocks --import tsx --test scripts/bot-pause-switch.test.ts",
+    "test:isabela-comentario-dm-pausa": "node --experimental-test-module-mocks --import tsx --test scripts/isabela-comentario-dm-pausa.test.ts",
     "test:bot-pause-transactional": "node --experimental-test-module-mocks --import tsx --test scripts/bot-pause-transactional.test.ts",
     "test:isabela-kiwify-events": "node --experimental-test-module-mocks --import tsx --test scripts/isabela-kiwify-events.test.ts scripts/isabela-forward-only-policy.test.ts scripts/recovery-sequence-policy.test.ts scripts/pix-followup-policy.test.ts scripts/kiwify-purchase-policy.test.ts",
     "test:sidebar-messages": "node --import tsx --test scripts/sidebar-messages-nav.test.ts",
