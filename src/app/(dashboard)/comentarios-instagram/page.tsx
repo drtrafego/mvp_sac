@@ -710,10 +710,10 @@ export default function ComentariosInstagramPage() {
                 </span>
               </div>
               <h2 className="text-h2 text-fg font-black">
-                {editingRule ? 'Editar Regra de Comentário' : 'Criar Regra de Comentário → DM'}
+                {editingRule ? 'Editar Regra de Automação' : 'Criar Regra de Automação → DM'}
               </h2>
               <p className="text-body text-fg-muted text-xs mt-0.5">
-                Quando alguém comentar as palavras-chave no Instagram, o SAC responderá na DM instantaneamente.
+                Quando alguém comentar ou enviar no Direct as palavras-chave (conforme o gatilho escolhido), o SAC responderá na DM instantaneamente.
               </p>
             </div>
 
