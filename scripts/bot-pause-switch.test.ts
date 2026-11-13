@@ -504,6 +504,24 @@ async function main() {
       const rows = await db.select().from(schema.companyPauseSwitches).where(and(eq(schema.companyPauseSwitches.companyId, 2)))
       assert.equal(rows.length, 0)
     })
+
+    await test('regra por post vence a global da mesma palavra de forma determinística', async () => {
+      await reset()
+      await db.update(schema.instagramCommentAutomations).set({ isActive: false })
+        .where(eq(schema.instagramCommentAutomations.companyId, company.id))
+      await db.insert(schema.instagramCommentAutomations).values([
+        { companyId: company.id, name: 'Global prioridade', keywords: 'PRIORIDADE', dmMessage: 'Global', isActive: true },
+        { companyId: company.id, name: 'Post prioridade', mediaId: 'media_1', keywords: 'PRIORIDADE', dmMessage: 'Post', isActive: true },
+      ])
+      const result = await processInstagramComment({
+        companyId: company.id, source: 'instagram_webhook', commentId: 'prioridade-por-post',
+        commenterId: 'prioridade-por-post', mediaId: 'media_1', commentText: 'PRIORIDADE',
+      })
+      assert.equal(result.status, 'sent')
+      assert.equal(privateReplies.length, 1)
+      assert.equal(privateReplies[0]?.text, 'Post')
+    })
+
   } finally {
     await fixture.close()
   }

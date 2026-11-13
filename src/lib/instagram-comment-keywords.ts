@@ -1,4 +1,4 @@
-function normalizeText(value: string): string {
+export function normalizeCommentKeywordText(value: string): string {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -19,10 +19,10 @@ export function matchesCommentKeywords(
   if (matchType === 'any') return { matched: true, matchedKeyword: '*' }
   if (!keywordsStr || !keywordsStr.trim()) return { matched: false }
 
-  const normalizedComment = normalizeText(commentText)
+  const normalizedComment = normalizeCommentKeywordText(commentText)
   const keywordsList = keywordsStr
     .split(',')
-    .map(keyword => normalizeText(keyword))
+    .map(keyword => normalizeCommentKeywordText(keyword))
     .filter(Boolean)
 
   if (matchType === 'exact') {

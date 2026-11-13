@@ -384,6 +384,12 @@ export async function processInstagramComment(event: CommentEventData) {
     if (!rule.mediaId) return true // regra global para todos os posts
     return rule.mediaId === mediaId
   })
+  applicableAutomations.sort((left, right) => {
+    const leftIsGlobal = !left.mediaId
+    const rightIsGlobal = !right.mediaId
+    if (leftIsGlobal !== rightIsGlobal) return leftIsGlobal ? 1 : -1
+    return left.id - right.id
+  })
 
   if (applicableAutomations.length === 0) {
     return { status: 'skipped', reason: 'no_matching_post_rule' }

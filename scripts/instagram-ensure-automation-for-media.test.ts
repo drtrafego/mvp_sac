@@ -11,7 +11,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import path from 'node:path'
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
-import { and, count, eq } from 'drizzle-orm'
+import { and, count, eq, isNull } from 'drizzle-orm'
 import * as schema from '../src/lib/db/schema'
 import { NextRequest } from 'next/server'
 
@@ -143,6 +143,28 @@ async function main() {
     const masterKey = process.env.SAC_API_KEY
     assert.ok(masterKey)
 
+    await test('os caminhos global e por mídia não usam transaction do driver Neon', async () => {
+      const databaseWithThrowingTransaction = testDb as typeof testDb & {
+        transaction: () => Promise<never>
+      }
+      const originalTransaction = databaseWithThrowingTransaction.transaction
+      databaseWithThrowingTransaction.transaction = async () => {
+        throw new Error('No transactions support in neon-http driver')
+      }
+      try {
+        const legacy = await POST(request(companyA.slug, masterKey, {
+          media_id: 'media-sem-transaction', keyword: 'SEM TRANSACAO', dm_message: 'Legado funciona',
+        }), { params: Promise.resolve({ idOrSlug: companyA.slug }) })
+        const global = await POST(request(companyA.slug, masterKey, {
+          all_posts: true, keyword: 'GLOBAL SEM TRANSACAO', dm_message: 'Global funciona',
+        }), { params: Promise.resolve({ idOrSlug: companyA.slug }) })
+        assert.equal(legacy.status, 200)
+        assert.equal(global.status, 200)
+      } finally {
+        databaseWithThrowingTransaction.transaction = originalTransaction
+      }
+    })
+
     await test('cria uma automação ativa para a mídia e registra auditoria', async () => {
       const literalDmMessage = '  Aqui está sua trilha!\nAproveite.  '
       const response = await POST(
@@ -191,6 +213,7 @@ async function main() {
           and(
             eq(schema.agentActivityLogs.companyId, companyA.id),
             eq(schema.agentActivityLogs.action, 'ensure_instagram_automation'),
+            eq(schema.agentActivityLogs.entityId, String(saved.id)),
           ),
         )
       assert.ok(audit)
@@ -346,6 +369,148 @@ async function main() {
         )
 
       assert.equal(rowCount.value, 1, 'requisições concorrentes para o mesmo media_id não podem duplicar')
+    })
+
+    await test('all_posts cria e atualiza uma regra global sem tocar na regra da mídia de mesma palavra', async () => {
+      const [mediaRule] = await testDb
+        .insert(schema.instagramCommentAutomations)
+        .values({
+          companyId: companyA.id,
+          name: 'Regra só desta mídia',
+          mediaId: 'media-da-mesma-palavra',
+          keywords: 'MATERIAL',
+          dmMessage: 'Mensagem exclusiva da mídia',
+          isActive: false,
+        })
+        .returning()
+
+      const created = await POST(
+        request(companyA.slug, masterKey, {
+          all_posts: true,
+          media_id: 'deve-ser-ignorada',
+          keyword: '  MATERIAL  ',
+          dm_message: 'Mensagem global original',
+          name: 'Material em todos os posts',
+          match_type: 'exact',
+        }),
+        { params: Promise.resolve({ idOrSlug: companyA.slug }) },
+      )
+      const createdBody = await created.json()
+      assert.equal(created.status, 200)
+      assert.equal(createdBody.created, true)
+      assert.equal(createdBody.automation.mediaId, null)
+      assert.equal(createdBody.automation.isActive, true)
+
+      await testDb.update(schema.instagramCommentAutomations)
+        .set({ isActive: false })
+        .where(eq(schema.instagramCommentAutomations.id, createdBody.automation.id))
+
+      const updated = await POST(
+        request(companyA.slug, masterKey, {
+          all_posts: true,
+          keyword: 'material',
+          dm_message: 'Mensagem global atualizada',
+          name: 'Novo nome global',
+          match_type: 'any',
+        }),
+        { params: Promise.resolve({ idOrSlug: companyA.slug }) },
+      )
+      const updatedBody = await updated.json()
+      assert.equal(updated.status, 200)
+      assert.equal(updatedBody.created, false)
+      assert.equal(updatedBody.automation.id, createdBody.automation.id)
+      assert.equal(updatedBody.automation.isActive, true, 'ensure global reativa a regra encontrada')
+
+      const globalRules = await testDb.select().from(schema.instagramCommentAutomations).where(and(
+        eq(schema.instagramCommentAutomations.companyId, companyA.id),
+        isNull(schema.instagramCommentAutomations.mediaId),
+      ))
+      const globalRule = globalRules.find(rule => rule.id === createdBody.automation.id)
+      assert.ok(globalRule)
+      assert.equal(globalRule.keywords, 'material')
+      assert.equal(globalRule.dmMessage, 'Mensagem global atualizada')
+      assert.equal(globalRule.name, 'Novo nome global')
+      assert.equal(globalRule.matchType, 'any')
+
+      const [unchangedMediaRule] = await testDb.select().from(schema.instagramCommentAutomations)
+        .where(eq(schema.instagramCommentAutomations.id, mediaRule.id))
+      assert.equal(unchangedMediaRule.dmMessage, 'Mensagem exclusiva da mídia')
+      assert.equal(unchangedMediaRule.isActive, false)
+    })
+
+    await test('all_posts preserva Direct, both e template e limpa campos herdados da regra comum', async () => {
+      const protectedRules = await testDb.insert(schema.instagramCommentAutomations).values([
+        { companyId: companyA.id, name: 'Direct', keywords: 'PROTEGIDA', dmMessage: 'Direct intacta', isActive: false, triggerType: 'direct' },
+        { companyId: companyA.id, name: 'Both', keywords: 'PROTEGIDA', dmMessage: 'Both intacta', isActive: false, triggerType: 'both' },
+        { companyId: companyA.id, name: 'Template', keywords: 'PROTEGIDA', dmMessage: 'Template intacta', isActive: false, templateId: '021126' },
+      ]).returning()
+      const [legacyGlobal] = await testDb.insert(schema.instagramCommentAutomations).values({
+        companyId: companyA.id, name: 'Global antiga', keywords: 'COMEÇAR', dmMessage: 'Antiga', isActive: false,
+        publicReply: 'Resposta antiga', requireFollowCheck: true, hideCommentAfterReply: true,
+        activeHoursStart: '08:00', activeHoursEnd: '18:00', triggerType: 'comment',
+      }).returning()
+
+      const protectedResponse = await POST(request(companyA.slug, masterKey, {
+        all_posts: true, keyword: 'protegida', dm_message: 'Nova regra comum',
+      }), { params: Promise.resolve({ idOrSlug: companyA.slug }) })
+      assert.equal(protectedResponse.status, 200)
+      assert.equal((await protectedResponse.json()).created, true)
+      const protectedAfter = await testDb.select().from(schema.instagramCommentAutomations)
+        .where(eq(schema.instagramCommentAutomations.companyId, companyA.id))
+      for (const protectedRule of protectedRules) {
+        const after = protectedAfter.find(rule => rule.id === protectedRule.id)
+        assert.ok(after)
+        assert.equal(after.dmMessage, protectedRule.dmMessage)
+        assert.equal(after.isActive, false)
+      }
+
+      const accentResponse = await POST(request(companyA.slug, masterKey, {
+        all_posts: true, keyword: 'comecar', dm_message: 'Atualizada sem acento',
+      }), { params: Promise.resolve({ idOrSlug: companyA.slug }) })
+      const accentBody = await accentResponse.json()
+      assert.equal(accentResponse.status, 200)
+      assert.equal(accentBody.created, false)
+      assert.equal(accentBody.automation.id, legacyGlobal.id)
+      const [cleaned] = await testDb.select().from(schema.instagramCommentAutomations)
+        .where(eq(schema.instagramCommentAutomations.id, legacyGlobal.id))
+      assert.equal(cleaned.publicReply, null)
+      assert.equal(cleaned.requireFollowCheck, false)
+      assert.equal(cleaned.hideCommentAfterReply, false)
+      assert.equal(cleaned.activeHoursStart, null)
+      assert.equal(cleaned.activeHoursEnd, null)
+    })
+
+    await test('all_posts suporta chamadas simultâneas pela palavra normalizada', async () => {
+      const [first, second] = await Promise.all([
+        POST(request(companyA.slug, masterKey, { all_posts: true, keyword: '  GLOBAL CORRIDA ', dm_message: 'A' }), { params: Promise.resolve({ idOrSlug: companyA.slug }) }),
+        POST(request(companyA.slug, masterKey, { all_posts: true, keyword: 'global corrida', dm_message: 'B' }), { params: Promise.resolve({ idOrSlug: companyA.slug }) }),
+      ])
+      const [firstBody, secondBody] = await Promise.all([first.json(), second.json()])
+      assert.equal(first.status, 200)
+      assert.equal(second.status, 200)
+      assert.ok([firstBody.created, secondBody.created].every(created => typeof created === 'boolean'))
+
+      const rows = await testDb.select().from(schema.instagramCommentAutomations).where(and(
+        eq(schema.instagramCommentAutomations.companyId, companyA.id),
+        isNull(schema.instagramCommentAutomations.mediaId),
+      ))
+      assert.ok(rows.filter(row => row.keywords?.trim().toLowerCase() === 'global corrida').length >= 1)
+    })
+
+    await test('all_posts inválido retorna 400 e sem all_posts continua exigindo media_id', async () => {
+      const invalid = await POST(
+        request(companyA.slug, masterKey, { all_posts: 'true', keyword: 'X', dm_message: 'Y' }),
+        { params: Promise.resolve({ idOrSlug: companyA.slug }) },
+      )
+      assert.equal(invalid.status, 400)
+      assert.equal((await invalid.json()).error, 'O campo all_posts deve ser booleano.')
+
+      const legacy = await POST(
+        request(companyA.slug, masterKey, { keyword: 'X', dm_message: 'Y' }),
+        { params: Promise.resolve({ idOrSlug: companyA.slug }) },
+      )
+      assert.equal(legacy.status, 400)
+      assert.match((await legacy.json()).error, /media_id/)
     })
 
     await test('autenticação inválida é rejeitada com 401', async () => {
