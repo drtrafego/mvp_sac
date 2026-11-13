@@ -561,14 +561,21 @@ export async function POST(req: NextRequest) {
                 // Mensagem real trocada: se for a primeira, marca a abordagem do lead
                 await markLeadContacted(lead?.id)
 
-                const directKeyword = await processInstagramDirectKeyword({
-                  companyId,
-                  messageId: message?.mid ?? '',
-                  senderId: sender.id,
-                  text: message?.text ?? '',
-                  messageCreatedAt: (item.timestamp ?? entry.time) as string | number | undefined,
-                  isStoryReply: isInstagramStoryReply(message),
-                })
+                let directKeyword: { matched?: boolean } = { matched: false }
+                try {
+                  directKeyword = await processInstagramDirectKeyword({
+                    companyId,
+                    messageId: message?.mid ?? '',
+                    senderId: sender.id,
+                    text: message?.text ?? '',
+                    messageCreatedAt: (item.timestamp ?? entry.time) as string | number | undefined,
+                    isStoryReply: isInstagramStoryReply(message),
+                  })
+                } catch (error) {
+                  // Esta automação é complementar. Falha nela nunca pode
+                  // derrubar a resposta de IA do Direct para a empresa.
+                  console.error(`[Instagram Direct Keyword Error] Empresa ${companyId}:`, error instanceof Error ? error.name : 'erro_desconhecido')
+                }
                 if (directKeyword.matched) continue
 
                 // Gate de seguidor do Comment-to-DM (24/09/2026): se este lead está

@@ -114,6 +114,19 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     if (typeof nextTriggerType !== 'string' || !['comment', 'direct', 'both'].includes(nextTriggerType)) {
       return NextResponse.json({ error: 'O gatilho deve ser comentário, Direct ou ambos.' }, { status: 400 })
     }
+    const nextMatchType = body.matchType === undefined ? current.matchType : body.matchType
+    if ((nextTriggerType === 'direct' || nextTriggerType === 'both') && nextMatchType === 'any') {
+      return NextResponse.json({ error: 'O gatilho por palavra no Direct não aceita “Qualquer comentário”. Escolha contém ou exato.' }, { status: 400 })
+    }
+    const nextRequireFollowCheck = body.requireFollowCheck === undefined ? current.requireFollowCheck : body.requireFollowCheck
+    if (nextTriggerType === 'direct' && nextRequireFollowCheck === true) {
+      return NextResponse.json({ error: 'O gatilho só por Direct não permite exigir que a pessoa siga a conta.' }, { status: 400 })
+    }
+    const nextPublicReply = body.publicReply === undefined ? current.publicReply : body.publicReply
+    const nextHideComment = body.hideCommentAfterReply === undefined ? current.hideCommentAfterReply : body.hideCommentAfterReply
+    if (nextTriggerType === 'direct' && ((typeof nextPublicReply === 'string' && nextPublicReply.trim()) || nextHideComment === true)) {
+      return NextResponse.json({ error: 'O gatilho só por Direct não permite resposta pública nem ocultar comentário.' }, { status: 400 })
+    }
     if (requestedTemplateId && nextTriggerType !== 'comment') {
       return NextResponse.json({ error: 'O template 021126 só pode usar o gatilho de comentário.' }, { status: 400 })
     }

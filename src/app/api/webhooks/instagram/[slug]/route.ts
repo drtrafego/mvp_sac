@@ -477,16 +477,23 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
             // Mensagem real trocada: se for a primeira, marca a abordagem do lead
             await markLeadContacted(lead?.id)
 
-            const directKeyword = await processInstagramDirectKeyword({
-              companyId: company.id,
-              messageId: message?.mid ?? '',
-              senderId: sender.id,
-              text: message?.text ?? '',
-              messageCreatedAt: (item.timestamp ?? entry.time) as string | number | undefined,
-              isStoryReply: isInstagramStoryReply(message),
-            })
-            // Uma regra determinística ganha da IA, inclusive se o envio falhar:
-            // a IA não pode mandar uma segunda resposta conflitante.
+            let directKeyword: { matched?: boolean } = { matched: false }
+            try {
+              directKeyword = await processInstagramDirectKeyword({
+                companyId: company.id,
+                messageId: message?.mid ?? '',
+                senderId: sender.id,
+                text: message?.text ?? '',
+                messageCreatedAt: (item.timestamp ?? entry.time) as string | number | undefined,
+                isStoryReply: isInstagramStoryReply(message),
+              })
+            } catch (error) {
+              // A regra determinística não pode interromper a IA se banco ou
+              // schema estiverem momentaneamente indisponíveis.
+              console.error(`[Instagram Direct Keyword Error] Empresa ${company.id}:`, error instanceof Error ? error.name : 'erro_desconhecido')
+            }
+            // Só uma DM efetivamente enviada ou que falhou nesta chamada ganha
+            // da IA. Claims antigos e regras ignoradas seguem o fluxo normal.
             if (directKeyword.matched) continue
 
             // Gate de seguidor do Comment-to-DM (24/09/2026): mesma causa raiz e

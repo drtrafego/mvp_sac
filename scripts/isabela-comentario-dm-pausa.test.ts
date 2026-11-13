@@ -58,6 +58,7 @@ async function main() {
   const aiReplies: number[] = []
   let timestampLookups = 0
   let failPrivateReply = false
+  let failDirect = 0
   let timestampResult: { ok: boolean; createdAt?: Date } = { ok: true, createdAt: AFTER_CUTOFF }
   let afterPromise: Promise<unknown> | undefined
 
@@ -72,7 +73,11 @@ async function main() {
   mock.module('@/lib/instagram', {
     namedExports: {
       sendInstagramPrivateReply: async (p: { commentId: string; text: string; companyId: number }) => { privateReplies.push(p); return failPrivateReply ? { ok: false, error: 'falha simulada' } : { ok: true, messageId: `mid_${privateReplies.length}` } },
-      sendInstagramMessage: async (p: { recipientId: string; text?: string }) => { directMessages.push(p); return { ok: true, messageId: `dm_${directMessages.length}` } },
+      sendInstagramMessage: async (p: { recipientId: string; text?: string }) => {
+        directMessages.push(p)
+        if (failDirect > 0) { failDirect -= 1; return { ok: false, error: 'falha Graph simulada' } }
+        return { ok: true, messageId: `dm_${directMessages.length}` }
+      },
       checkInstagramUserFollowsBusiness: async (p: { igsid: string }) => { followChecks.push(p.igsid); return { ok: true, follows: true } },
       replyInstagramCommentPublic: async (p: { commentId: string; text: string }) => { publicReplies.push(p); return { ok: true } },
       hideInstagramComment: async () => ({ ok: true }),
@@ -104,6 +109,7 @@ async function main() {
     await pg.exec('TRUNCATE recovery_leads, whatsapp_messages, instagram_comment_logs, company_pause_switches, lead_tags, sac_audit_events RESTART IDENTITY')
     privateReplies.length = 0; publicReplies.length = 0; directMessages.length = 0; followChecks.length = 0; aiReplies.length = 0
     timestampLookups = 0; timestampResult = { ok: true, createdAt: AFTER_CUTOFF }; failPrivateReply = false
+    failDirect = 0
   }
   const pauseLead = (phone: string, companyId: number, fields: Partial<typeof schema.recoveryLeads.$inferInsert>) =>
     db.insert(schema.recoveryLeads).values({
@@ -539,8 +545,10 @@ async function main() {
       assert.equal((await comment(isabela.id, '9002', { text: 'chave-direct', commentId: 'c_direct_only' })).reason, 'no_keyword_matched', 'regra só Direct não reage a comentário')
       assert.equal((await direct('9003', 'd_both', 'chave-ambos')).status, 'sent')
       assert.equal((await comment(isabela.id, '9004', { text: 'chave-ambos', commentId: 'c_both' })).status, 'sent')
+      assert.equal((await comment(isabela.id, '9006', { text: 'chave-ambos', commentId: 'c_both_first' })).status, 'sent')
+      assert.equal((await direct('9006', 'd_both_after_comment', 'chave-ambos de novo')).matched, false, 'DM por comentário encerra a regra both para o Direct')
       assert.equal(directMessages.filter(message => message.text === 'Resposta Ambos').length, 1)
-      assert.equal(privateReplies.filter(reply => reply.text === 'Resposta Ambos').length, 1)
+      assert.equal(privateReplies.filter(reply => reply.text === 'Resposta Ambos').length, 2)
       assert.equal((await db.select().from(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.id, directOnly.id)))[0].mediaId, null)
       assert.equal((await db.select().from(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.id, both.id)))[0].triggerType, 'both')
     })
@@ -560,10 +568,33 @@ async function main() {
       const lead = await leadByPhone('ig_9105')
       await db.insert(schema.leadTags).values({ leadId: lead.id, tag: 'pessoa', scopeChannel: 'instagram', createdBy: 'teste' })
       assert.equal((await direct('9105', 'd_9105')).reason, 'ignorado_pausa')
-      assert.notEqual((await direct('9106', 'd_old', BEFORE_CUTOFF)).status, 'sent', 'mensagem anterior ao corte nunca recebe resposta')
+      const beforeCutoffInside24h = new Date('2026-11-12T20:00:00.000Z')
+      assert.equal(Date.now() - beforeCutoffInside24h.getTime() < 24 * 60 * 60 * 1000, true, 'controle: a mensagem ainda está na janela de 24h')
+      assert.notEqual((await direct('9106', 'd_old', beforeCutoffInside24h)).status, 'sent', 'corte, e não a janela de 24h, bloqueia mensagem anterior')
       assert.equal(directMessages.length, 0)
       assert.equal((await direct('9107', 'd_switch_bypass')).status, 'sent', 'pausa geral da Isabela não barra a regra determinística')
       assert.equal(directMessages.length, 1)
+    })
+
+    await test('(Direct QA) claim anterior, any, falha transitória e inbox não silenciam a IA nem duplicam a regra', async () => {
+      await reset()
+      const [directRule] = await db.insert(schema.instagramCommentAutomations).values({
+        companyId: outra.id, name: 'RETRY DIRECT', triggerType: 'direct', keywords: 'chave-retry', matchType: 'contains', dmMessage: 'Resposta retry', autoTag: 'veio_direct', isActive: true,
+      }).returning()
+      const direct = (senderId: string, messageId: string, text = 'chave-retry') => processInstagramDirectKeyword({ companyId: outra.id, senderId, messageId, text, messageCreatedAt: new Date() })
+      await captureInstagramInboundInteraction({ companyId: outra.id, instagramUserId: '9201', interaction: 'direct' })
+      assert.equal((await direct('9201', 'retry_1')).status, 'sent')
+      assert.equal((await direct('9201', 'retry_2')).matched, false, 'claim enviado em chamada anterior não captura a pergunta atual')
+      failDirect = 1
+      assert.equal((await direct('9202', 'retry_fail')).status, 'failed')
+      assert.equal((await direct('9202', 'retry_ok')).status, 'sent', 'falha Graph é retomada apenas numa nova mensagem')
+      const out = await db.select().from(schema.whatsappMessages).where(eq(schema.whatsappMessages.phone, 'ig_9201'))
+      assert.equal(out.filter(message => message.direction === 'outbound' && message.content === 'Resposta retry').length, 1, 'DM Direct aparece no inbox')
+      const tags = await db.select().from(schema.leadTags)
+      assert.equal(tags.some(tag => tag.tag === 'veio_direct'), true, 'autoTag é aplicada no Direct')
+      await db.insert(schema.instagramCommentAutomations).values({ companyId: outra.id, name: 'ANY INVÁLIDA', triggerType: 'direct', keywords: null, matchType: 'any', dmMessage: 'não enviar', isActive: true })
+      assert.equal((await direct('9203', 'any_1', 'uma pergunta comum')).matched, false, 'regra legada inválida any não sequestra Direct')
+      void directRule
     })
   } finally {
     await fixture.close()

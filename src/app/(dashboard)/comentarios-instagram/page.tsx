@@ -262,6 +262,10 @@ export default function ComentariosInstagramPage() {
       setActionError('A mensagem da DM é obrigatória.')
       return
     }
+    if (formTriggerType !== 'comment' && formMatchType === 'any') {
+      setActionError('O gatilho por palavra no Direct precisa usar “contém” ou “exato”.')
+      return
+    }
 
     setSubmitting(true)
     setActionError(null)
@@ -749,6 +753,7 @@ export default function ComentariosInstagramPage() {
                       setFormHideComment(false)
                       setFormRequireFollowCheck(false)
                     }
+                    if (trigger !== 'comment' && formMatchType === 'any') setFormMatchType('contains')
                   }}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-surface-base border border-line-subtle text-fg text-xs focus:border-brand-solid outline-none"
                 >
@@ -851,8 +856,8 @@ export default function ComentariosInstagramPage() {
                     className="px-2 py-1 rounded-lg bg-surface-base border border-line-subtle text-[11px] text-fg font-semibold outline-none"
                   >
                     <option value="contains">Contém a palavra (Recomendado)</option>
-                    <option value="exact">Comentário exato</option>
-                    <option value="any">Qualquer comentário (*)</option>
+                    <option value="exact">Mensagem exata</option>
+                    {formTriggerType === 'comment' && <option value="any">Qualquer comentário (*)</option>}
                   </select>
                 </div>
 

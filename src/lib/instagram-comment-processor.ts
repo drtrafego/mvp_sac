@@ -534,7 +534,9 @@ export async function processInstagramComment(event: CommentEventData) {
     })
   }
 
-  // 5. Deduplicação por Usuário + Post + Regra (não reenviar DM se já enviou pelo mesmo post)
+  // 5. Deduplicação por Usuário + Post + Regra. Para "ambos", comentário e
+  // Direct são uma só promessa: a pessoa recebe a DM uma vez, independente da
+  // ordem ou do post em que usou a palavra.
   if (mediaId) {
     const [alreadySentToUser] = await db
       .select({ id: instagramCommentLogs.id })
@@ -543,7 +545,7 @@ export async function processInstagramComment(event: CommentEventData) {
         and(
           eq(instagramCommentLogs.automationId, matchedRule.id),
           eq(instagramCommentLogs.commenterId, commenterId),
-          eq(instagramCommentLogs.mediaId, mediaId),
+          ...(matchedRule.triggerType === 'both' ? [] : [eq(instagramCommentLogs.mediaId, mediaId)]),
           eq(instagramCommentLogs.status, 'sent')
         )
       )
@@ -818,6 +820,12 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
   let matchedKeyword: string | undefined
   for (const rule of automations) {
     if (rule.triggerType !== 'direct' && rule.triggerType !== 'both') continue
+    // "Qualquer comentário" não é uma palavra-chave e nunca pode capturar
+    // toda a conversa no Direct.
+    if (rule.matchType === 'any') continue
+    // O follow check só existe para a interação de comentário. Em uma regra
+    // "ambos", o Direct deixa a mensagem seguir para o fluxo normal da IA.
+    if (rule.requireFollowCheck) continue
     if (!isWithinActiveHours(rule.activeHoursStart, rule.activeHoursEnd)) continue
     const match = matchesCommentKeywords(text, rule.keywords, rule.matchType)
     if (match.matched) {
@@ -826,14 +834,14 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
       break
     }
   }
-  if (!matchedRule) return { status: 'skipped', reason: 'no_direct_keyword_matched' }
+  if (!matchedRule) return { status: 'skipped', reason: 'no_direct_keyword_matched', matched: false }
 
   let pauseDecision: CommentPauseDecision
   try {
     pauseDecision = await resolveCommentPauseDecision(companyId, senderId, async () => createdAt)
   } catch (error) {
     console.error(`[Instagram Direct Keyword Pause Check Error] Empresa ${companyId}, mensagem ${messageId}:`, error)
-    return { status: 'blocked', reason: 'pause_check_failed' }
+    return { status: 'blocked', reason: 'pause_check_failed', matched: false }
   }
   if (pauseDecision.blocked) {
     await db.insert(instagramCommentLogs).values({
@@ -841,14 +849,59 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
       mediaId: null, commentText: text, matchedKeyword, status: 'ignorado_pausa',
       errorMessage: 'Bot pausado para este lead. Nenhuma mensagem enviada.',
     }).onConflictDoNothing()
-    return { status: 'ignored', reason: 'ignorado_pausa' }
+    return { status: 'ignored', reason: 'ignorado_pausa', matched: false }
   }
 
-  const [claim] = await db.insert(instagramCommentLogs).values({
+  // Uma DM já confirmada, seja por comentário ou por Direct, encerra a regra
+  // "both" para esta pessoa. Não é um match desta chamada, portanto a IA pode
+  // responder a uma nova pergunta recebida no Direct.
+  const [alreadySent] = await db.select({ id: instagramCommentLogs.id })
+    .from(instagramCommentLogs)
+    .where(and(
+      eq(instagramCommentLogs.automationId, matchedRule.id),
+      eq(instagramCommentLogs.commenterId, senderId),
+      eq(instagramCommentLogs.status, 'sent'),
+    ))
+    .limit(1)
+  if (alreadySent) return { status: 'skipped', reason: 'direct_rule_already_claimed', matched: false }
+
+  let [claim] = await db.insert(instagramCommentLogs).values({
     companyId, automationId: matchedRule.id, commentId: messageId, commenterId: senderId,
     mediaId: null, commentText: text, matchedKeyword, status: 'processing',
   }).onConflictDoNothing().returning({ id: instagramCommentLogs.id })
-  if (!claim) return { status: 'skipped', reason: 'direct_rule_already_claimed', matched: true }
+  // Falha de Graph é transitória. A próxima mensagem com a mesma palavra pode
+  // tentar novamente, mas somente a linha failed é retomada de forma atômica.
+  if (!claim) {
+    ;[claim] = await db.update(instagramCommentLogs).set({
+      commentId: messageId, commentText: text, matchedKeyword, status: 'processing',
+      errorMessage: null, sentAt: null, createdAt: new Date(),
+    }).where(and(
+      eq(instagramCommentLogs.companyId, companyId),
+      eq(instagramCommentLogs.automationId, matchedRule.id),
+      eq(instagramCommentLogs.commenterId, senderId),
+      sql`${instagramCommentLogs.mediaId} is null`,
+      eq(instagramCommentLogs.status, 'failed'),
+    )).returning({ id: instagramCommentLogs.id })
+  }
+  // A pausa herdada da chave pode ser removida por um humano. Na allowlist,
+  // reaproveitamos somente o log ignorado_pausa, como no comentário.
+  if (!claim) {
+    const [company] = await db.select({ slug: companies.slug }).from(companies)
+      .where(eq(companies.id, companyId)).limit(1)
+    if (company && COMMENT_DM_PAUSE_BYPASS_COMPANY_SLUGS.includes(company.slug)) {
+      ;[claim] = await db.update(instagramCommentLogs).set({
+        commentId: messageId, commentText: text, matchedKeyword, status: 'processing',
+        errorMessage: null, sentAt: null, createdAt: new Date(),
+      }).where(and(
+        eq(instagramCommentLogs.companyId, companyId),
+        eq(instagramCommentLogs.automationId, matchedRule.id),
+        eq(instagramCommentLogs.commenterId, senderId),
+        sql`${instagramCommentLogs.mediaId} is null`,
+        eq(instagramCommentLogs.status, 'ignorado_pausa'),
+      )).returning({ id: instagramCommentLogs.id })
+    }
+  }
+  if (!claim) return { status: 'skipped', reason: 'direct_rule_already_claimed', matched: false }
 
   let lastPauseDecision: CommentPauseDecision | null = null
   try {
@@ -861,7 +914,7 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
       status: 'ignorado_pausa',
       errorMessage: 'Bot pausado antes do envio. Nenhuma mensagem enviada.',
     }).where(eq(instagramCommentLogs.id, claim.id))
-    return { status: 'ignored', reason: 'ignorado_pausa', matched: true }
+    return { status: 'ignored', reason: 'ignorado_pausa', matched: false }
   }
 
   const result = await sendInstagramMessage({ companyId, recipientId: senderId, text: matchedRule.dmMessage })
@@ -877,6 +930,26 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
   }).where(eq(instagramCommentAutomations.id, matchedRule.id))
   if (pauseDecision.bypassed || lastPauseDecision.bypassed) {
     await auditDirectPauseBypass(companyId, messageId, { automationId: matchedRule.id, reason: 'disparo_direct_por_palavra_nao_e_bot' })
+  }
+  // O inbound já materializou o lead antes desta função no webhook. Não o
+  // reativa: a automação determinística respeita a pausa e só registra a DM.
+  try {
+    const igPhone = `ig_${senderId}`
+    const [lead] = await db.select({ id: recoveryLeads.id }).from(recoveryLeads)
+      .where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, igPhone))).limit(1)
+    if (matchedRule.autoTag && lead?.id) {
+      await db.insert(leadTags).values({
+        leadId: lead.id, tag: normalizeTag(matchedRule.autoTag), scopeChannel: 'instagram',
+        createdBy: 'automation:instagram:direct',
+      }).onConflictDoNothing()
+    }
+    await db.insert(whatsappMessages).values({
+      companyId, leadId: lead?.id ?? null, phone: igPhone, channel: 'instagram',
+      direction: 'outbound', content: matchedRule.dmMessage, messageType: 'text', sentBy: 'bot',
+      externalId: result.messageId ?? null,
+    })
+  } catch (error) {
+    console.error(`[Instagram Direct Keyword Inbox Sync Error] Empresa ${companyId}:`, error)
   }
   return { status: 'sent', automationId: matchedRule.id, matched: true }
 }

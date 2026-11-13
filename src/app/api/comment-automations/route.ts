@@ -68,6 +68,15 @@ export async function POST(req: NextRequest) {
     if (typeof triggerType !== 'string' || !['comment', 'direct', 'both'].includes(triggerType)) {
       return NextResponse.json({ error: 'O gatilho deve ser comentário, Direct ou ambos.' }, { status: 400 })
     }
+    if ((triggerType === 'direct' || triggerType === 'both') && matchType === 'any') {
+      return NextResponse.json({ error: 'O gatilho por palavra no Direct não aceita “Qualquer comentário”. Escolha contém ou exato.' }, { status: 400 })
+    }
+    if (triggerType === 'direct' && requireFollowCheck === true) {
+      return NextResponse.json({ error: 'O gatilho só por Direct não permite exigir que a pessoa siga a conta.' }, { status: 400 })
+    }
+    if (triggerType === 'direct' && ((typeof publicReply === 'string' && publicReply.trim()) || hideCommentAfterReply === true)) {
+      return NextResponse.json({ error: 'O gatilho só por Direct não permite resposta pública nem ocultar comentário.' }, { status: 400 })
+    }
 
     const requestedTemplateId = typeof templateId === 'string' ? templateId.trim() : ''
     if (requestedTemplateId && requestedTemplateId !== INSTAGRAM_COMMENT_DM_TEMPLATE_ID) {
