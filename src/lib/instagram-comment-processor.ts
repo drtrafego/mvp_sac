@@ -269,6 +269,7 @@ async function reuseIgnoredPauseClaim(input: {
   mediaId: string
   commentText: string
   matchedKeyword?: string
+  dedupeScope?: 'both'
 }): Promise<{ id: number } | null> {
   const [company] = await db
     .select({ slug: companies.slug })
@@ -282,8 +283,10 @@ async function reuseIgnoredPauseClaim(input: {
       .set({
         commentId: input.commentId,
         commenterUsername: input.commenterUsername,
+        mediaId: input.mediaId,
         commentText: input.commentText,
         matchedKeyword: input.matchedKeyword,
+        dedupeScope: input.dedupeScope ?? null,
         status: 'processing',
         errorMessage: null,
         sentAt: null,
@@ -293,7 +296,9 @@ async function reuseIgnoredPauseClaim(input: {
         eq(instagramCommentLogs.companyId, input.companyId),
         eq(instagramCommentLogs.automationId, input.automationId),
         eq(instagramCommentLogs.commenterId, input.commenterId),
-        eq(instagramCommentLogs.mediaId, input.mediaId),
+        ...(input.dedupeScope === 'both'
+          ? [eq(instagramCommentLogs.dedupeScope, 'both')]
+          : [eq(instagramCommentLogs.mediaId, input.mediaId)]),
         eq(instagramCommentLogs.status, 'ignorado_pausa'),
       ))
       .returning({ id: instagramCommentLogs.id })
@@ -426,6 +431,7 @@ export async function processInstagramComment(event: CommentEventData) {
   if (!matchedRule) {
     return { status: 'skipped', reason: 'no_keyword_matched' }
   }
+  const dedupeScope = matchedRule.triggerType === 'both' ? 'both' as const : undefined
 
   // Trava de pausa: ANTES de qualquer chamada à Graph API (follow check, janela
   // da Meta) e antes de reivindicar o comentário. Vale a chave da empresa para
@@ -463,6 +469,7 @@ export async function processInstagramComment(event: CommentEventData) {
       mediaId,
       commentText,
       matchedKeyword: matchedKeywordFound,
+      dedupeScope,
       status: 'ignorado_pausa',
       errorMessage: pauseDecision.reason === 'switch'
         ? `Bot pausado na empresa (chave ${pauseDecision.scope}). Nenhuma mensagem enviada.`
@@ -580,8 +587,22 @@ export async function processInstagramComment(event: CommentEventData) {
     mediaId,
     commentText,
     matchedKeyword: matchedKeywordFound,
+    dedupeScope,
     status: 'processing',
   }).onConflictDoNothing().returning({ id: instagramCommentLogs.id })
+  if (!claim) {
+    if (dedupeScope) {
+      ;[claim] = await db.update(instagramCommentLogs).set({
+        commentId, commenterUsername, mediaId, commentText, matchedKeyword: matchedKeywordFound,
+        status: 'processing', errorMessage: null, sentAt: null, createdAt: new Date(),
+      }).where(and(
+        eq(instagramCommentLogs.automationId, matchedRule.id),
+        eq(instagramCommentLogs.commenterId, commenterId),
+        eq(instagramCommentLogs.dedupeScope, dedupeScope),
+        eq(instagramCommentLogs.status, 'failed'),
+      )).returning({ id: instagramCommentLogs.id })
+    }
+  }
   if (!claim) {
     // Índice único (automação, pessoa, mídia): o log 'ignorado_pausa' de um
     // comentário ANTERIOR da mesma pessoa no mesmo post ocupa a vaga e barrava
@@ -592,6 +613,7 @@ export async function processInstagramComment(event: CommentEventData) {
     const reused = await reuseIgnoredPauseClaim({
       companyId, automationId: matchedRule.id, commentId, commenterId, commenterUsername, mediaId, commentText,
       matchedKeyword: matchedKeywordFound,
+      dedupeScope,
     })
     if (!reused) return { status: 'skipped', reason: 'comment_claim_already_exists' }
     claim = reused
@@ -835,6 +857,7 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
     }
   }
   if (!matchedRule) return { status: 'skipped', reason: 'no_direct_keyword_matched', matched: false }
+  const dedupeScope = matchedRule.triggerType === 'both' ? 'both' as const : undefined
 
   let pauseDecision: CommentPauseDecision
   try {
@@ -846,7 +869,7 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
   if (pauseDecision.blocked) {
     await db.insert(instagramCommentLogs).values({
       companyId, automationId: matchedRule.id, commentId: messageId, commenterId: senderId,
-      mediaId: null, commentText: text, matchedKeyword, status: 'ignorado_pausa',
+      mediaId: null, commentText: text, matchedKeyword, dedupeScope, status: 'ignorado_pausa',
       errorMessage: 'Bot pausado para este lead. Nenhuma mensagem enviada.',
     }).onConflictDoNothing()
     return { status: 'ignored', reason: 'ignorado_pausa', matched: false }
@@ -867,7 +890,7 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
 
   let [claim] = await db.insert(instagramCommentLogs).values({
     companyId, automationId: matchedRule.id, commentId: messageId, commenterId: senderId,
-    mediaId: null, commentText: text, matchedKeyword, status: 'processing',
+    mediaId: null, commentText: text, matchedKeyword, dedupeScope, status: 'processing',
   }).onConflictDoNothing().returning({ id: instagramCommentLogs.id })
   // Falha de Graph é transitória. A próxima mensagem com a mesma palavra pode
   // tentar novamente, mas somente a linha failed é retomada de forma atômica.
@@ -879,7 +902,9 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
       eq(instagramCommentLogs.companyId, companyId),
       eq(instagramCommentLogs.automationId, matchedRule.id),
       eq(instagramCommentLogs.commenterId, senderId),
-      sql`${instagramCommentLogs.mediaId} is null`,
+      ...(dedupeScope
+        ? [eq(instagramCommentLogs.dedupeScope, dedupeScope)]
+        : [sql`${instagramCommentLogs.mediaId} is null`]),
       eq(instagramCommentLogs.status, 'failed'),
     )).returning({ id: instagramCommentLogs.id })
   }
@@ -896,7 +921,9 @@ export async function processInstagramDirectKeyword(event: DirectKeywordEventDat
         eq(instagramCommentLogs.companyId, companyId),
         eq(instagramCommentLogs.automationId, matchedRule.id),
         eq(instagramCommentLogs.commenterId, senderId),
-        sql`${instagramCommentLogs.mediaId} is null`,
+        ...(dedupeScope
+          ? [eq(instagramCommentLogs.dedupeScope, dedupeScope)]
+          : [sql`${instagramCommentLogs.mediaId} is null`]),
         eq(instagramCommentLogs.status, 'ignorado_pausa'),
       )).returning({ id: instagramCommentLogs.id })
     }

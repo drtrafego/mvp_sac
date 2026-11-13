@@ -553,6 +553,33 @@ async function main() {
       assert.equal((await db.select().from(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.id, both.id)))[0].triggerType, 'both')
     })
 
+    await test('(C3) regra both: comentário e Direct concorrentes entregam exatamente uma DM por pessoa', async () => {
+      await reset()
+      const [both] = await db.insert(schema.instagramCommentAutomations).values({
+        companyId: outra.id, name: 'AMBOS CONCORRENTE', triggerType: 'both', keywords: 'chave-corrida',
+        matchType: 'contains', dmMessage: 'Resposta corrida', isActive: true,
+      }).returning()
+      const totals: number[] = []
+      for (let i = 0; i < 10; i++) {
+        const senderId = `corrida_${i}`
+        const before = privateReplies.length + directMessages.filter(message => message.text === 'Resposta corrida').length
+        await Promise.all([
+          processInstagramComment({
+            companyId: outra.id, source: 'instagram_webhook', commentId: `c_corrida_${i}`,
+            commenterId: senderId, mediaId: 'media_corrida', commentText: 'chave-corrida', commentCreatedAt: AFTER_CUTOFF,
+          }),
+          processInstagramDirectKeyword({
+            companyId: outra.id, senderId, messageId: `d_corrida_${i}`, text: 'chave-corrida', messageCreatedAt: AFTER_CUTOFF,
+          }),
+        ])
+        const after = privateReplies.length + directMessages.filter(message => message.text === 'Resposta corrida').length
+        totals.push(after - before)
+      }
+      assert.deepEqual(totals, Array(10).fill(1))
+      const claims = await db.select().from(schema.instagramCommentLogs).where(eq(schema.instagramCommentLogs.automationId, both.id))
+      assert.equal(claims.length, 10, 'o índice comum deixa um único claim por pessoa')
+    })
+
     await test('(Direct) pausa humana, opt-out, tag pessoa, anti-loop e mensagem anterior ao corte não enviam', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })

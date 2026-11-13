@@ -892,6 +892,10 @@ export const instagramCommentLogs = pgTable('instagram_comment_logs', {
   mediaId: text('media_id'),
   commentText: text('comment_text'),
   matchedKeyword: text('matched_keyword'),
+  // Só regras com gatilho "both" recebem "both" aqui. Isso cria uma trava
+  // comum entre comentário (com media_id) e Direct (media_id null), sem mudar
+  // a deduplicação por post das regras exclusivas de comentário.
+  dedupeScope: text('dedupe_scope'),
   status: text('status').notNull(),                       // 'sent' | 'failed' | 'skipped' | 'rate_limited' | 'ignorado_pausa'
   errorMessage: text('error_message'),
   sentAt: timestamp('sent_at'),
@@ -904,6 +908,9 @@ export const instagramCommentLogs = pgTable('instagram_comment_logs', {
   uniqueIndex('instagram_comment_logs_direct_rule_user_unique')
     .on(table.automationId, table.commenterId)
     .where(sql`${table.mediaId} is null`),
+  uniqueIndex('instagram_comment_logs_both_rule_user_unique')
+    .on(table.automationId, table.commenterId)
+    .where(sql`${table.dedupeScope} = 'both'`),
 ])
 
 // ─── Bloqueios de agenda por data (férias, congresso, feriado) ───────────────
