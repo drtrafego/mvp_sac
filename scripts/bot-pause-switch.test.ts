@@ -522,6 +522,107 @@ async function main() {
       assert.equal(privateReplies[0]?.text, 'Post')
     })
 
+    await test('Luana sem template 021126 usa a regra global comum e não registra bloqueio', async () => {
+      await reset()
+      await db.delete(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.companyId, company.id))
+      await db.insert(schema.instagramCommentAutomations).values({
+        companyId: company.id, name: 'Luana global', keywords: 'Luana', matchType: 'contains',
+        dmMessage: 'DM comum da Luana', isActive: true,
+      })
+
+      const result = await processInstagramComment({
+        companyId: company.id, source: 'instagram_webhook', commentId: 'luana-sem-template',
+        commenterId: 'luana-sem-template', mediaId: 'media_1', commentText: 'Quero a Luana',
+      })
+      assert.equal(result.status, 'sent')
+      assert.equal(privateReplies.length, 1)
+      assert.equal(privateReplies[0]?.text, 'DM comum da Luana')
+      assert.equal((await db.select().from(schema.sacAuditEvents)).length, 0)
+    })
+
+    await test('Luana sem template 021126 e sem regra comum retorna no_keyword_matched', async () => {
+      await reset()
+      await db.delete(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.companyId, company.id))
+      await db.insert(schema.instagramCommentAutomations).values({
+        companyId: company.id, name: 'Outra palavra', keywords: 'PREÇO', matchType: 'contains',
+        dmMessage: 'Sem relação', isActive: true,
+      })
+
+      const result = await processInstagramComment({
+        companyId: company.id, source: 'instagram_webhook', commentId: 'luana-sem-regra',
+        commenterId: 'luana-sem-regra', mediaId: 'media_1', commentText: 'Luana',
+      })
+      assert.deepEqual(result, { status: 'skipped', reason: 'no_keyword_matched' })
+      assert.equal(privateReplies.length, 0)
+      assert.equal((await db.select().from(schema.sacAuditEvents)).length, 0)
+    })
+
+    await test('Luana com template 021126 válido reserva o gatilho e ignora a regra comum', async () => {
+      await reset()
+      await db.delete(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.companyId, company.id))
+      await db.insert(schema.instagramCommentAutomations).values({
+        companyId: company.id, name: 'Luana comum', keywords: 'Luana', matchType: 'contains',
+        dmMessage: 'DM comum que não pode sair', isActive: true,
+      })
+      await db.insert(schema.instagramCommentAutomations).values({
+        companyId: company.id, name: '021126', mediaId: 'media_1', keywords: 'Luana', matchType: 'contains',
+        dmMessage: 'Oi! Aqui está a página de avaliação sobre pedidos de clientes.\n\nEla mostra o que o vídeo explica, o que a empresa precisa ter pronto e traz 7 perguntas para você ver se essa rotina cabe no seu caso.\n\nO assistente organiza o pedido e a sua equipe revisa antes de qualquer envio ao cliente. Se quiser conversar sobre a sua operação, é só responder por aqui.\n\nhttps://www.casaldotrafego.com/blog/avaliar-assistente-ia-pedidos-de-clientes',
+        isActive: true, templateId: '021126',
+        templateVariables: { url: 'https://www.casaldotrafego.com/blog/avaliar-assistente-ia-pedidos-de-clientes' },
+        consentRequired: true, metaWindowHours: 168, apiOrigin: 'instagram_graph', publicReply: null,
+        hideCommentAfterReply: false,
+      })
+
+      const result = await processInstagramComment({
+        companyId: company.id, source: 'instagram_webhook', commentId: 'luana-template-valido',
+        commenterId: 'luana-template-valido', mediaId: 'media_1', commentText: 'Luana', commentCreatedAt: new Date(),
+      })
+      assert.equal(result.status, 'sent')
+      assert.equal(privateReplies.length, 1)
+      assert.match(privateReplies[0]?.text ?? '', /página de avaliação/)
+      assert.notEqual(privateReplies[0]?.text, 'DM comum que não pode sair')
+    })
+
+    await test('Luana com template 021126 adulterado continua bloqueada', async () => {
+      await reset()
+      await db.delete(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.companyId, company.id))
+      await db.insert(schema.instagramCommentAutomations).values({
+        companyId: company.id, name: '021126 inválido', mediaId: 'media_1', keywords: 'Luana', matchType: 'contains',
+        dmMessage: 'Texto adulterado', isActive: true, templateId: '021126', consentRequired: false,
+        metaWindowHours: 168, apiOrigin: 'instagram_graph', publicReply: null, hideCommentAfterReply: false,
+      })
+
+      const result = await processInstagramComment({
+        companyId: company.id, source: 'instagram_webhook', commentId: 'luana-template-invalido',
+        commenterId: 'luana-template-invalido', mediaId: 'media_1', commentText: 'Luana', commentCreatedAt: new Date(),
+      })
+      assert.deepEqual(result, { status: 'blocked', reason: 'template_registration_or_consent_invalid' })
+      assert.equal(privateReplies.length, 0)
+    })
+
+    await test('Luana sem template 021126 preserva o gate de seguidor da regra comum', async () => {
+      await reset()
+      await db.delete(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.companyId, company.id))
+      const [automation] = await db.insert(schema.instagramCommentAutomations).values({
+        companyId: company.id, name: 'Luana exige seguir', keywords: 'Luana', matchType: 'contains',
+        dmMessage: 'Conteúdo que só sai para seguidor', isActive: true, requireFollowCheck: true,
+      }).returning()
+      followCheckFollows = false
+      try {
+        const result = await processInstagramComment({
+          companyId: company.id, source: 'instagram_webhook', commentId: 'luana-gate-seguidor',
+          commenterId: 'luana-gate-seguidor', mediaId: 'media_1', commentText: 'Luana',
+        })
+        assert.equal(result.status, 'sent')
+        assert.equal(privateReplies.length, 1)
+        assert.match(privateReplies[0]?.text ?? '', /Segue lá/)
+        assert.notEqual(privateReplies[0]?.text, 'Conteúdo que só sai para seguidor')
+        assert.equal((await leadByPhone('ig_luana-gate-seguidor')).pendingFollowCheckAutomationId, automation.id)
+      } finally {
+        followCheckFollows = true
+      }
+    })
+
   } finally {
     await fixture.close()
   }

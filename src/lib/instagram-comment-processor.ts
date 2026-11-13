@@ -395,9 +395,9 @@ export async function processInstagramComment(event: CommentEventData) {
     return { status: 'skipped', reason: 'no_matching_post_rule' }
   }
 
-  // Luana é um gatilho reservado ao template 021126. Regras legadas com a
-  // mesma palavra podem ter DM ou resposta pública diferentes e não podem
-  // assumir esse fluxo enquanto a configuração aprovada não estiver presente.
+  // Quando há uma regra aprovada do template 021126 aplicável ao post, Luana
+  // fica reservada a ela. Sem essa regra, o gatilho segue o casamento comum
+  // das regras globais e do post, na ordem já definida acima.
   const isLuanaTrigger = matchesCommentKeywords(
     commentText,
     INSTAGRAM_COMMENT_DM_TEMPLATE_KEYWORD,
@@ -405,15 +405,7 @@ export async function processInstagramComment(event: CommentEventData) {
   ).matched
   if (isLuanaTrigger) {
     const preparedRules = applicableAutomations.filter(rule => rule.templateId === INSTAGRAM_COMMENT_DM_TEMPLATE_ID)
-    if (preparedRules.length === 0) {
-      await auditPreparedTemplate(companyId, 'instagram_comment_dm_blocked', commentId, {
-        templateId: INSTAGRAM_COMMENT_DM_TEMPLATE_ID,
-        reason: 'gatilho_luana_sem_template_021126_configurado',
-        keyword: INSTAGRAM_COMMENT_DM_TEMPLATE_KEYWORD,
-      })
-      return { status: 'blocked', reason: 'luana_template_not_configured' }
-    }
-    applicableAutomations = preparedRules
+    if (preparedRules.length > 0) applicableAutomations = preparedRules
   }
 
   // 4. Encontra a primeira regra que casa com o horário e as palavras-chave
