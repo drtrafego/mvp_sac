@@ -108,11 +108,22 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: 'templateId não reconhecido.' }, { status: 400 })
     }
 
+    const nextTriggerType = body.triggerType === undefined
+      ? (current.triggerType ?? 'comment')
+      : body.triggerType
+    if (typeof nextTriggerType !== 'string' || !['comment', 'direct', 'both'].includes(nextTriggerType)) {
+      return NextResponse.json({ error: 'O gatilho deve ser comentário, Direct ou ambos.' }, { status: 400 })
+    }
+    if (requestedTemplateId && nextTriggerType !== 'comment') {
+      return NextResponse.json({ error: 'O template 021126 só pode usar o gatilho de comentário.' }, { status: 400 })
+    }
+
     const updateData: Record<string, unknown> = {
       updatedAt: new Date(),
     }
 
     if (typeof body.name === 'string') updateData.name = body.name.trim()
+    if (body.triggerType !== undefined) updateData.triggerType = nextTriggerType
     if (body.mediaId !== undefined) updateData.mediaId = typeof body.mediaId === 'string' ? body.mediaId.trim() || null : null
     if (body.mediaUrl !== undefined) updateData.mediaUrl = typeof body.mediaUrl === 'string' ? body.mediaUrl.trim() || null : null
     if (body.mediaCaption !== undefined) updateData.mediaCaption = typeof body.mediaCaption === 'string' ? body.mediaCaption.trim() || null : null
@@ -128,6 +139,12 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     if (typeof body.isActive === 'boolean') updateData.isActive = body.isActive
     if (typeof body.requireFollowCheck === 'boolean') updateData.requireFollowCheck = body.requireFollowCheck
     if (body.autoTag !== undefined) updateData.autoTag = typeof body.autoTag === 'string' ? normalizeTag(body.autoTag) || null : null
+
+    if (nextTriggerType === 'direct') {
+      updateData.mediaId = null
+      updateData.mediaUrl = null
+      updateData.mediaCaption = null
+    }
 
     if (requestedTemplateId === INSTAGRAM_COMMENT_DM_TEMPLATE_ID) {
       const nextMediaId = body.mediaId !== undefined

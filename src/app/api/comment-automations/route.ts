@@ -62,11 +62,19 @@ export async function POST(req: NextRequest) {
       requireFollowCheck = false,
       autoTag,
       templateId,
+      triggerType = 'comment',
     } = body
+
+    if (typeof triggerType !== 'string' || !['comment', 'direct', 'both'].includes(triggerType)) {
+      return NextResponse.json({ error: 'O gatilho deve ser comentário, Direct ou ambos.' }, { status: 400 })
+    }
 
     const requestedTemplateId = typeof templateId === 'string' ? templateId.trim() : ''
     if (requestedTemplateId && requestedTemplateId !== INSTAGRAM_COMMENT_DM_TEMPLATE_ID) {
       return NextResponse.json({ error: 'templateId não reconhecido.' }, { status: 400 })
+    }
+    if (requestedTemplateId && triggerType !== 'comment') {
+      return NextResponse.json({ error: 'O template 021126 só pode usar o gatilho de comentário.' }, { status: 400 })
     }
     if ((!name || typeof name !== 'string' || !name.trim()) && !requestedTemplateId) {
       return NextResponse.json({ error: 'O nome da automação é obrigatório.' }, { status: 400 })
@@ -124,9 +132,10 @@ export async function POST(req: NextRequest) {
       .values({
         companyId: company.id,
         name: templateRegistration?.name ?? (name as string).trim(),
-        mediaId: typeof mediaId === 'string' ? mediaId.trim() || null : null,
-        mediaUrl: typeof mediaUrl === 'string' ? mediaUrl.trim() || null : null,
-        mediaCaption: typeof mediaCaption === 'string' ? mediaCaption.trim() || null : null,
+        mediaId: triggerType === 'direct' ? null : typeof mediaId === 'string' ? mediaId.trim() || null : null,
+        mediaUrl: triggerType === 'direct' ? null : typeof mediaUrl === 'string' ? mediaUrl.trim() || null : null,
+        mediaCaption: triggerType === 'direct' ? null : typeof mediaCaption === 'string' ? mediaCaption.trim() || null : null,
+        triggerType,
         keywords: templateRegistration?.keywords ?? (typeof keywords === 'string' ? keywords.trim() || null : null),
         matchType: templateRegistration?.matchType ?? (typeof matchType === 'string' && ['contains', 'exact', 'any'].includes(matchType) ? matchType : 'contains'),
         dmMessage: templateRegistration?.dmMessage ?? (dmMessage as string).trim(),

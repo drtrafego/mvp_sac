@@ -42,6 +42,7 @@ interface AutomationRule {
   mediaCaption: string | null
   keywords: string | null
   matchType: string
+  triggerType: 'comment' | 'direct' | 'both'
   dmMessage: string
   publicReply: string | null
   hideCommentAfterReply: boolean
@@ -104,6 +105,7 @@ export default function ComentariosInstagramPage() {
 
   // Form state
   const [formName, setFormName] = useState('')
+  const [formTriggerType, setFormTriggerType] = useState<'comment' | 'direct' | 'both'>('comment')
   const [formPostType, setFormPostType] = useState<'all' | 'specific'>('all')
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null)
   const [formKeywords, setFormKeywords] = useState('')
@@ -173,6 +175,7 @@ export default function ComentariosInstagramPage() {
   const openNewModal = () => {
     setEditingRule(null)
     setFormName('')
+    setFormTriggerType('comment')
     setFormPostType('all')
     setSelectedMedia(null)
     setFormKeywords('QUERO, LINK, PRECO')
@@ -192,6 +195,7 @@ export default function ComentariosInstagramPage() {
   const openEditModal = (rule: AutomationRule) => {
     setEditingRule(rule)
     setFormName(rule.name)
+    setFormTriggerType(rule.triggerType || 'comment')
     setFormPostType(rule.mediaId ? 'specific' : 'all')
     if (rule.mediaId) {
       setSelectedMedia({
@@ -264,9 +268,10 @@ export default function ComentariosInstagramPage() {
 
     const payload = {
       name: formName.trim(),
-      mediaId: formPostType === 'specific' ? selectedMedia?.id || null : null,
-      mediaUrl: formPostType === 'specific' ? selectedMedia?.media_url || selectedMedia?.thumbnail_url || null : null,
-      mediaCaption: formPostType === 'specific' ? selectedMedia?.caption || null : null,
+      triggerType: formTriggerType,
+      mediaId: formTriggerType !== 'direct' && formPostType === 'specific' ? selectedMedia?.id || null : null,
+      mediaUrl: formTriggerType !== 'direct' && formPostType === 'specific' ? selectedMedia?.media_url || selectedMedia?.thumbnail_url || null : null,
+      mediaCaption: formTriggerType !== 'direct' && formPostType === 'specific' ? selectedMedia?.caption || null : null,
       keywords: formMatchType === 'any' ? null : formKeywords.trim(),
       matchType: formMatchType,
       dmMessage: formDmMessage.trim(),
@@ -494,6 +499,9 @@ export default function ComentariosInstagramPage() {
                         >
                           {rule.isActive ? 'Ativa' : 'Pausada'}
                         </span>
+                        <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-300 border border-violet-500/20">
+                          {rule.triggerType === 'direct' ? 'Direct' : rule.triggerType === 'both' ? 'Comentário + Direct' : 'Comentário'}
+                        </span>
                         {rule.hideCommentAfterReply && (
                           <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
                             <EyeOff size={10} /> Oculta Comentário
@@ -507,7 +515,7 @@ export default function ComentariosInstagramPage() {
                       </div>
                       <h3 className="text-h3 text-fg font-bold mt-2 truncate">{rule.name}</h3>
                       <p className="text-micro text-fg-subtle">
-                        {rule.mediaId ? 'Gatilho: Post/Reel Específico' : 'Gatilho: Qualquer Post/Reel'}
+                        {rule.triggerType === 'direct' ? 'Gatilho: Palavra no Direct' : rule.triggerType === 'both' ? `Gatilho: Comentário + Direct${rule.mediaId ? ', Post/Reel Específico' : ', Qualquer Post/Reel'}` : rule.mediaId ? 'Gatilho: Comentário, Post/Reel Específico' : 'Gatilho: Comentário, Qualquer Post/Reel'}
                       </p>
                     </div>
 
@@ -727,8 +735,32 @@ export default function ComentariosInstagramPage() {
                 />
               </div>
 
-              {/* Seletor de Post */}
               <div>
+                <label className="block text-micro font-bold text-fg mb-1">Gatilho *</label>
+                <select
+                  value={formTriggerType}
+                  onChange={e => {
+                    const trigger = e.target.value as 'comment' | 'direct' | 'both'
+                    setFormTriggerType(trigger)
+                    if (trigger === 'direct') {
+                      setFormPostType('all')
+                      setSelectedMedia(null)
+                      setFormPublicReply('')
+                      setFormHideComment(false)
+                      setFormRequireFollowCheck(false)
+                    }
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-surface-base border border-line-subtle text-fg text-xs focus:border-brand-solid outline-none"
+                >
+                  <option value="both">Comentário e palavra no Direct</option>
+                  <option value="direct">Só palavra no Direct</option>
+                  <option value="comment">Só comentário</option>
+                </select>
+                <span className="text-[10px] text-fg-subtle mt-1 block">A palavra no Direct recebe a mesma mensagem configurada. Cada pessoa recebe uma vez por regra.</span>
+              </div>
+
+              {/* Seletor de Post */}
+              {formTriggerType !== 'direct' && <div>
                 <label className="block text-micro font-bold text-fg mb-1">Gatilho de Post/Reel</label>
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <button
@@ -807,7 +839,7 @@ export default function ComentariosInstagramPage() {
                     )}
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* Palavras-chave e Tipo de Match */}
               <div>
@@ -868,7 +900,7 @@ export default function ComentariosInstagramPage() {
               </div>
 
               {/* Opções Avançadas: Resposta Pública e Ocultar */}
-              <div className="p-3.5 rounded-2xl bg-surface-base border border-line-subtle space-y-3">
+              {formTriggerType !== 'direct' && <div className="p-3.5 rounded-2xl bg-surface-base border border-line-subtle space-y-3">
                 <span className="text-micro font-bold text-fg uppercase tracking-wider block">
                   Ações Complementares Opcionais
                 </span>
@@ -940,7 +972,7 @@ export default function ComentariosInstagramPage() {
                     />
                   </div>
                 </div>
-              </div>
+              </div>}
               </div>
 
               {/* Ações */}

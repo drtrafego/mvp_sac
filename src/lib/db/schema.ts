@@ -838,6 +838,9 @@ export const instagramCommentAutomations = pgTable('instagram_comment_automation
   mediaCaption: text('media_caption'),
   keywords: text('keywords'),                             // palavras separadas por vírgula ("QUERO, PREÇO")
   matchType: text('match_type').default('contains').notNull(), // 'contains' | 'exact' | 'any'
+  // comment (legado), direct ou ambos. O default preserva todas as regras já
+  // existentes como "Só comentário".
+  triggerType: text('trigger_type').default('comment').notNull(),
   dmMessage: text('dm_message').notNull(),                // texto enviado no Direct
   publicReply: text('public_reply'),                      // resposta pública no comentário (opcional)
   hideCommentAfterReply: boolean('hide_comment_after_reply').default(false),
@@ -896,6 +899,11 @@ export const instagramCommentLogs = pgTable('instagram_comment_logs', {
 }, (table) => [
   uniqueIndex('instagram_comment_logs_comment_unique').on(table.companyId, table.commentId),
   uniqueIndex('instagram_comment_logs_user_media_unique').on(table.automationId, table.commenterId, table.mediaId),
+  // Uma regra de palavra no Direct responde só uma vez para cada pessoa. Logs
+  // de comentário sempre têm mídia e continuam sob o índice acima.
+  uniqueIndex('instagram_comment_logs_direct_rule_user_unique')
+    .on(table.automationId, table.commenterId)
+    .where(sql`${table.mediaId} is null`),
 ])
 
 // ─── Bloqueios de agenda por data (férias, congresso, feriado) ───────────────

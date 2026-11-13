@@ -12,7 +12,7 @@ import { companies, settings, webhookReceived, recoveryLeads } from "@/lib/db/sc
 import { and, eq, sql } from "drizzle-orm"
 import { maskedHeaders } from "@/lib/webhook-headers"
 import { verifyMetaSignature } from "@/lib/meta-signature"
-import { processInstagramComment, handleFollowCheckReply } from "@/lib/instagram-comment-processor"
+import { processInstagramComment, processInstagramDirectKeyword, handleFollowCheckReply } from "@/lib/instagram-comment-processor"
 import { fetchInstagramUserProfile } from "@/lib/instagram"
 import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
@@ -560,6 +560,16 @@ export async function POST(req: NextRequest) {
 
                 // Mensagem real trocada: se for a primeira, marca a abordagem do lead
                 await markLeadContacted(lead?.id)
+
+                const directKeyword = await processInstagramDirectKeyword({
+                  companyId,
+                  messageId: message?.mid ?? '',
+                  senderId: sender.id,
+                  text: message?.text ?? '',
+                  messageCreatedAt: (item.timestamp ?? entry.time) as string | number | undefined,
+                  isStoryReply: isInstagramStoryReply(message),
+                })
+                if (directKeyword.matched) continue
 
                 // Gate de seguidor do Comment-to-DM (24/09/2026): se este lead está
                 // no meio do fluxo de 2 mensagens de uma automação com

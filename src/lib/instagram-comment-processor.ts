@@ -45,6 +45,15 @@ export interface CommentEventData {
   commentCreatedAt?: Date | string | number
 }
 
+export interface DirectKeywordEventData {
+  companyId: number
+  messageId: string
+  senderId: string
+  text: string
+  messageCreatedAt?: Date | string | number
+  isStoryReply?: boolean
+}
+
 async function auditPreparedTemplate(
   companyId: number,
   type: string,
@@ -229,6 +238,22 @@ async function auditCommentPauseBypass(companyId: number, commentId: string, pay
   }
 }
 
+async function auditDirectPauseBypass(companyId: number, messageId: string, payload: Record<string, unknown>) {
+  try {
+    await db.insert(sacAuditEvents).values({
+      companyId,
+      actorType: 'system',
+      actorId: 'instagram-direct-keyword-automation',
+      type: 'instagram_direct_keyword_pause_bypass',
+      referenceType: 'instagram_direct_message',
+      referenceId: messageId,
+      payload,
+    })
+  } catch (error) {
+    console.error('[Instagram Direct Keyword Pause Bypass Audit Error]:', error)
+  }
+}
+
 /**
  * Reaproveita o log 'ignorado_pausa' (e só ele) de (automação, pessoa, mídia)
  * como claim do comentário novo. Só para a empresa da lista do bypass; as
@@ -350,6 +375,7 @@ export async function processInstagramComment(event: CommentEventData) {
 
   // Filtra regras que se aplicam a este post (ou a qualquer post se mediaId for null/vazio)
   let applicableAutomations = automations.filter(rule => {
+    if (rule.triggerType !== 'comment' && rule.triggerType !== 'both') return false
     if (!rule.mediaId) return true // regra global para todos os posts
     return rule.mediaId === mediaId
   })
@@ -425,7 +451,7 @@ export async function processInstagramComment(event: CommentEventData) {
     pauseDecision = await resolveCommentPauseDecision(companyId, commenterId, resolveCommentCreatedAt)
   } catch (err) {
     console.error(`[Comment-to-DM Pause Check Error] Empresa ${companyId}, comment ${commentId}:`, err)
-    return { status: 'blocked', reason: 'pause_check_failed' }
+    return { status: 'blocked', reason: 'pause_check_failed', matched: true }
   }
   if (pauseDecision.blocked) {
     await db.insert(instagramCommentLogs).values({
@@ -442,7 +468,7 @@ export async function processInstagramComment(event: CommentEventData) {
         ? `Bot pausado na empresa (chave ${pauseDecision.scope}). Nenhuma mensagem enviada.`
         : 'Bot pausado para este lead. Nenhuma mensagem enviada.',
     }).onConflictDoNothing()
-    return { status: 'ignored', reason: 'ignorado_pausa' }
+    return { status: 'ignored', reason: 'ignorado_pausa', matched: true }
   }
 
   const isPreparedTemplate = matchedRule.templateId === INSTAGRAM_COMMENT_DM_TEMPLATE_ID
@@ -764,6 +790,95 @@ export async function processInstagramComment(event: CommentEventData) {
   }
 
   return { status: 'sent', messageId: dmResult.messageId }
+}
+
+/**
+ * Resposta determinística a uma palavra recebida no Direct. Ela usa os mesmos
+ * logs e a mesma decisão de pausa do comentário, mas nunca executa IA e nunca
+ * trata resposta de Story como Direct comum.
+ */
+export async function processInstagramDirectKeyword(event: DirectKeywordEventData) {
+  const { companyId, messageId, senderId, text } = event
+  if (!companyId || !messageId || !senderId || !text.trim() || event.isStoryReply) {
+    return { status: 'skipped', reason: 'dados_incompletos_ou_story' }
+  }
+
+  const createdAt = parseCommentCreatedAt(event.messageCreatedAt)
+  // A Messaging API só pode responder enquanto a conversa está aberta. Não
+  // aceitamos timestamp ausente, pois seria possível responder uma DM antiga.
+  if (!createdAt || !isWithinMetaPrivateReplyWindow(createdAt, 24)) {
+    return { status: 'skipped', reason: 'meta_messaging_window' }
+  }
+
+  const automations = await db.select().from(instagramCommentAutomations).where(and(
+    eq(instagramCommentAutomations.companyId, companyId),
+    eq(instagramCommentAutomations.isActive, true),
+  ))
+  let matchedRule: typeof automations[number] | null = null
+  let matchedKeyword: string | undefined
+  for (const rule of automations) {
+    if (rule.triggerType !== 'direct' && rule.triggerType !== 'both') continue
+    if (!isWithinActiveHours(rule.activeHoursStart, rule.activeHoursEnd)) continue
+    const match = matchesCommentKeywords(text, rule.keywords, rule.matchType)
+    if (match.matched) {
+      matchedRule = rule
+      matchedKeyword = match.matchedKeyword
+      break
+    }
+  }
+  if (!matchedRule) return { status: 'skipped', reason: 'no_direct_keyword_matched' }
+
+  let pauseDecision: CommentPauseDecision
+  try {
+    pauseDecision = await resolveCommentPauseDecision(companyId, senderId, async () => createdAt)
+  } catch (error) {
+    console.error(`[Instagram Direct Keyword Pause Check Error] Empresa ${companyId}, mensagem ${messageId}:`, error)
+    return { status: 'blocked', reason: 'pause_check_failed' }
+  }
+  if (pauseDecision.blocked) {
+    await db.insert(instagramCommentLogs).values({
+      companyId, automationId: matchedRule.id, commentId: messageId, commenterId: senderId,
+      mediaId: null, commentText: text, matchedKeyword, status: 'ignorado_pausa',
+      errorMessage: 'Bot pausado para este lead. Nenhuma mensagem enviada.',
+    }).onConflictDoNothing()
+    return { status: 'ignored', reason: 'ignorado_pausa' }
+  }
+
+  const [claim] = await db.insert(instagramCommentLogs).values({
+    companyId, automationId: matchedRule.id, commentId: messageId, commenterId: senderId,
+    mediaId: null, commentText: text, matchedKeyword, status: 'processing',
+  }).onConflictDoNothing().returning({ id: instagramCommentLogs.id })
+  if (!claim) return { status: 'skipped', reason: 'direct_rule_already_claimed', matched: true }
+
+  let lastPauseDecision: CommentPauseDecision | null = null
+  try {
+    lastPauseDecision = await resolveCommentPauseDecision(companyId, senderId, async () => createdAt)
+  } catch (error) {
+    console.error(`[Instagram Direct Keyword Pause Recheck Error] Empresa ${companyId}, mensagem ${messageId}:`, error)
+  }
+  if (!lastPauseDecision || lastPauseDecision.blocked) {
+    await db.update(instagramCommentLogs).set({
+      status: 'ignorado_pausa',
+      errorMessage: 'Bot pausado antes do envio. Nenhuma mensagem enviada.',
+    }).where(eq(instagramCommentLogs.id, claim.id))
+    return { status: 'ignored', reason: 'ignorado_pausa', matched: true }
+  }
+
+  const result = await sendInstagramMessage({ companyId, recipientId: senderId, text: matchedRule.dmMessage })
+  if (!result.ok) {
+    await db.update(instagramCommentLogs).set({ status: 'failed', errorMessage: result.error ?? 'Falha ao enviar Direct.' }).where(eq(instagramCommentLogs.id, claim.id))
+    return { status: 'failed', error: result.error, matched: true }
+  }
+
+  const now = new Date()
+  await db.update(instagramCommentLogs).set({ status: 'sent', sentAt: now, errorMessage: null }).where(eq(instagramCommentLogs.id, claim.id))
+  await db.update(instagramCommentAutomations).set({
+    totalTriggered: sql`${instagramCommentAutomations.totalTriggered} + 1`, updatedAt: now,
+  }).where(eq(instagramCommentAutomations.id, matchedRule.id))
+  if (pauseDecision.bypassed || lastPauseDecision.bypassed) {
+    await auditDirectPauseBypass(companyId, messageId, { automationId: matchedRule.id, reason: 'disparo_direct_por_palavra_nao_e_bot' })
+  }
+  return { status: 'sent', automationId: matchedRule.id, matched: true }
 }
 
 // Limite de respostas sem confirmar seguir, antes do gate desistir (FIX ALTO

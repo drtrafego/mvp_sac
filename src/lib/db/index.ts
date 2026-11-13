@@ -529,6 +529,7 @@ export function ensureSchema(client: any): Promise<void> {
           client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS consent_required BOOLEAN NOT NULL DEFAULT FALSE`,
           client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS meta_window_hours INTEGER NOT NULL DEFAULT 168`,
           client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS api_origin TEXT NOT NULL DEFAULT 'instagram_graph'`,
+          client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS trigger_type TEXT NOT NULL DEFAULT 'comment'`,
           client`ALTER TABLE recovery_leads ADD COLUMN IF NOT EXISTS pending_follow_check_automation_id INTEGER REFERENCES instagram_comment_automations(id) ON DELETE SET NULL`,
           // FIX ALTO de QA (24/09/2026, 2ª rodada): contador de tentativas
           // sem confirmar, ver comentário completo em schema.ts.
@@ -1001,6 +1002,7 @@ export function ensureSchema(client: any): Promise<void> {
 
         try {
           await client`ALTER TABLE instagram_comment_automations ADD COLUMN IF NOT EXISTS auto_tag TEXT`
+          await client`CREATE UNIQUE INDEX IF NOT EXISTS instagram_comment_logs_direct_rule_user_unique ON instagram_comment_logs (automation_id, commenter_id) WHERE media_id IS NULL`
           await client`
             CREATE TABLE IF NOT EXISTS instagram_inbound_tag_rules (
               id SERIAL PRIMARY KEY,

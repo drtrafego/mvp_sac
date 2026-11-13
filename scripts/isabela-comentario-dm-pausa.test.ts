@@ -81,7 +81,7 @@ async function main() {
     },
   })
 
-  const { processInstagramComment, handleFollowCheckReply } = await import('../src/lib/instagram-comment-processor')
+  const { processInstagramComment, processInstagramDirectKeyword, handleFollowCheckReply } = await import('../src/lib/instagram-comment-processor')
   const { POST: instagramWebhookPost } = await import('../src/app/api/webhooks/instagram/[slug]/route')
   const { POST: globalWebhookPost } = await import('../src/app/api/webhooks/instagram/route')
   const { setPauseSwitch } = await import('../src/lib/bot-pause')
@@ -511,6 +511,59 @@ async function main() {
       failPrivateReply = false
       assert.equal((await comment(isabela.id, '8402')).status, 'sent')
       assert.equal(await audits(), 1)
+    })
+
+    await test('(Direct) gatilhos respeitam comentário, Direct e ambos; palavra repetida envia uma única vez', async () => {
+      await reset()
+      const [commentOnly] = await db.select().from(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.companyId, isabela.id))
+      await db.update(schema.instagramCommentAutomations).set({ triggerType: 'comment' }).where(eq(schema.instagramCommentAutomations.id, commentOnly.id))
+      const [directOnly] = await db.insert(schema.instagramCommentAutomations).values({
+        companyId: isabela.id, name: 'SÓ DIRECT', triggerType: 'direct', keywords: 'chave-direct', matchType: 'contains', dmMessage: 'Resposta Direct', isActive: true,
+      }).returning()
+      const [both] = await db.insert(schema.instagramCommentAutomations).values({
+        companyId: isabela.id, name: 'AMBOS', triggerType: 'both', keywords: 'chave-ambos', matchType: 'contains', dmMessage: 'Resposta Ambos', isActive: true,
+      }).returning()
+      const directNow = new Date()
+      const direct = (senderId: string, messageId: string, text: string) => processInstagramDirectKeyword({
+        companyId: isabela.id, senderId, messageId, text, messageCreatedAt: directNow,
+      })
+
+      assert.equal((await direct('9001', 'd_comment_only', 'posicionamento')).reason, 'no_direct_keyword_matched', 'regra legada sem coluna é só comentário')
+      assert.equal(directMessages.length, 0)
+      assert.equal((await direct('9001', 'd_direct_1', 'quero a chave-direct')).status, 'sent')
+      assert.equal((await direct('9001', 'd_direct_2', 'chave-direct de novo')).reason, 'direct_rule_already_claimed')
+      assert.equal(directMessages.filter(message => message.text === 'Resposta Direct').length, 1)
+      const concurrent = await Promise.all([1, 2].map(() => direct('9005', 'd_direct_concurrent', 'chave-direct')))
+      assert.equal(concurrent.filter(result => result.status === 'sent').length, 1, 'duas entregas do mesmo evento fazem uma única DM')
+      assert.equal(directMessages.filter(message => message.text === 'Resposta Direct').length, 2)
+      assert.equal((await comment(isabela.id, '9002', { text: 'chave-direct', commentId: 'c_direct_only' })).reason, 'no_keyword_matched', 'regra só Direct não reage a comentário')
+      assert.equal((await direct('9003', 'd_both', 'chave-ambos')).status, 'sent')
+      assert.equal((await comment(isabela.id, '9004', { text: 'chave-ambos', commentId: 'c_both' })).status, 'sent')
+      assert.equal(directMessages.filter(message => message.text === 'Resposta Ambos').length, 1)
+      assert.equal(privateReplies.filter(reply => reply.text === 'Resposta Ambos').length, 1)
+      assert.equal((await db.select().from(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.id, directOnly.id)))[0].mediaId, null)
+      assert.equal((await db.select().from(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.id, both.id)))[0].triggerType, 'both')
+    })
+
+    await test('(Direct) pausa humana, opt-out, tag pessoa, anti-loop e mensagem anterior ao corte não enviam', async () => {
+      await reset()
+      await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })
+      const directNow = new Date()
+      const direct = (senderId: string, messageId: string, messageCreatedAt = directNow) => processInstagramDirectKeyword({
+        companyId: isabela.id, senderId, messageId, text: 'chave-direct', messageCreatedAt,
+      })
+      for (const [senderId, botPausedBy] of [['9101', 'Atendente humana'], ['9102', 'optout_whatsapp'], ['9103', 'tag:pessoa'], ['9104', 'anti-loop detectado']] as const) {
+        await pauseLead(`ig_${senderId}`, isabela.id, { botPausedBy, botPausedAll: false })
+        assert.equal((await direct(senderId, `d_${senderId}`)).reason, 'ignorado_pausa')
+      }
+      await captureInstagramInboundInteraction({ companyId: isabela.id, instagramUserId: '9105', interaction: 'direct' })
+      const lead = await leadByPhone('ig_9105')
+      await db.insert(schema.leadTags).values({ leadId: lead.id, tag: 'pessoa', scopeChannel: 'instagram', createdBy: 'teste' })
+      assert.equal((await direct('9105', 'd_9105')).reason, 'ignorado_pausa')
+      assert.notEqual((await direct('9106', 'd_old', BEFORE_CUTOFF)).status, 'sent', 'mensagem anterior ao corte nunca recebe resposta')
+      assert.equal(directMessages.length, 0)
+      assert.equal((await direct('9107', 'd_switch_bypass')).status, 'sent', 'pausa geral da Isabela não barra a regra determinística')
+      assert.equal(directMessages.length, 1)
     })
   } finally {
     await fixture.close()
