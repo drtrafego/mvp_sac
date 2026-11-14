@@ -76,18 +76,18 @@ test('validações: dm 1001 bytes, emoji bytes, storyId, palavras vazias, tipo/m
   assert.equal((await R.POST(req('POST', { ...good, name: '   ' }))).status, 400)
   assert.equal((await R.POST(req('POST', '[]' as never))).status, 400)
 })
-test('auth: sem sessão 401; membro 403; GET lista só da empresa', async () => {
+test('auth: sem sessão 401; membro lê, mas não escreve; GET lista só da empresa', async () => {
   as(A, null); assert.equal((await R.GET()).status, 401); assert.equal((await R.POST(req('POST', good))).status, 401)
-  as(A, 'membro'); assert.equal((await R.GET()).status, 403); assert.equal((await R.POST(req('POST', good))).status, 403)
+  as(A, 'membro'); assert.equal((await R.GET()).status, 200); assert.equal((await R.POST(req('POST', good))).status, 403)
   await seed(A); await seed(B, { name: 'DA-B' }); as(B); const j = await (await R.GET()).json()
   assert.ok(j.automations.every((x: { companyId: number }) => x.companyId === B))
 })
-test('conta fora do piloto não consegue ler, alterar ou excluir regra', async () => {
+test('empresa não protegida não lê, altera nem exclui regra de outra empresa', async () => {
   const id = await seed(A, { name: 'alvo-A' })
   as(B)
-  assert.equal((await RI.GET(req('GET'), ctx(id))).status, 403)
-  assert.equal((await RI.PATCH(req('PATCH', { name: 'HACK', isActive: true }), ctx(id))).status, 403)
-  assert.equal((await RI.DELETE(req('DELETE'), ctx(id))).status, 403)
+  assert.equal((await RI.GET(req('GET'), ctx(id))).status, 404)
+  assert.equal((await RI.PATCH(req('PATCH', { name: 'HACK', isActive: true }), ctx(id))).status, 404)
+  assert.equal((await RI.DELETE(req('DELETE'), ctx(id))).status, 404)
   const [row] = await client`select name, is_active from instagram_story_automations where id = ${id}`; assert.notEqual(row.name, 'HACK')
   as(A); assert.equal((await RI.GET(req('GET'), ctx('abc'))).status, 400); assert.equal((await RI.GET(req('GET'), ctx('-1'))).status, 400)
 })
@@ -103,15 +103,16 @@ test('PATCH: ativar e observe->send renovam enabled_at; story "" grava NULL', as
   const bad = await RI.PATCH(req('PATCH', { matchType: 'exact', keywords: [] }), ctx(id)); assert.equal(bad.status, 400)
   const any = await RI.PATCH(req('PATCH', { matchType: 'any', keywords: [] }), ctx(id)); assert.equal(any.status, 200, JSON.stringify(await any.json()))
 })
-test('conta fora do piloto não lista, cria nem altera regra', async () => {
-  as(B); const list = await (await R.GET()).json(); assert.equal(list.enabled, false); assert.equal(list.automations.length, 0)
-  assert.equal((await R.POST(req('POST', good))).status, 403)
-  assert.equal((await RI.PATCH(req('PATCH', { isActive: true }), ctx(1))).status, 403)
+test('empresa não protegida lista, cria, ativa e edita a própria regra', async () => {
+  as(B); const created = await R.POST(req('POST', { ...good, isActive: true })); const body = await created.json()
+  assert.equal(created.status, 201, JSON.stringify(body)); assert.equal(body.automation.companyId, B)
+  const list = await (await R.GET()).json(); assert.equal(list.enabled, true); assert.ok(list.automations.some((automation: { id: number }) => automation.id === body.automation.id))
+  const patched = await RI.PATCH(req('PATCH', { mode: 'send', dmMessage: 'teste' }), ctx(body.automation.id)); assert.equal(patched.status, 200)
 })
 test('logs: só da própria empresa mesmo com automationId alheio', async () => {
   as(A); const [{ id: autoA }] = await client`select id from instagram_story_automations where company_id = ${A} limit 1`
   await client`insert into instagram_story_deliveries (company_id, automation_id, sender_id, story_id, occurred_at, status) values (${A}, ${autoA}, 's', '1', now(), 'observed')`
-  as(B); assert.equal((await RL.GET(req('GET', undefined, `https://sac.test/api/story-automations/logs?automationId=${autoA}`) as never)).status, 403)
+  as(B); const otherLogs = await (await RL.GET(req('GET', undefined, `https://sac.test/api/story-automations/logs?automationId=${autoA}`) as never)).json(); assert.deepEqual(otherLogs.logs, [])
   as(A); assert.equal((await (await RL.GET(req('GET', undefined, 'https://sac.test/x') as never)).json()).logs.length, 1)
 })
 
@@ -180,10 +181,12 @@ test('M5: enabled_at renova só nas mudanças que reativam o gatilho', async () 
   id = await seed(A, { active: true, mode: 'send' }); await old(id); await RI.PATCH(req('PATCH', { name: 'só o nome' }), ctx(id)); assert.ok((await age(id)) > 86400)
   id = await seed(A, { active: true, mode: 'send' }); await old(id); await RI.PATCH(req('PATCH', { isActive: false }), ctx(id)); assert.ok((await age(id)) > 86400)
 })
-test('M4: conta fora do piloto não consulta nem acessa as rotas de story', async () => {
-  as(B); assert.deepEqual(await (await R.GET()).json(), { enabled: false, automations: [] }); assert.equal((await R.POST(req('POST', good))).status, 403)
-  assert.equal((await RI.PATCH(req('PATCH', { isActive: true }), ctx(1))).status, 403); assert.equal((await RI.DELETE(req('DELETE'), ctx(1))).status, 403); assert.equal((await RI.GET(req('GET'), ctx(1))).status, 403)
-  assert.equal((await RL.GET(req('GET', undefined, 'https://sac.test/x') as never)).status, 403); assert.equal((await RS.GET()).status, 403)
+test('M4: empresa não protegida acessa as rotas com isolamento por company_id', async () => {
+  as(B); const created = await R.POST(req('POST', { ...good, name: 'regra B' })); const body = await created.json(); assert.equal(created.status, 201)
+  assert.equal((await RI.GET(req('GET'), ctx(body.automation.id))).status, 200)
+  assert.equal((await RI.PATCH(req('PATCH', { isActive: true }), ctx(body.automation.id))).status, 200)
+  assert.equal((await RI.DELETE(req('DELETE'), ctx(body.automation.id))).status, 200)
+  assert.equal((await RL.GET(req('GET', undefined, 'https://sac.test/x') as never)).status, 200)
 })
 test('B-baixos: IDs e storyId inválidos retornam 400; espaço em storyId vira NULL', async () => {
   as(A); for (const id of ['1e3', '0x10', '+1', '0', '01', ' 1', '1.0', '-1', 'abc']) assert.equal((await RI.GET(req('GET'), ctx(id))).status, 400)

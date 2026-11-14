@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireCompanyRole, AuthError, ForbiddenError, forbiddenResponse } from '@/lib/auth'
+import { requireCompany, requireCompanyRole, AuthError, ForbiddenError, forbiddenResponse } from '@/lib/auth'
 import { sql } from 'drizzle-orm'
-import { isStoryTriggerEnabledForSlug, postgresTextArrayLiteral } from '@/lib/instagram-story-automation'
+import { postgresTextArrayLiteral } from '@/lib/instagram-story-automation'
 
 function authError(error: unknown): boolean { return error instanceof AuthError || (typeof error === 'object' && error !== null && 'status' in error && error.status === 401) }
 function forbidden(error: unknown): boolean { return error instanceof ForbiddenError || (typeof error === 'object' && error !== null && 'status' in error && error.status === 403) }
@@ -26,8 +26,7 @@ function validate(body: Record<string, unknown>): { error?: string; values?: { n
 
 export async function GET() {
   try {
-    const { company } = await requireCompanyRole('admin')
-    if (!isStoryTriggerEnabledForSlug(company.slug)) return NextResponse.json({ enabled: false, automations: [] })
+    const company = await requireCompany()
     const result = await db.execute(sql`SELECT id, company_id AS "companyId", name, keywords, match_type AS "matchType", story_id AS "storyId", dm_message AS "dmMessage", mode, is_active AS "isActive", enabled_at AS "enabledAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM instagram_story_automations WHERE company_id = ${company.id} ORDER BY created_at DESC`)
     return NextResponse.json({ enabled: true, automations: Array.isArray(result) ? result : result.rows ?? [] })
   } catch (error) {
@@ -41,7 +40,6 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const { company } = await requireCompanyRole('admin')
-    if (!isStoryTriggerEnabledForSlug(company.slug)) return NextResponse.json({ error: 'Disponível apenas para a conta piloto.' }, { status: 403 })
     const parsed: unknown = await request.json().catch(() => null)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return NextResponse.json({ error: 'O corpo deve ser um objeto JSON.' }, { status: 400 })
     const checked = validate(parsed as Record<string, unknown>)

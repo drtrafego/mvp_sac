@@ -286,10 +286,56 @@ for (const which of ['slug', 'global'] as const) {
     for (const v of variants) await deliver(which, ISA, [v])
     assert.equal(aiCalls.length, 0, `IA chamada ${aiCalls.length}x em resposta a story reconhecida pelo isInstagramStoryReply`)
   })
-  T('OUTRA EMPRESA com story: IA chamada 1x (comportamento atual) e zero query em tabelas de story; queries idênticas ao Direct normal', async () => {
+  T('empresa não protegida sem regra lê regras uma vez, registra skipped e mantém a IA', async () => {
     await deliver(which, OUT, [{ sender: 'O1', mid: mid(), text: 'oi', story: { id: '111' } }])
-    const withStory = queryLog.filter(q => q.includes('instagram_story')); assert.equal(withStory.length, 0)
+    const withStory = queryLog.filter(q => q.includes('FROM instagram_story_automations')); assert.equal(withStory.length, 1)
     assert.equal(aiCalls.length, 1); assert.equal(kwCalls.length, 1)
+    assert.equal((await deliveries())[0].status, 'skipped')
+  })
+  T('empresa não protegida em modo teste registra observed e mantém a IA', async () => {
+    await rule({ company_id: outId, mode: 'observe' })
+    await deliver(which, OUT, [{ sender: 'O2', mid: mid(), text: 'oi', story: { id: '111' } }])
+    assert.equal(sendCalls.length, 0); assert.equal(aiCalls.length, 1); assert.equal((await deliveries())[0].status, 'observed')
+  })
+  T('empresa não protegida em modo envio reserva um Direct e não chama IA', async () => {
+    await rule({ company_id: outId })
+    await deliver(which, OUT, [{ sender: 'O3', mid: mid(), text: 'oi', story: { id: '111' } }])
+    noAi(); assert.equal(sendCalls.length, 1); assert.equal((await deliveries())[0].status, 'sent')
+  })
+  T('empresa não protegida: 20 respostas concorrentes reservam um único Direct', async () => {
+    await rule({ company_id: outId }); const concurrentMid = mid()
+    await Promise.all(Array.from({ length: 20 }, (_, index) => deliver(index % 2 ? 'slug' : 'global', OUT, [{ sender: 'O4', mid: concurrentMid, text: 'oi', story: { id: '112' } }])))
+    noAi(); assert.equal(sendCalls.length, 1)
+  })
+  T('empresa não protegida: envio incerto é consumido e nunca reenviado', async () => {
+    await rule({ company_id: outId }); sendBehavior = async () => ({ ok: false, uncertain: true, isTimeout: true, error: 'timeout' })
+    await deliver(which, OUT, [{ sender: 'O5', mid: mid(), text: 'oi', story: { id: '113' } }])
+    await deliver(which, OUT, [{ sender: 'O5', mid: mid(), text: 'oi', story: { id: '113' } }])
+    noAi(); assert.equal(sendCalls.length, 1); assert.equal((await deliveries())[0].status, 'unknown')
+  })
+  T('empresa não protegida: regra anterior à ativação e janela vencida seguem para IA; pausa humana mantém o bloqueio atual', async () => {
+    await rule({ company_id: outId, enabled_at: new Date(Date.now() + 60_000) })
+    await deliver(which, OUT, [{ sender: 'O6', mid: mid(), text: 'oi', story: { id: '114' } }])
+    assert.equal(sendCalls.length, 0); assert.equal(aiCalls.length, 1)
+    await reset(); await rule({ company_id: outId, enabled_at: new Date(Date.now() - 3 * 86_400_000) })
+    await deliver(which, OUT, [{ sender: 'O7', mid: mid(), text: 'oi', story: { id: '115' }, ts: Date.now() - 25 * 3_600_000 }])
+    assert.equal(sendCalls.length, 0); assert.equal(aiCalls.length, 1)
+    await reset(); await rule({ company_id: outId, mode: 'observe' })
+    await deliver(which, OUT, [{ sender: 'O8', mid: mid(), text: 'oi', story: { id: '116' } }]); const lead = await leadOf('O8')
+    await client`update recovery_leads set bot_paused = true, bot_paused_by = 'humano', bot_paused_all = false where id = ${lead.id}`
+    await client`update instagram_story_automations set mode = 'send' where company_id = ${outId}`; aiCalls.length = 0; kwCalls.length = 0
+    await deliver(which, OUT, [{ sender: 'O8', mid: mid(), text: 'oi', story: { id: '117' } }])
+    assert.equal(sendCalls.length, 0); assert.equal(aiCalls.length, 0)
+  })
+  T('empresa não protegida: tabela ausente ou erro de banco não muda o caminho para IA', async () => {
+    await rule({ company_id: outId }); failStoryQueries = true
+    const erro = await deliver(which, OUT, [{ sender: 'O9', mid: mid(), text: 'oi', story: { id: '118' } }])
+    assert.equal(erro.status, 200); assert.equal(aiCalls.length, 1); assert.equal(sendCalls.length, 0)
+    await reset(); await client`drop table instagram_story_deliveries, instagram_story_automations cascade`
+    try {
+      const semTabela = await deliver(which, OUT, [{ sender: 'O10', mid: mid(), text: 'oi', story: { id: '119' } }])
+      assert.equal(semTabela.status, 200); assert.equal(aiCalls.length, 1); assert.equal(sendCalls.length, 0)
+    } finally { await client.unsafe(MIGRATION) }
   })
   T('CONCORRÊNCIA: 20 entregas do MESMO mid (10 por rota) -> 1 DM', async () => {
     await rule(); const m = mid()
@@ -344,7 +390,7 @@ for (const which of ['slug', 'global'] as const) {
     const lines = captured.filter(line => /Story Trigger|Story Automations/.test(line)); assert.ok(lines.length >= 1); for (const line of lines) assert.ok(!/LOGSENDER|MIDSECRETO|TEXTOSECRETO|params|Failed query|DM-AUTO/i.test(line), `vazou: ${line}`); noAi()
   })
   T('erro hostil do banco também não é repassado ao log', async () => { await rule(); failStoryQueries = true; await deliver(which, ISA, [{ sender: 'LOGSENDER3', mid: 'MIDSECRETO3', text: 'x', story: { id: '4242' } }]); assert.ok(!captured.some(line => /LOGSENDER3|MIDSECRETO3/.test(line))) })
-  T('outra empresa mantém IA e não consulta tabelas de story', async () => { await rule(); await deliver(which, OUT, [{ sender: 'O1', mid: mid(), text: 'oi', isStoryReply: true }, { sender: 'O2', mid: mid(), text: 'oi', story: { id: '9' } }]); assert.equal(queryLog.filter(query => query.includes('instagram_story')).length, 0); assert.equal(aiCalls.length, 2); assert.equal(sendCalls.length, 0) })
+  T('outra empresa sem regra mantém IA e só consulta regras para o item com id de Story', async () => { await deliver(which, OUT, [{ sender: 'O1', mid: mid(), text: 'oi', isStoryReply: true }, { sender: 'O2', mid: mid(), text: 'oi', story: { id: '9' } }]); assert.equal(queryLog.filter(query => query.includes('FROM instagram_story_automations')).length, 1); assert.equal(aiCalls.length, 2); assert.equal(sendCalls.length, 0) })
   T('evento anterior a enabled_at não envia, posterior envia', async () => { await rule({ enabled_at: new Date(Date.now() - 60_000) }); await deliver(which, ISA, [{ sender: 'L1', mid: mid(), text: 'a', story: { id: '5' }, ts: Date.now() - 3_600_000 }]); assert.equal(sendCalls.length, 0); await deliver(which, ISA, [{ sender: 'L2', mid: mid(), text: 'a', story: { id: '5' }, ts: Date.now() - 1_000 }]); assert.equal(sendCalls.length, 1); noAi() })
   T('send_state accepted e uncertain seguem a regra do histórico e da métrica', async () => {
     await rule(); await deliver(which, ISA, [{ sender: 'H1', mid: mid(), text: 'a', story: { id: '5' } }]); sendBehavior = async () => ({ ok: false, uncertain: true, isTimeout: true, error: 't' }); await deliver(which, ISA, [{ sender: 'H2', mid: mid(), text: 'a', story: { id: '5' } }]); const rows = await client`select m.send_state, m.external_id from whatsapp_messages m where m.direction = 'outbound' order by m.id`; assert.deepEqual(rows.map(row => row.send_state), ['accepted', 'uncertain']); const visible = await client`select count(*)::int c from whatsapp_messages where direction='outbound' and (send_state = 'accepted' or (send_state is null and external_id is not null))`; assert.equal(visible[0].c, 1); const { classifySendMetric } = await import('../src/lib/channel-send-metrics'); assert.equal(classifySendMetric(rows[0].send_state as string, !!rows[0].external_id), 'accepted'); assert.equal(classifySendMetric(rows[1].send_state as string, !!rows[1].external_id), 'uncertain')

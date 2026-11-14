@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import { matchesCommentKeywords } from '../src/lib/instagram-comment-keywords'
 import { isInstagramStoryReplyMessage, STORY_PROTECTED_SLUGS } from '../src/lib/instagram-story-trigger'
+import { isStoryTriggerEnabledForSlug } from '../src/lib/instagram-story-automation'
 
 async function fixture(name: string) { return JSON.parse(await readFile(resolve(process.cwd(), `scripts/fixtures/instagram-story/${name}`), 'utf8')) as { entry: Array<{ messaging: Array<{ message?: unknown; reaction?: unknown }> }> } }
 
@@ -22,6 +23,8 @@ test('reaction de eco não é resposta a Story e a proteção é exclusiva da Is
   assert.equal(isInstagramStoryReplyMessage(reaction.message as never), false)
   assert.ok(STORY_PROTECTED_SLUGS.includes('isabela-fanini'))
   assert.ok(!STORY_PROTECTED_SLUGS.includes('outra-empresa' as never))
+  assert.equal(isStoryTriggerEnabledForSlug('outra-empresa'), true)
+  assert.equal(isStoryTriggerEnabledForSlug(''), false)
 })
 
 test('migração é estritamente aditiva e cria a trava de envio único', async () => {
