@@ -169,7 +169,7 @@ test('T-IDOR-1/2/4: todas as rotas isolam tenant, inclusive platform_admin troca
     const body = route === 'clarify' ? { actionId: a.id, etapaId: 'agendado' } : {}
     assert.equal((await h.call(route, route === 'undo' ? a.id : r.body.job.id, body)).status, 404, route)
   }
-  await assert.rejects(() => h.flow.confirmJob(h.actor(), r.body.job.id), { status: 404 })
+  await assert.rejects(() => h.flow.confirmJob(h.actor(), r.body.job.id, { planHash: '0'.repeat(64), codigo: 'teste' }), { status: 404 })
   assert.equal(await h.protectedState(), before)
 })
 test('T-ADMIN-1/T-DESL-1/T-KILL-1: 401/403 em todas as rotas e painel em quatro estados', async () => {

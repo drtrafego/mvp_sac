@@ -6,5 +6,5 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(value)
 }
 export function planHash(actions: PreparedAction[]) {
-  return createHash('sha256').update(canonicalJson(actions.map(a => ({ ordinal: a.ordinal, tipo: a.actionType, targetId: a.targetId, request: Object.fromEntries(Object.entries(a.requestJson).filter(([k]) => k !== 'resumo')), before: a.beforeSnapshot })))).digest('hex')
+  return createHash('sha256').update(canonicalJson(actions.map(a => ({ ordinal: a.ordinal, tipo: a.actionType, targetId: a.targetId, request: Object.fromEntries(Object.entries(a.requestJson).filter(([k]) => k !== 'resumo' && k !== 'avisos')), before: a.beforeSnapshot })))).digest('hex')
 }

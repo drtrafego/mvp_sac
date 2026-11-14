@@ -1,5 +1,15 @@
 // Códigos permanecem nos recibos para diagnóstico, com texto legível na tela.
 const messages: Record<string, string> = {
+  RULE_EXISTS: 'Já existe uma regra com essa palavra. Peça para editar ou ativar a existente.',
+  RULE_SHADOWED: 'Outra regra tem prioridade. Confira as regras existentes.',
+  PROTECTED_RULE: 'Essa regra só pode ser desativada pelo operador.',
+  INVALID_KEYWORD: 'Escolha uma palavra menos comum, sem vírgula e com até 60 caracteres.',
+  INVALID_LINK: 'Use um endereço HTTPS público, sem credenciais.',
+  INVALID_MESSAGE: 'Confira o texto da mensagem e o limite de 1.500 caracteres.',
+  LINK_DOMAIN_NOT_ALLOWED: 'O domínio do link não está liberado para esta empresa.',
+  LINK_NOT_FROM_USER: 'O link precisa vir do pedido humano.',
+  DAILY_RULE_LIMIT: 'O limite diário de criação de regras foi atingido.',
+  BUSY: 'Outra alteração de regras está em andamento. Tente novamente em instantes.',
   CONFLICT: 'O registro mudou depois. Faça um novo pedido.',
   INVALID_NOTE: 'A nota é inválida. Confira o texto e o tamanho.',
   INVALID_ALIAS: 'O apelido deve ter até 40 caracteres.',

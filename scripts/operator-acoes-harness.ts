@@ -34,6 +34,7 @@ export async function createOperatorAcoesHarness() {
     execFileSync('./node_modules/.bin/drizzle-kit', ['push', '--force'], { env: { ...process.env, DATABASE_URL: URL }, stdio: 'pipe' })
     await client.unsafe(readFileSync('drizzle/0044_sac_operator.sql', 'utf8'))
     await client.unsafe(readFileSync('drizzle/0045_instagram_story_trigger.sql', 'utf8'))
+    await client.unsafe(readFileSync('drizzle/0046_sac_operator_locks.sql', 'utf8'))
     const companies = await client`INSERT INTO companies (name, slug) VALUES ('Empresa A', 'a'), ('Empresa B', 'b'), ('Isabela de teste', 'isabela-fanini') RETURNING id, slug, name`
     const [A, B, I] = companies as unknown as Array<{ id: number; slug: string; name: string }>
     const permissions = ['buscar_lead', 'listar_etapas', 'listar_regras_instagram', 'mover_etapa', 'anotar_lead']
@@ -83,6 +84,7 @@ export async function createOperatorAcoesHarness() {
     const get = await import('../src/app/api/operator/jobs/[jobId]/route')
     const acoes = await import('../src/app/api/operator/jobs/[jobId]/acoes/route')
     const clarify = await import('../src/app/api/operator/jobs/[jobId]/clarify/route')
+    const confirm = await import('../src/app/api/operator/jobs/[jobId]/confirm/route')
     const cancel = await import('../src/app/api/operator/jobs/[jobId]/cancel/route')
     const undo = await import('../src/app/api/operator/actions/[actionId]/undo/route')
     const flow = await import('../src/lib/operator/acoes/flow')
@@ -93,10 +95,10 @@ export async function createOperatorAcoesHarness() {
     const actor = () => ({ companyId: state.company.id, userId: state.user, role: state.role, actorName: 'Admin de teste', companySlug: state.company.slug })
     const read = async (r: Response) => ({ status: r.status, body: await r.json() as any })
     const post = async (text = 'Mova Mariana Souza para agendado', key = randomUUID(), extra = {}, headers = {}) => read(await messages.POST(operatorRequest('/api/operator/messages', { text, idempotencyKey: key, ...extra }, headers)))
-    const call = async (route: 'get' | 'acoes' | 'clarify' | 'cancel' | 'undo', id: string, body: unknown = {}, headers = {}) => {
+    const call = async (route: 'get' | 'acoes' | 'clarify' | 'confirm' | 'cancel' | 'undo', id: string, body: unknown = {}, headers = {}) => {
       if (route === 'get' || route === 'acoes') return read(await ({ get, acoes })[route].GET(new Request('https://sac.test'), { params: Promise.resolve({ jobId: id }) }))
       if (route === 'undo') return read(await undo.POST(operatorRequest(`/api/operator/actions/${id}/undo`, body, headers), { params: Promise.resolve({ actionId: id }) }))
-      return read(await ({ clarify, cancel })[route].POST(operatorRequest(`/api/operator/jobs/${id}/${route}`, body, headers), { params: Promise.resolve({ jobId: id }) }))
+      return read(await ({ clarify, cancel, confirm })[route].POST(operatorRequest(`/api/operator/jobs/${id}/${route}`, body, headers), { params: Promise.resolve({ jobId: id }) }))
     }
     const fresh = () => { state.user = randomUUID(); state.mode = 'admin'; state.role = 'admin'; state.company = A }
     const prepared = async (actions: any[], text: string, company = A) => {

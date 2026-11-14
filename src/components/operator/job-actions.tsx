@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { mensagemErro } from '@/lib/operator/acoes/error-messages'
 import type { ActionView } from '@/lib/operator/acoes/types'
+import { ConfirmationCard } from './confirmation-card'
 import { ClarificationPicker } from './clarification-picker'
 export function OperatorJobActions({ job, onChange }: { job: { id: string; status: string; updatedAt?: string; resultJson?: { acoes?: boolean } | null }; onChange: () => Promise<void> }) {
   const [actions, setActions] = useState<ActionView[]>([])
+  const [cardJob, setCardJob] = useState<{ planHash: string | null; confirmationExpiresAt: string | null } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [revision, setRevision] = useState(0)
@@ -14,7 +16,7 @@ export function OperatorJobActions({ job, onChange }: { job: { id: string; statu
     if (!enabled) return
     const controller = new AbortController()
     fetch(`/api/operator/jobs/${job.id}/acoes`, { cache: 'no-store', signal: controller.signal })
-      .then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.error ?? 'Não foi possível carregar as ações.'); if (!controller.signal.aborted) { setActions(data.acoes ?? []); setError(null) } })
+      .then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.error ?? 'Não foi possível carregar as ações.'); if (!controller.signal.aborted) { setActions(data.acoes ?? []); setCardJob(data.job ?? null); setError(null) } })
       .catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : 'Falha ao carregar ações.') })
     return () => controller.abort()
   }, [job.id, job.status, job.updatedAt, enabled, revision])
@@ -40,6 +42,9 @@ export function OperatorJobActions({ job, onChange }: { job: { id: string; statu
         onCancel={() => void mutate(`/api/operator/jobs/${job.id}/cancel`, {})} />}
       {a.podeDesfazer && <Button type="button" variant="outline" disabled={busy} onClick={() => { if (window.confirm(`Tem certeza que deseja desfazer? ${a.resumo}`)) void mutate(`/api/operator/actions/${a.id}/undo`, {}) }}>Desfazer</Button>}
     </div>)}
-    {error && <p role="alert" className="text-destructive">{error}</p>}
+    {cardJob?.planHash && cardJob.confirmationExpiresAt && <ConfirmationCard key={cardJob.planHash} actions={actions} expiresAt={cardJob.confirmationExpiresAt} busy={busy}
+      onConfirm={codigo => void mutate(`/api/operator/jobs/${job.id}/confirm`, { planHash: cardJob.planHash, codigo })}
+      onCancel={() => void mutate(`/api/operator/jobs/${job.id}/cancel`, {})} />}
+    {error && <div role="alert"><p className="text-destructive">{error}</p><Button type="button" variant="outline" disabled={busy} onClick={() => setRevision(r => r + 1)}>Tentar carregar novamente</Button></div>}
   </div>
 }
