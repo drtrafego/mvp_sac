@@ -2,6 +2,7 @@
 
 import { PageHeader } from '@/components/ui/page-header'
 import { useState, useEffect } from 'react'
+import { StoryAutomationsSection } from '@/components/instagram/story-automations-section'
 import {
   MessageCircle,
   Plus,
@@ -380,6 +381,7 @@ export default function ComentariosInstagramPage() {
         </>}
         className="shrink-0"
       />
+      <StoryAutomationsSection />
 
       {/* Cards de Métricas */}
       <div className="rise rise-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-[var(--space-gutter)]">

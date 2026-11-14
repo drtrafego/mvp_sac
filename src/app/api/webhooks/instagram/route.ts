@@ -19,6 +19,7 @@ import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { AmbiguousCredentialError } from "@/lib/instagram-webhook-errors"
 import { captureInstagramInboundInteraction, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
+import { handleInstagramStoryReplyItem } from '@/lib/instagram-story-trigger'
 
 
 // Resolve a empresa dona do Instagram Business User ID e,
@@ -560,6 +561,7 @@ export async function POST(req: NextRequest) {
 
                 // Mensagem real trocada: se for a primeira, marca a abordagem do lead
                 await markLeadContacted(lead?.id)
+                if (await handleInstagramStoryReplyItem({ companyId, companySlug: resolved?.slug, instagramAccountId, senderId: sender.id, message, itemTimestamp: (item.timestamp ?? entry.time) as string | number | undefined, lead })) continue
 
                 let directKeyword: { matched?: boolean } = { matched: false }
                 try {

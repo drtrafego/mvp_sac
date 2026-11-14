@@ -18,6 +18,7 @@ import { markLeadContacted } from "@/lib/leads"
 import { generateAndSendAiReply } from "@/lib/ai-reply"
 import { isInboundMessageAlreadyProcessed, isUniqueViolation } from "@/lib/webhook-dedup"
 import { captureInstagramInboundInteraction, isInstagramEntryForCompany, isInstagramStoryReaction, isInstagramStoryReply, persistInstagramInboundWithTags, InstagramInboundPersistenceError } from "@/lib/instagram-inbound-tags"
+import { handleInstagramStoryReplyItem } from '@/lib/instagram-story-trigger'
 
 
 function instagramDebugPayload(opts: {
@@ -476,6 +477,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
             // Mensagem real trocada: se for a primeira, marca a abordagem do lead
             await markLeadContacted(lead?.id)
+            if (await handleInstagramStoryReplyItem({ companyId: company.id, companySlug: company.slug, instagramAccountId, senderId: sender.id, message, itemTimestamp: (item.timestamp ?? entry.time) as string | number | undefined, lead })) continue
 
             let directKeyword: { matched?: boolean } = { matched: false }
             try {
