@@ -16,8 +16,8 @@ export function gate(ator: Ator, a: PreparedAction, holder?: string) {
       AND j.id = ${a.jobId}::uuid AND j.status = 'em_execucao'
       AND a.id = ${a.id}::uuid AND a.status IN ('pendente', 'aguardando_confirmacao')
       ${a.requestJson.execucao === 'cartao' ? sql`AND j.approved_plan_hash = j.plan_hash AND j.confirmed_by IS NOT NULL` : sql``}
-      ${a.requestJson.ativar ? sql`AND s.allowed_actions ? 'ativar_regra_instagram'` : sql``}
-      ${acaoDeRegra(a.actionType) ? sql`AND EXISTS (SELECT 1 FROM sac_operator_locks l WHERE l.company_id = s.company_id AND l.holder = ${holder ?? null}::uuid AND l.locked_until > now())` : sql``}`
+      ${a.requestJson.ativar ? sql`AND s.allowed_actions ? ${a.actionType.includes('_story') ? 'ativar_regra_story' : 'ativar_regra_instagram'}` : sql``}
+      ${acaoDeRegra(a.actionType) || a.actionType === 'mover_etapa_lote' ? sql`AND EXISTS (SELECT 1 FROM sac_operator_locks l WHERE l.company_id = s.company_id AND l.holder = ${holder ?? null}::uuid AND l.locked_until > now())` : sql``}`
 }
 function audit(ator: Ator, a: PreparedAction, type: string, payload: SQL) {
   return sql`INSERT INTO sac_audit_events (company_id, lead_id, type, actor_type, actor_id, actor_name, reference_type, reference_id, payload)
@@ -71,6 +71,7 @@ export function efeitoSql(ator: Ator, a: PreparedAction, noteId?: number) {
 
 // Regra, recibo e auditoria pertencem à mesma instrução Neon HTTP.
 export function regraSql(ator: Ator, a: PreparedAction, holder: string, maxId: number, id?: number) {
+  if (a.actionType.includes('_story')) return regraStorySql(ator, a, holder, maxId, id)
   const target = a.requestJson.regra!
   const before = a.beforeSnapshot?.regra
   const create = a.actionType === 'criar_regra_instagram'
@@ -83,7 +84,7 @@ export function regraSql(ator: Ator, a: PreparedAction, holder: string, maxId: n
   const effect = create ? sql`INSERT INTO instagram_comment_automations
       (id, company_id, name, keywords, match_type, trigger_type, media_id, media_url, media_caption, dm_message, public_reply,
        hide_comment_after_reply, is_active, require_follow_check, consent_required, meta_window_hours, api_origin, template_id, auto_tag, created_at, updated_at)
-      SELECT ${id}, ${ator.companyId}, ${target.name}, ${target.keywords}, ${target.match_type}, 'comment', NULL, NULL, NULL, ${target.dm_message}, NULL,
+       SELECT ${id}, ${ator.companyId}, ${target.name}, ${target.keywords}, ${target.match_type}, ${target.trigger_type}, NULL, NULL, NULL, ${target.dm_message}, NULL,
        false, ${target.is_active}, false, false, 168, 'instagram_graph', NULL, NULL, now(), now() FROM clm
       WHERE NOT EXISTS (SELECT 1 FROM instagram_comment_automations WHERE company_id = ${ator.companyId} AND id > ${maxId}) RETURNING *`
     : remove ? sql`DELETE FROM instagram_comment_automations WHERE ${version} AND updated_at = created_at AND is_active = false
@@ -112,4 +113,33 @@ export function regraSql(ator: Ator, a: PreparedAction, holder: string, maxId: n
   ), aud AS (${audit}), chk AS (
     SELECT 1 / CASE WHEN (SELECT count(*) FROM eff) = (SELECT count(*) FROM rec) AND (SELECT count(*) FROM eff) = (SELECT count(*) FROM aud) THEN 1 ELSE 0 END AS ok
   ) SELECT (SELECT count(*) FROM eff)::int efeitos, (SELECT count(*) FROM gate)::int gates, ok FROM chk`
+}
+
+/** Efeito atômico das regras globais de resposta a story. Mantém a tabela do
+ * painel isolada e usa a mesma guarda de empresa, versão e recibo das regras
+ * de comentário. */
+export function regraStorySql(ator: Ator, a: PreparedAction, holder: string, maxId: number, id?: number) {
+  const target = a.requestJson.regra!
+  const before = a.beforeSnapshot?.regra
+  const create = a.actionType === 'criar_regra_story'
+  const remove = a.actionType === 'desfazer_criar_regra_story' && !before?.is_active
+  const content = a.actionType.includes('editar_regra_story')
+  const version = sql`id = ${before?.id ?? null} AND company_id = ${ator.companyId} AND updated_at::text = ${before?.updated_at ?? null}`
+  const effect = create ? sql`INSERT INTO instagram_story_automations (id, company_id, name, keywords, match_type, story_id, dm_message, mode, is_active, enabled_at, created_at, updated_at)
+    SELECT ${id}, ${ator.companyId}, ${target.name}, ARRAY[${target.keywords}]::text[], ${target.match_type}, NULL, ${target.dm_message}, ${target.mode ?? 'observe'}, ${target.is_active}, CASE WHEN ${target.is_active} THEN now() ELSE NULL END, now(), now()
+    FROM clm WHERE NOT EXISTS (SELECT 1 FROM instagram_story_automations WHERE company_id = ${ator.companyId} AND id > ${maxId}) RETURNING *`
+    : remove ? sql`DELETE FROM instagram_story_automations WHERE ${version} AND is_active = false AND updated_at = created_at
+      AND NOT EXISTS (SELECT 1 FROM instagram_story_deliveries WHERE automation_id = ${before?.id ?? null}) AND EXISTS (SELECT 1 FROM gate) RETURNING *`
+    : sql`UPDATE instagram_story_automations SET
+      ${content ? sql`name = ${target.name}, keywords = ARRAY[${target.keywords}]::text[], dm_message = ${target.dm_message}, match_type = ${target.match_type},` : sql`is_active = ${target.is_active}, mode = ${target.mode ?? before?.mode ?? 'observe'},`}
+      ${target.is_active ? sql`enabled_at = now(),` : sql``} updated_at = now() WHERE ${version} AND EXISTS (SELECT 1 FROM gate)
+      ${content ? sql`` : sql`AND (is_active IS DISTINCT FROM ${target.is_active} OR mode IS DISTINCT FROM ${target.mode ?? 'observe'})`}
+      ${a.actionType === 'desfazer_criar_regra_story' ? sql`AND NOT EXISTS (SELECT 1 FROM instagram_story_deliveries WHERE automation_id = ${before?.id ?? null})` : sql``} RETURNING *`
+  const snapshot = sql`jsonb_build_object('regra', jsonb_build_object('id', eff.id, 'name', eff.name, 'keywords', array_to_string(eff.keywords, ','), 'dm_message', eff.dm_message, 'match_type', eff.match_type, 'trigger_type', 'story', 'media_id', NULL, 'is_active', eff.is_active, 'template_id', NULL, 'story_id', eff.story_id, 'mode', eff.mode, 'enabled_at', eff.enabled_at::text, 'updated_at', eff.updated_at::text, 'created_at', eff.created_at::text))`
+  const kind = create ? 'operator_story_rule_created' : remove ? 'operator_story_rule_deleted' : a.actionType.includes('desativar') ? 'operator_story_rule_deactivated' : a.actionType.includes('ativar') ? 'operator_story_rule_activated' : 'operator_story_rule_updated'
+  const audit = sql`INSERT INTO sac_audit_events (company_id, type, actor_type, actor_id, actor_name, reference_type, reference_id, payload)
+    SELECT ${ator.companyId}, ${kind}, 'human', ${ator.userId}, ${ator.actorName}, 'instagram_story_automations', eff.id::text,
+      jsonb_build_object('origem', 'operador_sac', 'jobId', ${a.jobId}::text, 'palavra', array_to_string(eff.keywords, ','), 'ativa', eff.is_active, 'modo', eff.mode) FROM eff RETURNING id`
+  return create ? sql`WITH gate AS (${gate(ator, a, holder)}), clm AS (UPDATE sac_operator_actions SET status='concluido', applied_at=now(), target_id=${String(id)}, after_snapshot=jsonb_build_object('regra', ${JSON.stringify(target)}::jsonb || jsonb_build_object('id', ${id}::int, 'updated_at', now()::text, 'created_at', now()::text, 'enabled_at', CASE WHEN ${target.is_active} THEN now()::text ELSE NULL END)) WHERE id=${a.id}::uuid AND company_id=${ator.companyId} AND status IN ('pendente','aguardando_confirmacao') AND EXISTS (SELECT 1 FROM gate) RETURNING id), eff AS (${effect}), aud AS (${audit}), chk AS (SELECT 1 / CASE WHEN (SELECT count(*) FROM clm)=(SELECT count(*) FROM eff) AND (SELECT count(*) FROM aud)=(SELECT count(*) FROM eff) THEN 1 ELSE 0 END ok) SELECT (SELECT count(*)::int FROM eff) efeitos, (SELECT count(*)::int FROM gate) gates, chk.ok FROM chk`
+    : sql`WITH gate AS (${gate(ator, a, holder)}), eff AS (${effect}), rec AS (UPDATE sac_operator_actions SET status='concluido', after_snapshot=${snapshot}, applied_at=now() FROM eff WHERE sac_operator_actions.id=${a.id}::uuid AND sac_operator_actions.company_id=${ator.companyId} AND status IN ('pendente','aguardando_confirmacao') RETURNING sac_operator_actions.id), aud AS (${audit}), chk AS (SELECT 1 / CASE WHEN (SELECT count(*) FROM eff)=(SELECT count(*) FROM rec) AND (SELECT count(*) FROM aud)=(SELECT count(*) FROM eff) THEN 1 ELSE 0 END ok) SELECT (SELECT count(*)::int FROM eff) efeitos, (SELECT count(*)::int FROM gate) gates, chk.ok FROM chk`
 }

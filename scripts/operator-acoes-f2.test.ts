@@ -294,7 +294,7 @@ test('Lock ocupado/expirado e atomicidade: auditoria rejeitada reverte criação
   }
 })
 
-test('Leitura de story do perfil Fatia 2 respeita empresa; escrita permanece recusada', async () => {
+test('Leitura de story do perfil Fatia 2 respeita empresa; escrita sem permissão permanece recusada', async () => {
   await h.sql`UPDATE sac_operator_company_settings SET allowed_actions=allowed_actions || '["listar_regras_story"]'::jsonb WHERE company_id=${h.A.id}`
   await h.sql`INSERT INTO instagram_story_automations (company_id,name,keywords,dm_message,is_active,mode) VALUES (${h.A.id},'Visível',ARRAY['PUBLICO'],'Texto',false,'observe'),(${h.B.id},'Privada',ARRAY['PRIVADO'],'Texto',false,'observe')`
   plan([{ type: 'listar_regras_story' }])
@@ -303,7 +303,7 @@ test('Leitura de story do perfil Fatia 2 respeita empresa; escrita permanece rec
   const data = r.body.job.resultJson.results[0].data
   assert.equal(data.length, 1); assert.equal(data[0].name, 'Visível')
   plan([{ type: 'criar_regra_story', palavra: '[PALAVRA_1]', mensagem: '[LINK_1]', correspondencia: 'contem', ativar: 'envio' }])
-  assert.match((await h.post('Crie regra story palavra CADERNO mensagem https://example.test')).body.job.resultText, /Ainda não sei/)
+  assert.equal((await h.post('Crie regra story palavra CADERNO mensagem https://example.test')).body.code, 'ACTION_NOT_ALLOWED')
 })
 
 test('Mensagem humana entre aspas resolve link aninhado no servidor; palavra de dois caracteres aceita em exata', async () => {
@@ -342,16 +342,19 @@ test('Desfazer de criação ativa só desativa se ainda não disparou; não admi
   assert.equal((await h.sql`SELECT is_active FROM instagram_comment_automations WHERE id=${row.id}`)[0].is_active, true)
 })
 
-test('Desativar reduz envio de qualquer regra legada; reativar Direct/ambos permanece na Fatia 3', async () => {
+test('Desativar reduz envio de regra legada; Fatia 3 reativa Direct/ambos somente pelo cartão', async () => {
   for (const trigger of ['direct', 'both']) {
     const id = await rule(`PALAVRA${trigger}`, true)
     await h.sql`UPDATE instagram_comment_automations SET trigger_type=${trigger} WHERE id=${id}`
     const r = await change('desativar_regra_instagram', id)
     assert.equal(r.body.job.status, 'concluido', JSON.stringify(r.body))
     assert.equal((await h.sql`SELECT is_active FROM instagram_comment_automations WHERE id=${id}`)[0].is_active, false)
-    const a = (await view(r.body.job.id)).acoes[0]; assert.equal(a.podeDesfazer, false)
-    assert.equal((await h.call('undo', a.id)).body.code, 'NOT_UNDOABLE')
-    assert.equal((await change('ativar_regra_instagram', id)).body.code, 'NOT_AVAILABLE')
+    const a = (await view(r.body.job.id)).acoes[0]; assert.equal(a.podeDesfazer, true)
+    const undo = await h.call('undo', a.id)
+    assert.equal(undo.body.job.waitingReason, 'confirmacao')
+    assert.equal((await h.sql`SELECT is_active FROM instagram_comment_automations WHERE id=${id}`)[0].is_active, false)
+    assert.equal((await confirm(undo.body.job.id)).body.job.status, 'concluido')
+    assert.equal((await h.sql`SELECT is_active FROM instagram_comment_automations WHERE id=${id}`)[0].is_active, true)
   }
 })
 

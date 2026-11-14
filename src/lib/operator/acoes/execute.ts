@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { adquirirTrava, liberarTrava } from './lock'
-import { acaoDeRegra, conflitosDeRegra, regrasDaEmpresa, limiteCriacao } from './resolve-rule'
+import { acaoDeRegra, conflitosDeRegra, conflitosDeStory, regrasDaEmpresa, regrasStoryDaEmpresa, limiteCriacao } from './resolve-rule'
 import { validarMensagem, validarPalavra } from './validate'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { sacOperatorActions } from '../schema'
 import { OperatorServiceError } from '../service'
 import { efeitoSql, regraSql, gate, postgresCode } from './sql'
+import { loteSql } from './batch'
 import { colunasDaEmpresa } from './resolve-stage'
 import type { Ator, PreparedAction } from './types'
 export async function carregarAcao(companyId: number, id: string): Promise<PreparedAction> {
@@ -29,32 +30,46 @@ export async function executarAcao(ator: Ator, jobId: string, action: PreparedAc
   if (a.requestJson.esclarecimento) return falharAcao(ator, a.id, 'CLARIFICATION_REQUIRED')
   if (a.actionType === 'mover_etapa' && !(await colunasDaEmpresa(ator.companyId)).some(c => c.id === a.requestJson.etapaId)) return falharAcao(ator, a.id, 'CONFLICT')
   try {
-    if (acaoDeRegra(a.actionType)) {
+    if (a.actionType === 'mover_etapa_lote' || a.actionType === 'desfazer_mover_etapa_lote') {
       if (!holder) return falharAcao(ator, a.id, 'GATE_CLOSED')
-      const rows = await regrasDaEmpresa(ator.companyId)
+      const ids = (a.requestJson.lote ?? []).map(l => l.id)
+      const owned = await db.execute<{ n: number }>(sql`SELECT count(*)::int n FROM recovery_leads WHERE company_id = ${ator.companyId} AND id IN (SELECT jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb)::int)`)
+      if (owned.rows[0].n !== ids.length) throw new OperatorServiceError('Lead não encontrado nesta empresa.', 404, 'LEAD_NOT_FOUND')
+      if (!a.requestJson.desfazDe && !(await colunasDaEmpresa(ator.companyId)).some(c => c.id === a.requestJson.etapaDestino)) return falharAcao(ator, a.id, 'CONFLICT')
+      const result = await db.execute<{ efeitos: number; gates: number; recibos: number }>(loteSql(ator, a, holder))
+      if (!result.rows[0]?.recibos) return falharAcao(ator, a.id, result.rows[0]?.gates ? 'CONFLICT' : 'GATE_CLOSED')
+    } else if (acaoDeRegra(a.actionType)) {
+      if (!holder) return falharAcao(ator, a.id, 'GATE_CLOSED')
+      const story = a.actionType.includes('_story')
+      const list = story ? regrasStoryDaEmpresa : regrasDaEmpresa
+      const conflicts = story ? conflitosDeStory : conflitosDeRegra
+      const table = story ? 'instagram_story_automations' : 'instagram_comment_automations'
+      const rows = await list(ator.companyId)
       const target = a.requestJson.regra!
-      const create = a.actionType === 'criar_regra_instagram'
+      const create = a.actionType === 'criar_regra_instagram' || a.actionType === 'criar_regra_story'
       const current = rows.find(r => r.id === a.beforeSnapshot?.regra?.id)
       if (!create && (!current || current.updated_at !== a.beforeSnapshot?.regra?.updated_at)) return falharAcao(ator, a.id, 'CONFLICT')
       if (create) await limiteCriacao(ator.companyId)
       // Desligar e apagar uma criação nunca usada não aumentam envios.
       if (create || target.is_active || a.actionType.includes('editar_')) {
-        if (target.trigger_type !== 'comment') return falharAcao(ator, a.id, 'NOT_AVAILABLE')
+        if (!a.actionType.includes('_story') && !['comment', 'direct', 'both'].includes(target.trigger_type ?? 'comment')) return falharAcao(ator, a.id, 'NOT_AVAILABLE')
         if (target.template_id || target.match_type === 'any') return falharAcao(ator, a.id, 'PROTECTED_RULE')
         validarPalavra(target.keywords, target.match_type)
         const config = await db.execute<{ domains: string }>(sql`SELECT link_domains::text AS domains FROM sac_operator_company_settings WHERE company_id = ${ator.companyId}`)
-        validarMensagem(target.dm_message, { servidor: true, linkDomains: JSON.parse(config.rows[0]?.domains ?? '[]') })
-        conflitosDeRegra(rows, target, create)
+        const checkedMessage = validarMensagem(target.dm_message, { servidor: true, linkDomains: JSON.parse(config.rows[0]?.domains ?? '[]') })
+        if (a.actionType.includes('_story') && new TextEncoder().encode(checkedMessage.mensagem).length > 1000) return falharAcao(ator, a.id, 'INVALID_MESSAGE')
+        if (a.actionType.includes('_story')) conflitosDeStory(await regrasStoryDaEmpresa(ator.companyId), target, create)
+        else conflitosDeRegra(rows, target, create)
       }
       if (a.requestJson.semEfeito) {
         const result = await db.execute<{ efeitos: number }>(sql`WITH gate AS (${gate(ator, a, holder)}), rec AS (
           UPDATE sac_operator_actions SET status = 'concluido', after_snapshot = '{"semEfeito":true}'::jsonb, applied_at = now()
           WHERE id = ${a.id}::uuid AND company_id = ${ator.companyId} AND status IN ('pendente','aguardando_confirmacao') AND EXISTS (SELECT 1 FROM gate)
-            AND EXISTS (SELECT 1 FROM instagram_comment_automations WHERE id = ${target.id} AND company_id = ${ator.companyId} AND updated_at::text = ${current!.updated_at}) RETURNING id)
+            AND EXISTS (SELECT 1 FROM ${sql.identifier(table)} WHERE id = ${target.id} AND company_id = ${ator.companyId} AND updated_at::text = ${current!.updated_at}) RETURNING id)
           SELECT count(*)::int efeitos FROM rec`)
         if (!result.rows[0]?.efeitos) return falharAcao(ator, a.id, 'GATE_CLOSED')
       } else {
-        const id = create ? (await db.execute<{ id: number }>(sql`SELECT nextval(pg_get_serial_sequence('instagram_comment_automations', 'id'))::int AS id`)).rows[0].id : undefined
+        const id = create ? (await db.execute<{ id: number }>(sql`SELECT nextval(pg_get_serial_sequence(${table}, 'id'))::int AS id`)).rows[0].id : undefined
         let checkedRows = rows
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
@@ -65,8 +80,8 @@ export async function executarAcao(ator: Ator, jobId: string, action: PreparedAc
             if (!create || attempt || postgresCode(error) !== '22012') throw error
             // O painel não participa do lock. Reconfere uma vez após o rollback
             // integral, antes de tentar usar novamente o mesmo id pré-alocado.
-            checkedRows = await regrasDaEmpresa(ator.companyId)
-            conflitosDeRegra(checkedRows, target, true)
+            checkedRows = await list(ator.companyId)
+            conflicts(checkedRows, target, true)
             await limiteCriacao(ator.companyId)
           }
         }
@@ -87,11 +102,11 @@ export async function executarAcao(ator: Ator, jobId: string, action: PreparedAc
     }
     const done = await carregarAcao(ator.companyId, a.id)
     return done.status === 'pendente' ? falharAcao(ator, a.id, 'GATE_CLOSED') : done
-  } catch (error) { return falharAcao(ator, a.id, error instanceof OperatorServiceError ? error.code : postgresCode(error) === '22012' ? 'OPERATOR_INCONSISTENT' : 'EXECUTION_FAILED') }
+  } catch (error) { if (error instanceof OperatorServiceError && error.status === 404) throw error; return falharAcao(ator, a.id, error instanceof OperatorServiceError ? error.code : postgresCode(error) === '22012' ? 'OPERATOR_INCONSISTENT' : 'EXECUTION_FAILED') }
 }
 export async function executarJob(ator: Ator, jobId: string) {
   const actions = await acoesDoJob(ator.companyId, jobId)
-  const holder = actions.some(a => acaoDeRegra(a.actionType)) ? randomUUID() : undefined
+  const holder = actions.some(a => acaoDeRegra(a.actionType) || a.actionType.endsWith('mover_etapa_lote')) ? randomUUID() : undefined
   const results: PreparedAction[] = []
   let locked = false
   let failed = false
@@ -110,6 +125,7 @@ export async function executarJob(ator: Ator, jobId: string) {
     }
     return results
   } catch (error) {
+    if (error instanceof OperatorServiceError && error.status === 404) throw error
     for (const a of actions) await falharAcao(ator, a.id, postgresCode(error) === '42P01' ? 'GATE_CLOSED' : 'EXECUTION_FAILED')
     return acoesDoJob(ator.companyId, jobId)
   } finally { if (holder && locked) await liberarTrava(ator.companyId, holder) }

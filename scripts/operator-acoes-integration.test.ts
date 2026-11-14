@@ -305,7 +305,7 @@ test('T-TRAVA1-B/D e T-TRAVA2-C: catálogo liberado e desfazeres não mudam paus
     for (const a of await actions(r.body.job.id)) assert.equal((await h.call('undo', a.id)).body.job.status, 'concluido')
     for (const text of ['pause o bot', 'despause tudo']) { plan([{ type: 'recusar', motivo: 'controle_do_bot' }]); assert.match((await h.post(text)).body.job.resultText, /único controle do bot/) }
     plan([{ type: 'pausar_bot' }]); assert.equal((await h.post()).body.job.status, 'falhou')
-    plan([{ type: 'criar_regra_instagram', gatilho: 'direct', palavra: '[T1]', mensagem: '[T2]', correspondencia: 'contem', ativar: true }]); assert.match((await h.post()).body.job.resultText, /Ainda não sei/)
+    plan([{ type: 'criar_regra_instagram', gatilho: 'direct', palavra: '[T1]', mensagem: '[T2]', correspondencia: 'contem', ativar: true }]); assert.equal((await h.post()).body.code, 'ACTION_NOT_ALLOWED')
     assert.equal(await h.protectedState(), before)
   }
 })

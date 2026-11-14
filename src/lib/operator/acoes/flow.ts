@@ -53,9 +53,9 @@ export function outcome(actions: PreparedAction[], extra: { results?: unknown[];
   const waiting = actions.some(a => a.requestJson.esclarecimento && a.status === 'pendente')
   const card = !waiting && actions.some(a => a.requestJson.execucao === 'cartao' && (a.status === 'pendente' || a.status === 'aguardando_confirmacao'))
   const failed = actions.find(a => a.status === 'falhou' || a.status === 'cancelado')
-  const text = waiting ? 'Escolha uma das opções para continuar. Nada foi alterado.' : card ? 'Confira as regras e digite a palavra para confirmar. Nada foi alterado.' : [
+  const text = waiting ? 'Escolha uma das opções para continuar. Nada foi alterado.' : card ? 'Confira o cartão e digite o código para confirmar. Nada foi alterado.' : [
     ...actions.map(a => a.status === 'concluido'
-      ? a.requestJson.semEfeito ? a.requestJson.resumo : `${a.actionType.startsWith('desfazer_') ? 'Desfeito' : 'Executado'}: ${a.requestJson.resumo}`
+      ? a.afterSnapshot?.lote ? `${a.actionType.startsWith('desfazer_') ? 'Desfeito' : 'Executado'}: ${a.afterSnapshot.movidos ?? 0} leads movidos. Ignorados: ${a.afterSnapshot.ignorados?.length ? a.afterSnapshot.ignorados.map(id => '#' + id).join(', ') : 'nenhum'}.` : a.requestJson.semEfeito ? a.requestJson.resumo : `${a.actionType.startsWith('desfazer_') ? 'Desfeito' : 'Executado'}: ${a.requestJson.resumo}`
       : `Não aplicado: ${a.requestJson.resumo} (${mensagemErro(a.afterSnapshot?.erro ?? a.status)}).`), ...(extra.recusas ?? []),
   ].join('\n') || 'Consulta concluída.'
   return { status: waiting || card ? 'aguardando_confirmacao' : failed ? 'falhou' : 'concluido', waitingReason: waiting ? 'esclarecimento' : card ? 'confirmacao' : null,
@@ -66,8 +66,10 @@ export function outcome(actions: PreparedAction[], extra: { results?: unknown[];
 export async function handleWritePlan(input: { ator: Ator; jobId: string; plan: AcoesPlan; markers: Map<string, string>; textoOriginal: string; settings: OperatorSettings }): Promise<FlowOutcome> {
   const { ator, jobId, markers, textoOriginal, settings } = input
   const plan = acoesPlanSchema.parse(input.plan)
-  const actions = plan.actions.map(a => disponivelNestaFatia(a.type) && !(a.type === 'criar_regra_instagram' && a.gatilho !== 'comentario') ? a : { type: 'recusar' as const, motivo: 'fora_do_catalogo' as const })
-  if (actions.some(a => a.type !== 'recusar' && (!settings.allowedActions.includes(a.type) || (a.type === 'criar_regra_instagram' && a.ativar && !settings.allowedActions.includes('ativar_regra_instagram')))))
+  const actions = plan.actions.map(a => disponivelNestaFatia(a.type) ? a : { type: 'recusar' as const, motivo: 'fora_do_catalogo' as const })
+  if (actions.some(a => a.type !== 'recusar' && (!settings.allowedActions.includes(a.type) ||
+    (a.type === 'criar_regra_instagram' && a.ativar && !settings.allowedActions.includes('ativar_regra_instagram')) ||
+    (a.type === 'criar_regra_story' && a.ativar === 'envio' && !settings.allowedActions.includes('ativar_regra_story')))))
     throw new OperatorServiceError('Esta ação não está liberada para esta empresa.', 403, 'ACTION_NOT_ALLOWED')
   const results = []; const recusas: string[] = []
   for (const a of actions) {
@@ -183,10 +185,10 @@ export async function confirmJob(ator: Ator, id: string, input: { planHash: stri
   if (job.status !== 'aguardando_confirmacao' || job.waitingReason !== 'confirmacao') throw new OperatorServiceError('Este pedido não espera confirmação.', 409, 'INVALID_STATE')
   const actions = await acoesDoJob(ator.companyId, id)
   if (job.planHash !== input.planHash || planHash(actions) !== job.planHash) throw new OperatorServiceError('O plano mudou. Confira o cartão novamente.', 409, 'PLAN_CHANGED')
-  if (actions.some(a => acaoDeRegra(a.actionType))) await verificarTabelaTrava()
+  if (actions.some(a => acaoDeRegra(a.actionType) || a.actionType.endsWith('mover_etapa_lote'))) await verificarTabelaTrava()
   // Um único código corresponde à primeira regra do cartão; todas aparecem na tela.
   const code = actions.find(a => a.requestJson.execucao === 'cartao')?.requestJson.codigoConfirmacao
-  if (!code || normalizeCommentKeywordText(input.codigo) !== normalizeCommentKeywordText(code)) throw new OperatorServiceError('Digite a palavra exibida no cartão.', 400, 'CODE_MISMATCH')
+  if (!code || normalizeCommentKeywordText(input.codigo) !== normalizeCommentKeywordText(code)) throw new OperatorServiceError('Digite o código exibido no cartão.', 400, 'CODE_MISMATCH')
   const claimed = await db.execute<{ id: string }>(sql`WITH owner AS (
     UPDATE sac_operator_jobs SET status = 'em_execucao', approved_plan_hash = ${input.planHash}, confirmed_by = ${ator.userId},
       confirmed_at = now(), waiting_reason = NULL, updated_at = now()

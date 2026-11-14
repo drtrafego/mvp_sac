@@ -16,7 +16,7 @@ test('T-TRAVA1-C e T-TRAVA2-B imports, chamadas e campos proibidos ausentes', ()
     function visit(node: ts.Node) {
       if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
         const spec = node.moduleSpecifier.text
-        if (['@/lib/instagram-comment-keywords', '@/lib/instagram-comment-dm-template'].includes(spec)) return
+        if (['@/lib/instagram-comment-keywords', '@/lib/instagram-comment-dm-template', '@/lib/instagram-story-automation'].includes(spec)) return
         assert.doesNotMatch(spec, /@\/lib\/(?:bot-pause|pessoa-tag-pause|gabi-pause-mirror|lead-tags|instagram|outbound-send|ai-bridge|codex-gateway-client)|whatsapp|send|dispatch|mass-/, name)
       }
       if (ts.isCallExpression(node)) {
@@ -35,7 +35,7 @@ test('T-TRAVA1-C e T-TRAVA2-B imports, chamadas e campos proibidos ausentes', ()
     if (name.includes('/acoes/')) assert.doesNotMatch(text, /\bALTER\s+TABLE\b/i, name)
   }
 })
-test('T-ADIT-1 somente arquivos previstos na Fatia 2, sem exclusão nem alteração de processador', () => {
+test('T-ADIT-1 somente arquivos previstos na Fatia 3, sem exclusão nem alteração de processador', () => {
   const names = (args: string[]) => execFileSync('git', args, { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
   const allChanged = [...new Set([
     ...names(['diff', 'origin/main...HEAD', '--name-only', '--diff-filter=M']),
@@ -43,8 +43,8 @@ test('T-ADIT-1 somente arquivos previstos na Fatia 2, sem exclusão nem alteraç
     ...names(['diff', '--name-only', '--diff-filter=M']),
   ])].sort()
   const changed = allChanged.filter(name => !name.startsWith('scripts/operator-fase0'))
-  const allowed = ['src/lib/operator/acoes/types.ts', 'src/lib/operator/acoes/limits.ts', 'src/lib/operator/acoes/validate.ts', 'src/lib/operator/acoes/prepare.ts', 'src/lib/operator/acoes/canonical.ts', 'src/lib/operator/acoes/sql.ts', 'src/lib/operator/acoes/execute.ts', 'src/lib/operator/acoes/flow.ts', 'src/lib/operator/acoes/undo.ts', 'src/lib/operator/acoes/public-view.ts', 'src/lib/operator/acoes/error-messages.ts', 'src/components/operator/job-actions.tsx', 'src/components/operator/clarification-picker.tsx', 'scripts/operator-acoes-harness.ts', 'scripts/operator-acoes-integration.test.ts', 'scripts/operator-acoes-travas.test.ts']
-  for (const file of changed) assert.ok(allowed.includes(file), `Edição fora da Fatia 2: ${file}`)
+  const allowed = ['src/lib/operator/acoes/types.ts', 'src/lib/operator/acoes/limits.ts', 'src/lib/operator/acoes/validate.ts', 'src/lib/operator/acoes/prepare.ts', 'src/lib/operator/acoes/canonical.ts', 'src/lib/operator/acoes/sql.ts', 'src/lib/operator/acoes/execute.ts', 'src/lib/operator/acoes/flow.ts', 'src/lib/operator/acoes/undo.ts', 'src/lib/operator/acoes/public-view.ts', 'src/lib/operator/acoes/error-messages.ts', 'src/components/operator/job-actions.tsx', 'src/components/operator/clarification-picker.tsx', 'scripts/operator-acoes-harness.ts', 'scripts/operator-acoes-f2.test.ts', 'src/lib/operator/acoes/resolve-rule.ts', 'src/components/operator/confirmation-card.tsx', 'scripts/operator-acoes-integration.test.ts', 'scripts/operator-acoes-travas.test.ts']
+  for (const file of changed) assert.ok(allowed.includes(file), `Edição fora da Fatia 3: ${file}`)
   for (const file of ['src/lib/instagram-comment-processor.ts', 'src/app/api/comment-automations/ensure-for-media/route.ts', 'src/lib/db/schema.ts']) assert.ok(!allChanged.includes(file))
   assert.deepEqual([...new Set([
     ...names(['diff', 'origin/main...HEAD', '--name-only', '--diff-filter=D']),
