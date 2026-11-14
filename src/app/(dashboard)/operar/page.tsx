@@ -20,7 +20,7 @@ export default async function OperarPage() {
   }
   return (
     <div className="max-w-[880px] flex flex-col gap-[var(--space-section)]">
-      <PageHeader icon={<Bot size={22} />} title="Operador SAC" description={`Consultas seguras da empresa ${actor.company.name}. Nesta fase, o operador apenas lê dados e não controla bots, pausas ou automações.`} />
+      <PageHeader icon={<Bot size={22} />} title="Operador SAC" description={`Operações da empresa ${actor.company.name}. O operador move etapas, anota em leads e prepara regras do Instagram. Regras que mudam o que o cliente recebe só valem depois da sua confirmação. Ele não controla bot, pausas nem envia mensagens.`} />
       <OperatorConsole />
     </div>
   )

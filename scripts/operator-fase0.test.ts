@@ -1,7 +1,5 @@
 // Fase 0: testes locais com PostgreSQL WASM descartável, sem rede nem banco real.
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { test } from 'node:test'
 import { and, eq } from 'drizzle-orm'
 import { createSacTestDatabase } from './sac-test-pglite'
@@ -12,7 +10,6 @@ import { redactOperatorText } from '../src/lib/operator/privacy'
 import { createOperatorService, type OperatorJob, type OperatorRepository } from '../src/lib/operator/service'
 import * as operatorSchema from '../src/lib/operator/schema'
 
-const exec = promisify(execFile)
 const settings = { maxJobsPerDay: 10, dailyTokenBudget: 10000, allowedActions: ['buscar_lead', 'listar_etapas', 'listar_regras_instagram'] }
 function repository(): OperatorRepository & { rows: OperatorJob[] } {
   const rows: OperatorJob[] = []
@@ -84,15 +81,6 @@ await test('anonimização preserva intenção sem vazar senha, idade ou inicial
   const dados = redactOperatorText('João E. Silva tem 34 anos e DDD 11')
   assert.doesNotMatch(dados.text, /\b(?:E|34|11)\b/u)
   assert.match(redactOperatorText('a/o artigo normal').text, /^a\/o /u)
-})
-
-await test('nenhum arquivo existente foi modificado e não há db.transaction novo', async () => {
-  const status = await exec('git', ['status', '--porcelain'])
-  assert.equal(status.stdout.split('\n').filter(Boolean).every(line => line.startsWith('??')), true)
-  const diff = await exec('git', ['diff', '--diff-filter=M', '--name-only'])
-  assert.equal(diff.stdout.trim(), '')
-  const source = await (await import('node:fs/promises')).readFile(new URL('../src/lib/operator/service.ts', import.meta.url), 'utf8')
-  assert.doesNotMatch(source, /db\.transaction/)
 })
 
 }

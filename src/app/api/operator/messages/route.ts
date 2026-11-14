@@ -1,3 +1,4 @@
+import { assertSameOrigin } from '@/lib/operator/acoes/csrf'
 import { createHash } from 'node:crypto'
 import { desc, eq } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
@@ -8,6 +9,7 @@ import { operatorRateLimit } from '@/lib/operator/rate-limit'
 import { createOperatorService, OperatorServiceError } from '@/lib/operator/service'
 import { sacOperatorJobs } from '@/lib/operator/schema'
 
+export const maxDuration = 30
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 const MAX_TEXT = 4000
@@ -36,15 +38,17 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const actor = await requireOperatorAdmin()
+    assertSameOrigin(request)
     if (!operatorRateLimit(`${actor.company.id}:${actor.user.id}`)) return response({ error: 'Muitas solicitações. Tente novamente em um minuto.' }, 429)
     const body = await request.json().catch(() => null) as { text?: unknown; idempotencyKey?: unknown } | null
+    if (body && Object.keys(body).some(k => !['text', 'idempotencyKey'].includes(k))) return response({ error: 'Pedido inválido.', code: 'INVALID_BODY' }, 400)
     if (!body || typeof body.text !== 'string') return response({ error: 'Informe o pedido em texto.' }, 400)
     const text = body.text.trim()
     if (!text || text.length > MAX_TEXT) return response({ error: `O pedido deve ter até ${MAX_TEXT} caracteres.` }, 400)
     const idempotencyKey = typeof body.idempotencyKey === 'string' && body.idempotencyKey.length <= 200 && body.idempotencyKey.trim()
       ? body.idempotencyKey.trim()
       : createHash('sha256').update(`${actor.company.id}:${actor.user.id}:${text}:${Math.floor(Date.now() / 60_000)}`).digest('hex')
-    const outcome = await createOperatorService().submit({ companyId: actor.company.id, userId: actor.user.id, role: actor.role, requestText: text, idempotencyKey })
+    const outcome = await createOperatorService().submit({ companyId: actor.company.id, userId: actor.user.id, role: actor.role, requestText: text, idempotencyKey, actorName: actor.user.displayName ?? 'Admin', companySlug: actor.company.slug })
     return response({ job: outcome.job, reused: outcome.reused }, outcome.reused ? 200 : 202)
   } catch (error) { return errorResponse(error) }
 }

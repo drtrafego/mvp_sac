@@ -191,8 +191,10 @@ async function main() {
     const jobsR = await import('../src/app/api/operator/jobs/[jobId]/route')
     const page = await import('../src/app/(dashboard)/operar/page')
     const { NextRequest } = await import('next/server')
-    const postReq = (b: unknown) => new NextRequest('https://sac.test/api/operator/messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) })
+    const postReq = (b: unknown, origin = 'https://sac.test') => new NextRequest('https://sac.test/api/operator/messages', { method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify(b) })
+    const postReqWithoutOrigin = (b: unknown) => new NextRequest('https://sac.test/api/operator/messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) })
     const P = async (b: unknown) => { const r = await msgs.POST(postReq(b)); let j: any = null; try { j = await r.json() } catch {} return { s: r.status, j } }
+    const PWithoutOrigin = async (b: unknown) => { const r = await msgs.POST(postReqWithoutOrigin(b)); let j: any = null; try { j = await r.json() } catch {} return { s: r.status, j } }
     const G = async () => { const r = await msgs.GET(); let j: any = null; try { j = await r.json() } catch {} return { s: r.status, j } }
     const GJ = async (id: string) => { const r = await jobsR.GET(new Request('https://x'), { params: Promise.resolve({ jobId: id }) }); let j: any = null; try { j = await r.json() } catch {} return { s: r.status, j } }
     const pageTry = async () => { try { const el: any = await page.default(); const d = el?.props?.children; const desc = Array.isArray(d) ? d[0]?.props?.description : d?.props?.description; return 'RENDER:' + String(desc).slice(0, 90) } catch (e: any) { return 'THROWS:' + e.constructor.name + ':' + String(e.message).slice(0, 60) } }
@@ -241,7 +243,7 @@ async function main() {
       out('3 jobs/chamadas modelo enquanto desligado', [(await sql`select count(*)::int c from sac_operator_jobs`)[0].c, orBodies.length])
       await seed(coA.id, { enabled: true }); await seed(coB.id, { enabled: true })
       out('3 habilitada pagina', await pageTry())
-      assert.match(await pageTry(), /^RENDER:Consultas seguras da empresa Empresa A\./u)
+      assert.match(await pageTry(), /^RENDER:Operações da empresa Empresa A\. O operador move etapas, anota em leads e prepara regras do/u)
       authMode = 'member'; out('4 membro nao admin', [(await G()).s, (await P({ text: 'x' })).s, (await GJ(FAKE)).s, await pageTry()]); 
       assert.match(await pageTry(), /Sem permissão para usar o Operador SAC\./u)
       authMode = 'unauth'; out('4 AuthError', [(await G()).s, (await P({ text: 'x' })).s, (await GJ(FAKE)).s, await pageTry()])
@@ -252,9 +254,10 @@ async function main() {
       cookieNames = new Set(['agent_auth_session']); out('4 cookie agente', [(await G()).s, (await P({ text: 'x' })).s, (await GJ(FAKE)).s, await pageTry()]); cookieNames = new Set()
       newUser(); authCompany = coB; const rb = await P({ text: 'listar etapas', idempotencyKey: 'b-1' }); authCompany = coA; const ra = await P({ text: 'listar etapas', idempotencyKey: 'a-1' })
       out('4 job de B por A / invalido / proprio', [(await GJ(rb.j.job.id)).s, (await GJ('nao-e-uuid')).s, (await GJ("'; drop table x;--")).s, (await GJ(ra.j.job.id)).s]); out('4 historico so A', (await G()).j.jobs.map((x: any) => x.companyId))
-      const sp = await P({ text: 'listar etapas', idempotencyKey: 'sp', company_id: coB.id }); out('4 company_id do corpo ignorado', sp.j.job.companyId === coA.id)
+      const sp = await P({ text: 'listar etapas', idempotencyKey: 'sp', company_id: coB.id }); out('4 company_id extra rejeitado', sp.s)
+      const semOrigin = await PWithoutOrigin({ text: 'listar etapas', idempotencyKey: 'sem-origin' }); out('4 POST sem Origin rejeitado', semOrigin.s)
       out('4 tamanhos', [(await P({ text: 'a'.repeat(4001) })).s, (await P({ text: ' ' })).s, (await P({ text: 5 })).s])
-      assert.deepEqual([(await P({ text: 'a'.repeat(4001) })).s, (await P({ text: ' ' })).s, (await P({ text: 5 })).s], [400, 400, 400])
+      assert.deepEqual([sp.s, semOrigin.s, (await P({ text: 'a'.repeat(4001) })).s, (await P({ text: ' ' })).s, (await P({ text: 5 })).s], [400, 403, 400, 400, 400])
       authMode = 'member'; assert.deepEqual([(await G()).s, (await P({ text: 'x' })).s, (await GJ(FAKE)).s], [403, 403, 403]); authMode = 'admin'
       cookieNames = new Set(['agent_auth_session']); assert.deepEqual([(await G()).s, (await P({ text: 'x' })).s, (await GJ(FAKE)).s], [401, 401, 401]); cookieNames = new Set()
       assert.deepEqual([(await GJ(rb.j.job.id)).s, (await GJ('nao-e-uuid')).s, (await GJ(ra.j.job.id)).s], [404, 404, 200])

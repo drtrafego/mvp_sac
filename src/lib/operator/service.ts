@@ -1,3 +1,6 @@
+import { acoesPlanSchema, precisaFluxoDeAcoes, type AcoesPlan } from './acoes/catalog'
+import { ACOES_SYSTEM_PROMPT } from './acoes/prompt'
+import { handleWritePlan, expireWaitingJobs } from './acoes/flow'
 import { createHash, randomUUID } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
@@ -11,7 +14,7 @@ import { sacOperatorCompanySettings, sacOperatorJobs, type OperatorJobStatus } f
 export class OperatorServiceError extends Error {
   constructor(message: string, readonly status = 400, readonly code = 'OPERATOR_ERROR') { super(message) }
 }
-export type OperatorSettings = Pick<typeof sacOperatorCompanySettings.$inferSelect, 'maxJobsPerDay' | 'dailyTokenBudget' | 'allowedActions'>
+export type OperatorSettings = Pick<typeof sacOperatorCompanySettings.$inferSelect, 'maxJobsPerDay' | 'dailyTokenBudget' | 'allowedActions'> & Partial<Pick<typeof sacOperatorCompanySettings.$inferSelect, 'linkDomains' | 'stageAliases'>>
 export type OperatorJob = typeof sacOperatorJobs.$inferSelect
 export type OperatorRepository = {
   settings(companyId: number): Promise<OperatorSettings | null>
@@ -119,6 +122,7 @@ const databaseRepository: OperatorRepository = {
           updated_at = now()
       WHERE settings.company_id = ${companyId} AND EXISTS (SELECT 1 FROM expired)
     `)
+    await expireWaitingJobs(companyId)
   },
 }
 
@@ -129,17 +133,17 @@ function resultText(results: ReadResult[]): string {
   return 'Consulta concluída.'
 }
 function planHash(plan: OperatorPlan) { return createHash('sha256').update(JSON.stringify(plan)).digest('hex') }
-function settledUsage(result: ModelResult) {
+function settledUsage(result: ModelResult<OperatorPlan | AcoesPlan>) {
   return { tokensIn: Math.max(0, result.usage.inputTokens), tokensOut: Math.max(0, result.usage.outputTokens) }
 }
 
-export function createOperatorService(deps: { repository?: OperatorRepository; model?: OperatorModelAdapter; execute?: (companyId: number, action: OperatorPlan['actions'][number]) => Promise<ReadResult>; redact?: (companyId: number, text: string) => Promise<RedactedRequest> } = {}) {
+export function createOperatorService(deps: { repository?: OperatorRepository; model?: OperatorModelAdapter<OperatorPlan | AcoesPlan>; acoes?: { handleWritePlan: typeof handleWritePlan }; execute?: (companyId: number, action: OperatorPlan['actions'][number]) => Promise<ReadResult>; redact?: (companyId: number, text: string) => Promise<RedactedRequest> } = {}) {
   const repository = deps.repository ?? databaseRepository
-  const model = deps.model ?? createOpenRouterAdapter()
+  const model = deps.model ?? createOpenRouterAdapter({ systemPrompt: ACOES_SYSTEM_PROMPT, parsePlan: v => acoesPlanSchema.parse(v) })
   const execute = deps.execute ?? executeReadAction
   const redact = deps.redact ?? redactRequestForCompany
   return {
-    async submit(input: { companyId: number; userId: string; role: string; requestText: string; idempotencyKey: string }) {
+    async submit(input: { companyId: number; userId: string; role: string; requestText: string; idempotencyKey: string; actorName?: string; companySlug?: string }) {
       const text = input.requestText.trim()
       if (!text || text.length > 4000) throw new OperatorServiceError('O pedido deve ter entre 1 e 4.000 caracteres.', 400, 'INVALID_TEXT')
       await repository.expireStuck?.(input.companyId)
@@ -167,10 +171,16 @@ export function createOperatorService(deps: { repository?: OperatorRepository; m
         created = await repository.create(draft)
       }
       if (created.id !== id) return { job: created, reused: true }
-      let modelResult: ModelResult | undefined
+      let modelResult: ModelResult<OperatorPlan | AcoesPlan> | undefined
       try {
         modelResult = await model.plan(redacted.text, Math.min(1200, reservedTokens))
-        const safePlan = assertPhaseZeroPlan(modelResult.plan)
+        if (precisaFluxoDeAcoes(modelResult.plan)) {
+          const result = await (deps.acoes?.handleWritePlan ?? handleWritePlan)({ ator: { companyId: input.companyId, userId: input.userId, role: input.role, actorName: input.actorName ?? 'Admin', companySlug: input.companySlug ?? '' }, jobId: id, plan: acoesPlanSchema.parse(modelResult.plan), markers: redacted.markers, textoOriginal: text, settings })
+          const values = { ...result, planJson: modelResult.plan, ...settledUsage(modelResult), model: modelResult.model, finishedAt: result.status === 'aguardando_confirmacao' ? null : new Date() }
+          const job = repository.settle ? await repository.settle(input.companyId, id, values, values.tokensIn + values.tokensOut) : await repository.update(input.companyId, id, values)
+          return { job, reused: false }
+        }
+        const safePlan = assertPhaseZeroPlan(modelResult.plan as OperatorPlan)
         const resolvedPlan = resolvePlanMarkers(safePlan, redacted.markers)
         if (safePlan.actions.some(action => !settings.allowedActions.includes(action.type))) throw new OperatorServiceError('Ação não autorizada para esta empresa.', 403, 'ACTION_NOT_ALLOWED')
         // O plano persistido preserva marcadores; só a chamada de leitura recebe
