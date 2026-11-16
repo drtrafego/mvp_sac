@@ -35,7 +35,7 @@ test('T-TRAVA1-C e T-TRAVA2-B imports, chamadas e campos proibidos ausentes', ()
     if (name.includes('/acoes/')) assert.doesNotMatch(text, /\bALTER\s+TABLE\b/i, name)
   }
 })
-test('T-ADIT-1 somente arquivos previstos na F1 e no formulário de Story, sem exclusão nem alteração de processador', () => {
+test('T-ADIT-1 escopo da F1, formulário e Story sem pausa, sem exclusão nem alteração de outros processadores', () => {
   const names = (args: string[]) => execFileSync('git', args, { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
   const allChanged = [...new Set([
     ...names(['diff', 'origin/main...HEAD', '--name-only', '--diff-filter=M']),
@@ -45,10 +45,22 @@ test('T-ADIT-1 somente arquivos previstos na F1 e no formulário de Story, sem e
   const changed = allChanged.filter(name => !name.startsWith('scripts/operator-fase0'))
   const allowed = ['src/lib/operator/privacy.ts', 'src/lib/operator/acoes/prompt.ts', 'scripts/operator-acoes-f2-isolamento.test.ts', 'scripts/operator-acoes-f3-fronteiras.test.ts', 'scripts/operator-acoes-f3-prepare-fronteiras.test.ts', 'scripts/operator-acoes-f3-regras.test.ts', 'scripts/operator-acoes-f3-sql.test.ts', 'src/lib/operator/acoes/validate.ts', 'src/lib/operator/service.ts', 'src/proxy.ts', 'src/components/operator/operator-console.tsx', 'scripts/operator-acoes-travas.test.ts', 'package.json', 'scripts/operator-acoes-harness.ts', 'scripts/operator-acoes-f2.test.ts']
   // Rodadas 1 e 2 do cadastro manual de Story: autorização restrita à UI e seu teste.
-  // As travas de envio/pausa do operador e a proibição de editar processadores continuam.
+  // As travas de envio/pausa do operador continuam; a exceção de Story é delimitada abaixo.
   allowed.push('src/app/(dashboard)/comentarios-instagram/page.tsx', 'src/components/instagram/story-automations-section.tsx', 'scripts/instagram-story-section.test.tsx')
+  // Ordem do Gastão em 16/11/2026: remover somente a dependência de pausa do Story e atualizar seus testes.
+  allowed.push('src/lib/instagram-story-trigger.ts', 'scripts/qa-story-webhook.test.ts', 'scripts/qa-todas-webhook.test.ts')
   for (const file of changed) assert.ok(allowed.includes(file), `Edição fora do escopo autorizado: ${file}`)
-  for (const file of ['src/lib/instagram-story-trigger.ts', 'src/lib/instagram-comment-processor.ts', 'src/app/api/comment-automations/ensure-for-media/route.ts', 'src/lib/db/schema.ts']) assert.ok(!allChanged.includes(file))
+  for (const file of ['src/lib/instagram-comment-processor.ts', 'src/app/api/comment-automations/ensure-for-media/route.ts', 'src/lib/db/schema.ts']) assert.ok(!allChanged.includes(file))
+  // Fora dos imports de pausa e do bloco entre janela e modo, o gatilho deve ficar idêntico.
+  const storyPath = 'src/lib/instagram-story-trigger.ts'
+  const withoutPauseBlock = (source: string) => {
+    const text = source.replace(/^import .* from '@\/lib\/(?:bot-pause|instagram-comment-pause-bypass)'\n/gm, '')
+    const start = text.indexOf('\n', text.indexOf('    if (Date.now() - occurredAt.getTime()')) + 1
+    const end = text.indexOf("    if (rule.mode !== 'send')")
+    assert.ok(start > 0 && end > start, 'Delimitadores do bloco de pausa preservados')
+    return text.slice(0, start) + text.slice(end)
+  }
+  assert.equal(withoutPauseBlock(readFileSync(storyPath, 'utf8')), withoutPauseBlock(execFileSync('git', ['show', `origin/main:${storyPath}`], { encoding: 'utf8' })))
   assert.deepEqual([...new Set([
     ...names(['diff', 'origin/main...HEAD', '--name-only', '--diff-filter=D']),
     ...names(['diff', 'HEAD', '--name-only', '--diff-filter=D']),
@@ -60,7 +72,7 @@ test('T-ADIT-1 somente arquivos previstos na F1 e no formulário de Story, sem e
     ...names(['ls-files', '--others', '--exclude-standard']),
   ])]
   // A F2 trabalha em paralelo somente nestes dois diretórios novos.
-  assert.ok(added.every(n => /^(src\/lib\/operator\/dm\.ts$|src\/lib\/operator\/executor\/|src\/app\/api\/operator-executor\/|src\/app\/api\/operator\/executor\/|scripts\/operator-executor-|scripts\/sac-operator\/|deploy\/sac-operator\/|scripts\/operator-apply-migration-0047\.ts$|drizzle\/0047_sac_operator_executor\.sql$)/.test(n)))
+  assert.ok(added.every(n => n === 'scripts/instagram-story-sem-pausa.test.ts' || /^(src\/lib\/operator\/dm\.ts$|src\/lib\/operator\/executor\/|src\/app\/api\/operator-executor\/|src\/app\/api\/operator\/executor\/|scripts\/operator-executor-|scripts\/sac-operator\/|deploy\/sac-operator\/|scripts\/operator-apply-migration-0047\.ts$|drizzle\/0047_sac_operator_executor\.sql$)/.test(n)))
 })
 test('T-PII-LISTA vocabulário acrescentado não inclui prenomes brasileiros', () => {
   // Lista de referência fixa, independente do dicionário de intenções.

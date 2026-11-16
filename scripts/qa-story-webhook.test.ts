@@ -181,32 +181,36 @@ for (const which of ['slug', 'global'] as const) {
     neonShape = true; await rule(); await deliver(which, ISA, [{ mid: mid(), text: 'oi', story: { id: '111' } }])
     noAi(); assert.equal(sendCalls.length, 1)
   })
-  T('lead com pausa HUMANA (botPausedAll=false): não envia, 0 IA', async () => {
+  T('lead com pausa HUMANA (botPausedAll=false): envia 1 DM, 0 IA', async () => {
+    // Ordem do Gastão em 16/11/2026: pausa do bot não bloqueia a DM fixa do Story.
     await rule(); await deliver(which, ISA, [{ sender: 'H1', mid: mid(), text: 'a', story: { id: '111' } }]); sendCalls.length = 0
     await client`update recovery_leads set bot_paused = true, bot_paused_by = 'Fulana', bot_paused_all = false where phone = 'ig_H1'`
     await client`delete from instagram_story_deliveries`
     await deliver(which, ISA, [{ sender: 'H1', mid: mid(), text: 'b', story: { id: '222' } }])
-    noAi(); assert.equal(sendCalls.length, 0); assert.match(String((await deliveries())[0].reason), /Pausa/)
+    noAi(); assert.equal(sendCalls.length, 1); assert.equal((await deliveries())[0].status, 'sent'); assert.equal((await deliveries())[0].reason, null)
   })
-  T('pausa geral (chave ligada): DM sai (bypass por desenho), 0 IA, lead continua pausado pela chave', async () => {
+  T('pausa geral (chave ligada): DM sai independentemente da pausa do bot, 0 IA, lead continua pausado pela chave', async () => {
     await rule(); await client`insert into company_pause_switches (company_id, scope, active, paused_by) values (${isaId}, 'all', true, 'dono')`
     await deliver(which, ISA, [{ sender: 'P1', mid: mid(), text: 'a', story: { id: '111' } }])
     noAi(); assert.equal(sendCalls.length, 1)
   })
-  T('tag "pessoa": não envia', async () => {
+  T('tag "pessoa": envia 1 DM, 0 IA', async () => {
+    // Ordem do Gastão em 16/11/2026: tag pessoa também não bloqueia a automação de Story.
     await rule(); await deliver(which, ISA, [{ sender: 'T1', mid: mid(), text: 'a', story: { id: '111' } }]); sendCalls.length = 0
     const l = await leadOf('T1'); await client`insert into lead_tags (lead_id, tag, created_by) values (${l.id}, 'pessoa', 'qa')`
     await client`delete from instagram_story_deliveries`
-    await deliver(which, ISA, [{ sender: 'T1', mid: mid(), text: 'b', story: { id: '222' } }]); noAi(); assert.equal(sendCalls.length, 0)
+    await deliver(which, ISA, [{ sender: 'T1', mid: mid(), text: 'b', story: { id: '222' } }]); noAi(); assert.equal(sendCalls.length, 1); assert.equal((await deliveries())[0].status, 'sent')
   })
   T('janela de 24h vencida: não envia', async () => {
     await rule({ enabled_at: new Date(Date.now() - 3 * 86_400_000) }); await deliver(which, ISA, [{ mid: mid(), text: 'a', story: { id: '1' }, ts: Date.now() - 25 * 3_600_000 }])
     noAi(); assert.equal(sendCalls.length, 0); assert.match(String((await deliveries())[0].reason), /24/)
   })
-  T('antes do corte forward-only: não envia', async () => {
+  T('Isabela usa enabled_at da regra, sem o corte do bypass de comentário', async () => {
+    // Ordem do Gastão em 16/11/2026: Story da Isabela segue a mesma regra das demais empresas.
+    // O corte de evaluateCommentDmPauseBypass deixa de se aplicar; enabled_at continua obrigatório.
     process.env.ISABELA_FORWARD_ONLY_SINCE = new Date(Date.now() - 600_000).toISOString()
     await rule({ enabled_at: new Date(Date.now() - 3 * 3_600_000) }); await deliver(which, ISA, [{ mid: mid(), text: 'a', story: { id: '1' }, ts: Date.now() - 3_600_000 }])
-    noAi(); assert.equal(sendCalls.length, 0)
+    noAi(); assert.equal(sendCalls.length, 1); assert.equal((await deliveries())[0].status, 'sent')
   })
   T('evento anterior ao enabled_at: não envia', async () => {
     await rule({ enabled_at: new Date(Date.now() - 60_000) }); await deliver(which, ISA, [{ mid: mid(), text: 'a', story: { id: '1' }, ts: Date.now() - 3_600_000 }])
@@ -313,7 +317,7 @@ for (const which of ['slug', 'global'] as const) {
     await deliver(which, OUT, [{ sender: 'O5', mid: mid(), text: 'oi', story: { id: '113' } }])
     noAi(); assert.equal(sendCalls.length, 1); assert.equal((await deliveries())[0].status, 'unknown')
   })
-  T('empresa não protegida: regra anterior à ativação e janela vencida seguem para IA; pausa humana mantém o bloqueio atual', async () => {
+  T('empresa não protegida: regra anterior à ativação e janela vencida seguem para IA; pausa humana permite a DM fixa', async () => {
     await rule({ company_id: outId, enabled_at: new Date(Date.now() + 60_000) })
     await deliver(which, OUT, [{ sender: 'O6', mid: mid(), text: 'oi', story: { id: '114' } }])
     assert.equal(sendCalls.length, 0); assert.equal(aiCalls.length, 1)
@@ -325,7 +329,9 @@ for (const which of ['slug', 'global'] as const) {
     await client`update recovery_leads set bot_paused = true, bot_paused_by = 'humano', bot_paused_all = false where id = ${lead.id}`
     await client`update instagram_story_automations set mode = 'send' where company_id = ${outId}`; aiCalls.length = 0; kwCalls.length = 0
     await deliver(which, OUT, [{ sender: 'O8', mid: mid(), text: 'oi', story: { id: '117' } }])
-    assert.equal(sendCalls.length, 0); assert.equal(aiCalls.length, 0)
+    // Ordem do Gastão em 16/11/2026: a pausa impede a IA, mas permite a DM da regra.
+    assert.equal(sendCalls.length, 1); assert.equal(aiCalls.length, 0)
+    assert.equal((await deliveries()).find(d => d.story_id === '117')?.status, 'sent')
   })
   T('empresa não protegida: tabela ausente ou erro de banco não muda o caminho para IA', async () => {
     await rule({ company_id: outId }); failStoryQueries = true

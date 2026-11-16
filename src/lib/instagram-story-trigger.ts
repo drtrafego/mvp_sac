@@ -1,10 +1,8 @@
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { matchesCommentKeywords } from '@/lib/instagram-comment-keywords'
-import { evaluateCommentDmPauseBypass } from '@/lib/instagram-comment-pause-bypass'
 import { sendInstagramMessage } from '@/lib/instagram'
 import { and, eq, sql } from 'drizzle-orm'
-import { getBlockingPauseSwitch, isBotBlocked } from '@/lib/bot-pause'
 import { isInstagramStoryReply } from '@/lib/instagram-inbound-tags'
 import { STORY_PROTECTED_SLUGS, isStoryProtectedForSlug } from '@/lib/instagram-story-automation'
 
@@ -77,23 +75,11 @@ export async function handleInstagramStoryReplyItem(input: {
     if (!enabledAt || occurredAt.getTime() < enabledAt.getTime()) { await writeDeliverySafely({ companyId: input.companyId, automationId: rule.id, senderId: input.senderId, storyId, messageMid, occurredAt, status: 'skipped', reason: 'Resposta anterior à ativação da regra.' }); return fallback() }
     if (Date.now() - occurredAt.getTime() >= 24 * 60 * 60 * 1000 || occurredAt.getTime() > Date.now() + 5 * 60 * 1000) { await writeDeliverySafely({ companyId: input.companyId, automationId: rule.id, senderId: input.senderId, storyId, messageMid, occurredAt, status: 'skipped', reason: 'Fora da janela de 24 horas.' }); return fallback() }
 
-    const [freshLead] = input.lead?.id ? await db.select({ id: recoveryLeads.id, botPaused: recoveryLeads.botPaused, botPausedBy: recoveryLeads.botPausedBy, botPausedAll: recoveryLeads.botPausedAll, botPausedChannel: recoveryLeads.botPausedChannel })
+    // A DM fixa da regra é automação de Story e independe da pausa do bot.
+    // A releitura por empresa garante o lead do registro no Inbox antes do envio.
+    const [freshLead] = input.lead?.id ? await db.select({ id: recoveryLeads.id })
       .from(recoveryLeads).where(and(eq(recoveryLeads.id, input.lead.id), eq(recoveryLeads.companyId, input.companyId))).limit(1) : []
-    if (!freshLead) { await writeDeliverySafely({ companyId: input.companyId, automationId: rule.id, senderId: input.senderId, storyId, messageMid, occurredAt, status: 'skipped', reason: 'Lead não encontrado para releitura da pausa.' }); return fallback() }
-    const tagResult = rows<{ exists: boolean }>(await db.execute(sql`SELECT EXISTS(SELECT 1 FROM lead_tags WHERE lead_id = ${freshLead.id} AND tag = 'pessoa') AS exists`))
-    const hasPessoaTag = tagResult[0]?.exists === true
-    // Empresas comuns obedecem exatamente ao guard normal do bot. O bypass é
-    // exclusivo da Isabela; a tag pessoa é uma defesa explícita de anti-loop.
-    const pauseDecision = await isBotBlocked({ companyId: input.companyId, channel: 'instagram', leadBotPaused: freshLead.botPaused })
-    let pauseBlocked = pauseDecision.blocked || hasPessoaTag
-    let pauseReason: string | null = hasPessoaTag ? 'pausa_individual_do_lead' : (pauseDecision.reason ?? 'pausa_ativa')
-    if (protectedCompany) {
-      const switchBlocking = !!await getBlockingPauseSwitch(input.companyId, 'instagram')
-      const pause = evaluateCommentDmPauseBypass({ companySlug: input.companySlug, lead: { ...freshLead, hasPessoaTag }, switchBlocking, commentCreatedAt: occurredAt })
-      pauseBlocked = !pause.bypass
-      pauseReason = pause.bypass ? null : pause.reason
-    }
-    if (pauseBlocked) { await writeDeliverySafely({ companyId: input.companyId, automationId: rule.id, senderId: input.senderId, storyId, messageMid, occurredAt, status: 'skipped', reason: `Pausa não contornável: ${pauseReason}.` }); return fallback() }
+    if (!freshLead) { await writeDeliverySafely({ companyId: input.companyId, automationId: rule.id, senderId: input.senderId, storyId, messageMid, occurredAt, status: 'skipped', reason: 'Lead não encontrado para registro do Direct.' }); return fallback() }
     if (rule.mode !== 'send') { await writeDeliverySafely({ companyId: input.companyId, automationId: rule.id, senderId: input.senderId, storyId, messageMid, occurredAt, status: 'observed', reason: 'Modo teste: nenhum Direct foi enviado.' }); return fallback() }
 
     const reservation = rows<{ id: number }>(await db.execute(sql`INSERT INTO instagram_story_deliveries (company_id, automation_id, sender_id, story_id, message_mid, occurred_at, status, reason)

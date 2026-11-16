@@ -206,19 +206,26 @@ for (const which of ['slug', 'global'] as const) {
     await ruleO(); sendBehavior = async () => ({ ok: false, error: 'HTTP 400' }); await deliver(which, OUT, [story('F1')]); console.log(`   falha certa: IA ${await aiFor('F1')}x, DMs tentadas ${sendCalls.length}`)
     assert.equal(await aiFor('F1'), 1, 'falha certa do transporte deveria devolver a mensagem à IA')
   })
-  T('PAUSA: OUTRA com "Pausar tudo" ligado: 0 DM; IA 0 (lead pausado pela chave, como hoje)', async () => {
+  // Ordem do Gastão em 16/11/2026: todas as pausas e a tag pessoa permitem a DM fixa.
+  // As antigas asserções de 0 DM passam a exigir 1 DM e entrega sent, sem liberar IA.
+  T('PAUSA: OUTRA com "Pausar tudo" ligado: 1 DM; IA 0', async () => {
     await ruleO(); await client`insert into company_pause_switches (company_id, scope, active, paused_by) values (${outId}, 'all', true, 'dono')`
-    await deliver(which, OUT, [story('X1')]); assert.equal(sendCalls.length, 0); assert.equal(await aiFor('X1'), 0); assert.equal(kwCalls.length, 1, 'direct-keyword segue como hoje')
+    await deliver(which, OUT, [story('X1')]); assert.equal(sendCalls.length, 1); assert.equal(await aiFor('X1'), 0)
+    assert.equal(kwCalls.length, 0, 'a regra consumiu o Story, sem direct-keyword')
+    assert.equal((await deliveries())[0].status, 'sent')
   })
-  T('PAUSA: OUTRA com bot desligado no lead (botão do SAC), tag pessoa: 0 DM, 0 IA', async () => {
+  T('PAUSA: OUTRA com bot desligado no lead (botão do SAC), tag pessoa: 1 DM em cada caso, 0 IA', async () => {
     await ruleO(); await deliver(which, OUT, [story('B0')]); sendCalls.length = 0; await client`delete from instagram_story_deliveries`
     await client`update recovery_leads set bot_paused = true, bot_paused_by = 'Fulana', bot_paused_all = false where phone = 'ig_B0'`
-    aiCalls.length = 0; await deliver(which, OUT, [story('B0')]); assert.equal(sendCalls.length, 0); assert.equal(aiCalls.length, 0)
+    aiCalls.length = 0; await deliver(which, OUT, [story('B0')]); assert.equal(sendCalls.length, 1); assert.equal(aiCalls.length, 0)
+    assert.equal((await deliveries())[0].status, 'sent'); sendCalls.length = 0
     await client`update recovery_leads set bot_paused = false, bot_paused_by = null where phone = 'ig_B0'`; const l = await leadOf('B0'); await client`insert into lead_tags (lead_id, tag, created_by) values (${l.id}, 'pessoa', 'qa')`
-    await client`delete from instagram_story_deliveries`; await deliver(which, OUT, [story('B0')]); assert.equal(sendCalls.length, 0)
+    await client`delete from instagram_story_deliveries`; await deliver(which, OUT, [story('B0')]); assert.equal(sendCalls.length, 1)
+    assert.equal(aiCalls.length, 0); assert.equal((await deliveries())[0].status, 'sent')
   })
-  T('PAUSA: pausa do canal instagram ligada (scope instagram) em OUTRA -> 0 DM', async () => {
-    await ruleO(); await client`insert into company_pause_switches (company_id, scope, active, paused_by) values (${outId}, 'instagram', true, 'dono')`; await deliver(which, OUT, [story('X2')]); assert.equal(sendCalls.length, 0)
+  T('PAUSA: pausa do canal instagram ligada (scope instagram) em OUTRA: 1 DM, 0 IA', async () => {
+    await ruleO(); await client`insert into company_pause_switches (company_id, scope, active, paused_by) values (${outId}, 'instagram', true, 'dono')`; await deliver(which, OUT, [story('X2')]); assert.equal(sendCalls.length, 1)
+    assert.equal(await aiFor('X2'), 0); assert.equal((await deliveries())[0].status, 'sent')
   })
   T('OUTRA: lead antes/depois: story com send não altera bot_paused* do lead', async () => {
     await deliver(which, OUT, [{ sender: 'CTRL2', mid: mid(), text: 'oi', story: { id: '1' } }]); const c = await leadOf('CTRL2'); await ruleO(); await deliver(which, OUT, [story('Z9')]); const l = await leadOf('Z9')
