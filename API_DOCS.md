@@ -245,3 +245,49 @@ Endpoints para recebimento direto de eventos de checkout e mensagens:
 | **Zouti** | `/api/webhooks/zouti/:slug` | Zouti Event JSON |
 
 > **Nota:** Quando qualquer webhook recebe uma mensagem de um novo contato que não existia no banco, o sistema cria o registro em `recovery_leads` instantaneamente com `channel: "whatsapp"`, vincula a mensagem e torna a conversa visível no Inbox.
+
+## Métricas e histórico das automações do Instagram
+
+Somente leitura, disponível para todas as empresas, com a autenticação e o escopo de `authenticateAgentRequest`. Exige `Authorization: Bearer <chave>` ou `x-api-key`; chave vinculada a outra empresa retorna 403. As respostas não usam cache compartilhado.
+
+- `GET /api/v1/companies/:idOrSlug/instagram-automations/metrics?from=&to=&type=all`: retorna `automations`, `totais` e `porTipo.comment/story`. `type` aceita `comment`, `story` ou `all` (padrão). Cada regra contém `type`, `id`, `name`, `keywords`, `matchType`, `triggerType`, `targetId` (null significa qualquer alvo), `isActive`, `mode` (Story) e `totais`. Regras de comentário também podem ter gatilho `direct` ou `both`.
+- `GET /api/v1/companies/:idOrSlug/instagram-automations/:type/:id/logs?from=&to=&page=1&limit=50`: `type` aceita `comment` ou `story`. Retorna `logs`, `total`, `page`, `limit`, `period`, `automationId` e `type`, com ordenação por ID decrescente. `limit` deve estar entre 1 e 200. Regra inexistente e regra de outra empresa têm a mesma resposta 404. A paginação usa deslocamento; novos registros entre requisições podem deslocar as páginas.
+
+Datas aceitam `YYYY-MM-DD` (meia-noite UTC) ou ISO 8601 com fuso explícito. Os dois extremos são inclusivos e filtram `created_at` do log, não a data de envio ou do evento recebido. Sem `to`, usa agora; sem `from`, usa 30 dias antes de `to`. Intervalo máximo de 366 dias. Data, tipo, ID ou paginação inválidos retornam 400; sem chave ou chave inválida, 401.
+
+Exemplo fictício de `totais` (também presente em cada regra e tipo):
+
+```json
+{
+  "disparos": 3,
+  "enviados": 1,
+  "falhas": 0,
+  "ignorados": 1,
+  "observados": 1,
+  "reservados": 0,
+  "desconhecidos": 0,
+  "ultimoDisparo": "2026-11-16T12:00:00.000Z",
+  "visualizou": null,
+  "clicou": null,
+  "disponivel": { "visualizou": false, "clicou": false }
+}
+```
+
+`disparos` conta entradas de log. Como no painel, só `sent` conta como enviado e só `failed` como falha. `skipped`, `rate_limited` e `ignorado_pausa` entram em `ignorados`; `processing` e `reserved` em `reservados`; `observed` em `observados`; outros status em `desconhecidos`. Totais gerais e por tipo respeitam o filtro `type` e incluem logs sem regra associada; por isso podem superar a soma das regras listadas. Regras sem logs têm zeros e `ultimoDisparo: null`; empresa sem regras retorna `automations: []`.
+
+Exemplo fictício de uma entrada do histórico:
+
+```json
+{
+  "id": 42,
+  "createdAt": "2026-11-16T12:00:00.000Z",
+  "status": "sent",
+  "reason": null,
+  "matchedKeyword": "QUERO",
+  "senderId": "****6789",
+  "commenterUsername": "conta_exemplo",
+  "outboundMessageId": null
+}
+```
+
+`status` é normalizado para `sent|failed|skipped|observed|reserved|unknown`. `reason` traz um diagnóstico curto por categoria, sem o erro bruto da Meta. IDs numéricos de remetentes mostram apenas os quatro últimos dígitos; identificadores internos não numéricos retornam null. Texto de comentário não é exposto. Story retorna `matchedKeyword` e `commenterUsername` como null, pois esses campos não são armazenados nas entregas. `outboundMessageId` vem da entrega de Story quando disponível; logs de comentário não armazenam esse ID e retornam null. Visualizações e cliques permanecem indisponíveis, sem estimativa.
