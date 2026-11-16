@@ -35,7 +35,7 @@ test('T-TRAVA1-C e T-TRAVA2-B imports, chamadas e campos proibidos ausentes', ()
     if (name.includes('/acoes/')) assert.doesNotMatch(text, /\bALTER\s+TABLE\b/i, name)
   }
 })
-test('T-ADIT-1 somente arquivos previstos na F1 do executor, sem exclusão nem alteração de processador', () => {
+test('T-ADIT-1 somente arquivos previstos na F1 e no formulário de Story, sem exclusão nem alteração de processador', () => {
   const names = (args: string[]) => execFileSync('git', args, { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
   const allChanged = [...new Set([
     ...names(['diff', 'origin/main...HEAD', '--name-only', '--diff-filter=M']),
@@ -44,8 +44,11 @@ test('T-ADIT-1 somente arquivos previstos na F1 do executor, sem exclusão nem a
   ])].sort()
   const changed = allChanged.filter(name => !name.startsWith('scripts/operator-fase0'))
   const allowed = ['src/lib/operator/privacy.ts', 'src/lib/operator/acoes/prompt.ts', 'scripts/operator-acoes-f2-isolamento.test.ts', 'scripts/operator-acoes-f3-fronteiras.test.ts', 'scripts/operator-acoes-f3-prepare-fronteiras.test.ts', 'scripts/operator-acoes-f3-regras.test.ts', 'scripts/operator-acoes-f3-sql.test.ts', 'src/lib/operator/acoes/validate.ts', 'src/lib/operator/service.ts', 'src/proxy.ts', 'src/components/operator/operator-console.tsx', 'scripts/operator-acoes-travas.test.ts', 'package.json', 'scripts/operator-acoes-harness.ts', 'scripts/operator-acoes-f2.test.ts']
-  for (const file of changed) assert.ok(allowed.includes(file), `Edição fora da F1: ${file}`)
-  for (const file of ['src/lib/instagram-comment-processor.ts', 'src/app/api/comment-automations/ensure-for-media/route.ts', 'src/lib/db/schema.ts']) assert.ok(!allChanged.includes(file))
+  // Rodadas 1 e 2 do cadastro manual de Story: autorização restrita à UI e seu teste.
+  // As travas de envio/pausa do operador e a proibição de editar processadores continuam.
+  allowed.push('src/app/(dashboard)/comentarios-instagram/page.tsx', 'src/components/instagram/story-automations-section.tsx', 'scripts/instagram-story-section.test.tsx')
+  for (const file of changed) assert.ok(allowed.includes(file), `Edição fora do escopo autorizado: ${file}`)
+  for (const file of ['src/lib/instagram-story-trigger.ts', 'src/lib/instagram-comment-processor.ts', 'src/app/api/comment-automations/ensure-for-media/route.ts', 'src/lib/db/schema.ts']) assert.ok(!allChanged.includes(file))
   assert.deepEqual([...new Set([
     ...names(['diff', 'origin/main...HEAD', '--name-only', '--diff-filter=D']),
     ...names(['diff', 'HEAD', '--name-only', '--diff-filter=D']),

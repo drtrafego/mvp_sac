@@ -1,9 +1,10 @@
 'use client'
 
 import { PageHeader } from '@/components/ui/page-header'
-import { useState, useEffect } from 'react'
-import { StoryAutomationsSection } from '@/components/instagram/story-automations-section'
+import { useState, useEffect, useRef } from 'react'
+import { StoryAutomationsSection, type StoryAutomationsSectionHandle } from '@/components/instagram/story-automations-section'
 import {
+  Camera,
   MessageCircle,
   Plus,
   Play,
@@ -14,11 +15,8 @@ import {
   AlertCircle,
   Clock,
   RefreshCw,
-  ExternalLink,
-  ChevronRight,
   Shield,
   EyeOff,
-  Sparkles,
   Send,
   X,
 } from 'lucide-react'
@@ -92,6 +90,7 @@ interface InboundTagRule {
 }
 
 export default function ComentariosInstagramPage() {
+  const storySectionRef = useRef<StoryAutomationsSectionHandle>(null)
   const [activeTab, setActiveTab] = useState<'regras' | 'logs'>('regras')
   const [rules, setRules] = useState<AutomationRule[]>([])
   const [inboundTagRules, setInboundTagRules] = useState<InboundTagRule[]>([])
@@ -170,6 +169,7 @@ export default function ComentariosInstagramPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Carregamento inicial da página; preserva o fluxo existente.
     loadData()
   }, [])
 
@@ -209,7 +209,7 @@ export default function ComentariosInstagramPage() {
       setSelectedMedia(null)
     }
     setFormKeywords(rule.keywords || '')
-    setFormMatchType((rule.matchType as any) || 'contains')
+    setFormMatchType((rule.matchType as typeof formMatchType) || 'contains')
     setFormDmMessage(rule.dmMessage)
     setFormPublicReply(rule.publicReply || '')
     setFormHideComment(rule.hideCommentAfterReply)
@@ -316,8 +316,8 @@ export default function ComentariosInstagramPage() {
         setIsModalOpen(false)
         loadData()
       }
-    } catch (err: any) {
-      setActionError(err?.message || 'Erro de conexão.')
+    } catch (err: unknown) {
+      setActionError((err as { message?: string } | null)?.message || 'Erro de conexão.')
     } finally {
       setSubmitting(false)
     }
@@ -361,7 +361,7 @@ export default function ComentariosInstagramPage() {
           </div>
         </>}
         actions={<>
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               onClick={loadData}
               title="Atualizar Dados"
@@ -377,11 +377,20 @@ export default function ComentariosInstagramPage() {
               <Plus size={16} />
               Nova Automação
             </button>
+            <button
+              onClick={() => storySectionRef.current?.openNew()}
+              title="Criar regra de resposta ao Story"
+              aria-label="Resposta ao Story: criar nova regra"
+              className="btn btn-primary flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs"
+            >
+              <Camera size={16} aria-hidden="true" />
+              Resposta ao Story
+            </button>
           </div>
         </>}
         className="shrink-0"
       />
-      <StoryAutomationsSection />
+      <StoryAutomationsSection ref={storySectionRef} />
 
       {/* Cards de Métricas */}
       <div className="rise rise-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-[var(--space-gutter)]">
@@ -567,7 +576,7 @@ export default function ComentariosInstagramPage() {
                       <div className="flex flex-wrap gap-1">
                         {(rule.keywords || '')
                           .split(',')
-                          .map((k, i) => k.trim())
+                          .map(k => k.trim())
                           .filter(Boolean)
                           .map((kw, i) => (
                             <span
@@ -823,6 +832,7 @@ export default function ComentariosInstagramPage() {
                               }`}
                             >
                               {item.thumbnail_url || item.media_url ? (
+                                // eslint-disable-next-line @next/next/no-img-element -- URLs temporárias da Meta, como no cartão de Story.
                                 <img
                                   src={item.thumbnail_url || item.media_url}
                                   alt="Post"
@@ -854,7 +864,7 @@ export default function ComentariosInstagramPage() {
                   <label className="text-micro font-bold text-fg">Palavras-chave de Acionamento</label>
                   <select
                     value={formMatchType}
-                    onChange={e => setFormMatchType(e.target.value as any)}
+                    onChange={e => setFormMatchType(e.target.value as typeof formMatchType)}
                     className="px-2 py-1 rounded-lg bg-surface-base border border-line-subtle text-[11px] text-fg font-semibold outline-none"
                   >
                     <option value="contains">Contém a palavra (Recomendado)</option>
