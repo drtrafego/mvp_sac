@@ -10,9 +10,6 @@ import {
   Columns3,
   Users,
   BarChart3,
-  Radio,
-  Globe,
-  Zap,
   Layers,
   Settings,
   Webhook,
@@ -165,9 +162,6 @@ export const atendimentoNav: Array<{
 
 export const analiseNav = [
   { label: 'Analytics Vendas', href: '/analytics-vendas', icon: BarChart3 },
-  { label: 'Canais de Atendimento', href: '/canais', icon: Radio },
-  { label: 'Origens de Tráfego', href: '/origens', icon: Globe },
-  { label: 'Operação & SLA', href: '/operacao', icon: Zap },
   { label: 'Recuperador Admin', href: '/recuperador-admin', icon: Layers },
 ]
 

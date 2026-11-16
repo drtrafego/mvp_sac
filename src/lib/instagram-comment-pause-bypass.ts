@@ -1,3 +1,8 @@
+// Compatibilidade: este módulo continua usado pelo Direct e por
+// instagram-story-trigger.ts, fora do escopo desta alteração. Desde a mudança
+// de regra ordenada pelo Gastão em 16/11/2026, o processador de COMENTÁRIOS não
+// usa este bypass, sua lista de slugs nem seu corte de data. Preservá-lo evita
+// alterar indiretamente os fluxos de Direct/story que têm outro responsável.
 import { isSwitchGeneratedPause } from '@/lib/message-job-class'
 import { getIsabelaForwardOnlyCutoff } from '@/lib/isabela-forward-only-policy'
 

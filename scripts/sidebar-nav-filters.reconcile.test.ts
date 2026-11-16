@@ -179,6 +179,7 @@ async function startDisposablePostgres(): Promise<{ url: string; stop: () => voi
     '--rm',
     '-d',
     '--name', CONTAINER_NAME,
+    '--tmpfs', '/var/lib/postgresql/data',
     '-e', 'POSTGRES_PASSWORD=test',
     '-e', 'POSTGRES_DB=test',
     '-p', `127.0.0.1:${port}:5432`,
@@ -402,7 +403,7 @@ async function main() {
 
     // ── 8. Sanidade final: cada seção do menu, isolada, nunca devolve o lead
     // de controle (atendimento comum) nem o de outra seção. ────────────────
-    const todasCondicoesDeCanal: { nome: string; cond: any }[] = [
+    const todasCondicoesDeCanal: { nome: string; cond: ReturnType<typeof channelWhereCondition> }[] = [
       { nome: 'instagram', cond: channelWhereCondition('instagram') },
       { nome: 'mineracao', cond: channelWhereCondition('mineracao') },
     ]

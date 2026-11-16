@@ -35,7 +35,7 @@ test('T-TRAVA1-C e T-TRAVA2-B imports, chamadas e campos proibidos ausentes', ()
     if (name.includes('/acoes/')) assert.doesNotMatch(text, /\bALTER\s+TABLE\b/i, name)
   }
 })
-test('T-ADIT-1 escopo da F1, formulário e Story sem pausa, sem exclusão nem alteração de outros processadores', () => {
+test('T-ADIT-1 escopo da F1, formulário e Story sem pausa, SAC B e comentário sem pausa, sem exclusão', () => {
   const names = (args: string[]) => execFileSync('git', args, { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
   const allChanged = [...new Set([
     ...names(['diff', 'origin/main...HEAD', '--name-only', '--diff-filter=M']),
@@ -49,8 +49,17 @@ test('T-ADIT-1 escopo da F1, formulário e Story sem pausa, sem exclusão nem al
   allowed.push('src/app/(dashboard)/comentarios-instagram/page.tsx', 'src/components/instagram/story-automations-section.tsx', 'scripts/instagram-story-section.test.tsx')
   // Ordem do Gastão em 16/11/2026: remover somente a dependência de pausa do Story e atualizar seus testes.
   allowed.push('src/lib/instagram-story-trigger.ts', 'scripts/qa-story-webhook.test.ts', 'scripts/qa-todas-webhook.test.ts')
+  // Mudança de regra ordenada pelo Gastão em 16/11/2026, briefing SAC B:
+  // comentário independente de pausa e menu enxuto. A autorização é limitada
+  // a estes arquivos; story, bot-pause, schema e código do operador seguem protegidos.
+  allowed.push(
+    'src/components/layout/sidebar.tsx', 'src/lib/instagram-comment-processor.ts',
+    'src/lib/instagram-comment-pause-bypass.ts', 'scripts/bot-pause-switch.test.ts',
+    'scripts/isabela-comentario-dm-pausa.test.ts', 'scripts/sidebar-messages-nav.test.ts',
+    'scripts/sidebar-nav-filters.reconcile.test.ts',
+  )
   for (const file of changed) assert.ok(allowed.includes(file), `Edição fora do escopo autorizado: ${file}`)
-  for (const file of ['src/lib/instagram-comment-processor.ts', 'src/app/api/comment-automations/ensure-for-media/route.ts', 'src/lib/db/schema.ts']) assert.ok(!allChanged.includes(file))
+  for (const file of ['src/lib/bot-pause.ts', 'src/app/api/comment-automations/ensure-for-media/route.ts', 'src/lib/db/schema.ts']) assert.ok(!allChanged.includes(file))
   // Fora dos imports de pausa e do bloco entre janela e modo, o gatilho deve ficar idêntico.
   const storyPath = 'src/lib/instagram-story-trigger.ts'
   const withoutPauseBlock = (source: string) => {
@@ -72,7 +81,7 @@ test('T-ADIT-1 escopo da F1, formulário e Story sem pausa, sem exclusão nem al
     ...names(['ls-files', '--others', '--exclude-standard']),
   ])]
   // A F2 trabalha em paralelo somente nestes dois diretórios novos.
-  assert.ok(added.every(n => n === 'scripts/instagram-story-sem-pausa.test.ts' || /^(src\/lib\/operator\/dm\.ts$|src\/lib\/operator\/executor\/|src\/app\/api\/operator-executor\/|src\/app\/api\/operator\/executor\/|scripts\/operator-executor-|scripts\/sac-operator\/|deploy\/sac-operator\/|scripts\/operator-apply-migration-0047\.ts$|drizzle\/0047_sac_operator_executor\.sql$)/.test(n)))
+  assert.ok(added.every(n => n === 'scripts/instagram-story-sem-pausa.test.ts' || n === 'scripts/qa-comment-pause-independent.test.ts' || /^(src\/lib\/operator\/dm\.ts$|src\/lib\/operator\/executor\/|src\/app\/api\/operator-executor\/|src\/app\/api\/operator\/executor\/|scripts\/operator-executor-|scripts\/sac-operator\/|deploy\/sac-operator\/|scripts\/operator-apply-migration-0047\.ts$|drizzle\/0047_sac_operator_executor\.sql$)/.test(n)))
 })
 test('T-PII-LISTA vocabulário acrescentado não inclui prenomes brasileiros', () => {
   // Lista de referência fixa, independente do dicionário de intenções.

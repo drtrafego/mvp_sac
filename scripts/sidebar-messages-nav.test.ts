@@ -46,3 +46,17 @@ test('setor sem capacidade operacional não expõe nem Mensagens nem inbox', () 
     assert.deepEqual(sidebar.getVisibleChannelNavItems(items, true), [...items])
   }
 })
+
+// Mudança de regra ordenada pelo Gastão em 16/11/2026: só três itens saem.
+test('menu de análise enxuto mantém Analytics e Recuperador, sem remover rotas', async () => {
+  assert.deepEqual(sidebar.analiseNav.map(({ label, href }) => ({ label, href })), [
+    { label: 'Analytics Vendas', href: '/analytics-vendas' },
+    { label: 'Recuperador Admin', href: '/recuperador-admin' },
+  ])
+  const { access } = await import('node:fs/promises')
+  for (const route of ['operacao', 'origens', 'canais']) {
+    await access(new URL(`../src/app/(dashboard)/${route}/page.tsx`, import.meta.url))
+  }
+  assert.ok(sidebar.mineracaoNav.some(item => item.href === '/origens?source=mineracao'), 'atalho filtrado de mineração continua')
+  assert.ok(sidebar.instagramNav.some(item => item.href === '/origens?source=instagram'), 'atalho filtrado de Instagram continua')
+})

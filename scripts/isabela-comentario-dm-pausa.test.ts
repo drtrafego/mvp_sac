@@ -1,26 +1,8 @@
-// Teste do disparo "Comentário vira DM" sob "Pausar tudo" na Isabela.
-//
-// Incidente (12/11/2026): a chave de pausa 'all' da Isabela (ligada de propósito
-// em 11/11: a Isabela NÃO conversa) barrava também a DM determinística da regra
-// "Comentário vira DM". Decisão do Gastão: o disparo da regra (DM única + resposta
-// pública da regra) NÃO é bot e passa pela pausa, na empresa isabela-fanini, só
-// para comentário posterior ao corte; resposta de IA/conversa continua barrada.
-//
-// PGlite real (sem Docker, sem rede). Mocks: '@/lib/db' (drizzle sobre PGlite),
-// '@/lib/instagram' (espiões de envio: NADA real é enviado), '@/lib/ai-reply'
-// (espião), 'next/server' (after síncrono).
-//
-// Casos:
-//   (1) pausa 'all' + regra casando na Isabela = DM + resposta pública enviadas; lead continua pausado
-//   (2) lead pausado em massa ('Administrador (Agente IA)', botPausedAll) também passa
-//   (3) pausa por humano no lead = bloqueia; opt-out = bloqueia; tag pessoa = bloqueia; anti-loop = bloqueia
-//   (4) outra empresa com pausa 'all' = comportamento atual (ignorado_pausa)
-//   (5) comentário antigo / sem data = não dispara; reentrega de comentário já ignorado = skipped
-//   (6) resposta no Direct depois da DM continua sem resposta automática (IA e follow check)
-//   (7) pausa de canal 'instagram' na Isabela também passa; pausa ligada no meio (recheck) usa a mesma regra
-//   (8) puro: avaliação do bypass e corte por ISABELA_FORWARD_ONLY_SINCE
-//
-// Uso: npm run test:isabela-comentario-dm-pausa
+// Mudança de regra ordenada pelo Gastão em 16/11/2026:
+// comentário determinístico ignora qualquer pausa e tag pessoa em toda empresa.
+// Opt-out, anti-loop, dedupe e regras continuam bloqueando. Direct/IA/story
+// mantêm sua política anterior. O teste puro do bypass protege esses consumidores.
+// PGlite descartável, transporte Graph interceptado, nenhuma chamada real.
 
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
@@ -116,6 +98,11 @@ async function main() {
       companyId, platform: 'instagram', channel: 'instagram', eventType: 'instagram_direct', phone, name: phone,
       status: 'in_conversation', botPaused: true, botPausedAt: new Date(), ...fields,
     })
+  const historicalIgnored = async (companyId: number, commenterId: string, commentId: string) => {
+    const [rule] = await db.select().from(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.companyId, companyId))
+    await db.insert(schema.instagramCommentLogs).values({ companyId, automationId: rule.id, commenterId,
+      commentId, mediaId: 'mediaX', commentText: 'posicionamento', status: 'ignorado_pausa' })
+  }
   const webhookDm = async (igsid: string, text: string, mid: string, slug = isabela.slug) => {
     const raw = JSON.stringify({ object: 'instagram', entry: [{ id: IG_ACCOUNT, messaging: [{ sender: { id: igsid }, recipient: { id: IG_ACCOUNT }, message: { mid, text } }] }] })
     const res = await instagramWebhookPost(new NextRequest(`https://sac.example.com/api/webhooks/instagram/${slug}`, {
@@ -203,7 +190,7 @@ async function main() {
       assert.equal((await logsByStatus('sent')).length, 1)
       assert.equal((await logsByStatus('ignorado_pausa')).length, 0)
       const audits = await db.select().from(schema.sacAuditEvents)
-      assert.equal(audits.filter(a => a.type === 'instagram_comment_dm_pause_bypass').length, 1, 'o bypass fica auditado')
+      assert.equal(audits.filter(a => a.type === 'instagram_comment_dm_pause_bypass').length, 0, 'comentário não usa mais bypass; envio registrado no log sent')
       const sw = await db.select().from(schema.companyPauseSwitches)
       assert.equal(sw[0].active, true, 'a chave continua ligada')
     })
@@ -229,76 +216,61 @@ async function main() {
       assert.equal(privateReplies.length, 2)
     })
 
-    await test('(3) pausa individual no lead bloqueia: humano, opt-out, tag pessoa e anti-loop (mesmo com a chave ligada)', async () => {
+    // Mudança de regra ordenada pelo Gastão em 16/11/2026: humano/pessoa enviam;
+    // opt-out e anti-loop continuam bloqueados, sem depender de botPaused.
+    await test('(3) pausa humana e tag pessoa enviam; opt-out e anti-loop bloqueiam', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })
-      const cases: Array<[string, Partial<typeof schema.recoveryLeads.$inferInsert>]> = [
-        ['2001', { botPausedBy: 'Atendente Maria', botPausedAll: false, botPausedChannel: null }],
-        ['2002', { botPausedBy: 'optout_whatsapp', botPausedAll: true }],
-        ['2003', { botPausedBy: 'tag:pessoa', botPausedAll: true }],
-        ['2004', { botPausedBy: 'Anti-loop (bot do outro lado detectado)', botPausedAll: false }],
-      ]
-      for (const [id, fields] of cases) await pauseLead(`ig_${id}`, isabela.id, fields)
-      for (const [id] of cases) {
+      for (const [id, by, reason] of [
+        ['2001', 'Atendente Maria', null], ['2002', 'optout_whatsapp', 'optout'],
+        ['2003', 'tag:pessoa', null], ['2004', 'Anti-loop (bot do outro lado detectado)', 'anti_loop'],
+      ] as const) {
+        await pauseLead(`ig_${id}`, isabela.id, { botPausedBy: by, botPausedAll: false })
         const result = await comment(isabela.id, id)
-        assert.equal(result.status, 'ignored', id)
-        assert.equal(result.reason, 'ignorado_pausa', id)
+        if (reason) assert.deepEqual(result, { status: 'blocked', reason })
+        else assert.equal(result.status, 'sent')
       }
-      assert.equal(privateReplies.length, 0)
-      assert.equal(publicReplies.length, 0)
-      assert.equal((await logsByStatus('ignorado_pausa')).length, 4)
+      assert.equal(privateReplies.length, 2)
+      assert.equal(publicReplies.length, 2)
+      assert.equal((await logsByStatus('sent')).length, 2)
     })
 
-    await test('(3b) lead pausado por humano SEM chave ligada continua barrado (pausa individual é do lead)', async () => {
+    await test('(3b) pausa humana e pausa residual sem chave não bloqueiam comentário', async () => {
       await reset()
       await pauseLead('ig_2101', isabela.id, { botPausedBy: 'Atendente Maria', botPausedAll: false })
       await pauseLead('ig_2102', isabela.id, { botPausedBy: 'Administrador (Agente IA)', botPausedAll: true })
-      assert.equal((await comment(isabela.id, '2101')).reason, 'ignorado_pausa')
-      assert.equal((await comment(isabela.id, '2102')).reason, 'ignorado_pausa', 'pausa residual sem a chave ligada não é contornada')
-      assert.equal(privateReplies.length, 0)
+      assert.equal((await comment(isabela.id, '2101')).status, 'sent')
+      assert.equal((await comment(isabela.id, '2102')).status, 'sent')
+      assert.equal(privateReplies.length, 2)
     })
 
-    await test('(4) outra empresa com pausa geral: comportamento atual preservado (nada enviado, ignorado_pausa)', async () => {
+    await test('(4) outra empresa com pausa geral também envia para lead existente e novo', async () => {
       await reset()
       await setPauseSwitch({ companyId: outra.id, scope: 'all', active: true, by: 'Gastão' })
       await captureInstagramInboundInteraction({ companyId: outra.id, instagramUserId: '3001', username: 'user3001', interaction: 'comment' })
-      const result = await comment(outra.id, '3001')
-      assert.equal(result.status, 'ignored')
-      assert.equal(result.reason, 'ignorado_pausa')
-      const result2 = await comment(outra.id, '3002')
-      assert.equal(result2.reason, 'ignorado_pausa', 'lead novo também')
-      assert.equal(privateReplies.length, 0)
-      assert.equal(publicReplies.length, 0)
-      assert.equal(timestampLookups, 0, 'fora da lista nem consulta timestamp')
-      // pausa na outra empresa não vaza para a Isabela, e a da Isabela não vaza para a outra
-      assert.equal((await comment(isabela.id, '3003')).status, 'sent', 'Isabela sem chave ligada: fluxo normal')
+      assert.equal((await comment(outra.id, '3001')).status, 'sent')
+      assert.equal((await comment(outra.id, '3002')).status, 'sent')
+      assert.equal(privateReplies.length, 2)
+      assert.equal(publicReplies.length, 2)
+      assert.equal(timestampLookups, 0, 'pausa não exige timestamp')
+      assert.equal((await comment(isabela.id, '3003')).status, 'sent')
+      assert.deepEqual(privateReplies.map(p => p.companyId), [outra.id, outra.id, isabela.id])
     })
 
-    await test('(5) comentário antigo ou sem data não dispara; reentrega do já ignorado não reprocessa', async () => {
+    await test('(5) corte do bypass não interfere na regra comum; reentrega não duplica', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })
-
-      const old = await comment(isabela.id, '4001', { commentCreatedAt: BEFORE_CUTOFF, commentId: 'c_antigo' })
-      assert.equal(old.reason, 'ignorado_pausa', 'anterior ao corte: pausa mantida')
-      assert.equal(privateReplies.length, 0)
-      assert.equal((await logsByStatus('ignorado_pausa')).length, 1)
-
-      // Meta reentrega o MESMO comentário já ignorado, agora com timestamp "novo": idempotência segura.
+      assert.equal((await comment(isabela.id, '4001', { commentCreatedAt: BEFORE_CUTOFF, commentId: 'c_antigo' })).status, 'sent')
+      assert.equal((await logsByStatus('sent')).length, 1)
       const again = await comment(isabela.id, '4001', { commentCreatedAt: AFTER_CUTOFF, commentId: 'c_antigo' })
-      assert.equal(again.status, 'skipped')
       assert.equal(again.reason, 'comment_already_processed')
-      assert.equal(privateReplies.length, 0)
-
-      // sem timestamp no evento e a Graph não devolve: falha fechada
-      timestampResult = { ok: false }
-      const noDate = await comment(isabela.id, '4002', { commentCreatedAt: undefined })
-      assert.equal(noDate.reason, 'ignorado_pausa')
-      assert.equal(timestampLookups >= 1, true)
-      // sem timestamp no evento, mas a Graph devolve data recente: passa
-      timestampResult = { ok: true, createdAt: AFTER_CUTOFF }
-      const viaGraph = await comment(isabela.id, '4003', { commentCreatedAt: undefined })
-      assert.equal(viaGraph.status, 'sent')
       assert.equal(privateReplies.length, 1)
+      timestampResult = { ok: false }
+      assert.equal((await comment(isabela.id, '4002', { commentCreatedAt: undefined })).status, 'sent')
+      timestampResult = { ok: true, createdAt: AFTER_CUTOFF }
+      assert.equal((await comment(isabela.id, '4003', { commentCreatedAt: undefined })).status, 'sent')
+      assert.equal(privateReplies.length, 3)
+      assert.equal(timestampLookups, 0, 'apenas a janela própria do template exige data, não a pausa')
     })
 
     await test('(6) resposta da pessoa no Direct depois da DM segue SEM resposta automática (IA e checagem de seguidor)', async () => {
@@ -371,7 +343,7 @@ async function main() {
     const AFTER_SECONDS = Math.floor(AFTER_CUTOFF.getTime() / 1000)
     const BEFORE_SECONDS = Math.floor(BEFORE_CUTOFF.getTime() / 1000)
 
-    await test('(QA1) tag "pessoa" em lead já pausado pela chave bloqueia (a tag não sobrescreve a origem da pausa)', async () => {
+    await test('(QA1) tag "pessoa" em lead já pausado pela chave não bloqueia (a tag não sobrescreve a origem da pausa)', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })
       await pauseLead('ig_8101', isabela.id, { botPausedBy: 'auto (pausa geral ativa)', botPausedAll: true })
@@ -385,27 +357,18 @@ async function main() {
       await pauseBotForPessoaTag({ id: l1.id, phone: l1.phone, channel: l1.channel })
       assert.equal((await leadByPhone('ig_8101')).botPausedBy, 'auto (pausa geral ativa)', 'premissa do defeito: a origem NÃO vira tag:pessoa')
 
-      assert.equal((await comment(isabela.id, '8101')).reason, 'ignorado_pausa', 'tag geral')
-      assert.equal((await comment(isabela.id, '8102')).reason, 'ignorado_pausa', 'tag no escopo instagram')
-      assert.equal(privateReplies.length, 0)
-      assert.equal(publicReplies.length, 0)
-      // outra pessoa, sem a tag, na mesma empresa e mesma chave: passa
+      // Mudança de regra ordenada pelo Gastão em 16/11/2026: qualquer escopo de pessoa passa.
+      assert.equal((await comment(isabela.id, '8101')).status, 'sent', 'tag geral')
+      assert.equal((await comment(isabela.id, '8102')).status, 'sent', 'tag instagram')
       assert.equal((await comment(isabela.id, '8103')).status, 'sent')
-      assert.equal(privateReplies.length, 1)
-      assert.deepEqual(
-        evaluateCommentDmPauseBypass({
-          companySlug: 'isabela-fanini', switchBlocking: true, commentCreatedAt: AFTER_CUTOFF, env: {},
-          lead: { botPaused: true, botPausedBy: 'auto (pausa geral ativa)', botPausedAll: true, hasPessoaTag: true },
-        }),
-        { bypass: false, reason: 'pausa_individual_do_lead' },
-      )
+      assert.equal(privateReplies.length, 3)
+      assert.equal(publicReplies.length, 3)
     })
 
     await test('(QA2) ignorado_pausa antigo na mesma mídia NÃO barra o comentário novo da mesma pessoa: sai 1 DM', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })
-      const old = await comment(isabela.id, '8201', { commentCreatedAt: BEFORE_CUTOFF, commentId: 'c_old_8201', mediaId: 'mediaX' })
-      assert.equal(old.reason, 'ignorado_pausa')
+      await historicalIgnored(isabela.id, '8201', 'c_old_8201')
       assert.equal(privateReplies.length, 0)
 
       const novo = await comment(isabela.id, '8201', { commentCreatedAt: AFTER_CUTOFF, commentId: 'c_new_8201', mediaId: 'mediaX' })
@@ -418,7 +381,7 @@ async function main() {
       assert.equal(logs[0].status, 'sent')
       assert.equal(logs[0].commentId, 'c_new_8201')
 
-      // o comentário antigo reentregue continua sendo "já processado"? o id antigo foi substituído; o corte o barra
+      // o comentário antigo reentregue continua sendo "já processado"? o id antigo foi substituído; o dedupe por pessoa/mídia o barra
       const again = await comment(isabela.id, '8201', { commentCreatedAt: BEFORE_CUTOFF, commentId: 'c_old_8201', mediaId: 'mediaX' })
       assert.equal(privateReplies.length, 1, 'o comentário antigo nunca dispara')
       assert.notEqual(again.status, 'sent')
@@ -431,7 +394,7 @@ async function main() {
     await test('(QA2b) três entregas concorrentes do mesmo comentário novo (com ignorado_pausa antigo ocupando a vaga) = 1 DM e 1 resposta pública', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })
-      await comment(isabela.id, '8202', { commentCreatedAt: BEFORE_CUTOFF, commentId: 'c_old_8202', mediaId: 'mediaX' })
+      await historicalIgnored(isabela.id, '8202', 'c_old_8202')
       const rs = await Promise.all([1, 2, 3].map(() => comment(isabela.id, '8202', { commentId: 'c_new_8202', mediaId: 'mediaX' })))
       assert.equal(rs.filter(r => r.status === 'sent').length, 1, JSON.stringify(rs))
       assert.equal(privateReplies.length, 1)
@@ -443,7 +406,7 @@ async function main() {
       assert.equal(publicReplies.length, 2)
     })
 
-    await test('(QA2c) só ignorado_pausa é reaproveitável: failed/sent/processing seguem barrando; outra empresa mantém o comportamento atual', async () => {
+    await test('(QA2c) só ignorado_pausa é reaproveitável: failed/sent/processing seguem barrando; outra empresa também recupera ignorado_pausa', async () => {
       await reset()
       const [rule] = await db.select().from(schema.instagramCommentAutomations).where(eq(schema.instagramCommentAutomations.companyId, isabela.id))
       for (const status of ['failed', 'sent', 'processing', 'skipped']) {
@@ -459,15 +422,13 @@ async function main() {
       const statuses = (await db.select().from(schema.instagramCommentLogs)).map(l => l.status).sort()
       assert.deepEqual(statuses, ['failed', 'processing', 'sent', 'skipped'], 'nenhuma linha foi reaproveitada')
 
-      // outra empresa: ignorado_pausa antigo + pausa desligada depois = continua barrado (comportamento atual)
+      // Mudança de regra ordenada pelo Gastão em 16/11/2026: recuperação universal.
       await reset()
       await setPauseSwitch({ companyId: outra.id, scope: 'all', active: true, by: 'Gastão' })
-      assert.equal((await comment(outra.id, '8290', { commentId: 'o_old', mediaId: 'mediaX' })).reason, 'ignorado_pausa')
-      await setPauseSwitch({ companyId: outra.id, scope: 'all', active: false, by: 'Gastão' })
+      await historicalIgnored(outra.id, '8290', 'o_old')
       const r = await comment(outra.id, '8290', { commentId: 'o_new', mediaId: 'mediaX' })
-      assert.equal(r.status, 'skipped')
-      assert.equal(r.reason, 'comment_claim_already_exists')
-      assert.equal(privateReplies.length, 0)
+      assert.equal(r.status, 'sent')
+      assert.equal(privateReplies.length, 1)
     })
 
     await test('(QA3) payload real SEM timestamp no value: as duas rotas usam entry.time e enviam com a Graph FALHANDO (comentário após o corte)', async () => {
@@ -483,14 +444,14 @@ async function main() {
       assert.equal(privateReplies.length, 2, 'rota global: 1 DM')
       assert.equal(timestampLookups, 0, 'a Graph nem foi necessária')
 
-      // entry.time anterior ao corte: não dispara nas duas rotas
+      // Mudança de regra ordenada pelo Gastão em 16/11/2026: corte não bloqueia nas duas rotas
       await hook(`/api/webhooks/instagram/${isabela.slug}`, realCommentPayload('8303', 'c_real_old_slug', BEFORE_SECONDS), isabela.slug)
       await hook('/api/webhooks/instagram', realCommentPayload('8304', 'c_real_old_global', BEFORE_SECONDS))
-      assert.equal(privateReplies.length, 2)
-      assert.equal((await logsByStatus('ignorado_pausa')).length, 2)
+      assert.equal(privateReplies.length, 4)
+      assert.equal((await logsByStatus('sent')).length, 4)
     })
 
-    await test('(QA3b) sem entry.time nem timestamp, a Graph continua como reserva (e falhando nega)', async () => {
+    await test('(QA3b) regra comum sem timestamp envia sem consultar data na Graph', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })
       const semTempo = (commenterId: string, commentId: string) => {
@@ -501,13 +462,13 @@ async function main() {
       timestampResult = { ok: true, createdAt: AFTER_CUTOFF }
       await hook('/api/webhooks/instagram', semTempo('8311', 'c_sem_tempo_ok'))
       assert.equal(privateReplies.length, 1)
-      assert.equal(timestampLookups, 1)
+      assert.equal(timestampLookups, 0)
       timestampResult = { ok: false }
       await hook('/api/webhooks/instagram', semTempo('8312', 'c_sem_tempo_falha'))
-      assert.equal(privateReplies.length, 1, 'Graph falhando e sem data: falha fechada')
+      assert.equal(privateReplies.length, 2, 'regra comum não depende do corte de pausa')
     })
 
-    await test('(QA4) auditoria do bypass só depois do envio bem-sucedido', async () => {
+    await test('(QA4) envio e falha registrados sem auditoria de bypass obsoleto', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })
       failPrivateReply = true
@@ -516,7 +477,9 @@ async function main() {
       assert.equal(await audits(), 0, 'DM que falhou não gera auditoria de disparo liberado')
       failPrivateReply = false
       assert.equal((await comment(isabela.id, '8402')).status, 'sent')
-      assert.equal(await audits(), 1)
+      assert.equal(await audits(), 0)
+      assert.equal((await logsByStatus('sent')).length, 1)
+      assert.equal((await logsByStatus('failed')).length, 1)
     })
 
     await test('(Direct) gatilhos respeitam comentário, Direct e ambos; palavra repetida envia uma única vez', async () => {
@@ -569,7 +532,7 @@ async function main() {
             commenterId: senderId, mediaId: 'media_corrida', commentText: 'chave-corrida', commentCreatedAt: AFTER_CUTOFF,
           }),
           processInstagramDirectKeyword({
-            companyId: outra.id, senderId, messageId: `d_corrida_${i}`, text: 'chave-corrida', messageCreatedAt: AFTER_CUTOFF,
+            companyId: outra.id, senderId, messageId: `d_corrida_${i}`, text: 'chave-corrida', messageCreatedAt: new Date(),
           }),
         ])
         const after = privateReplies.length + directMessages.filter(message => message.text === 'Resposta corrida').length
@@ -583,7 +546,8 @@ async function main() {
     await test('(Direct) pausa humana, opt-out, tag pessoa, anti-loop e mensagem anterior ao corte não enviam', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'Gastão' })
-      const directNow = new Date()
+      const directNow = new Date('2026-11-13T13:00:00Z')
+      const clock = mock.method(Date, 'now', () => directNow.getTime())
       const direct = (senderId: string, messageId: string, messageCreatedAt = directNow) => processInstagramDirectKeyword({
         companyId: isabela.id, senderId, messageId, text: 'chave-direct', messageCreatedAt,
       })
@@ -601,6 +565,7 @@ async function main() {
       assert.equal(directMessages.length, 0)
       assert.equal((await direct('9107', 'd_switch_bypass')).status, 'sent', 'pausa geral da Isabela não barra a regra determinística')
       assert.equal(directMessages.length, 1)
+      clock.mock.restore()
     })
 
     await test('(Direct QA) claim anterior, any, falha transitória e inbox não silenciam a IA nem duplicam a regra', async () => {

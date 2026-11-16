@@ -1,3 +1,4 @@
+// Mudança de regra ordenada pelo Gastão em 16/11/2026: pausa bloqueia IA, não a regra de comentário.
 // Teste da chave persistente de pausa do bot (company_pause_switches).
 //
 // Incidente: "Pausar tudo" e "Pausar canal" só marcavam os leads que JÁ
@@ -15,7 +16,7 @@
 //   - 'next/server': after() síncrono.
 //
 // Casos (pedidos na tarefa):
-//   (1) comentário com pausa ativa NÃO envia e registra 'ignorado_pausa'
+//   (1) comentário com pausa ativa envia a DM fixa e registra 'sent'
 //   (2) lead novo com a chave ativa nasce pausado
 //   (3) reativar libera (lead marcado e comentário novo)
 //   (4) canal A pausado não afeta B (Instagram x WhatsApp)
@@ -156,7 +157,7 @@ async function main() {
       assert.equal(pickBlockingSwitch([sw('all', false), sw('instagram', true)], 'instagram')?.scope, 'instagram')
     })
 
-    await test('(1)(2) pausa geral ativa: lead novo nasce pausado e o comentário NÃO envia, com log ignorado_pausa', async () => {
+    await test('(1)(2) pausa geral ativa: lead novo nasce pausado e o comentário envia, com log sent', async () => {
       await reset()
       const res = await callPauseAll('pause')
       assert.equal(res.status, 200)
@@ -165,9 +166,8 @@ async function main() {
       assert.equal(json.affected, 0, 'não havia nenhum lead: o caso é só o futuro')
 
       const result = await webhookComment('1001')
-      assert.equal(result.status, 'ignored')
-      assert.equal(result.reason, 'ignorado_pausa')
-      assert.equal(privateReplies.length, 0, 'nenhuma Private Reply pode sair com a empresa pausada')
+      assert.equal(result.status, 'sent')
+      assert.equal(privateReplies.length, 1, 'DM determinística passa pela pausa da empresa')
       assert.equal(directMessages.length, 0)
 
       const lead = await leadByPhone('ig_1001')
@@ -176,19 +176,19 @@ async function main() {
       assert.equal(lead.botPausedAll, true, 'marcado como pausa geral: "Reativar tudo" reverte')
       assert.equal(lead.botPausedBy, 'auto (pausa geral ativa)')
 
-      const logs = await logsByStatus('ignorado_pausa')
+      const logs = await logsByStatus('sent')
       assert.equal(logs.length, 1)
-      assert.ok(logs[0].automationId, 'o log guarda qual regra foi ignorada')
-      assert.equal(await db.select().from(schema.whatsappMessages).then(r => r.length), 0, 'nada gravado como mensagem do bot')
+      assert.ok(logs[0].automationId, 'o log guarda qual regra foi enviada')
+      assert.equal(await db.select().from(schema.whatsappMessages).then(r => r.length), 1, 'DM fixa aparece no inbox')
     })
 
-    await test('(1) o mesmo comentário reentregue pela Meta continua ignorado (idempotente)', async () => {
+    await test('(1) o mesmo comentário reentregue pela Meta não duplica (idempotente)', async () => {
       const again = await processInstagramComment({
         companyId: company.id, source: 'instagram_webhook', commentId: 'c_1', commenterId: '1001',
         mediaId: 'media_1', commentText: 'QUERO o link',
       })
       assert.equal(again.status, 'skipped')
-      assert.equal(privateReplies.length, 0)
+      assert.equal(privateReplies.length, 1)
     })
 
     await test('(3) reativar libera: lead marcado volta e comentário novo envia', async () => {
@@ -203,7 +203,7 @@ async function main() {
 
       const result = await webhookComment('1002')
       assert.equal(result.status, 'sent')
-      assert.equal(privateReplies.length, 1)
+      assert.equal(privateReplies.length, 2)
       const newLead = await leadByPhone('ig_1002')
       assert.equal(newLead.botPaused, false, 'com a chave desligada, lead novo nasce com o bot ativo')
     })
@@ -212,8 +212,8 @@ async function main() {
       await reset()
       assert.equal((await callPauseChannel('instagram', 'pause')).status, 200)
 
-      assert.equal((await webhookComment('2001')).status, 'ignored', 'Instagram pausado barra o comentário')
-      assert.equal(privateReplies.length, 0)
+      assert.equal((await webhookComment('2001')).status, 'sent', 'Instagram pausado não barra o comentário')
+      assert.equal(privateReplies.length, 1)
 
       const wa = await whatsappWebhook.POST(whatsappRequest('5511999990100', 'wamid.pausa.1'))
       assert.equal(wa.status, 200)
@@ -236,18 +236,18 @@ async function main() {
       assert.equal(aiReplies.length, 0, 'IA nunca acionada para lead pausado (WhatsApp)')
     })
 
-    await test('(5) pausa individual do lead barra o comentário sem nenhuma chave; outro lead segue', async () => {
+    await test('(5) pausa individual do lead não barra o comentário sem nenhuma chave; outro lead segue', async () => {
       await reset()
       await captureInstagramInboundInteraction({ companyId: company.id, instagramUserId: '3001', username: 'u3001', interaction: 'comment' })
       await db.update(schema.recoveryLeads).set({ botPaused: true, botPausedBy: 'Atendente Teste' }).where(eq(schema.recoveryLeads.phone, 'ig_3001'))
 
-      assert.equal((await comment('3001')).status, 'ignored')
-      assert.equal(privateReplies.length, 0)
-      const [log] = await logsByStatus('ignorado_pausa')
-      assert.match(log.errorMessage ?? '', /este lead/)
+      assert.equal((await comment('3001')).status, 'sent')
+      assert.equal(privateReplies.length, 1)
+      const [log] = await logsByStatus('sent')
+      assert.equal(log.errorMessage, null)
 
       assert.equal((await webhookComment('3002')).status, 'sent')
-      assert.equal(privateReplies.length, 1)
+      assert.equal(privateReplies.length, 2)
     })
 
     await test('(6) reativar lead individual com a chave ligada falha com 409 (API e inbox); pausa/despausa individual é auditada com autor', async () => {
@@ -368,17 +368,17 @@ async function main() {
       assert.equal((await leadByPhone('5511999990401')).botPaused, false, 'lead do canal não pausado nasce ativo')
     })
 
-    await test('(1) pausa ligada ENQUANTO o follow check consulta a Graph API: a segunda leitura barra o envio', async () => {
+    await test('(1) pausa ligada ENQUANTO o follow check consulta a Graph API: a DM da regra continua enviando', async () => {
       await reset()
       await db.update(schema.instagramCommentAutomations).set({ requireFollowCheck: true })
       duringFollowCheck = async () => { await callPauseAll('pause') }
       try {
         const result = await webhookComment('6001')
-        assert.equal(result.status, 'ignored')
-        assert.equal(privateReplies.length, 0, 'a pausa ligada no meio do processamento vale antes do envio')
-        const logs = await logsByStatus('ignorado_pausa')
+        assert.equal(result.status, 'sent')
+        assert.equal(privateReplies.length, 1, 'pausa ligada durante a consulta não bloqueia automação')
+        const logs = await logsByStatus('sent')
         assert.equal(logs.length, 1)
-        assert.match(logs[0].errorMessage ?? '', /antes do envio/)
+        assert.equal(logs[0].errorMessage, null)
       } finally {
         duringFollowCheck = null
         await db.update(schema.instagramCommentAutomations).set({ requireFollowCheck: false })
