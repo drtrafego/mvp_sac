@@ -6,7 +6,7 @@ import path from 'node:path'
 import ts from 'typescript'
 
 function files(dir: string): string[] { return readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? files(path.join(dir, e.name)) : [path.join(dir, e.name)]) }
-const roots = ['src/lib/operator', 'src/app/api/operator', 'src/components/operator']
+const roots = ['src/lib/operator', 'src/app/api/operator', 'src/app/api/operator-executor', 'src/components/operator']
 const sources = roots.flatMap(files)
 test('T-TRAVA1-C e T-TRAVA2-B imports, chamadas e campos proibidos ausentes', () => {
   for (const name of sources) {
@@ -35,7 +35,7 @@ test('T-TRAVA1-C e T-TRAVA2-B imports, chamadas e campos proibidos ausentes', ()
     if (name.includes('/acoes/')) assert.doesNotMatch(text, /\bALTER\s+TABLE\b/i, name)
   }
 })
-test('T-ADIT-1 somente arquivos previstos na Fatia 3, sem exclusão nem alteração de processador', () => {
+test('T-ADIT-1 somente arquivos previstos na F1 do executor, sem exclusão nem alteração de processador', () => {
   const names = (args: string[]) => execFileSync('git', args, { encoding: 'utf8' }).trim().split('\n').filter(Boolean)
   const allChanged = [...new Set([
     ...names(['diff', 'origin/main...HEAD', '--name-only', '--diff-filter=M']),
@@ -43,8 +43,8 @@ test('T-ADIT-1 somente arquivos previstos na Fatia 3, sem exclusão nem alteraç
     ...names(['diff', '--name-only', '--diff-filter=M']),
   ])].sort()
   const changed = allChanged.filter(name => !name.startsWith('scripts/operator-fase0'))
-  const allowed = ['src/lib/operator/acoes/types.ts', 'src/lib/operator/acoes/limits.ts', 'src/lib/operator/acoes/validate.ts', 'src/lib/operator/acoes/prepare.ts', 'src/lib/operator/acoes/canonical.ts', 'src/lib/operator/acoes/sql.ts', 'src/lib/operator/acoes/execute.ts', 'src/lib/operator/acoes/flow.ts', 'src/lib/operator/acoes/undo.ts', 'src/lib/operator/acoes/public-view.ts', 'src/lib/operator/acoes/error-messages.ts', 'src/components/operator/job-actions.tsx', 'src/components/operator/clarification-picker.tsx', 'scripts/operator-acoes-harness.ts', 'scripts/operator-acoes-f2.test.ts', 'src/lib/operator/acoes/resolve-rule.ts', 'src/components/operator/confirmation-card.tsx', 'scripts/operator-acoes-integration.test.ts', 'scripts/operator-acoes-travas.test.ts']
-  for (const file of changed) assert.ok(allowed.includes(file), `Edição fora da Fatia 3: ${file}`)
+  const allowed = ['src/lib/operator/privacy.ts', 'src/lib/operator/acoes/prompt.ts', 'scripts/operator-acoes-f2-isolamento.test.ts', 'scripts/operator-acoes-f3-fronteiras.test.ts', 'scripts/operator-acoes-f3-prepare-fronteiras.test.ts', 'scripts/operator-acoes-f3-regras.test.ts', 'scripts/operator-acoes-f3-sql.test.ts', 'src/lib/operator/acoes/validate.ts', 'src/lib/operator/service.ts', 'src/proxy.ts', 'src/components/operator/operator-console.tsx', 'scripts/operator-acoes-travas.test.ts', 'package.json', 'scripts/operator-acoes-harness.ts', 'scripts/operator-acoes-f2.test.ts']
+  for (const file of changed) assert.ok(allowed.includes(file), `Edição fora da F1: ${file}`)
   for (const file of ['src/lib/instagram-comment-processor.ts', 'src/app/api/comment-automations/ensure-for-media/route.ts', 'src/lib/db/schema.ts']) assert.ok(!allChanged.includes(file))
   assert.deepEqual([...new Set([
     ...names(['diff', 'origin/main...HEAD', '--name-only', '--diff-filter=D']),
@@ -56,7 +56,8 @@ test('T-ADIT-1 somente arquivos previstos na Fatia 3, sem exclusão nem alteraç
     ...names(['diff', 'HEAD', '--name-only', '--diff-filter=A']),
     ...names(['ls-files', '--others', '--exclude-standard']),
   ])]
-  assert.ok(added.every(n => /^(src\/lib\/operator\/acoes\/|src\/app\/api\/operator\/|src\/components\/operator\/|scripts\/operator-acoes-|scripts\/operator-apply-migration-0046\.ts$|drizzle\/0046_sac_operator_locks\.sql$)/.test(n)))
+  // A F2 trabalha em paralelo somente nestes dois diretórios novos.
+  assert.ok(added.every(n => /^(src\/lib\/operator\/dm\.ts$|src\/lib\/operator\/executor\/|src\/app\/api\/operator-executor\/|src\/app\/api\/operator\/executor\/|scripts\/operator-executor-|scripts\/sac-operator\/|deploy\/sac-operator\/|scripts\/operator-apply-migration-0047\.ts$|drizzle\/0047_sac_operator_executor\.sql$)/.test(n)))
 })
 test('T-PII-LISTA vocabulário acrescentado não inclui prenomes brasileiros', () => {
   // Lista de referência fixa, independente do dicionário de intenções.

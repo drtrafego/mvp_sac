@@ -34,19 +34,22 @@ export function hostDe(value: string) {
     throw new OperatorServiceError('Use um endereço HTTPS público, sem credenciais.', 400, 'INVALID_LINK')
   return host
 }
+
 export function validarMensagem(texto: string, contexto: { markers?: Map<string, string>; original?: string; linkDomains?: string[]; servidor?: boolean }) {
+  if (!contexto.servidor && !contexto.markers?.has('[DM_1]'))
+    throw new OperatorServiceError('Qual é a mensagem que devo enviar? Escreva assim: mensagem: ...', 400, 'INVALID_MESSAGE')
   if (!contexto.servidor && /https?|www\./i.test(texto)) throw new OperatorServiceError('O link precisa vir do pedido humano.', 400, 'LINK_NOT_FROM_USER')
+  if (!texto.trim()) throw new OperatorServiceError('Qual é a mensagem que devo enviar? Escreva assim: mensagem: ...', 400, 'INVALID_MESSAGE')
   let mensagem = texto
   if (!contexto.servidor) {
-    // Blocos entre aspas podem conter um [LINK_n] protegido antes da criação
-    // do marcador do bloco. Expande somente os marcadores do próprio pedido.
-    const markers = contexto.markers ?? new Map<string, string>()
-    const seen = new Set<string>()
-    while (/\[(?:T\d+|PALAVRA_\d+|LINK_\d+|CONTATO_\d+)\]/.test(mensagem)) {
-      if (seen.has(mensagem) || seen.size > markers.size) throw new OperatorServiceError('Referência desconhecida no pedido.', 400, 'MARKER_UNKNOWN')
-      seen.add(mensagem)
-      mensagem = resolverMarcadores(mensagem, markers)
-    }
+    if (!/^\[DM_\d+\]$/.test(texto))
+      throw new OperatorServiceError('A mensagem do plano deve usar somente o marcador de DM do pedido.', 400, 'INVALID_PLAN')
+    if (texto !== '[DM_1]') throw new OperatorServiceError('Referência desconhecida no pedido.', 400, 'MARKER_UNKNOWN')
+    const value = contexto.markers?.get(texto)
+    if (value === undefined) throw new OperatorServiceError('Qual é a mensagem que devo enviar? Escreva assim: mensagem: ...', 400, 'INVALID_MESSAGE')
+    // O valor é indivisível e privado deste pedido. Nunca expande marcadores
+    // escritos dentro da própria mensagem nem normaliza seu conteúdo.
+    mensagem = value
   }
   if (!mensagem.trim() || mensagem.length > 1500 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(mensagem)) throw new OperatorServiceError('Mensagem inválida. Use até 1.500 caracteres.', 400, 'INVALID_MESSAGE')
   const dominios = [...new Set((mensagem.match(/\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s<>"']+/gi) ?? []).map(hostDe))]

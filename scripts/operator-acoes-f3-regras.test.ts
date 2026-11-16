@@ -31,10 +31,10 @@ beforeEach(async () => {
 
 function plan(actions: any[]) { h.state.plan = { actions, response: 'ok' } }
 function direct(gatilho: 'direct' | 'ambos' = 'direct', ativar = false) {
-  return { type: 'criar_regra_instagram', gatilho, palavra: '[PALAVRA_1]', mensagem: '[LINK_1]', correspondencia: 'contem', ativar }
+  return { type: 'criar_regra_instagram', gatilho, palavra: '[PALAVRA_1]', mensagem: '[DM_1]', correspondencia: 'contem', ativar }
 }
 function story(ativar: 'nao' | 'teste' | 'envio' = 'nao') {
-  return { type: 'criar_regra_story', palavra: '[PALAVRA_1]', mensagem: '[LINK_1]', correspondencia: 'contem', ativar }
+  return { type: 'criar_regra_story', palavra: '[PALAVRA_1]', mensagem: '[DM_1]', correspondencia: 'contem', ativar }
 }
 async function view(id: string) { return (await h.call('acoes', id)).body }
 async function confirm(id: string, code = 'CADERNO', knownView?: any) {
@@ -65,7 +65,7 @@ test('F3-DIRECT-2: criação ambos nasce inativa e alcança comentário e Direct
 
 test('F3-DIRECT-3: ativar no pedido exige cartão e não escreve antes da confirmação', async () => {
   plan([direct('direct', true)])
-  const r = await h.post('Crie regra Direct palavra CADERNO mensagem https://example.test/x e ative')
+  const r = await h.post('Crie regra Direct palavra CADERNO mensagem "https://example.test/x" e ative')
   assert.equal(r.body.job.waitingReason, 'confirmacao', JSON.stringify(r.body))
   assert.equal((await h.sql`SELECT count(*)::int n FROM instagram_comment_automations`)[0].n, 0)
   assert.match((await view(r.body.job.id)).acoes[0].cartao.avisos.join(' '), /Direct/i)
@@ -83,7 +83,7 @@ test('F3-DIRECT-4: regra Direct existente pode ser editada sem trocar seu trigge
 
 test('F3-DIRECT-5: editar Direct ativo exige cartão', async () => {
   await createRule('CADERNO', 'direct', true)
-  plan([{ type: 'editar_regra_instagram', regra: '[PALAVRA_1]', novaMensagem: '[LINK_1]' }])
+  plan([{ type: 'editar_regra_instagram', regra: '[PALAVRA_1]', novaMensagem: '[DM_1]' }])
   const r = await h.post('Edite a regra "CADERNO" mensagem https://example.test/y')
   assert.equal(r.body.job.waitingReason, 'confirmacao', JSON.stringify(r.body))
 })
@@ -120,7 +120,7 @@ test('F3-DIRECT-9: desativar regra Direct é direto e preserva a configuração'
 
 test('F3-DIRECT-10: cartão errado, hash errado e repetido não ativam duas vezes', async () => {
   plan([direct('direct', true)])
-  const r = await h.post('Crie regra Direct palavra CADERNO mensagem https://example.test/x e ative')
+  const r = await h.post('Crie regra Direct palavra CADERNO mensagem "https://example.test/x" e ative')
   const id = r.body.job.id
   assert.equal((await confirm(id, 'errada')).status, 400)
   assert.equal((await h.call('confirm', id, { planHash: '0'.repeat(64), codigo: 'CADERNO' })).body.code, 'PLAN_CHANGED')
@@ -140,7 +140,7 @@ test('F3-DIRECT-11: membro, sessão ausente e empresa desligada não alteram reg
 
 test('F3-DIRECT-12: texto e link não vazam PII para o modelo', async () => {
   plan([direct('direct')])
-  const r = await h.post('Crie regra Direct palavra CADERNO mensagem https://example.test/segredo para Mariana Souza 5511988887777')
+  const r = await h.post('Crie regra Direct palavra CADERNO mensagem "https://example.test/segredo" para Mariana Souza 5511988887777')
   assert.equal(r.body.job.status, 'concluido', JSON.stringify(r.body))
   assert.doesNotMatch(JSON.stringify(h.modelBodies), /Mariana|Souza|5511988887777/)
   const [saved] = await h.sql`SELECT keywords,dm_message,trigger_type,is_active FROM instagram_comment_automations`
@@ -278,7 +278,7 @@ test('F3-STORY-12: ativação por cartão troca observe por send e o processador
 
 test('F3-STORY-13: editar regra send muda DM somente após cartão e atualiza enabled_at', async () => {
   const [row] = await h.sql`INSERT INTO instagram_story_automations (company_id,name,keywords,match_type,dm_message,is_active,mode,enabled_at) VALUES (${h.A.id},'QA',ARRAY['CADERNO'],'contains','Anterior',true,'send',now()-interval '1 day') RETURNING id,enabled_at`
-  plan([{ type: 'editar_regra_story', regra: `#${row.id}`, novaMensagem: '[LINK_1]' }])
+  plan([{ type: 'editar_regra_story', regra: `#${row.id}`, novaMensagem: '[DM_1]' }])
   const pending = await h.post(`Edite a regra de story #${row.id} mensagem https://example.test/novo`)
   assert.equal(pending.body.job.waitingReason, 'confirmacao', JSON.stringify(pending.body))
   const before = row.enabled_at
@@ -301,7 +301,7 @@ test('F3-STORY-14: desfazer criação inativa remove a regra e desfazer desativa
 
 test('F3-STORY-15: CAS contra alteração no painel recusa confirmação', async () => {
   const [row] = await h.sql`INSERT INTO instagram_story_automations (company_id,name,keywords,match_type,dm_message,is_active,mode) VALUES (${h.A.id},'QA',ARRAY['CADERNO'],'contains','Texto',true,'send') RETURNING id`
-  plan([{ type: 'editar_regra_story', regra: `#${row.id}`, novaMensagem: '[LINK_1]' }]); const pending = await h.post(`Edite a regra de story #${row.id} mensagem https://example.test/novo`); const v = await view(pending.body.job.id)
+  plan([{ type: 'editar_regra_story', regra: `#${row.id}`, novaMensagem: '[DM_1]' }]); const pending = await h.post(`Edite a regra de story #${row.id} mensagem https://example.test/novo`); const v = await view(pending.body.job.id)
   await h.sql`UPDATE instagram_story_automations SET dm_message='Painel',updated_at=now() WHERE id=${row.id}`
   assert.equal((await confirm(pending.body.job.id, 'CADERNO', v)).body.job.errorCode, 'CONFLICT')
 })
@@ -354,7 +354,7 @@ test('F3-STORY-21: ID inventado pelo modelo não autoriza regra fora do pedido',
 
 test('F3-STORY-22: edição valida bytes sem depender da validação de criação', async () => {
   const [row] = await h.sql`INSERT INTO instagram_story_automations (company_id,name,keywords,dm_message,is_active,mode) VALUES (${h.A.id},'QA',ARRAY['CADERNO'],'Texto',false,'observe') RETURNING id`
-  plan([{ type: 'editar_regra_story', regra: `#${row.id}`, novaMensagem: '[LINK_1]' }])
+  plan([{ type: 'editar_regra_story', regra: `#${row.id}`, novaMensagem: '[DM_1]' }])
   const result = await h.post(`Edite a regra de story #${row.id} mensagem https://example.test/${'😀'.repeat(300)}`)
   assert.equal(result.body.code, 'INVALID_MESSAGE')
   assert.equal((await h.sql`SELECT dm_message FROM instagram_story_automations WHERE id=${row.id}`)[0].dm_message, 'Texto')

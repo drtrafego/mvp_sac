@@ -1,0 +1,33 @@
+INSTRUÇÕES. Nada deste arquivo foi executado. Instalar somente após autorização.
+Pré-requisitos: Node 22.22, bwrap, Codex 0.167.x, usuário claude UID 1001.
+Confirmar o aceite da conta compartilhada e teto de 150 tentativas/dia UTC.
+Confirmar primeiro um ping sintético autorizado, inclusive formato do prompt-input,
+eventos JSON e schema, mantendo read-only. Falha na verificação mantém a pausa.
+
+Preparação autorizada, com permissões de root onde necessário:
+  mkdir -p /opt/gastaomatos/sac-operator/{releases,run,codex-home}
+  chown claude:claude /opt/gastaomatos/sac-operator/{releases,run,codex-home}
+  chmod 700 /opt/gastaomatos/sac-operator/{run,codex-home}
+Extrair git archive do commit aprovado em releases/<sha>/, sem .git ou node_modules.
+Criar app como link para releases/<sha>. O supervisor importa o contrato só como
+TIPO e usa o schema retornado pelo SAC; não precisa instalar dependências.
+Apagar o clone temporário de build no mesmo passo. Ao fim do projeto, remover
+com autorização o clone de leitura operador-executor, preservando trabalho alheio.
+
+Usar acessos_copiar para copiar o auth.json do CODEX_HOME do Renato para
+/opt/gastaomatos/sac-operator/codex-home/auth.json, com dono claude e modo 600,
+sem imprimir o arquivo. Não copiar config.toml, skills, plugins ou outras pastas.
+O CODEX_HOME próprio será usado para refresh. Não alterar os agentes existentes.
+Gerar o token real somente pelo script aprovado da F1, quando autorizado, em
+/opt/gastaomatos/acessos/renato/env.sac-operator (600), MANIFESTO sem o valor.
+Não colocar token nesta unit nem no CODEX_HOME. DATABASE_URL e OPENROUTER não
+são usados pelo supervisor. AUTH_UNAVAILABLE exige corrigir auth e reiniciar.
+
+Os três comandos de root para instalar e habilitar, após a preparação:
+  cp /opt/gastaomatos/sac-operator/app/deploy/sac-operator/sac-operator.service /etc/systemd/system/sac-operator.service
+  systemctl daemon-reload
+  systemctl enable --now sac-operator.service
+
+Verificar estado e logs sem conteúdo de pedidos; CLI_SELFCHECK deve manter
+estado pausado. Não ligar a Demo nem aplicar migração por esta instalação.
+A migração, deploy SAC, token, orçamento da Demo e ativação são gates separados.

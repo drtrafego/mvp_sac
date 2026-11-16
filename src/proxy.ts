@@ -11,6 +11,7 @@ function isAgentDirectLoginPath(pathname: string) {
 }
 
 const PUBLIC_PATHS = [
+  '/api/operator-executor',
   '/handler',
   '/invite',
   '/api/webhooks',
@@ -197,7 +198,9 @@ export async function proxy(request: NextRequest) {
   }
 
   // Se a rota for pública ou estática, permite sem autenticação adicional
-  if (PUBLIC_PATHS.some(path => pathname.startsWith(path)) || pathname === '/') {
+  if (PUBLIC_PATHS.some(path => path === '/api/operator-executor'
+    ? pathname === path || pathname.startsWith(path + '/')
+    : pathname.startsWith(path)) || pathname === '/') {
     return NextResponse.next()
   }
 

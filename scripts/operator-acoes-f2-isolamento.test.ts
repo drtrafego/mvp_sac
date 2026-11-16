@@ -8,7 +8,7 @@ import { createOperatorAcoesHarness, type QaHarness } from './operator-acoes-har
 let h: QaHarness
 const dialect = new PgDialect()
 const text = 'Crie regra palavra CADERNO mensagem https://example.test/material'
-const create = (ativar = false) => ({ type: 'criar_regra_instagram' as const, gatilho: 'comentario' as const, palavra: '[PALAVRA_1]', mensagem: '[LINK_1]', correspondencia: 'contem' as const, ativar })
+const create = (ativar = false) => ({ type: 'criar_regra_instagram' as const, gatilho: 'comentario' as const, palavra: '[PALAVRA_1]', mensagem: '[DM_1]', correspondencia: 'contem' as const, ativar })
 before(async () => { h = await createOperatorAcoesHarness() })
 after(async () => { if (h) await h.close() })
 beforeEach(async () => {

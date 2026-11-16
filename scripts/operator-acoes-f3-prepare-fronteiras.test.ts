@@ -19,8 +19,8 @@ for (const [label, unit] of [['ASCII', 'a'], ['acentos', 'á'], ['emoji', '😀'
     const message = body + 'x'.repeat(1000 - Buffer.byteLength(body))
     const ator: Ator = { companyId: 1, userId: 'qa', actorName: 'Admin de teste', role: 'admin', companySlug: 'qa' }
     const prepare = (text: string) => prepararPlano(ator, randomUUID(), {
-      actions: [{ type: 'criar_regra_story', palavra: '[PALAVRA_1]', mensagem: '[T1]', correspondencia: 'contem', ativar: 'nao' }], response: 'ok',
-    }, new Map([['[PALAVRA_1]', 'CADERNO'], ['[T1]', text]]), text,
+      actions: [{ type: 'criar_regra_story', palavra: '[PALAVRA_1]', mensagem: '[DM_1]', correspondencia: 'contem', ativar: 'nao' }], response: 'ok',
+    }, new Map([['[PALAVRA_1]', 'CADERNO'], ['[DM_1]', text]]), `mensagem: "${text}"`,
     { allowedActions: ['criar_regra_story'], maxJobsPerDay: 1000, dailyTokenBudget: 1000000, linkDomains: [] })
     assert.equal(Buffer.byteLength(message), 1000)
     assert.equal(Buffer.byteLength(message + 'x'), 1001)

@@ -21,7 +21,7 @@ beforeEach(async () => {
 })
 
 const story = (palavra = '[PALAVRA_1]') => ({
-  type: 'criar_regra_story', palavra, mensagem: '[LINK_1]', correspondencia: 'contem', ativar: 'nao',
+  type: 'criar_regra_story', palavra, mensagem: '[DM_1]', correspondencia: 'contem', ativar: 'nao',
 })
 function plan(actions: unknown[]) { h.state.plan = { actions, response: 'ok' } }
 async function createStory() {

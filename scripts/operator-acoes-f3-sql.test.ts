@@ -24,7 +24,7 @@ function directSql(text: string, params: unknown[]) {
   return h.sql.unsafe(command, values)
 }
 async function prepared() {
-  return h.prepared([{ type:'criar_regra_story',palavra:'[PALAVRA_1]',mensagem:'[LINK_1]',correspondencia:'contem',ativar:'nao' }], 'Crie story palavra CADERNO mensagem https://example.test/material')
+  return h.prepared([{ type:'criar_regra_story',palavra:'[PALAVRA_1]',mensagem:'[DM_1]',correspondencia:'contem',ativar:'nao' }], 'Crie story palavra CADERNO mensagem https://example.test/material')
 }
 
 test('F3-GATE: cada trava SQL isolada impede story sem depender da rota', async () => {

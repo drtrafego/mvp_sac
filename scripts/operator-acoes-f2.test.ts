@@ -19,7 +19,7 @@ beforeEach(async () => {
   await h.sql`DELETE FROM sac_operator_locks`
 })
 function plan(actions: any[]) { h.state.plan = { actions, response: 'ok' } }
-const create = (ativar = false, mensagem = '[LINK_1]') => ({ type: 'criar_regra_instagram', gatilho: 'comentario', palavra: '[PALAVRA_1]', mensagem, correspondencia: 'contem', ativar })
+const create = (ativar = false, mensagem = '[DM_1]') => ({ type: 'criar_regra_instagram', gatilho: 'comentario', palavra: '[PALAVRA_1]', mensagem, correspondencia: 'contem', ativar })
 async function submit(word = 'CADERNO', ativar = false) {
   plan([create(ativar)])
   return h.post(`Crie regra palavra ${word} mensagem https://example.test/material`)
@@ -89,8 +89,8 @@ test('T-REGRA-3/4: duplicata sem caixa/acento e dois pedidos paralelos ficam em 
 test('T-REGRA-5/6: links de origem humana, HTTPS, domínio, palavra reservada e esquema fechado', async () => {
   for (const palavra of ['sim','quero','Luana','xy']) assert.equal((await submit(palavra)).body.code, 'INVALID_KEYWORD', palavra)
   plan([create(false, 'https://inventado.test')])
-  assert.equal((await h.post('Crie regra palavra CADERNO')).body.code, 'LINK_NOT_FROM_USER')
-  plan([create(false, 'ftp://example.test/material')]); assert.equal((await h.post('Crie regra palavra CADERNO')).body.code, 'INVALID_LINK')
+  assert.equal((await h.post('Crie regra palavra CADERNO mensagem: "Conteúdo autorizado"')).body.code, 'LINK_NOT_FROM_USER')
+  plan([create()]); assert.equal((await h.post('Crie regra palavra CADERNO mensagem: ftp://example.test/material')).body.code, 'INVALID_LINK')
   for (const link of ['http://example.test','https://user:pass@example.test','https://127.0.0.1','https://[::1]','https://localhost','https://2130706433']) {
     plan([create()]); assert.equal((await h.post(`Crie regra palavra CADERNO mensagem ${link}`)).body.code, 'INVALID_LINK', link)
   }
@@ -102,15 +102,15 @@ test('T-REGRA-7: edição só muda campos permitidos, ativa pede cartão, templa
   const id = await rule()
   await h.sql`UPDATE instagram_comment_automations SET public_reply='Legado',require_follow_check=true,hide_comment_after_reply=true,auto_tag='legado' WHERE id=${id}`
   const before = (await h.sql`SELECT to_jsonb(r) v FROM instagram_comment_automations r WHERE id=${id}`)[0].v
-  const r = await change('editar_regra_instagram', id, { novaPalavra: '[PALAVRA_1]', novaMensagem: '[LINK_1]', novaCorrespondencia: 'exata' })
+  const r = await change('editar_regra_instagram', id, { novaPalavra: '[PALAVRA_1]', novaMensagem: '[DM_1]', novaCorrespondencia: 'exata' })
   assert.equal(r.body.job.status, 'concluido', JSON.stringify(r.body))
   const after = (await h.sql`SELECT to_jsonb(r) v FROM instagram_comment_automations r WHERE id=${id}`)[0].v
   assert.deepEqual(Object.keys(before).filter(k => JSON.stringify(before[k]) !== JSON.stringify(after[k])).sort(), ['keywords','dm_message','match_type','updated_at'].sort())
   await h.sql`UPDATE instagram_comment_automations SET is_active=true WHERE id=${id}`
-  const active = await change('editar_regra_instagram', id, { novaMensagem: '[LINK_1]' }); assert.equal(active.body.job.waitingReason, 'confirmacao')
+  const active = await change('editar_regra_instagram', id, { novaMensagem: '[DM_1]' }); assert.equal(active.body.job.waitingReason, 'confirmacao')
   assert.equal((await confirm(active.body.job.id)).body.job.status, 'concluido')
   await h.sql`UPDATE instagram_comment_automations SET template_id='021126' WHERE id=${id}`
-  assert.equal((await change('editar_regra_instagram', id, { novaMensagem: '[LINK_1]' })).body.code, 'PROTECTED_RULE')
+  assert.equal((await change('editar_regra_instagram', id, { novaMensagem: '[DM_1]' })).body.code, 'PROTECTED_RULE')
 })
 test('T-REGRA-8/10: sombra e alteração no painel são recusadas', async () => {
   const first = await rule('CADERNO', true); const id = await rule()
@@ -191,7 +191,7 @@ test('Travas de sessão/admin/IDOR/CSRF/desligado/kill/permissão; mesma regra p
 test('PII no corpo real do modelo e nenhuma escrita de pausa ou envio nas ações', async () => {
   const snapshot = async () => JSON.stringify({ pauses: await h.sql`SELECT * FROM company_pause_switches ORDER BY id`, leads: await h.sql`SELECT to_jsonb(r) v FROM recovery_leads r ORDER BY id`, settings: await h.sql`SELECT * FROM settings ORDER BY id`, messages: await h.sql`SELECT count(*) n FROM whatsapp_messages`, jobs: await h.sql`SELECT count(*) n FROM message_jobs`, logs: await h.sql`SELECT count(*) n FROM instagram_comment_logs`, story: await h.sql`SELECT count(*) n FROM instagram_story_deliveries` })
   const before = await snapshot()
-  plan([create(true, '[T1] [T2] [CONTATO_1] [CONTATO_2] [LINK_1]')])
+  plan([create(true, '[DM_1]')])
   const r = await h.post('Crie regra palavra CADERNO mensagem Mariana Souza mariana@example.test 11999998888 https://example.test/material')
   assert.equal(r.body.job.waitingReason, 'confirmacao', JSON.stringify(r.body))
   const body = h.modelBodies.at(-1); assert.equal(body.messages.length, 2)
@@ -229,7 +229,7 @@ test('Migração 0046 duas vezes preserva information_schema; aplicador exige al
   assert.equal(run(['--apply']).status, 1)
   assert.match(run(['--apply'], { OPERATOR_MIGRATION_CONFIRM:'sim', OPERATOR_MIGRATION_DATABASE_URL:'postgres://a:b@127.0.0.1:1/errado', OPERATOR_MIGRATION_EXPECTED_DATABASE:'test' }).stderr, /não corresponde/)
   assert.match(run(['--apply'], { OPERATOR_MIGRATION_CONFIRM:'sim', OPERATOR_MIGRATION_DATABASE_URL:'postgres://a:b@remote.test/test', OPERATOR_MIGRATION_EXPECTED_DATABASE:'test' }).stderr, /remoto bloqueado/)
-  assert.equal(run(['--apply'], { OPERATOR_MIGRATION_CONFIRM:'sim', OPERATOR_MIGRATION_DATABASE_URL:'postgres://postgres:test@127.0.0.1:55433/test', OPERATOR_MIGRATION_EXPECTED_DATABASE:'test' }).status, 0)
+  assert.equal(run(['--apply'], { OPERATOR_MIGRATION_CONFIRM:'sim', OPERATOR_MIGRATION_DATABASE_URL:h.databaseUrl, OPERATOR_MIGRATION_EXPECTED_DATABASE:'test' }).status, 0)
   assert.deepEqual(await snapshot(), before)
 })
 
@@ -265,7 +265,7 @@ test('Regra já ativa confirma sem efeito; Desfazer de edição ativa também ex
   const done = await confirm(r.body.job.id); assert.equal(done.body.job.status, 'concluido')
   assert.equal((await h.sql`SELECT updated_at::text v FROM instagram_comment_automations WHERE id=${id}`)[0].v, before)
   assert.equal(done.body.acoes[0].podeDesfazer, false)
-  const edit = await change('editar_regra_instagram', id, { novaMensagem: '[LINK_1]' }); assert.equal((await confirm(edit.body.job.id)).body.job.status, 'concluido')
+  const edit = await change('editar_regra_instagram', id, { novaMensagem: '[DM_1]' }); assert.equal((await confirm(edit.body.job.id)).body.job.status, 'concluido')
   const undo = await h.call('undo', (await view(edit.body.job.id)).acoes[0].id)
   assert.equal(undo.body.job.waitingReason, 'confirmacao')
   assert.equal((await confirm(undo.body.job.id)).body.job.status, 'concluido')
@@ -285,7 +285,7 @@ test('Lock ocupado/expirado e atomicidade: auditoria rejeitada reverte criação
     assert.equal((await submit('OUTRAPALAVRA')).body.job.errorCode, 'OPERATOR_INCONSISTENT')
     const [row] = await h.sql`SELECT id FROM instagram_comment_automations`
     const before = (await h.sql`SELECT to_jsonb(r) v FROM instagram_comment_automations r WHERE id=${row.id}`)[0].v
-    assert.equal((await change('editar_regra_instagram', row.id, { novaMensagem: '[LINK_1]' })).body.job.errorCode, 'OPERATOR_INCONSISTENT')
+    assert.equal((await change('editar_regra_instagram', row.id, { novaMensagem: '[DM_1]' })).body.job.errorCode, 'OPERATOR_INCONSISTENT')
     assert.deepEqual((await h.sql`SELECT to_jsonb(r) v FROM instagram_comment_automations r WHERE id=${row.id}`)[0].v, before)
     assert.equal((await h.sql`SELECT count(*)::int n FROM instagram_comment_automations`)[0].n, 1)
   } finally {
@@ -302,14 +302,14 @@ test('Leitura de story do perfil Fatia 2 respeita empresa; escrita sem permissã
   assert.equal(r.body.job.status, 'concluido')
   const data = r.body.job.resultJson.results[0].data
   assert.equal(data.length, 1); assert.equal(data[0].name, 'Visível')
-  plan([{ type: 'criar_regra_story', palavra: '[PALAVRA_1]', mensagem: '[LINK_1]', correspondencia: 'contem', ativar: 'envio' }])
+  plan([{ type: 'criar_regra_story', palavra: '[PALAVRA_1]', mensagem: '[DM_1]', correspondencia: 'contem', ativar: 'envio' }])
   assert.equal((await h.post('Crie regra story palavra CADERNO mensagem https://example.test')).body.code, 'ACTION_NOT_ALLOWED')
 })
 
 test('Mensagem humana entre aspas resolve link aninhado no servidor; palavra de dois caracteres aceita em exata', async () => {
-  plan([create(false, '[PALAVRA_1]')])
-  // Aspas são anonimizadas antes da extração de palavra-chave: mensagem #1, palavra #2.
-  h.state.plan = { actions: [{ ...create(false, '[PALAVRA_1]'), palavra: '[PALAVRA_2]' }], response: 'ok' }
+  plan([create(false, '[DM_1]')])
+  // A DM é extraída antes da palavra e recebe seu próprio marcador.
+  h.state.plan = { actions: [{ ...create(false, '[DM_1]'), palavra: '[PALAVRA_1]' }], response: 'ok' }
   const r = await h.post('Crie regra palavra CADERNO mensagem "Olá, veja https://example.test/material"')
   assert.equal(r.body.job.status, 'concluido', JSON.stringify(r.body))
   assert.equal((await h.sql`SELECT dm_message FROM instagram_comment_automations`)[0].dm_message, 'Olá, veja https://example.test/material')
@@ -375,7 +375,7 @@ test('Cartão misto aceita movimento sem efeito; Desfazer mostra domínios da me
   assert.equal((await confirm(r.body.job.id)).body.job.status, 'concluido')
   const id = await rule('RESTAURAR', true)
   await h.sql`UPDATE instagram_comment_automations SET dm_message='https://original.test/material' WHERE id=${id}`
-  const edit = await change('editar_regra_instagram', id, { novaMensagem: '[LINK_1]' }); assert.equal((await confirm(edit.body.job.id)).body.job.status, 'concluido')
+  const edit = await change('editar_regra_instagram', id, { novaMensagem: '[DM_1]' }); assert.equal((await confirm(edit.body.job.id)).body.job.status, 'concluido')
   const undo = await h.call('undo', (await view(edit.body.job.id)).acoes[0].id)
   const card = (await view(undo.body.job.id)).acoes[0].cartao
   assert.deepEqual(card.dominios, ['original.test'])

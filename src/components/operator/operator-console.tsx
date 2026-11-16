@@ -1,5 +1,6 @@
 'use client'
 
+import type { ExecutorStatus } from '@/lib/operator/executor/contract'
 import { mensagemErro } from '@/lib/operator/acoes/error-messages'
 import { OperatorJobActions } from './job-actions'
 import { useEffect, useRef, useState } from 'react'
@@ -22,8 +23,10 @@ export function OperatorConsole() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const timers = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [executor, setExecutor] = useState<ExecutorStatus | null>(null)
   async function history() {
-    const res = await fetch('/api/operator/messages', { cache: 'no-store' })
+    const [status, res] = await Promise.all([fetch('/api/operator/executor', { cache: 'no-store' }).catch(() => null), fetch('/api/operator/messages', { cache: 'no-store' })])
+    if (status?.ok) setExecutor(await status.json() as ExecutorStatus)
     if (!res.ok) return
     const data = await res.json() as { jobs?: Job[] }
     setJobs(data.jobs ?? [])
@@ -45,6 +48,7 @@ export function OperatorConsole() {
   return <Card>
     <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck size={18} /> Operar o SAC</CardTitle><CardDescription>Exemplos: “Mova [nome] para Agendado”, “Anote no lead [nome] que pediu retorno amanhã”, “Crie a regra: quem comentar GUIA recebe [link]”.</CardDescription></CardHeader>
     <CardContent className="space-y-4">
+      {executor && !executor.disponivel && <p role="status" className="rounded-lg border p-3 text-sm">Executor indisponível{executor.ultimoContatoEm ? ` desde ${new Date(executor.ultimoContatoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}. Pedidos ficam salvos por 5 minutos; nada antigo é aplicado.</p>}
       <Textarea value={text} onChange={event => setText(event.target.value)} maxLength={4000} rows={4} placeholder="Descreva o pedido que você quer fazer" />
       <div className="flex justify-end"><Button type="button" onClick={() => void submit()} disabled={busy || !text.trim()}>{busy ? <Loader2 className="animate-spin" /> : <Send />} Enviar</Button></div>
       {error && <p role="alert" className="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"><CircleAlert size={16} />{error}</p>}

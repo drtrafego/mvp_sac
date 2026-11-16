@@ -1,4 +1,5 @@
 import type { OperatorPlan } from './catalog'
+import { extrairDM } from './dm'
 
 export type RedactedRequest = { text: string; markers: Map<string, string> }
 
@@ -29,7 +30,9 @@ type MarkerKind = 'T' | 'LINK' | 'CONTATO' | 'PALAVRA'
  * inexistente, apelido ou empresa com milhões de registros.
  */
 export function redactOperatorText(request: string): RedactedRequest {
+  const dm = extrairDM(request)
   const markers = new Map<string, string>()
+  if (dm.mensagem !== undefined) markers.set('[DM_1]', dm.mensagem)
   const indexes: Record<MarkerKind, number> = { T: 0, LINK: 0, CONTATO: 0, PALAVRA: 0 }
   const stable = new Map<string, string>()
   const markerFor = (kind: MarkerKind, original: string) => {
@@ -44,7 +47,7 @@ export function redactOperatorText(request: string): RedactedRequest {
   }
 
   // Primeiro protege blocos que podem conter pontuação ou mais de um token.
-  let text = request
+  let text = dm.text
     .replace(/\b(?:https?:\/\/|www\.)[^\s<>"']+/giu, value => markerFor('LINK', value))
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, value => markerFor('CONTATO', value))
     .replace(/(?<![\d+])\+?(?:\d[\s().-]*){7,}\d(?!\d)/gu, value => markerFor('CONTATO', value))

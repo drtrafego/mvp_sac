@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test:operator-executor": "node --require ./scripts/operator-server-only-register.cjs --experimental-test-module-mocks --import tsx --test --test-concurrency=1 scripts/operator-executor-*.test.ts",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

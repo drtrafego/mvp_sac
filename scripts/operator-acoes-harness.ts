@@ -4,6 +4,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:net'
 import { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import postgres from 'postgres'
@@ -12,21 +13,30 @@ import * as schema from '../src/lib/db/schema'
 import { NextRequest } from 'next/server'
 import { roleSatisfies, type CompanyRole } from '../src/lib/company-role'
 
-const CONTAINER = 'op-f1-pg'
-const URL = 'postgres://postgres:test@127.0.0.1:55433/test'
 export function operatorRequest(path: string, body: unknown, headers: Record<string, string> = {}) {
   return new NextRequest(`https://sac.test${path}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://sac.test', ...headers }, body: JSON.stringify(body) })
 }
-export async function createOperatorAcoesHarness() {
+export async function createOperatorAcoesHarness(planner: 'openrouter' | 'fila' = 'openrouter') {
+  // Execuções paralelas não podem remover o Postgres umas das outras.
+  const CONTAINER = `op-f1-${randomUUID()}`
+  const port = await new Promise<number>((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address() as { port: number }
+      server.close(error => error ? reject(error) : resolve(address.port))
+    })
+  })
+  const URL = `postgres://postgres:test@127.0.0.1:${port}/test`
   assert.equal(spawnSync('docker', ['info'], { stdio: 'ignore' }).status, 0, 'Docker obrigatório: não executado sem Postgres real')
-  spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' })
-  execFileSync('docker', ['run', '--rm', '-d', '--name', CONTAINER, '-e', 'POSTGRES_PASSWORD=test', '-e', 'POSTGRES_DB=test', '-p', '127.0.0.1:55433:5432', 'postgres:16-alpine'], { stdio: 'ignore' })
+  spawnSync('docker', ['rm', '-f', '-v', CONTAINER], { stdio: 'ignore' })
+  execFileSync('docker', ['run', '--rm', '-d', '--name', CONTAINER, '-e', 'POSTGRES_PASSWORD=test', '-e', 'POSTGRES_DB=test', '-p', `127.0.0.1:${port}:5432`, 'postgres:16-alpine'], { stdio: 'ignore' })
   const client = postgres(URL, { max: 30, onnotice: () => {} })
   const pgn = postgres(URL, { max: 30, onnotice: () => {}, types: {
     ts: { to: 1114, from: [1082, 1114, 1184], serialize: (x: any) => x, parse: (x: any) => x },
     jsonb: { to: 3802, from: [3802, 114], serialize: (x: any) => x, parse: (x: any) => x },
   } as any })
-  const cleanup = async () => { await pgn.end({ timeout: 2 }); await client.end({ timeout: 2 }); spawnSync('docker', ['rm', '-f', CONTAINER], { stdio: 'ignore' }) }
+  const cleanup = async () => { await pgn.end({ timeout: 2 }); await client.end({ timeout: 2 }); spawnSync('docker', ['rm', '-f', '-v', CONTAINER], { stdio: 'ignore' }) }
   try {
     let ready = false
     for (let i = 0; i < 60; i++) { try { await client`select 1`; ready = true; break } catch { await new Promise(r => setTimeout(r, 250)) } }
@@ -74,6 +84,9 @@ export async function createOperatorAcoesHarness() {
     mock.module('next/headers', { namedExports: { cookies: async () => ({ has: (n: string) => n === 'agent_auth_session' && state.mode === 'agent' }) } })
     mock.module('@/lib/auth', { namedExports: { AuthError, ForbiddenError, requireCompanyRole: auth, requireSacActor: auth, requireCompany: async () => (await auth()).company } })
     mock.module('@/lib/db', { namedExports: { db } })
+    // A regressão legada usa a resposta síncrona do fetch simulado abaixo.
+    // A suíte do executor escolhe explicitamente a fila.
+    process.env.OPERATOR_PLANNER = planner
     process.env.OPENROUTER_API_KEY = 'stub-only'
     mock.method(globalThis, 'fetch', async (url: RequestInfo | globalThis.URL, init?: RequestInit) => {
       if (String(url) !== 'https://openrouter.ai/api/v1/chat/completions') { externalCalls.push(String(url)); throw new Error('Rede externa proibida') }
@@ -118,7 +131,7 @@ export async function createOperatorAcoesHarness() {
       wa: await client`SELECT count(*)::int n FROM whatsapp_messages`, jobs: await client`SELECT count(*)::int n FROM message_jobs`,
       comments: await client`SELECT count(*)::int n FROM instagram_comment_logs`, stories: await client`SELECT count(*)::int n FROM instagram_story_deliveries WHERE status IN ('sent','reserved')`,
     })
-    return { sql: client, db, A, B, I, leadA, leadB, twin1, twin2, lead, state, modelBodies, externalCalls, actor, post, call, fresh, prepared, protectedState, flow, execute, read, messages, close: async () => { await cleanup(); assert.equal(externalCalls.length, 0, 'T-TRAVA2-A: saída externa'); assert.doesNotMatch(consoleMessages.join(' '), /Mariana|Souza|Fernanda|Borges|João|Silva|5511\d+|@example\.test/, 'T-PII-LOG: console sem PII') } }
+    return { databaseUrl: URL, sql: client, db, A, B, I, leadA, leadB, twin1, twin2, lead, state, modelBodies, externalCalls, actor, post, call, fresh, prepared, protectedState, flow, execute, read, messages, close: async () => { await cleanup(); assert.equal(externalCalls.length, 0, 'T-TRAVA2-A: saída externa'); assert.doesNotMatch(consoleMessages.join(' '), /Mariana|Souza|Fernanda|Borges|João|Silva|5511\d+|@example\.test/, 'T-PII-LOG: console sem PII') } }
   } catch (error) { await cleanup(); throw error }
 }
 export type QaHarness = Awaited<ReturnType<typeof createOperatorAcoesHarness>>

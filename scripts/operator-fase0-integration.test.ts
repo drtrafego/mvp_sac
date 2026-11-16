@@ -144,6 +144,8 @@ async function main() {
     msgs: await sql`select count(*)::int c from whatsapp_messages`,
   })
 
+  // Estas fixtures validam o contrato síncrono com transporte do modelo simulado.
+  process.env.OPERATOR_PLANNER = 'openrouter'
   process.env.OPENROUTER_API_KEY = 'sk-or-QAKEY-SEGREDO-123'
   const logs: string[] = []
   for (const m of ['log', 'error', 'warn', 'info'] as const) { const o = (console as any)[m].bind(console); (console as any)[m] = (...a: any[]) => { const s = a.map(x => x instanceof Error ? x.stack || x.message : typeof x === 'string' ? x : JSON.stringify(x)).join(' '); if (!s.startsWith('QA>')) logs.push(s); o(...a) } }

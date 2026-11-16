@@ -1,5 +1,7 @@
+import { operatorPlanner, type OperatorPlanner } from './executor/planner'
+import { enfileirar, varrer } from './executor/queue'
+import { ExecutorError } from './executor/auth'
 import { acoesPlanSchema, precisaFluxoDeAcoes, type AcoesPlan } from './acoes/catalog'
-import { ACOES_SYSTEM_PROMPT } from './acoes/prompt'
 import { handleWritePlan, expireWaitingJobs } from './acoes/flow'
 import { createHash, randomUUID } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
@@ -7,7 +9,7 @@ import { db } from '@/lib/db'
 import { isUniqueConstraintError } from '@/lib/sac-access'
 import { executeReadAction, type ReadResult } from './actions/read'
 import { assertPhaseZeroPlan, type OperatorPlan } from './catalog'
-import { createOpenRouterAdapter, type ModelResult, type OperatorModelAdapter } from './model-adapter'
+import { type ModelResult, type OperatorModelAdapter } from './model-adapter'
 import { redactRequestForCompany, resolvePlanMarkers, type RedactedRequest } from './privacy'
 import { sacOperatorCompanySettings, sacOperatorJobs, type OperatorJobStatus } from './schema'
 
@@ -32,7 +34,7 @@ const ESTIMATED_TOKENS = 512
 const utcToday = sql`(now() AT TIME ZONE 'UTC')::date`
 const utcDayStart = sql`date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`
 
-const databaseRepository: OperatorRepository = {
+export const databaseRepository: OperatorRepository = {
   async settings(companyId) {
     const [row] = await db.select().from(sacOperatorCompanySettings).where(eq(sacOperatorCompanySettings.companyId, companyId)).limit(1)
     return row ?? null
@@ -137,15 +139,47 @@ function settledUsage(result: ModelResult<OperatorPlan | AcoesPlan>) {
   return { tokensIn: Math.max(0, result.usage.inputTokens), tokensOut: Math.max(0, result.usage.outputTokens) }
 }
 
-export function createOperatorService(deps: { repository?: OperatorRepository; model?: OperatorModelAdapter<OperatorPlan | AcoesPlan>; acoes?: { handleWritePlan: typeof handleWritePlan }; execute?: (companyId: number, action: OperatorPlan['actions'][number]) => Promise<ReadResult>; redact?: (companyId: number, text: string) => Promise<RedactedRequest> } = {}) {
+export type PlanoContexto = {
+  input: { companyId: number; userId: string; role: string; actorName?: string; companySlug?: string }
+  id: string; settings: OperatorSettings; redacted: RedactedRequest; text: string
+  repository?: OperatorRepository
+  execute?: (companyId: number, action: OperatorPlan['actions'][number]) => Promise<ReadResult>
+  acoes?: { handleWritePlan: typeof handleWritePlan }
+}
+// Único caminho pós-modelo, compartilhado pelo adapter síncrono e pela fila.
+export async function aplicarPlanoDoModelo(ctx: PlanoContexto, modelResult: ModelResult<OperatorPlan | AcoesPlan>) {
+  const { input, id, settings, redacted, text } = ctx
+  const repository = ctx.repository ?? databaseRepository
+  const execute = ctx.execute ?? executeReadAction
+        if (precisaFluxoDeAcoes(modelResult.plan)) {
+          const result = await (ctx.acoes?.handleWritePlan ?? handleWritePlan)({ ator: { companyId: input.companyId, userId: input.userId, role: input.role, actorName: input.actorName ?? 'Admin', companySlug: input.companySlug ?? '' }, jobId: id, plan: acoesPlanSchema.parse(modelResult.plan), markers: redacted.markers, textoOriginal: text, settings })
+          const values = { ...result, planJson: modelResult.plan, ...settledUsage(modelResult), model: modelResult.model, finishedAt: result.status === 'aguardando_confirmacao' ? null : new Date() }
+          const job = repository.settle ? await repository.settle(input.companyId, id, values, values.tokensIn + values.tokensOut) : await repository.update(input.companyId, id, values)
+          return { job, reused: false }
+        }
+        const safePlan = assertPhaseZeroPlan(modelResult.plan as OperatorPlan)
+        const resolvedPlan = resolvePlanMarkers(safePlan, redacted.markers)
+        if (safePlan.actions.some(action => !settings.allowedActions.includes(action.type))) throw new OperatorServiceError('Ação não autorizada para esta empresa.', 403, 'ACTION_NOT_ALLOWED')
+        // O plano persistido preserva marcadores; só a chamada de leitura recebe
+        // o valor resolvido, dentro deste processo e escopada à empresa.
+        const results = await Promise.all(resolvedPlan.actions.map(action => execute(input.companyId, action)))
+        const values = { status: 'concluido' as const, planJson: safePlan, planHash: planHash(safePlan), resultText: resultText(results), resultJson: { results }, ...settledUsage(modelResult), model: modelResult.model, finishedAt: new Date() }
+        const finished = repository.settle
+          ? await repository.settle(input.companyId, id, values, values.tokensIn + values.tokensOut)
+          : await repository.update(input.companyId, id, values)
+        return { job: finished, reused: false }
+}
+
+export function createOperatorService(deps: { planner?: OperatorPlanner; repository?: OperatorRepository; model?: OperatorModelAdapter<OperatorPlan | AcoesPlan>; acoes?: { handleWritePlan: typeof handleWritePlan }; execute?: (companyId: number, action: OperatorPlan['actions'][number]) => Promise<ReadResult>; redact?: (companyId: number, text: string) => Promise<RedactedRequest> } = {}) {
   const repository = deps.repository ?? databaseRepository
-  const model = deps.model ?? createOpenRouterAdapter({ systemPrompt: ACOES_SYSTEM_PROMPT, parsePlan: v => acoesPlanSchema.parse(v) })
+  const planner = deps.planner ?? (deps.model ? { tipo: 'sincrono' as const, adapter: deps.model } : operatorPlanner())
   const execute = deps.execute ?? executeReadAction
   const redact = deps.redact ?? redactRequestForCompany
   return {
     async submit(input: { companyId: number; userId: string; role: string; requestText: string; idempotencyKey: string; actorName?: string; companySlug?: string }) {
       const text = input.requestText.trim()
       if (!text || text.length > 4000) throw new OperatorServiceError('O pedido deve ter entre 1 e 4.000 caracteres.', 400, 'INVALID_TEXT')
+      if (planner.tipo === 'fila') await varrer(input.companyId)
       await repository.expireStuck?.(input.companyId)
       const existing = await repository.existing(input.companyId, input.idempotencyKey)
       if (existing) return { job: existing, reused: true }
@@ -173,32 +207,20 @@ export function createOperatorService(deps: { repository?: OperatorRepository; m
       if (created.id !== id) return { job: created, reused: true }
       let modelResult: ModelResult<OperatorPlan | AcoesPlan> | undefined
       try {
-        modelResult = await model.plan(redacted.text, Math.min(1200, reservedTokens))
-        if (precisaFluxoDeAcoes(modelResult.plan)) {
-          const result = await (deps.acoes?.handleWritePlan ?? handleWritePlan)({ ator: { companyId: input.companyId, userId: input.userId, role: input.role, actorName: input.actorName ?? 'Admin', companySlug: input.companySlug ?? '' }, jobId: id, plan: acoesPlanSchema.parse(modelResult.plan), markers: redacted.markers, textoOriginal: text, settings })
-          const values = { ...result, planJson: modelResult.plan, ...settledUsage(modelResult), model: modelResult.model, finishedAt: result.status === 'aguardando_confirmacao' ? null : new Date() }
-          const job = repository.settle ? await repository.settle(input.companyId, id, values, values.tokensIn + values.tokensOut) : await repository.update(input.companyId, id, values)
-          return { job, reused: false }
+        if (planner.tipo === 'fila') {
+          await enfileirar(created, { job_id: id, company_id: input.companyId, marcadores: Object.fromEntries(redacted.markers), texto_original: text, ator_nome: input.actorName ?? 'Admin', empresa_slug: input.companySlug ?? '', created_at: now.toISOString() })
+          return { job: created, reused: false }
         }
-        const safePlan = assertPhaseZeroPlan(modelResult.plan as OperatorPlan)
-        const resolvedPlan = resolvePlanMarkers(safePlan, redacted.markers)
-        if (safePlan.actions.some(action => !settings.allowedActions.includes(action.type))) throw new OperatorServiceError('Ação não autorizada para esta empresa.', 403, 'ACTION_NOT_ALLOWED')
-        // O plano persistido preserva marcadores; só a chamada de leitura recebe
-        // o valor resolvido, dentro deste processo e escopada à empresa.
-        const results = await Promise.all(resolvedPlan.actions.map(action => execute(input.companyId, action)))
-        const values = { status: 'concluido' as const, planJson: safePlan, planHash: planHash(safePlan), resultText: resultText(results), resultJson: { results }, ...settledUsage(modelResult), model: modelResult.model, finishedAt: new Date() }
-        const finished = repository.settle
-          ? await repository.settle(input.companyId, id, values, values.tokensIn + values.tokensOut)
-          : await repository.update(input.companyId, id, values)
-        return { job: finished, reused: false }
+        modelResult = await planner.adapter.plan(redacted.text, Math.min(1200, reservedTokens))
+        return await aplicarPlanoDoModelo({ input, id, settings, redacted, text, repository, execute, acoes: deps.acoes }, modelResult)
       } catch (error) {
-        const safe = error instanceof OperatorServiceError ? error : new OperatorServiceError('Não foi possível concluir a consulta.', 502, 'MODEL_OR_READ_FAILURE')
+        const safe = error instanceof OperatorServiceError ? error : error instanceof ExecutorError ? new OperatorServiceError('Não foi possível enfileirar o pedido.', error.status, error.code) : new OperatorServiceError('Não foi possível concluir a consulta.', 502, 'MODEL_OR_READ_FAILURE')
         const usage = modelResult ? settledUsage(modelResult) : { tokensIn: 0, tokensOut: 0 }
         const values = { status: 'falhou' as const, errorCode: safe.code, resultText: safe.message, ...usage, finishedAt: new Date() }
         const failed = repository.settle
           ? await repository.settle(input.companyId, id, values, usage.tokensIn + usage.tokensOut)
           : await repository.update(input.companyId, id, values)
-        if (error instanceof OperatorServiceError) throw Object.assign(error, { job: failed })
+        if (error instanceof OperatorServiceError || error instanceof ExecutorError) throw Object.assign(safe, { job: failed })
         return { job: failed, reused: false }
       }
     },
