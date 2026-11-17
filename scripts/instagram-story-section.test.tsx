@@ -72,6 +72,7 @@ type Element = React.ReactElement<{
   children?: ReactNode; actions?: ReactNode; className?: string; title?: string
   role?: string; 'aria-label'?: string; 'aria-labelledby'?: string; id?: string; disabled?: boolean; value?: string; checked?: boolean
   ref?: React.Ref<unknown>; onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void
+  onMouseDown?: (event: React.MouseEvent<HTMLDivElement>) => void; onEdit?: () => void; onToggle?: () => void; rule?: { isActive: boolean };
   onClick?: () => void; onChange?: (event: { target: { value: string } }) => void
 }>
 function all(node: ReactNode, predicate: (element: Element) => boolean): Element[] {
@@ -82,6 +83,7 @@ function all(node: ReactNode, predicate: (element: Element) => boolean): Element
   return [...(predicate(el) ? [el] : []), ...all(el.props.children, predicate), ...all(el.props.actions, predicate)]
 }
 function text(node: ReactNode): string {
+  if (typeof node === 'number') return String(node)
   if (typeof node === 'string') return node
   if (Array.isArray(node)) return node.map(text).join('')
   if (React.isValidElement(node)) return text((node as Element).props.children)
@@ -113,8 +115,8 @@ function assertManualForm(tree: ReactNode) {
   assert.match(markup, /Todos os Stories|Um Story específico/)
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5))
-const existing = { id: 7, name: 'Regra existente', keywords: ['quero'], matchType: 'contains', storyId: null, dmMessage: 'Olá', mode: 'send', isActive: true, enabledAt: null }
-function setup(rules: unknown[] = []) {
+const existing = { id: 7, name: 'Regra existente', keywords: ['quero'], matchType: 'contains', storyId: null, dmMessage: 'Olá', mode: 'send', isActive: true, enabledAt: null, createdAt: '2026-11-16T12:00:00Z' }
+function setup(rules: unknown[] = [], comments: unknown[] = []) {
   const pageHooks = hooks(); const sectionHooks = hooks()
   // Pequeno adaptador de foco para os handlers reais. A navegação nativa de Tab
   // também é verificada no Chromium, pois este renderizador não monta um DOM.
@@ -157,7 +159,8 @@ function setup(rules: unknown[] = []) {
     if (path === '/api/story-automations') return responses.listError ? Response.json({ error: 'Falha ao carregar de teste.' }, { status: 503 }) : Response.json({ automations: rules })
     if (path === '/api/story-automations/stories') return responses.storiesError ? Response.json({ error: 'Falha nos Stories de teste.' }, { status: 502 }) : Response.json({ stories: [] })
     if (['/api/story-automations/logs', '/api/comment-automations/all/logs'].includes(path)) return Response.json({ logs: [] })
-    if (path === '/api/comment-automations') return Response.json({ automations: [] })
+    if (path === '/api/instagram-automations/metrics') return Response.json({ automations: [] })
+    if (path === '/api/comment-automations') return Response.json({ automations: comments })
     if (path === '/api/instagram-tag-rules') return Response.json({ rules: [] })
     if (path === '/api/comment-automations/media') return Response.json({ ok: true, media: [] })
     assert.fail(`Requisição inesperada: ${method} ${path}`)
@@ -208,9 +211,8 @@ for (const rules of [[], [existing]]) {
       assert.match(newStory.props['aria-label']!, /Story.*nova regra/)
       assert.match(newStory.props.title!, /Criar regra/)
       assert.match(group[0].props.className!, /flex-wrap/)
-      assert.match(button(tree.section, 'Nova regra').props.className!, /btn-secondary/)
-      assert.match(renderToStaticMarkup(tree.section), /últimas 24 horas/)
-      for (const entry of ['header', 'card']) {
+      assert.equal(renderToStaticMarkup(tree.section), '', 'Controlador não renderiza cartão antigo')
+      for (const entry of ['header']) {
         tree = ui.draw()
         button(entry === 'header' ? tree.page : tree.section, entry === 'header' ? 'Resposta ao Story' : 'Nova regra').props.onClick!()
         await flush(); tree = ui.draw()
@@ -228,8 +230,7 @@ for (const rules of [[], [existing]]) {
         assert.doesNotMatch(renderToStaticMarkup(tree.section), /Falha|Não foi possível/)
       }
       const posts = ui.requests.filter(r => r.method === 'POST')
-      assert.equal(posts.length, 2, 'Uma única submissão por entrada')
-      assert.deepEqual(posts[0], posts[1], 'O botão novo deve usar exatamente o mesmo submit')
+      assert.equal(posts.length, 1, 'Uma única submissão pelo cabeçalho')
       assert.deepEqual(posts[0], { url: '/api/story-automations', method: 'POST', body: { name: 'Teste', keywords: ['QUERO', 'LINK'], matchType: 'contains', storyId: null, dmMessage: 'Olá!', mode: 'send', isActive: true } })
       button(tree.page, 'Nova Automação').props.onClick!()
       tree = ui.draw()
@@ -240,33 +241,23 @@ for (const rules of [[], [existing]]) {
   })
 }
 
-test('Cabeçalho abre formulário durante carregamento e erro; tentar de novo recupera o cartão', async () => {
+test('Cabeçalho abre formulário mesmo durante carregamento ou erro da lista', async () => {
   const ui = setup()
   try {
     let tree = ui.draw()
-    assert.match(renderToStaticMarkup(tree.section), /Carregando automações de Story/)
-    const origin = button(tree.page, 'Resposta ao Story')
-    ui.node(origin).focus(); origin.props.onClick!()
+    assert.equal(renderToStaticMarkup(tree.section), '')
+    button(tree.page, 'Resposta ao Story').props.onClick!()
     tree = ui.draw()
-    assert.equal(all(tree.section, el => el.props.role === 'dialog').length, 1)
-    assert.equal(ui.focused(), ui.node(field(tree.section, 'Nome')))
+    assertManualForm(tree.section)
     button(tree.section, 'Fechar').props.onClick!()
-    tree = ui.draw()
-    assert.equal(ui.focused(), ui.node(button(tree.page, 'Resposta ao Story')), 'Retorna ao cabeçalho mesmo com a lista ainda carregando')
     ui.responses.listError = true
-    tree = await ui.mount()
-    assert.match(renderToStaticMarkup(tree.section), /Falha ao carregar de teste/)
-    assert.doesNotMatch(renderToStaticMarkup(tree.section), /Nenhuma regra/)
+    const refresh = all(ui.draw().page, el => el.props['aria-label'] === 'Atualizar dados das automações')[0]
+    refresh.props.onClick!()
+    await flush(); tree = ui.draw()
+    assert.ok(all(tree.page, el => el.props.role === 'alert').length > 0)
     button(tree.page, 'Resposta ao Story').props.onClick!()
     await flush(); tree = ui.draw()
-    assert.match(renderToStaticMarkup(tree.section), /Nova regra de Story/)
-    button(tree.section, 'Cancelar').props.onClick!()
-    ui.responses.listError = false
-    button(ui.draw().section, 'Tentar de novo').props.onClick!()
-    assert.match(renderToStaticMarkup(ui.draw().section), /Carregando automações/)
-    await flush(); tree = ui.draw()
-    assert.match(renderToStaticMarkup(tree.section), /Nenhuma regra/)
-    button(tree.section, 'Nova regra')
+    assertManualForm(tree.section)
   } finally { ui.restore() }
 })
 
@@ -288,6 +279,7 @@ test('Falhas de Stories e salvamento continuam visíveis; envio fica desabilitad
     assert.equal(ui.requests.filter(r => r.method === 'POST').length, 1)
     release(); await flush(); tree = ui.draw()
     assert.match(renderToStaticMarkup(tree.section), /Falha ao salvar de teste/)
+    assert.ok(all(tree.section, el => el.props.role === 'alert').some(el => text(el.props.children).includes('Falha ao salvar de teste')), 'Erro de salvamento anunciado')
     assert.equal(all(tree.section, el => el.props.role === 'dialog').length, 1)
     assert.equal(button(tree.section, 'Salvar').props.disabled, false)
     button(tree.section, 'Cancelar').props.onClick!()
@@ -302,7 +294,7 @@ test('Abrir pelo cabeçalho após editar limpa a regra anterior e cria ativa/val
   const ui = setup([existing])
   try {
     let tree = await ui.mount()
-    button(tree.section, 'Editar').props.onClick!()
+    all(tree.page, el => !!el.props.onEdit)[0].props.onEdit!()
     await flush(); tree = ui.draw()
     assert.equal(field(tree.section, 'Nome').props.value, existing.name)
     assertManualForm(tree.section)
@@ -328,8 +320,8 @@ for (const old of [
     const ui = setup([legacy])
     try {
       let tree = await ui.mount()
-      button(tree.section, old.isActive ? 'Desativar' : 'Ativar')
-      button(tree.section, 'Editar').props.onClick!()
+      assert.equal(all(tree.page, el => !!el.props.onToggle)[0].props.rule!.isActive, old.isActive)
+      all(tree.page, el => !!el.props.onEdit)[0].props.onEdit!()
       await flush(); tree = ui.draw()
       assertManualForm(tree.section)
       assert.equal(field(tree.section, 'Nome').props.value, legacy.name)
@@ -351,10 +343,10 @@ test('Edição mantém erro e carregamento; liga/desliga da lista envia apenas i
   const ui = setup([{ ...existing, mode: 'observe', isActive: false }])
   try {
     let tree = await ui.mount()
-    button(tree.section, 'Ativar').props.onClick!()
+    all(tree.page, el => !!el.props.onToggle)[0].props.onToggle!()
     await flush(); tree = ui.draw()
     assert.deepEqual(ui.requests.filter(r => r.method === 'PATCH')[0].body, { isActive: true })
-    button(tree.section, 'Editar').props.onClick!()
+    all(tree.page, el => !!el.props.onEdit)[0].props.onEdit!()
     await flush(); tree = ui.draw()
     ui.responses.saveError = true
     let release!: () => void
@@ -363,13 +355,14 @@ test('Edição mantém erro e carregamento; liga/desliga da lista envia apenas i
     assert.equal(button(ui.draw().section, 'Salvando...').props.disabled, true)
     release(); await flush(); tree = ui.draw()
     assert.match(renderToStaticMarkup(tree.section), /Falha ao salvar de teste/)
+    assert.ok(all(tree.section, el => el.props.role === 'alert').some(el => text(el.props.children).includes('Falha ao salvar de teste')), 'Erro de salvamento anunciado')
     assertManualForm(tree.section)
     assert.equal(button(tree.section, 'Salvar').props.disabled, false)
   } finally { ui.restore() }
 })
 
 
-for (const entry of ['header', 'card']) {
+for (const entry of ['header']) {
   for (const closing of ['Escape', 'Cancelar', 'Fechar', 'Salvar']) {
     test(`Teclado pelo ${entry}: foco inicial, ciclo Tab/Shift+Tab e retorno após ${closing}`, async () => {
       const ui = setup()
@@ -430,6 +423,7 @@ for (const entry of ['header', 'card']) {
       assert.equal(ui.requests.filter(request => request.method === 'POST').length, 1)
       release(); await flush(); tree = ui.draw()
       assert.match(renderToStaticMarkup(tree.section), /Falha ao salvar de teste/)
+    assert.ok(all(tree.section, el => el.props.role === 'alert').some(el => text(el.props.children).includes('Falha ao salvar de teste')), 'Erro de salvamento anunciado')
       all(tree.section, el => el.props.role === 'dialog')[0].props.onKeyDown!({ key: 'Escape', preventDefault() {}, stopPropagation() {} } as React.KeyboardEvent<HTMLDivElement>)
       tree = ui.draw()
       assert.equal(all(tree.section, el => el.props.role === 'dialog').length, 0)
@@ -437,3 +431,32 @@ for (const entry of ['header', 'card']) {
     } finally { release?.(); ui.restore() }
   })
 }
+
+test('Fundo do modal impede blur e mantém foco no campo', async () => {
+  const ui = setup()
+  try {
+    let tree = await ui.mount()
+    button(tree.page, 'Resposta ao Story').props.onClick!()
+    tree = ui.draw()
+    const name = ui.node(field(tree.section, 'Nome'))
+    name.focus()
+    const backdrop = all(tree.section, el => el.props.className?.includes('fixed inset-0') === true)[0]
+    let prevented = false
+    const target = {}
+    backdrop.props.onMouseDown?.({ target, currentTarget: target, preventDefault() { prevented = true } } as unknown as React.MouseEvent<HTMLDivElement>)
+    assert.equal(prevented, true, 'Mouse down no fundo deve impedir perda de foco')
+    assert.equal(ui.focused(), name)
+  } finally { ui.restore() }
+})
+
+test('Lista única inclui Story, soma contagem e não renderiza cartão/histórico técnico', async () => {
+  const ui = setup([existing], [{ ...existing, keywords: 'QUERO', triggerType: 'comment' }])
+  try {
+    const tree = await ui.mount()
+    assert.equal(text(button(tree.page, 'Regras de Automação (2)').props.children), 'Regras de Automação (2)')
+    assert.equal(all(tree.page, el => !!el.props.onEdit).length, 2)
+    assert.equal(renderToStaticMarkup(tree.section), '')
+    assert.doesNotMatch(renderToStaticMarkup(tree.section), /Histórico recente|Sem regra|Nova regra/)
+    assert.equal(ui.requests.some(r => r.url === '/api/story-automations/logs'), false)
+  } finally { ui.restore() }
+})

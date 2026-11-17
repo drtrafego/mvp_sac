@@ -62,6 +62,20 @@ test('T-ADIT-1 escopo da F1, formulário e Story sem pausa, SAC B/E e comentári
   allowed.push('scripts/sidebar-visibility-consistency.test.ts')
   // Ordem do Gastão em 16/11/2026, SAC E2: aba móvel CRM e seu teste, sem ampliar outras travas.
   allowed.push('src/components/layout/mobile-tabbar.tsx', 'scripts/mobile-tabbar.test.ts')
+  // SAC D: cards unificados e leitura de métricas por sessão, escopo explícito.
+  const sacD = [
+    'src/app/(dashboard)/comentarios-instagram/page.tsx',
+    'src/components/instagram/story-automations-section.tsx',
+    'src/components/instagram/automation-rule-card.tsx',
+    'src/components/instagram/automation-history.tsx',
+    'src/app/api/instagram-automations/metrics/route.ts',
+    'src/app/api/instagram-automations/[type]/[id]/logs/route.ts',
+    'scripts/instagram-story-section.test.tsx',
+    'scripts/instagram-automation-cards.test.tsx',
+    'scripts/instagram-automation-panel.test.ts',
+    'scripts/instagram-automation-cards.browser.mjs',
+  ]
+  allowed.push(...sacD)
   for (const file of changed) assert.ok(allowed.includes(file), `Edição fora do escopo autorizado: ${file}`)
   for (const file of ['src/lib/bot-pause.ts', 'src/app/api/comment-automations/ensure-for-media/route.ts', 'src/lib/db/schema.ts']) assert.ok(!allChanged.includes(file))
   // Fora dos imports de pausa e do bloco entre janela e modo, o gatilho deve ficar idêntico.
@@ -85,7 +99,7 @@ test('T-ADIT-1 escopo da F1, formulário e Story sem pausa, SAC B/E e comentári
     ...names(['ls-files', '--others', '--exclude-standard']),
   ])]
   // A F2 trabalha em paralelo somente nestes dois diretórios novos.
-  assert.ok(added.every(n => n === 'scripts/mobile-tabbar.test.ts' || n === 'scripts/instagram-story-sem-pausa.test.ts' || n === 'scripts/qa-comment-pause-independent.test.ts' || /^(src\/lib\/operator\/dm\.ts$|src\/lib\/operator\/executor\/|src\/app\/api\/operator-executor\/|src\/app\/api\/operator\/executor\/|scripts\/operator-executor-|scripts\/sac-operator\/|deploy\/sac-operator\/|scripts\/operator-apply-migration-0047\.ts$|drizzle\/0047_sac_operator_executor\.sql$)/.test(n)))
+  assert.ok(added.every(n => sacD.includes(n) || n === 'scripts/mobile-tabbar.test.ts' || n === 'scripts/instagram-story-sem-pausa.test.ts' || n === 'scripts/qa-comment-pause-independent.test.ts' || /^(src\/lib\/operator\/dm\.ts$|src\/lib\/operator\/executor\/|src\/app\/api\/operator-executor\/|src\/app\/api\/operator\/executor\/|scripts\/operator-executor-|scripts\/sac-operator\/|deploy\/sac-operator\/|scripts\/operator-apply-migration-0047\.ts$|drizzle\/0047_sac_operator_executor\.sql$)/.test(n)))
 })
 test('T-PII-LISTA vocabulário acrescentado não inclui prenomes brasileiros', () => {
   // Lista de referência fixa, independente do dicionário de intenções.

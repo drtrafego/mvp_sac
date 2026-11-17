@@ -2,22 +2,17 @@
 
 import { PageHeader } from '@/components/ui/page-header'
 import { useState, useEffect, useRef } from 'react'
-import { StoryAutomationsSection, type StoryAutomationsSectionHandle } from '@/components/instagram/story-automations-section'
+import { StoryAutomationsSection, type StoryRule, type StoryAutomationsSectionHandle } from '@/components/instagram/story-automations-section'
+import { AutomationRuleCard, type AutomationRule } from '@/components/instagram/automation-rule-card'
+import { AutomationHistory } from '@/components/instagram/automation-history'
+import type { automationMetrics } from '@/lib/instagram-automation-reporting'
 import {
   Camera,
   MessageCircle,
   Plus,
-  Play,
-  Pause,
-  Trash2,
-  Edit2,
-  CheckCircle2,
   AlertCircle,
-  Clock,
   RefreshCw,
   Shield,
-  EyeOff,
-  Send,
   X,
 } from 'lucide-react'
 
@@ -33,42 +28,6 @@ function InstagramIcon({ size = 14, className = '' }: { size?: number; className
   )
 }
 
-interface AutomationRule {
-  id: number
-  name: string
-  mediaId: string | null
-  mediaUrl: string | null
-  mediaCaption: string | null
-  keywords: string | null
-  matchType: string
-  triggerType: 'comment' | 'direct' | 'both'
-  dmMessage: string
-  publicReply: string | null
-  hideCommentAfterReply: boolean
-  activeHoursStart: string | null
-  activeHoursEnd: string | null
-  isActive: boolean
-  requireFollowCheck: boolean
-  autoTag: string | null
-  totalTriggered: number
-  createdAt: string
-}
-
-interface CommentLog {
-  id: number
-  automationId: number | null
-  automationName: string | null
-  commentId: string
-  commenterId: string
-  commenterUsername: string | null
-  mediaId: string | null
-  commentText: string | null
-  matchedKeyword: string | null
-  status: string
-  errorMessage: string | null
-  sentAt: string | null
-  createdAt: string
-}
 
 interface MediaItem {
   id: string
@@ -94,7 +53,8 @@ export default function ComentariosInstagramPage() {
   const [activeTab, setActiveTab] = useState<'regras' | 'logs'>('regras')
   const [rules, setRules] = useState<AutomationRule[]>([])
   const [inboundTagRules, setInboundTagRules] = useState<InboundTagRule[]>([])
-  const [logs, setLogs] = useState<CommentLog[]>([])
+  const [storyRules, setStoryRules] = useState<StoryRule[]>([])
+  const [metrics, setMetrics] = useState<Awaited<ReturnType<typeof automationMetrics>> | null>(null)
   const [recentMedia, setRecentMedia] = useState<MediaItem[]>([])
   const [loadingMedia, setLoadingMedia] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -124,10 +84,12 @@ export default function ComentariosInstagramPage() {
 
   const loadData = async () => {
     setLoading(true)
+    setActionError(null)
     try {
-      const [rulesRes, logsRes, inboundRulesRes] = await Promise.all([
+      const [rulesRes, storyRes, metricsRes, inboundRulesRes] = await Promise.all([
         fetch('/api/comment-automations'),
-        fetch('/api/comment-automations/all/logs'),
+        fetch('/api/story-automations'),
+        fetch('/api/instagram-automations/metrics'),
         fetch('/api/instagram-tag-rules'),
       ])
 
@@ -136,16 +98,17 @@ export default function ComentariosInstagramPage() {
         setRules(rulesData.automations || [])
       }
 
-      if (logsRes.ok) {
-        const logsData = await logsRes.json()
-        setLogs(logsData.logs || [])
-      }
+      if (storyRes.ok) setStoryRules((await storyRes.json()).automations || [])
+      if (metricsRes.ok) setMetrics(await metricsRes.json())
+      else setMetrics(null)
+      if (![rulesRes, storyRes, metricsRes].every(response => response.ok)) setActionError('Não foi possível carregar todas as regras e métricas. Atualize para tentar novamente.')
       if (inboundRulesRes.ok) {
         const inboundRulesData = await inboundRulesRes.json()
         setInboundTagRules(inboundRulesData.rules || [])
       }
     } catch (err) {
       console.error('Erro ao carregar dados:', err)
+      setActionError('Não foi possível carregar as automações. Atualize para tentar novamente.')
     } finally {
       setLoading(false)
     }
@@ -339,10 +302,18 @@ export default function ComentariosInstagramPage() {
     if (res.ok) setInboundTagRules(current => current.filter(rule => rule.id !== id))
   }
 
-  // Métricas
-  const totalActive = rules.filter(r => r.isActive).length
-  const totalSent = logs.filter(l => l.status === 'sent').length
-  const totalFailed = logs.filter(l => l.status === 'failed').length
+  const combinedRules = [
+    ...rules.map(rule => ({ type: 'comment' as const, rule })),
+    ...storyRules.map(story => ({ type: 'story' as const, rule: {
+      ...story, keywords: story.keywords.join(', '), mediaId: story.storyId, mediaUrl: null,
+      mediaCaption: null, triggerType: 'comment' as const, publicReply: null,
+      hideCommentAfterReply: false, activeHoursStart: null, activeHoursEnd: null,
+      requireFollowCheck: false, autoTag: null, totalTriggered: 0,
+    } })),
+  ].sort((a, b) => b.rule.createdAt.localeCompare(a.rule.createdAt) || a.type.localeCompare(b.type) || b.rule.id - a.rule.id)
+  const totalActive = combinedRules.filter(({rule}) => rule.isActive).length
+  const totalSent = metrics?.automations.reduce((sum, rule) => sum + rule.totais.enviados, 0) ?? 0
+  const totalFailed = metrics?.automations.reduce((sum, rule) => sum + rule.totais.falhas, 0) ?? 0
   const successRate = totalSent + totalFailed > 0 ? ((totalSent / (totalSent + totalFailed)) * 100).toFixed(1) : '100.0'
 
   return (
@@ -390,14 +361,16 @@ export default function ComentariosInstagramPage() {
         </>}
         className="shrink-0"
       />
-      <StoryAutomationsSection ref={storySectionRef} />
+      <StoryAutomationsSection ref={storySectionRef} onChanged={loadData} />
+      <p className="text-xs text-fg-muted">Métricas e histórico dos últimos 30 dias.</p>
 
+      {actionError && !isModalOpen && <p role="alert" className="text-sm text-st-negativo">{actionError}</p>}
       {/* Cards de Métricas */}
       <div className="rise rise-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-[var(--space-gutter)]">
         <div className="card bg-surface-raised border border-line-subtle p-4 rounded-2xl">
           <span className="text-micro text-fg-subtle">Regras Configuradas</span>
           <div className="flex items-baseline justify-between mt-1">
-            <span className="text-h2 text-fg font-black">{rules.length}</span>
+            <span className="text-h2 text-fg font-black">{combinedRules.length}</span>
             <span className="text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
               {totalActive} ativas
             </span>
@@ -457,7 +430,7 @@ export default function ComentariosInstagramPage() {
               : 'text-fg-muted hover:text-fg hover:bg-surface-raised/50'
           }`}
         >
-          Regras de Automação ({rules.length})
+          Regras de Automação ({combinedRules.length})
         </button>
         <button
           onClick={() => setActiveTab('logs')}
@@ -467,14 +440,14 @@ export default function ComentariosInstagramPage() {
               : 'text-fg-muted hover:text-fg hover:bg-surface-raised/50'
           }`}
         >
-          Histórico de Disparos ({logs.length})
+          Histórico de Disparos
         </button>
       </div>
 
       {/* Conteúdo Tab 1: Regras */}
       {activeTab === 'regras' && (
         <div className="space-y-4">
-          {rules.length === 0 && !loading && (
+          {combinedRules.length === 0 && !loading && (
             <div className="card bg-surface-raised border border-dashed border-line-subtle p-10 rounded-2xl text-center space-y-3">
               <div className="w-12 h-12 rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20 mx-auto flex items-center justify-center">
                 <MessageCircle size={24} />
@@ -494,214 +467,24 @@ export default function ComentariosInstagramPage() {
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-[var(--space-gutter)]">
-            {rules.map(rule => (
-              <div
-                key={rule.id}
-                className={`card bg-surface-raised border p-5 rounded-2xl flex flex-col justify-between space-y-4 transition-all ${
-                  rule.isActive ? 'border-line-subtle' : 'border-line-subtle/50 opacity-75'
-                }`}
-              >
-                <div>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`text-[9px] uppercase font-bold px-2 py-0.5 rounded-full border ${
-                            rule.isActive
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                              : 'bg-surface-inset text-fg-subtle border-line-subtle'
-                          }`}
-                        >
-                          {rule.isActive ? 'Ativa' : 'Pausada'}
-                        </span>
-                        <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-300 border border-violet-500/20">
-                          {rule.triggerType === 'direct' ? 'Direct' : rule.triggerType === 'both' ? 'Comentário + Direct' : 'Comentário'}
-                        </span>
-                        {rule.hideCommentAfterReply && (
-                          <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
-                            <EyeOff size={10} /> Oculta Comentário
-                          </span>
-                        )}
-                        {rule.requireFollowCheck && (
-                          <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 flex items-center gap-1">
-                            <Shield size={10} /> Exige Seguir
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="text-h3 text-fg font-bold mt-2 truncate">{rule.name}</h3>
-                      <p className="text-micro text-fg-subtle">
-                        {rule.triggerType === 'direct' ? 'Gatilho: Palavra no Direct' : rule.triggerType === 'both' ? `Gatilho: Comentário + Direct${rule.mediaId ? ', Post/Reel Específico' : ', Qualquer Post/Reel'}` : rule.mediaId ? 'Gatilho: Comentário, Post/Reel Específico' : 'Gatilho: Comentário, Qualquer Post/Reel'}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        onClick={() => toggleRuleActive(rule)}
-                        title={rule.isActive ? 'Pausar Automação' : 'Ativar Automação'}
-                        className={`p-2 rounded-xl border transition-colors ${
-                          rule.isActive
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
-                            : 'bg-surface-inset text-fg-muted border-line-subtle hover:text-fg'
-                        }`}
-                      >
-                        {rule.isActive ? <Pause size={14} /> : <Play size={14} />}
-                      </button>
-                      <button
-                        onClick={() => openEditModal(rule)}
-                        title="Editar Regra"
-                        className="p-2 rounded-xl bg-surface-inset text-fg-muted hover:text-fg hover:bg-surface-base border border-line-subtle transition-colors"
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                      <button
-                        onClick={() => deleteRule(rule)}
-                        title="Excluir Regra"
-                        className="p-2 rounded-xl bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/20 transition-colors"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Palavras-chave */}
-                  <div className="mt-3 pt-3 border-t border-line-subtle">
-                    <span className="text-micro text-fg-subtle font-semibold block mb-1.5">
-                      Palavras-chave ({rule.matchType === 'any' ? 'Qualquer Comentário' : rule.matchType}):
-                    </span>
-                    {rule.matchType === 'any' ? (
-                      <span className="text-[11px] font-mono text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">
-                        * (Qualquer texto ou emoji)
-                      </span>
-                    ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {(rule.keywords || '')
-                          .split(',')
-                          .map(k => k.trim())
-                          .filter(Boolean)
-                          .map((kw, i) => (
-                            <span
-                              key={i}
-                              className="text-[11px] font-mono text-fg font-medium bg-surface-inset px-2 py-0.5 rounded border border-line-subtle"
-                            >
-                              {kw}
-                            </span>
-                          ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Prévia da DM */}
-                  <div className="mt-3 bg-surface-base border border-line-subtle rounded-xl p-3">
-                    <div className="flex items-center gap-1.5 text-micro text-fg-muted mb-1 font-semibold">
-                      <Send size={11} className="text-pink-400" />
-                      DM Enviada:
-                    </div>
-                    <p className="text-[12px] text-fg leading-relaxed whitespace-pre-wrap">{rule.dmMessage}</p>
-                    {rule.publicReply && (
-                      <div className="mt-2 pt-2 border-t border-line-subtle/50 text-[11px] text-fg-muted">
-                        <span className="font-semibold text-fg-subtle">Resposta Pública:</span> {rule.publicReply}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Rodapé do Card */}
-                <div className="flex items-center justify-between text-micro text-fg-subtle pt-2 border-t border-line-subtle">
-                  <span>Disparos realizados: <strong className="text-fg">{rule.totalTriggered}</strong></span>
-                  {rule.activeHoursStart && rule.activeHoursEnd ? (
-                    <span className="flex items-center gap-1">
-                      <Clock size={11} /> {rule.activeHoursStart} às {rule.activeHoursEnd}
-                    </span>
-                  ) : (
-                    <span>24h por dia</span>
-                  )}
-                </div>
-              </div>
+            {combinedRules.map(({rule, type}) => (
+              <AutomationRuleCard key={`${type}:${rule.id}`} rule={rule} type={type}
+                totals={metrics?.automations.find(item => item.type === type && item.id === rule.id)?.totais} period={metrics?.period}
+                onToggle={() => type === 'story' ? storySectionRef.current?.toggle(storyRules.find(item => item.id === rule.id)!) : toggleRuleActive(rule)}
+                onEdit={() => type === 'story' ? storySectionRef.current?.edit(storyRules.find(item => item.id === rule.id)!) : openEditModal(rule)}
+                onDelete={() => type === 'story' ? storySectionRef.current?.remove(rule.id) : deleteRule(rule)} />
             ))}
           </div>
         </div>
       )}
 
-      {/* Conteúdo Tab 2: Histórico / Logs */}
-      {activeTab === 'logs' && (
-        <div className="card bg-surface-raised border border-line-subtle rounded-2xl overflow-hidden">
-          <div className="p-4 border-b border-line-subtle flex items-center justify-between">
-            <span className="text-xs font-bold text-fg uppercase tracking-wider">
-              Últimos Comentários & Disparos
-            </span>
-            <span className="text-micro text-fg-subtle">
-              Atualizado automaticamente a cada comentário
-            </span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-line-subtle bg-surface-base text-fg-subtle uppercase text-[10px] tracking-wider">
-                  <th className="p-3">Data / Hora</th>
-                  <th className="p-3">Usuário</th>
-                  <th className="p-3">Comentário</th>
-                  <th className="p-3">Palavra Casada</th>
-                  <th className="p-3">Regra</th>
-                  <th className="p-3 text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line-subtle/60 text-fg">
-                {logs.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="p-6 text-center text-fg-subtle">
-                      Nenhum disparo registrado ainda.
-                    </td>
-                  </tr>
-                )}
-                {logs.map(log => (
-                  <tr key={log.id} className="hover:bg-surface-base/50 transition-colors">
-                    <td className="p-3 text-fg-muted font-mono whitespace-nowrap">
-                      {new Date(log.createdAt).toLocaleString('pt-BR')}
-                    </td>
-                    <td className="p-3 font-semibold text-fg whitespace-nowrap">
-                      {log.commenterUsername ? `@${log.commenterUsername}` : `ID: ${log.commenterId.slice(-6)}`}
-                    </td>
-                    <td className="p-3 max-w-xs truncate text-fg-muted" title={log.commentText || ''}>
-                      &quot;{log.commentText || '—'}&quot;
-                    </td>
-                    <td className="p-3 font-mono text-[11px] text-brand-ink">
-                      {log.matchedKeyword || '—'}
-                    </td>
-                    <td className="p-3 text-fg-muted max-w-xs truncate">
-                      {log.automationName || 'Geral'}
-                    </td>
-                    <td className="p-3 text-right whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                          log.status === 'sent'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            : log.status === 'failed'
-                            ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-                            : log.status === 'rate_limited'
-                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                            : 'bg-surface-inset text-fg-subtle border-line-subtle'
-                        }`}
-                        title={log.errorMessage || ''}
-                      >
-                        {log.status === 'sent' && <CheckCircle2 size={11} />}
-                        {log.status === 'failed' && <AlertCircle size={11} />}
-                        {log.status === 'sent'
-                          ? 'DM Enviada'
-                          : log.status === 'failed'
-                          ? 'Falha'
-                          : log.status === 'rate_limited'
-                          ? 'Rate Limit'
-                          : 'Ignorado'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      {activeTab === 'logs' && <div className="space-y-4">
+        {combinedRules.length === 0 && <p className="text-fg-muted">Nenhum disparo registrado ainda.</p>}
+        {combinedRules.map(({ rule, type }) => <section key={`${type}:${rule.id}`} className="card bg-surface-raised border border-line-subtle p-5 rounded-2xl">
+          <h3 className="font-bold text-fg mb-3">{rule.name}</h3>
+          <AutomationHistory type={type} id={rule.id} period={metrics?.period} initiallyOpen />
+        </section>)}
+      </div>}
 
       {/* Modal de Criação / Edição */}
       {isModalOpen && (
