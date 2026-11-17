@@ -60,7 +60,7 @@ type LeadFixture = {
 const FIXTURES: LeadFixture[] = [
   {
     descricao: 'Instagram Direct (DM), lead real de conversa',
-    secaoDoMenu: 'instagramNav → Conversas Direct / Leads Instagram / Performance Direct',
+    secaoDoMenu: 'instagramNav → Conversas Direct / Leads Instagram',
     channel: 'instagram',
     platform: 'instagram',
     trackingSource: null,
@@ -69,7 +69,7 @@ const FIXTURES: LeadFixture[] = [
   },
   {
     descricao: "Mineração via WhatsApp, trackingSource='mineracao_prospeccao' (valor mais comum gravado por sync-agents.ts)",
-    secaoDoMenu: 'mineracaoNav → Leads Minerados / Canais de Mineração / Pipeline Prospecção',
+    secaoDoMenu: 'mineracaoNav → Leads Minerados / CRM Prospecção',
     channel: 'whatsapp',
     platform: 'sac',
     trackingSource: 'mineracao_prospeccao',
@@ -78,7 +78,7 @@ const FIXTURES: LeadFixture[] = [
   },
   {
     descricao: "Mineração via valor CANÔNICO do CRM 'Minerador' (não contém a palavra 'mineracao' inteira; ILIKE '%mineracao%' antigo NÃO pegava isto)",
-    secaoDoMenu: 'mineracaoNav → Leads Minerados / Canais de Mineração / Pipeline Prospecção',
+    secaoDoMenu: 'mineracaoNav → Leads Minerados / CRM Prospecção',
     channel: 'whatsapp',
     platform: 'sac',
     trackingSource: 'Minerador',
@@ -375,6 +375,8 @@ async function main() {
       }
     )
 
+    // Ordem do Gastão em 16/11/2026: os atalhos de /origens saem do menu,
+    // mas as rotas e a reconciliação de origem permanecem protegidas.
     // ── 7. /origens?source= usa uma função DIFERENTE (normalizeOrigin, em
     // memória, já filtrada por matchesSourceFilter dentro do próprio
     // src/app/(dashboard)/origens/page.tsx), não channelWhereCondition.
@@ -384,7 +386,7 @@ async function main() {
     // aqui como heurística própria. Confere que os dois caminhos (Origens vs.
     // Inbox/Leads/Pipeline) concordam pros MESMOS leads. ─────────────────────
     await caso(
-      '[instagramNav → /origens?source=instagram] normalizeOrigin concorda com channelWhereCondition',
+      '[rota preservada /origens?source=instagram] normalizeOrigin concorda com channelWhereCondition',
       () => {
         const meta = normalizeOrigin(instagramLead.trackingSource, null, instagramLead.platform, instagramLead.eventType, instagramLead.channel)
         assert.equal(meta.category as OriginCategory, 'instagram')
@@ -392,7 +394,7 @@ async function main() {
     )
 
     await caso(
-      '[mineracaoNav → /origens?source=mineracao] normalizeOrigin concorda com channelWhereCondition, inclusive pro valor canônico "Minerador"',
+      '[rota preservada /origens?source=mineracao] normalizeOrigin concorda com channelWhereCondition, inclusive pro valor canônico "Minerador"',
       () => {
         for (const lead of [mineracaoLead1, mineracaoLead2Canonico]) {
           const meta = normalizeOrigin(lead.trackingSource, null, lead.platform, lead.eventType, lead.channel)

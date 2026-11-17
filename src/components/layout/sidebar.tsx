@@ -9,8 +9,8 @@ import {
   MessageSquare,
   Columns3,
   Users,
-  BarChart3,
-  Layers,
+  Send,
+  MoreHorizontal,
   Settings,
   Webhook,
   BookOpen,
@@ -41,7 +41,7 @@ export interface ActiveConnections {
   mineracao?: boolean
 }
 
-type NavigationRequirement = 'instagramCommentAutomation'
+type NavigationRequirement = 'instagramCommentAutomation' | 'whatsappOfficial'
 
 interface ConditionalNavigationItem {
   requires?: NavigationRequirement
@@ -146,30 +146,29 @@ export const atendimentoNav: Array<{
   href: string
   icon: typeof Activity
   requires?: NavigationRequirement
+  configKey?: keyof SidebarMenuConfig
 }> = [
-  { label: 'Visão geral', href: '/', icon: Activity },
+  { label: 'Visão geral', href: '/', icon: Activity, configKey: 'showVisaoGeral' },
   { label: 'Atender agora', href: '/atender-agora', icon: ListTodo },
-  { label: 'Conversas', href: '/inbox', icon: MessageSquare },
+  { label: 'Conversas', href: '/inbox', icon: MessageSquare, configKey: 'showConversas' },
+  { label: 'CRM', href: '/pipeline', icon: Columns3, configKey: 'showPipeline' },
+  { label: 'Leads', href: '/leads', icon: Users, configKey: 'showLeads' },
   {
     label: 'Comentário → DM',
     href: '/comentarios-instagram',
     icon: MessageCircle,
     requires: 'instagramCommentAutomation',
   },
-  { label: 'CRM', href: '/pipeline', icon: Columns3 },
-  { label: 'Leads Recentes', href: '/leads', icon: Users },
-]
-
-export const analiseNav = [
-  { label: 'Analytics Vendas', href: '/analytics-vendas', icon: BarChart3 },
-  { label: 'Recuperador Admin', href: '/recuperador-admin', icon: Layers },
+  // Ordem do Gastão em 16/11/2026: atalho único no principal, com o filtro da API oficial.
+  { label: 'Disparo em massa', href: '/disparo-em-massa', icon: Send, requires: 'whatsappOfficial', configKey: 'showApiOficial' },
+  { label: 'Agente', href: '/agente', icon: Bot, configKey: 'showAgente' },
+  { label: 'Configuração', href: '/configuracoes', icon: Settings, configKey: 'showConfiguracoes' },
 ]
 
 export const apiOficialNav = [
   { label: 'Mensagens', href: '/inbox?channel=whatsapp' },
   { label: 'Mensagens aprovadas', href: '/api-modelos' },
   { label: 'Campanhas ativas', href: '/api-campanhas' },
-  { label: 'Disparo em massa', href: '/disparo-em-massa' },
   { label: 'Follow-up', href: '/api-followup' },
 ]
 
@@ -217,7 +216,7 @@ export const zoutiNav = [
 ]
 
 // Conversas Direct tem rota própria; ?source= continua sendo o mesmo filtro
-// lido por /leads e /origens, reaproveitando a classificação única de
+// lido por /leads, reaproveitando a classificação única de
 // src/lib/inbox-channel-filter.ts e src/lib/origins.ts.
 export const instagramNav: Array<{
   label: string
@@ -232,13 +231,11 @@ export const instagramNav: Array<{
   },
   { label: 'Conversas Direct', href: '/instagram' },
   { label: 'Leads Instagram', href: '/leads?source=instagram' },
-  { label: 'Performance Direct', href: '/origens?source=instagram' },
 ]
 
 export const mineracaoNav = [
   { label: 'Mensagens', href: '/inbox?channel=mineracao' },
   { label: 'Leads Minerados', href: '/leads?source=mineracao' },
-  { label: 'Canais de Mineração', href: '/origens?source=mineracao' },
   { label: 'CRM Prospecção', href: '/pipeline?source=mineracao' },
 ]
 
@@ -246,9 +243,8 @@ export const emailNav = [
   { label: 'Mensagens', href: '/inbox?channel=email' },
 ]
 
-export const ajustesNav = [
-  { label: 'Agente', href: '/agente', icon: Bot, key: 'agente' },
-  { label: 'Configuração', href: '/configuracoes', icon: Settings, key: 'configuracoes' },
+// Ordem do Gastão em 16/11/2026: recursos auxiliares recolhidos e só para admin.
+export const maisNav = [
   { label: 'Documentação API', href: '/api-docs', icon: Code2, key: 'apiDocs' },
   { label: 'Webhooks Log', href: '/webhooks-log', icon: Webhook, key: 'webhooks' },
   { label: 'Biblioteca', href: '/biblioteca', icon: BookOpen, key: 'biblioteca' },
@@ -256,13 +252,13 @@ export const ajustesNav = [
 ]
 
 export interface SidebarMenuConfig {
-  // Atendimento
+  // Principal
   showVisaoGeral?: boolean
   showConversas?: boolean
   showPipeline?: boolean
   showLeads?: boolean
 
-  // Análise
+  // Configuração legada preservada por compatibilidade, sem grupo no menu.
   showAnalise?: boolean
   showAnalyticsVendas?: boolean
   showCanais?: boolean
@@ -361,7 +357,6 @@ export function SidebarNavContent({
   // Estado de recolhimento de cada seção da sidebar
   const [sectionsOpen, setSectionsOpen] = useState<{ [key: string]: boolean }>({
     atendimento: true,
-    analise: false,
     api_oficial: true,
     hotmart: true,
     kiwify: true,
@@ -370,11 +365,11 @@ export function SidebarNavContent({
     instagram: true,
     email: true,
     mineracao: true,
-    ajustes: true,
+    mais: false,
   })
 
   // Carrega a preferência de seções recolhidas/expandidas salva no navegador.
-  // Sem isso, toda seção que o usuário fechava (Hotmart, Análise etc.) voltava
+  // Sem isso, toda seção que o usuário fechava (Hotmart, Mais etc.) voltava
   // a aparecer aberta ao recarregar a página, porque o estado só vivia em memória.
   useEffect(() => {
     try {
@@ -396,10 +391,6 @@ export function SidebarNavContent({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSectionsOpen(prev => ({ ...prev, atendimento: true }))
     }
-    if (analiseNav.some(item => isActive(item.href))) {
-      // Abre a seção correspondente quando a rota muda.
-      setSectionsOpen(prev => ({ ...prev, analise: true }))
-    }
     if (apiOficialNav.some(item => isActive(item.href))) {
       setSectionsOpen(prev => ({ ...prev, api_oficial: true }))
     }
@@ -415,8 +406,8 @@ export function SidebarNavContent({
     if (hotmartNav.some(item => pathname.startsWith(item.href.split('?')[0]))) {
       setSectionsOpen(prev => ({ ...prev, hotmart: true, kiwify: true, greenn: true, zouti: true }))
     }
-    if (ajustesNav.some(item => isActive(item.href))) {
-      setSectionsOpen(prev => ({ ...prev, ajustes: true }))
+    if (maisNav.some(item => isActive(item.href))) {
+      setSectionsOpen(prev => ({ ...prev, mais: true }))
     }
     // isActive também depende de searchParams; pathname é a dependência histórica
     // deliberada para abrir seções apenas durante navegação entre rotas.
@@ -451,14 +442,21 @@ export function SidebarNavContent({
   const visibleMineracaoNav = getVisibleChannelNavItems(mineracaoNav, showMineracao)
 
   const visibleAtendimentoNav = filterAvailableNavItems(atendimentoNav, activeConnections)
+    .filter(item => !item.configKey || sidebarConfig?.[item.configKey] !== false)
   const visibleInstagramNav = filterAvailableNavItems(instagramNav, activeConnections)
 
-  const showAgente = sidebarConfig?.showAgente !== undefined ? sidebarConfig.showAgente : true
   const showWebhooksLog = sidebarConfig?.showWebhooksLog !== undefined ? sidebarConfig.showWebhooksLog : true
   const showBiblioteca = sidebarConfig?.showBiblioteca !== undefined ? sidebarConfig.showBiblioteca : true
   const showAprenda = sidebarConfig?.showAprenda !== undefined ? sidebarConfig.showAprenda : true
-  const showConfiguracoes = sidebarConfig?.showConfiguracoes !== undefined ? sidebarConfig.showConfiguracoes : true
   const showApiDocs = sidebarConfig?.showApiDocs !== undefined ? sidebarConfig.showApiDocs : true
+
+  const visibleMaisNav = maisNav.filter(item => {
+    if (item.key === 'apiDocs') return showApiDocs
+    if (item.key === 'webhooks') return showWebhooksLog
+    if (item.key === 'biblioteca') return showBiblioteca
+    if (item.key === 'aprenda') return showAprenda
+    return true
+  })
 
   return (
     <nav className={cn('scroll-thin min-h-0 overflow-y-auto px-2 py-3 space-y-3', className)}>
@@ -492,7 +490,7 @@ export function SidebarNavContent({
         </div>
       )}
 
-      {/* 1. SEÇÃO ATENDIMENTO */}
+      {/* Ordem do Gastão em 16/11/2026: cabeçalho Principal, sem grupo Análise. */}
       {!hideMain && (
         <div className="space-y-1">
           {!collapsed ? (
@@ -501,7 +499,7 @@ export function SidebarNavContent({
               onClick={() => toggleSection('atendimento')}
               className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors group cursor-pointer"
             >
-              <span>Atendimento</span>
+              <span>Principal</span>
               <ChevronDown
                 size={13}
                 className={cn('text-fg-faint group-hover:text-fg-muted transition-transform duration-200', !sectionsOpen.atendimento && '-rotate-90')}
@@ -546,59 +544,6 @@ export function SidebarNavContent({
           )}
         </div>
       )}
-
-      {/* 2. SEÇÃO ANÁLISE */}
-      <div className="space-y-1">
-        {!collapsed ? (
-          <button
-            type="button"
-            onClick={() => toggleSection('analise')}
-            className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors group cursor-pointer"
-          >
-            <span>Análise</span>
-            <ChevronDown
-              size={13}
-              className={cn('text-fg-faint group-hover:text-fg-muted transition-transform duration-200', !sectionsOpen.analise && '-rotate-90')}
-            />
-          </button>
-        ) : (
-          <div className="h-px bg-line-subtle my-2 mx-1" />
-        )}
-
-        {(collapsed || sectionsOpen.analise) && (
-          <div className="space-y-0.5">
-            {analiseNav.map(({ label, href, icon: Icon }) => {
-              const active = isActive(href)
-              return (
-                <Link
-                  key={href}
-                  href={href}
-                    aria-current={isActive(href) ? 'page' : undefined}
-                  title={label}
-                  className={cn(
-                    'nav-item group flex items-center rounded-xl transition-all duration-150 cursor-pointer',
-                    collapsed ? 'justify-center w-10 h-10 mx-auto px-0' : 'justify-between px-3 py-2 text-[0.8125rem]',
-                    active
-                      ? 'bg-surface-raised text-fg font-semibold shadow-sm border border-line-subtle/60'
-                      : 'text-fg-muted hover:text-fg hover:bg-surface-raised/60'
-                  )}
-                >
-                  <div className={cn('flex items-center min-w-0', collapsed ? 'justify-center' : 'gap-2.5')}>
-                    <Icon
-                      size={15}
-                      className={cn(
-                        'shrink-0 transition-colors',
-                        active ? 'text-brand-ink font-bold' : 'text-fg-faint group-hover:text-fg-muted'
-                      )}
-                    />
-                    {!collapsed && <span className="truncate">{label}</span>}
-                  </div>
-                </Link>
-              )
-            })}
-          </div>
-        )}
-      </div>
 
       {/* 3. SEÇÃO API OFICIAL (META & UAZAPI) */}
       {showApiOficial && <div className="space-y-1">
@@ -1019,37 +964,26 @@ export function SidebarNavContent({
         </div>
       )}
 
-      {/* 10. SEÇÃO AJUSTES */}
-      <div className="space-y-1">
-        {!collapsed ? (
-          <button
-            type="button"
-            onClick={() => toggleSection('ajustes')}
-            className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors group cursor-pointer"
-          >
-            <span>Ajustes</span>
-            <ChevronDown
-              size={13}
-              className={cn('text-fg-faint group-hover:text-fg-muted transition-transform duration-200', !sectionsOpen.ajustes && '-rotate-90')}
-            />
-          </button>
-        ) : (
-          <div className="h-px bg-line-subtle my-2 mx-1" />
-        )}
+      {/* Mais inicia recolhido, inclusive na barra compacta. */}
+      {isAdmin && visibleMaisNav.length > 0 && <div className="space-y-1">
+        <button
+          type="button"
+          onClick={() => toggleSection('mais')}
+          title="Mais"
+          aria-label="Mais"
+          aria-expanded={sectionsOpen.mais}
+          className={cn(
+            'w-full flex items-center text-[11px] font-bold uppercase tracking-wider text-fg-subtle hover:text-fg transition-colors cursor-pointer',
+            collapsed ? 'justify-center h-10' : 'justify-between px-2.5 py-1'
+          )}
+        >
+          {collapsed ? <MoreHorizontal size={16} /> : <span>Mais</span>}
+          {!collapsed && <ChevronDown size={13} className={cn('transition-transform duration-200', !sectionsOpen.mais && '-rotate-90')} />}
+        </button>
 
-        {(collapsed || sectionsOpen.ajustes) && (
+        {sectionsOpen.mais && (
           <div className="space-y-0.5">
-            {ajustesNav
-              .filter(item => {
-                if (item.key === 'agente') return showAgente
-                if (item.key === 'configuracoes') return showConfiguracoes
-                if (item.key === 'apiDocs') return showApiDocs
-                if (item.key === 'webhooks') return showWebhooksLog
-                if (item.key === 'biblioteca') return showBiblioteca
-                if (item.key === 'aprenda') return showAprenda
-                return true
-              })
-              .map(({ label, href, icon: Icon }) => {
+            {visibleMaisNav.map(({ label, href, icon: Icon }) => {
               const active = isActive(href)
               return (
                 <Link
@@ -1080,7 +1014,7 @@ export function SidebarNavContent({
             })}
           </div>
         )}
-      </div>
+      </div>}
     </nav>
   )
 }

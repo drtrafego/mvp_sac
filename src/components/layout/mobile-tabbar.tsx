@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, MessageSquare, Users, BarChart3, Menu } from 'lucide-react'
+import { LayoutDashboard, MessageSquare, Users, Columns3, Menu } from 'lucide-react'
 import { Sheet } from '@/components/ui/sheet'
 import { SidebarNavContent, SidebarFooter, type ActiveConnections, type SidebarMenuConfig } from './sidebar'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
@@ -13,7 +13,8 @@ const tabs = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { label: 'Inbox', href: '/inbox', icon: MessageSquare },
   { label: 'Leads', href: '/leads', icon: Users },
-  { label: 'Analytics', href: '/analytics-vendas', icon: BarChart3 },
+  // Ordem do Gastão em 16/11/2026: acesso ao CRM existente para acompanhar os leads.
+  { label: 'CRM', href: '/pipeline', icon: Columns3 },
 ]
 
 interface MobileTabBarProps {

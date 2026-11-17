@@ -32,7 +32,7 @@ test('cada setor de canal tem Mensagens com filtro próprio', () => {
 test('a navegação existente do SAC continua preservada', () => {
   assert.deepEqual(
     sidebar.apiOficialNav.slice(1).map(item => item.label),
-    ['Mensagens aprovadas', 'Campanhas ativas', 'Disparo em massa', 'Follow-up'],
+    ['Mensagens aprovadas', 'Campanhas ativas', 'Follow-up'],
   )
   assert.ok(sidebar.kiwifyNav.some(item => item.label === 'Carrinho Kiwify'))
   assert.ok(sidebar.instagramNav.some(item => item.label === 'Conversas Direct'))
@@ -47,16 +47,51 @@ test('setor sem capacidade operacional não expõe nem Mensagens nem inbox', () 
   }
 })
 
-// Mudança de regra ordenada pelo Gastão em 16/11/2026: só três itens saem.
-test('menu de análise enxuto mantém Analytics e Recuperador, sem remover rotas', async () => {
-  assert.deepEqual(sidebar.analiseNav.map(({ label, href }) => ({ label, href })), [
-    { label: 'Analytics Vendas', href: '/analytics-vendas' },
-    { label: 'Recuperador Admin', href: '/recuperador-admin' },
+// Ordem do Gastão em 16/11/2026, SAC E: ordem fixa e um único atalho de disparo.
+test('menu principal vendável tem a ordem e os rótulos aprovados', () => {
+  assert.deepEqual(sidebar.atendimentoNav.map(({ label, href }) => ({ label, href })), [
+    { label: 'Visão geral', href: '/' },
+    { label: 'Atender agora', href: '/atender-agora' },
+    { label: 'Conversas', href: '/inbox' },
+    { label: 'CRM', href: '/pipeline' },
+    { label: 'Leads', href: '/leads' },
+    { label: 'Comentário → DM', href: '/comentarios-instagram' },
+    { label: 'Disparo em massa', href: '/disparo-em-massa' },
+    { label: 'Agente', href: '/agente' },
+    { label: 'Configuração', href: '/configuracoes' },
+  ])
+  const allItems = [...sidebar.atendimentoNav, ...sidebar.maisNav, ...sections.flatMap(([, items]) => items)]
+  assert.equal(allItems.filter(item => item.href === '/disparo-em-massa').length, 1)
+  for (const item of allItems) {
+    assert.doesNotMatch(item.href, /^\/(analytics-vendas|recuperador-admin|origens|operacao|canais)(?:\?|$)/)
+    assert.notEqual(item.label, 'Leads Recentes')
+  }
+  assert.deepEqual(sidebar.maisNav.map(({ label, href }) => ({ label, href })), [
+    { label: 'Documentação API', href: '/api-docs' },
+    { label: 'Webhooks Log', href: '/webhooks-log' },
+    { label: 'Biblioteca', href: '/biblioteca' },
+    { label: 'Aprenda a Usar', href: '/aprenda-a-usar' },
+  ])
+})
+
+test('atalhos de origens saem, mas canais e rotas continuam preservados', async () => {
+  assert.deepEqual(sidebar.instagramNav.map(item => item.href), [
+    '/instagram', '/comentarios-instagram', '/instagram', '/leads?source=instagram',
+  ])
+  assert.deepEqual(sidebar.mineracaoNav.map(item => item.href), [
+    '/inbox?channel=mineracao', '/leads?source=mineracao', '/pipeline?source=mineracao',
   ])
   const { access } = await import('node:fs/promises')
-  for (const route of ['operacao', 'origens', 'canais']) {
+  for (const route of ['operacao', 'origens', 'canais', 'analytics-vendas', 'recuperador-admin']) {
     await access(new URL(`../src/app/(dashboard)/${route}/page.tsx`, import.meta.url))
   }
-  assert.ok(sidebar.mineracaoNav.some(item => item.href === '/origens?source=mineracao'), 'atalho filtrado de mineração continua')
-  assert.ok(sidebar.instagramNav.some(item => item.href === '/origens?source=instagram'), 'atalho filtrado de Instagram continua')
+  for (const [platform, items] of [
+    ['hotmart', sidebar.hotmartNav], ['kiwify', sidebar.kiwifyNav],
+    ['greenn', sidebar.greennNav], ['zouti', sidebar.zoutiNav],
+  ] as const) {
+    assert.deepEqual(items.map(item => item.href), [
+      `/inbox?source=${platform}`, `/carrinho?platform=${platform}`, `/boleto?platform=${platform}`,
+      `/pix?platform=${platform}`, `/cartao-recusado?platform=${platform}`, `/compra-aprovada?platform=${platform}`,
+    ])
+  }
 })
