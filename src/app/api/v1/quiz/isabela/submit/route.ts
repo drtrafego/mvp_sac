@@ -6,6 +6,7 @@ import { db } from '@/lib/db'
 import { companies, recoveryLeads, leadTags, sacInternalNotes } from '@/lib/db/schema'
 import { formatBrazilianPhone } from '@/lib/phone'
 import { normalizeTag } from '@/lib/lead-tags'
+import { getInheritedPauseFields } from '@/lib/bot-pause'
 
 export const dynamic = 'force-dynamic'
 const TENANT = 'isabela-fanini'
@@ -121,6 +122,7 @@ export async function POST(req: NextRequest) {
     whatsappConsentStatus: 'unknown',
     status: 'pending',
     orderDate: new Date(),
+    ...(await getInheritedPauseFields(company.id, 'whatsapp')),
   }).onConflictDoNothing({
     target: [recoveryLeads.companyId, recoveryLeads.platform, recoveryLeads.transactionId, recoveryLeads.eventType],
     where: sql`${recoveryLeads.transactionId} is not null`,
