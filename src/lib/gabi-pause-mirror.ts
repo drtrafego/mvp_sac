@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
@@ -78,7 +79,10 @@ export function gabiChatIds(channel: string | null | undefined, phone: string | 
 
 function por(kind: 'geral' | 'lead', by?: string | null): string {
   const quem = (by || '').replace(/[^\p{L}\p{N} ._()@-]/gu, '').trim().slice(0, 60)
-  return `${GABI_SAC_MARK}${kind}${quem ? `:${quem}` : ''}`
+  // `por` já identifica autoria no central. O UUID também é um token de
+  // versão por escrita: o DELETE compara o valor exato que leu, sem depender
+  // de updated_at (que pode empatar ou até regredir no relógio central).
+  return `${GABI_SAC_MARK}${kind}${quem ? `:${quem}` : ''}:${randomUUID()}`
 }
 
 function mask(chatId: string): string {
@@ -146,17 +150,20 @@ export async function mirrorGabiLeadPause(input: {
   if (!isGabiCompany(input.company.slug)) return { ok: true, skipped: 'empresa sem bot espelhado' }
   const ids = gabiChatIds(input.channel, input.phone)
   if (ids.length === 0) return { ok: true, skipped: 'lead sem WhatsApp válido para a Gabi' }
-  const rotulo = mask(ids[0])
+    const rotulo = mask(ids[0])
   try {
     if (input.paused) {
-      // Sobrescreve inclusive uma pausa 'bot (handoff)' da própria Gabi: um
-      // humano do SAC assumiu, então a pausa deixa de ser candidata a expirar.
+      // Uma pausa de outra origem é dona da própria liberação: o UPSERT só
+      // atualiza uma linha que já pertence ao SAC. Se a linha for externa,
+      // ela permanece intacta e a Gabi continua em silêncio por ela.
       let falhou = false
       for (const id of ids) {
         const r = await queryAgentsDb(
           `INSERT INTO public.agent_chat_pause (agent_slug, chat_id, paused, por, updated_at)
            VALUES ($1, $2, true, $3, now())
-           ON CONFLICT (agent_slug, chat_id) DO UPDATE SET paused = true, por = EXCLUDED.por, updated_at = now()`,
+           ON CONFLICT (agent_slug, chat_id) DO UPDATE SET paused = true, por = EXCLUDED.por, updated_at = now()
+           WHERE coalesce(public.agent_chat_pause.por, '') LIKE 'sac:%'
+           RETURNING chat_id`,
           [GABI_AGENT_SLUG, id, por('lead', input.by)],
         )
         if (r === null) falhou = true
@@ -189,11 +196,26 @@ export async function mirrorGabiLeadPause(input: {
     let apagou = 0
     for (const id of ids) {
       if (mantidos.has(id)) continue
+      // Leia o token central imediatamente antes de apagar. Se uma pausa
+      // concorrente fizer UPSERT entre esta leitura e o DELETE, o `por` novo
+      // faz o DELETE não encontrar a linha, mesmo com timestamp empatado ou
+      // relógio central regressivo.
+      const observado = await queryAgentsDb<{ por: string | null }>(
+        `SELECT por FROM public.agent_chat_pause
+         WHERE agent_slug = $1 AND chat_id = $2 AND coalesce(por, '') LIKE $3`,
+        [GABI_AGENT_SLUG, id, `${GABI_SAC_MARK}%`],
+      )
+      if (observado === null) {
+        falhou = true
+        continue
+      }
+      const porObservado = observado[0]?.por
+      if (!porObservado) continue
       const r = await queryAgentsDb(
         `DELETE FROM public.agent_chat_pause
-         WHERE agent_slug = $1 AND chat_id = $2 AND coalesce(por, '') LIKE $3
+         WHERE agent_slug = $1 AND chat_id = $2 AND coalesce(por, '') LIKE $3 AND por = $4
          RETURNING chat_id`,
-        [GABI_AGENT_SLUG, id, `${GABI_SAC_MARK}%`],
+        [GABI_AGENT_SLUG, id, `${GABI_SAC_MARK}%`, porObservado],
       )
       if (r === null) falhou = true
       else apagou += r.length
@@ -311,12 +333,13 @@ export async function reconcileGabiPause(
       }
     }
     const medida = { estoqueAntigo, estoqueAntigoMaisAntigoDias: maisAntigo, since: base.since }
-    const atual = await queryAgentsDb<{ chat_id: string }>(
-      `SELECT chat_id FROM public.agent_chat_pause WHERE agent_slug = $1 AND paused AND coalesce(por, '') LIKE $2`,
+    const atual = await queryAgentsDb<{ chat_id: string; por: string | null }>(
+      `SELECT chat_id, por FROM public.agent_chat_pause WHERE agent_slug = $1 AND paused AND coalesce(por, '') LIKE $2`,
       [GABI_AGENT_SLUG, `${GABI_SAC_MARK}%`],
     )
     if (atual === null) return { ...base, ...medida, global, ok: false }
     const jaTem = new Set(atual.map(r => String(r.chat_id)))
+    const atualPorId = new Map(atual.map(r => [String(r.chat_id), r.por]))
     let inserted = 0
     let removed = 0
     let ok = global.ok
@@ -326,21 +349,27 @@ export async function reconcileGabiPause(
       const r = await queryAgentsDb(
         `INSERT INTO public.agent_chat_pause (agent_slug, chat_id, paused, por, updated_at)
          VALUES ($1, $2, true, $3, now())
-         ON CONFLICT (agent_slug, chat_id) DO UPDATE SET paused = true, por = EXCLUDED.por, updated_at = now()`,
+         ON CONFLICT (agent_slug, chat_id) DO UPDATE SET paused = true, por = EXCLUDED.por, updated_at = now()
+         WHERE coalesce(public.agent_chat_pause.por, '') LIKE 'sac:%'
+         RETURNING chat_id`,
         [GABI_AGENT_SLUG, id, por('lead', by)],
       )
       if (r === null) ok = false
-      else inserted += 1
+      else inserted += r.length
     }
     for (const id of jaTem) {
       if (todosPausados.has(id)) continue
       if (opts.dryRun) { removed += 1; continue }
+      const porObservado = atualPorId.get(id)
+      // Sem token observado, não apague: uma pausa pode ter sido alterada
+      // durante a reconciliação e o próximo cron pode decidir com segurança.
+      if (!porObservado) continue
       const r = await queryAgentsDb(
-        `DELETE FROM public.agent_chat_pause WHERE agent_slug = $1 AND chat_id = $2 AND coalesce(por, '') LIKE $3`,
-        [GABI_AGENT_SLUG, id, `${GABI_SAC_MARK}%`],
+        `DELETE FROM public.agent_chat_pause WHERE agent_slug = $1 AND chat_id = $2 AND coalesce(por, '') LIKE $3 AND por = $4 RETURNING chat_id`,
+        [GABI_AGENT_SLUG, id, `${GABI_SAC_MARK}%`, porObservado],
       )
       if (r === null) ok = false
-      else removed += 1
+      else removed += r.length
     }
     return { global, inserted, removed, ok, ...medida }
   } catch (err) {

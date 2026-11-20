@@ -8,6 +8,7 @@ import { requireCompany } from '@/lib/auth'
 import { normalizeTag, PESSOA_TAG, BOT_PAUSED_BY_TAG_PESSOA, isLeadChannel } from '@/lib/lead-tags'
 import { notifyNaoResponder } from '@/lib/nao-responder'
 import { ensureLeadPausedBySwitch, getBlockingPauseSwitch, pauseFieldsFromSwitch, type PauseSwitchState } from '@/lib/bot-pause'
+import { propagateCentralBotPause } from '@/lib/central-bot-pause'
 
 type Params = { params: Promise<{ leadId: string; tag: string }> }
 
@@ -211,6 +212,20 @@ export async function DELETE(req: NextRequest, { params }: Params): Promise<Next
       // volta a constar pausado (e o isBotBlocked já barrava o envio).
       const reBlocked = await ensureLeadPausedBySwitch(updated)
       botPaused = reBlocked.botPaused
+      // Remover a tag é uma retomada explícita do usuário. Só libera no
+      // central quando o SAC realmente liberou o lead; se uma chave o
+      // bloqueou durante o await, não apaga a pausa por conversa.
+      if (!botPaused) {
+        const central = await propagateCentralBotPause({
+          company,
+          channel: updated.channel,
+          phone: updated.phone,
+          paused: false,
+          by: 'remoção da tag pessoa',
+          leadId: updated.id,
+        })
+        if (central.warning) warning = [warning, central.warning].filter(Boolean).join(' ')
+      }
     } else {
       // Ninguém foi afetado: ou já não estava pausado por 'tag:pessoa', ou
       // outra coisa mudou o estado durante o await — outro motivo assumiu

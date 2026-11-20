@@ -7,7 +7,7 @@ import { eq, and } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
 import { logAgentActivity } from '@/lib/agent-auth'
 import { getBlockingPauseSwitch } from '@/lib/bot-pause'
-import { mirrorGabiLeadPause } from '@/lib/gabi-pause-mirror'
+import { propagateCentralBotPause } from '@/lib/central-bot-pause'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   })
 
   // Gramado Plaza: a Gabi lê a pausa por conversa no banco central.
-  const gabi = await mirrorGabiLeadPause({
+  const gabi = await propagateCentralBotPause({
     company, channel: updated.channel, phone: updated.phone, paused: nextPaused, by: operatorName, leadId: updated.id,
   })
 

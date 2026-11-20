@@ -7,6 +7,7 @@ import { and, desc, eq } from 'drizzle-orm'
 import { requireCompany, getCurrentUser } from '@/lib/auth'
 import { normalizeTag, PESSOA_TAG, MAX_TAG_LENGTH, isLeadChannel, type LeadChannel } from '@/lib/lead-tags'
 import { pauseBotForPessoaTag } from '@/lib/pessoa-tag-pause'
+import { propagateCentralBotPause } from '@/lib/central-bot-pause'
 
 type Params = { params: Promise<{ leadId: string }> }
 
@@ -103,6 +104,15 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     // pausa se outro motivo concorrente/manual já estiver no lead.
     const result = await pauseBotForPessoaTag(lead)
     warning = result.warning
+    const central = await propagateCentralBotPause({
+      company,
+      channel: lead.channel,
+      phone: lead.phone,
+      paused: true,
+      by: createdBy,
+      leadId: lead.id,
+    })
+    if (central.warning) warning = [warning, central.warning].filter(Boolean).join(' ')
   }
 
   const tags = await db

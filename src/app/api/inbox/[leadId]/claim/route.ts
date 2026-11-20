@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 import { recoveryLeads, sacAuditEvents } from '@/lib/db/schema'
 import { eq, and, sql, or, isNull } from 'drizzle-orm'
 import { requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
-import { mirrorGabiLeadPause } from '@/lib/gabi-pause-mirror'
+import { propagateCentralBotPause } from '@/lib/central-bot-pause'
 import { parseSacObject, parsePositiveId, parseExpectedVersion, sacEpisodeForState, SacInputError } from '@/lib/sac-access'
 
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
 
     // Gramado Plaza: assumir o atendimento cala a Gabi (ela lê a pausa por
     // conversa no banco central). Nunca lança; o resultado vai na resposta.
-    const gabi = await mirrorGabiLeadPause({
+    const gabi = await propagateCentralBotPause({
       company, channel: updatedLead.channel, phone: updatedLead.phone, paused: true, by: actorName, leadId: updatedLead.id,
     })
 

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { authenticateAgentRequest } from '@/lib/agent-auth'
+import { propagateCentralBotPause } from '@/lib/central-bot-pause'
 import { eq, and, asc, or, sql } from 'drizzle-orm'
 
 type Params = { params: Promise<{ idOrSlug: string; leadId: string }> }
@@ -142,7 +143,22 @@ export async function PATCH(req: NextRequest, { params }: Params): Promise<NextR
       },
     })
 
-    return NextResponse.json({ ok: true, lead: updated })
+    const central = body.botPaused !== undefined
+      ? await propagateCentralBotPause({
+          company: context.company,
+          channel: updated.channel,
+          phone: updated.phone,
+          paused: Boolean(body.botPaused),
+          by: `${context.agentName} (Agente IA)`,
+          leadId: updated.id,
+        })
+      : null
+
+    return NextResponse.json({
+      ok: true,
+      lead: updated,
+      ...(central?.warning ? { warning: central.warning } : {}),
+    })
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Erro ao atualizar lead' }, { status: 500 })
   }

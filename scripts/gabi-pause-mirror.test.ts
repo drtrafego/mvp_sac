@@ -21,7 +21,7 @@
 //   (4) Pausa por lead grava agent_chat_pause com por 'sac:lead:...'
 //   (5) Liberar lead APAGA a linha do SAC e NUNCA grava paused=false (a ponte lê
 //       false como "despausou" e apagaria a pausa do dono no celular)
-//   (6) Liberar lead sem linha do SAC não toca em linha 'bot (handoff)' da Gabi
+//   (6) Pausar/liberar lead nunca assume nem toca em linha 'bot (handoff)' da Gabi
 //   (7) Lead de Instagram e empresa que não é a Gramado não geram escrita
 //   (8) Banco central fora do ar: a rota segue 200 e devolve gabi.ok=false
 //   (9) Reconciliação do cron: cria o que falta, apaga linha 'sac:' velha, ignora
@@ -45,6 +45,8 @@ async function main() {
   `)
 
   let centralFora = false
+  let corridaAntesDoDelete = false
+  const mesmoTimestamp = '2026-11-20 12:34:56.789+00'
   const queries: string[] = []
   const company = { id: 12, name: 'Gramado Plaza', slug: 'gramado-plaza' }
   const outra = { id: 13, name: 'Outra Empresa', slug: 'outra-empresa' }
@@ -57,6 +59,14 @@ async function main() {
       queryAgentsDb: async (q: string, params: unknown[] = []) => {
         queries.push(q)
         if (centralFora) return null
+        if (corridaAntesDoDelete && /^DELETE FROM public\.agent_chat_pause/i.test(q)) {
+          corridaAntesDoDelete = false
+          await central.pg.query(`
+            INSERT INTO public.agent_chat_pause (agent_slug, chat_id, paused, por, updated_at)
+            VALUES ('gramadoplazza', '5551999000111', true, 'sac:lead:concorrente', TIMESTAMPTZ '${mesmoTimestamp}')
+            ON CONFLICT (agent_slug, chat_id) DO UPDATE SET paused = true, por = EXCLUDED.por, updated_at = EXCLUDED.updated_at
+          `)
+        }
         const r = await central.pg.query(q, params as unknown[])
         return r.rows
       },
@@ -102,6 +112,7 @@ async function main() {
     await sac.pg.exec('TRUNCATE recovery_leads, company_pause_switches, sac_audit_events RESTART IDENTITY')
     await central.pg.exec('TRUNCATE public.agent_pause, public.agent_chat_pause')
     centralFora = false
+    corridaAntesDoDelete = false
     queries.length = 0
     ativa = company
   }
@@ -161,7 +172,7 @@ async function main() {
       assert.equal(rows.length, 2, 'celular BR: as duas formas do 9')
       assert.equal(rows[1].chat_id, '5551999000111')
       assert.equal(rows[1].paused, true)
-      assert.match(rows[1].por, /^sac:lead:Maria Atendente/)
+      assert.match(rows[1].por, /^sac:lead:Maria Atendente:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, 'a autoria SAC termina com token UUID')
 
       json = await (await inboxCall(l.id, false)).json()
       assert.equal(json.gabi.ok, true)
@@ -177,20 +188,50 @@ async function main() {
       assert.equal((await linhas()).length, 0)
     })
 
-    await test('(6) pausa do SAC assume uma pausa de handoff da Gabi; liberar sem linha do SAC não toca no handoff', async () => {
+    await test('(6) pausa e retomada do SAC preservam a pausa de handoff da Gabi', async () => {
       await reset()
       await central.pg.query("insert into public.agent_chat_pause (agent_slug, chat_id, paused, por) values ('gramadoplazza','5551999000111',true,'bot (handoff)'), ('gramadoplazza','5551999000222',true,'bot (handoff)')")
       const a = await lead('5551999000111')
       const b = await lead('5551999000222', 'whatsapp', { botPaused: true })
       await inboxCall(a.id, true)
       let rows = await linhas()
-      assert.match(rows.find(r => r.chat_id === '5551999000111')!.por, /^sac:lead/, 'a pausa vira do SAC (deixa de expirar)')
-      // lead B: o SAC "libera" um lead que ele nunca pausou na Gabi; o handoff da Gabi fica
+      const handoffA = rows.find(r => r.chat_id === '5551999000111')!
+      assert.equal(handoffA.paused, true)
+      assert.equal(handoffA.por, 'bot (handoff)', 'o UPSERT individual não pode assumir a pausa externa')
+      // A retomada do SAC não pode apagar a pausa externa que permaneceu.
+      await inboxCall(a.id, false)
+      rows = await linhas()
+      assert.equal(rows.find(r => r.chat_id === '5551999000111')!.por, 'bot (handoff)')
+
+      // Lead B: o SAC "libera" um lead que ele nunca pausou na Gabi; o handoff da Gabi fica.
       await inboxCall(b.id, false)
       rows = await linhas()
       const handoff = rows.find(r => r.chat_id === '5551999000222')!
       assert.equal(handoff.paused, true)
       assert.equal(handoff.por, 'bot (handoff)')
+    })
+
+    await test('(6b) cron não assume handoff; depois que ele sai, o próximo cron cria a linha sac', async () => {
+      await reset()
+      const since = new Date('2026-11-12T00:00:00Z')
+      const depois = new Date('2026-11-12T10:00:00Z')
+      await lead('5551999000111', 'whatsapp', { botPaused: true, botPausedBy: 'Maria', botPausedAll: false, botPausedAt: depois })
+      await central.pg.query("insert into public.agent_chat_pause (agent_slug, chat_id, paused, por) values ('gramadoplazza','5551999000111',true,'bot (handoff)')")
+
+      const primeiro = await mirror.reconcileGabiPause(company, { since })
+      assert.equal(primeiro.ok, true)
+      assert.equal(primeiro.inserted, 1, 'o conflito externo não é contado como inserção SAC')
+      let rows = await linhas()
+      assert.equal(rows.find(r => r.chat_id === '5551999000111')!.por, 'bot (handoff)', 'o cron não pode sobrescrever origem externa')
+      assert.match(rows.find(r => r.chat_id === '555199000111')!.por, /^sac:lead:/, 'o cron cria a forma livre')
+
+      await central.pg.query("delete from public.agent_chat_pause where agent_slug='gramadoplazza' and chat_id='5551999000111'")
+      const segundo = await mirror.reconcileGabiPause(company, { since })
+      assert.equal(segundo.ok, true)
+      assert.equal(segundo.inserted, 1, 'o cron cria a forma SAC que ficou livre')
+      rows = await linhas()
+      assert.match(rows.find(r => r.chat_id === '5551999000111')!.por, /^sac:lead:/, 'após remover a origem externa, o cron reafirma o SAC')
+      assert.match(rows.find(r => r.chat_id === '555199000111')!.por, /^sac:lead:/)
     })
 
     await test('(7) lead de Instagram e empresa que não é a Gramado não geram escrita', async () => {
@@ -330,6 +371,37 @@ async function main() {
       await inboxCall(d.id, true)
       await inboxCall(c.id, false)
       assert.deepEqual((await linhas()).map(r => r.chat_id).sort(), ['555199000333', '5551999000333'])
+    })
+
+    await test('(10d) corrida: pausa nova entre leitura e DELETE fica preservada', async () => {
+      await reset()
+      const l = await lead('5551999000111')
+      await central.pg.query(`insert into public.agent_chat_pause (agent_slug, chat_id, paused, por, updated_at) values ('gramadoplazza','5551999000111',true,'sac:lead:anterior', TIMESTAMPTZ '${mesmoTimestamp}')`)
+      corridaAntesDoDelete = true
+      const result = await mirror.mirrorGabiLeadPause({
+        company,
+        channel: 'whatsapp',
+        phone: '5551999000111',
+        paused: false,
+        leadId: l.id,
+      })
+      assert.equal(result.ok, true)
+      const row = (await central.pg.query("select paused, por from public.agent_chat_pause where agent_slug='gramadoplazza' and chat_id='5551999000111'")).rows[0] as { paused: boolean; por: string } | undefined
+      assert.deepEqual(row, { paused: true, por: 'sac:lead:concorrente' }, 'a pausa concorrente não pode ser apagada')
+    })
+
+    await test('(10e) cron: pausa nova no MESMO timestamp não é apagada', async () => {
+      await reset()
+      await lead('5551999000111', 'whatsapp', { botPaused: false })
+      await central.pg.query(`insert into public.agent_chat_pause (agent_slug, chat_id, paused, por, updated_at) values ('gramadoplazza','5551999000111',true,'sac:lead:anterior', TIMESTAMPTZ '${mesmoTimestamp}')`)
+      corridaAntesDoDelete = true
+      const result = await mirror.reconcileGabiPause(company, { since: new Date('2026-11-12T00:00:00Z') })
+      assert.equal(result.ok, true)
+      assert.equal(result.removed, 0, 'corrida preservada não pode ser contada como removida')
+      const row = (await central.pg.query("select paused, por, updated_at from public.agent_chat_pause where agent_slug='gramadoplazza' and chat_id='5551999000111'")).rows[0] as { paused: boolean; por: string; updated_at: Date } | undefined
+      assert.equal(row?.paused, true)
+      assert.equal(row?.por, 'sac:lead:concorrente', 'o cron não pode apagar a pausa concorrente com timestamp empatado')
+      assert.equal(new Date(row!.updated_at).toISOString(), '2026-11-20T12:34:56.789Z')
     })
 
     await test('(9c) GABI_PAUSE_MIRROR_SINCE: so ISO 8601 estrito com hora e fuso; invalida e LOGADA e vale como ausente', () => {
