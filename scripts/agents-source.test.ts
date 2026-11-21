@@ -8,9 +8,22 @@ import {
   resolveAgentsDbSource,
 } from '../src/lib/db/agents-source'
 
-const centralUrl = `postgresql://central_user:secret-value@${CENTRAL_AGENTS_DB_HOST}:${CENTRAL_AGENTS_DB_PORT}/${CENTRAL_AGENTS_DB_NAME}?sslmode=require`
+const centralUrl = `postgresql://central_user:secret-value@${CENTRAL_AGENTS_DB_HOST}/${CENTRAL_AGENTS_DB_NAME}?sslmode=require`
 
-test('usa somente AGENTS_DATABASE_URL quando aponta para o Supabase central comprovado', () => {
+test('aceita hostname central em caixa mista e normaliza o diagnóstico', () => {
+  const mixedCaseHost = CENTRAL_AGENTS_DB_HOST
+    .replace('ep-hidden', 'EP-Hidden')
+    .replace('pooler', 'POOLER')
+  const resolved = resolveAgentsDbSource({
+    AGENTS_DATABASE_URL: `postgres://central_user:secret-value@${mixedCaseHost}/${CENTRAL_AGENTS_DB_NAME}`,
+  })
+
+  assert.equal(resolved.status, 'configured')
+  assert.equal(resolved.host, CENTRAL_AGENTS_DB_HOST)
+  assert.equal(resolved.port, CENTRAL_AGENTS_DB_PORT)
+})
+
+test('usa somente AGENTS_DATABASE_URL quando aponta para o Neon central do Hermes', () => {
   const resolved = resolveAgentsDbSource({
     AGENTS_DATABASE_URL: centralUrl,
     CRM_DATABASE_URL: 'postgresql://legacy:secret@old.example.invalid/old',
@@ -18,7 +31,7 @@ test('usa somente AGENTS_DATABASE_URL quando aponta para o Supabase central comp
   })
 
   assert.equal(resolved.status, 'configured')
-  assert.equal(resolved.source, 'hermes-central-supabase')
+  assert.equal(resolved.source, 'hermes-central-neon')
   assert.equal(resolved.env, AGENTS_DATABASE_ENV)
   assert.equal(resolved.host, CENTRAL_AGENTS_DB_HOST)
   assert.equal(resolved.port, CENTRAL_AGENTS_DB_PORT)
@@ -39,14 +52,24 @@ test('recusa fontes antigas quando a fonte canônica está ausente', () => {
   assert.deepEqual(resolved.ignoredLegacyEnvs, ['CRM_DATABASE_URL', 'SUPABASE_DATABASE_URL'])
 })
 
-test('recusa um AGENTS_DATABASE_URL que aponta para outro banco', () => {
+test('recusa o host Supabase morto, sem fallback', () => {
   const resolved = resolveAgentsDbSource({
-    AGENTS_DATABASE_URL: 'postgresql://legacy:secret@ep-hidden-dust-acu81nrx-pooler.sa-east-1.aws.neon.tech/neondb',
+    AGENTS_DATABASE_URL: 'postgresql://legacy:secret@aws-0-us-west-2.pooler.supabase.com:6543/postgres',
   })
 
   assert.equal(resolved.status, 'wrong_central_host')
   assert.equal(resolved.url, null)
-  assert.equal(resolved.host, 'ep-hidden-dust-acu81nrx-pooler.sa-east-1.aws.neon.tech')
+  assert.equal(resolved.host, 'aws-0-us-west-2.pooler.supabase.com')
+})
+
+test('recusa o destino do SAC em vez do Neon central dos agentes', () => {
+  const resolved = resolveAgentsDbSource({
+    AGENTS_DATABASE_URL: 'postgresql://sac_user:secret@postgres.internal:5432/sac',
+  })
+
+  assert.equal(resolved.status, 'wrong_central_host')
+  assert.equal(resolved.url, null)
+  assert.equal(resolved.host, 'postgres.internal')
 })
 
 test('recusa URL canônica inválida sem tentar fallback', () => {

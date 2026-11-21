@@ -1,17 +1,16 @@
 /**
  * A única fonte operacional dos agentes do SAC.
  *
- * A identidade vem da configuração existente em
- * /opt/gastaomatos/hermes/central-db/.neon.bak-before-cutover-20261017-124028.
- * A leitura direta dessa fonte confirmou mensagens do Gramado até 04/11/2026.
+ * A identidade não secreta vem do Neon central do Hermes, em
+ * /opt/gastaomatos/hermes/central-db/.neon.
  * A credencial inteira continua exclusivamente no ambiente; este arquivo
- * registra apenas a identidade não secreta necessária para impedir um
- * fallback silencioso para o Neon parado em 17/10 ou para outro banco.
+ * registra apenas host, porta e database para impedir fallback silencioso
+ * para o banco operacional do SAC ou para outro banco.
  */
 export const AGENTS_DATABASE_ENV = 'AGENTS_DATABASE_URL' as const
-export const CENTRAL_AGENTS_DB_HOST = 'aws-0-us-west-2.pooler.supabase.com'
-export const CENTRAL_AGENTS_DB_PORT = '6543'
-export const CENTRAL_AGENTS_DB_NAME = 'postgres'
+export const CENTRAL_AGENTS_DB_HOST = 'ep-hidden-dust-acu81nrx-pooler.sa-east-1.aws.neon.tech'
+export const CENTRAL_AGENTS_DB_PORT = '5432'
+export const CENTRAL_AGENTS_DB_NAME = 'neondb'
 
 const LEGACY_DATABASE_ENVS = ['CRM_DATABASE_URL', 'SUPABASE_DATABASE_URL'] as const
 
@@ -23,7 +22,7 @@ export type AgentsDbSourceStatus =
 
 export interface AgentsDbSourceDiagnostic {
   status: AgentsDbSourceStatus
-  source: 'hermes-central-supabase' | null
+  source: 'hermes-central-neon' | null
   env: typeof AGENTS_DATABASE_ENV | null
   host: string | null
   port: string | null
@@ -78,12 +77,14 @@ export function resolveAgentsDbSource(
     }
   }
 
+  const normalizedHostname = parsed.hostname.toLowerCase()
+
   if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
     return {
       status: 'invalid_canonical_url',
       source: null,
       env: AGENTS_DATABASE_ENV,
-      host: parsed.hostname || null,
+      host: normalizedHostname || null,
       port: parsed.port || null,
       database: safeDatabaseName(parsed),
       ignoredLegacyEnvs,
@@ -92,12 +93,13 @@ export function resolveAgentsDbSource(
     }
   }
 
-  if (parsed.hostname !== CENTRAL_AGENTS_DB_HOST || parsed.port !== CENTRAL_AGENTS_DB_PORT || safeDatabaseName(parsed) !== CENTRAL_AGENTS_DB_NAME) {
+  const effectivePort = parsed.port || CENTRAL_AGENTS_DB_PORT
+  if (normalizedHostname !== CENTRAL_AGENTS_DB_HOST || effectivePort !== CENTRAL_AGENTS_DB_PORT || safeDatabaseName(parsed) !== CENTRAL_AGENTS_DB_NAME) {
     return {
       status: 'wrong_central_host',
       source: null,
       env: AGENTS_DATABASE_ENV,
-      host: parsed.hostname || null,
+      host: normalizedHostname || null,
       port: parsed.port || null,
       database: safeDatabaseName(parsed),
       ignoredLegacyEnvs,
@@ -108,10 +110,10 @@ export function resolveAgentsDbSource(
 
   return {
     status: 'configured',
-    source: 'hermes-central-supabase',
+    source: 'hermes-central-neon',
     env: AGENTS_DATABASE_ENV,
-    host: parsed.hostname,
-    port: parsed.port,
+    host: normalizedHostname,
+    port: effectivePort,
     database: safeDatabaseName(parsed),
     ignoredLegacyEnvs,
     reason: null,
