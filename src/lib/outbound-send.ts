@@ -23,7 +23,7 @@ export interface OutboundSendInput {
   templateName?: string | null
   templateLanguage?: string | null
   templateVariableValues?: string[]
-  templateVariableNames?: string[]
+  templateVariableNames?: Array<string | undefined>
   /** Explicit channel selected from a channel-specific conversation thread. */
   channelOverride?: LeadDeliveryChannel | null
   beforeTransport?: () => Promise<boolean>

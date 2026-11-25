@@ -40,13 +40,15 @@ function readBodyText(components: unknown[]): string {
 }
 
 function extractVariables(body: string): string[] {
-  const indexes = new Set<number>()
+  const variables = new Set<string>()
   for (const match of body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)) {
-    indexes.add(Number(match[1]))
+    variables.add(`variavel_${Number(match[1])}`)
   }
-  return Array.from(indexes)
-    .sort((a, b) => a - b)
-    .map(index => `variavel_${index}`)
+  for (const match of body.matchAll(/\{\{\s*([^}\d][^}]*)\s*\}\}/g)) {
+    const name = match[1].trim()
+    if (name) variables.add(name)
+  }
+  return Array.from(variables)
 }
 
 export function toApprovedMetaTemplate(template: MetaTemplate): ApprovedMetaTemplate | null {

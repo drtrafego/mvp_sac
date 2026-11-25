@@ -103,7 +103,7 @@ function buttonLabels(components: unknown[]): string[] {
   return labels
 }
 
-function substituteTemplateVariables(text: string, values: readonly string[], variableNames?: readonly string[]): string {
+function substituteTemplateVariables(text: string, values: readonly string[], variableNames?: readonly (string | undefined)[]): string {
   return text.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_placeholder, rawKey: string) => {
     const numericIndex = Number(rawKey)
     const namedIndex = variableNames?.indexOf(rawKey) ?? -1
@@ -114,7 +114,7 @@ function substituteTemplateVariables(text: string, values: readonly string[], va
   })
 }
 
-export function renderMetaTemplate(components: unknown, variableValues: readonly string[] = [], variableNames?: readonly string[]): {
+export function renderMetaTemplate(components: unknown, variableValues: readonly string[] = [], variableNames?: readonly (string | undefined)[]): {
   content: string
   complete: boolean
 } {
@@ -134,7 +134,7 @@ export function renderMetaTemplate(components: unknown, variableValues: readonly
   return { content: sections.join('\n\n'), complete: true }
 }
 
-export function renderMetaTemplateBody(body: string, variableValues: readonly string[] = [], variableNames?: readonly string[]): string {
+export function renderMetaTemplateBody(body: string, variableValues: readonly string[] = [], variableNames?: readonly (string | undefined)[]): string {
   return substituteTemplateVariables(body, variableValues, variableNames)
 }
 

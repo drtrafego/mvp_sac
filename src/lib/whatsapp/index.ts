@@ -19,7 +19,7 @@ interface MessagePayload {
   templateName?: string
   templateLanguage?: string
   templateVariableValues?: string[]  // valores interpolados em ordem posicional
-  templateVariableNames?: string[]
+  templateVariableNames?: Array<string | undefined>
   templateHeaderDocument?: MetaTemplateDocumentHeader
 }
 

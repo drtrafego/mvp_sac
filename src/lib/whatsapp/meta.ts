@@ -129,7 +129,7 @@ export async function sendMetaTemplate(
   templateName: string,
   languageCode: string,
   variableValues: string[],  // valores interpolados em ordem: [valor_{{1}}, valor_{{2}}, ...]
-  variableNames?: string[],
+  variableNames?: Array<string | undefined>,
   headerDocument?: MetaTemplateDocumentHeader,
 ): Promise<string | null> {
   const parameters = variableValues.map((v, index) => ({

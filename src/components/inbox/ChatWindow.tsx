@@ -656,7 +656,10 @@ export function ChatWindow({
   }
 
   function templatePreview(template: ApprovedMetaTemplate, variables: Record<string, string>) {
-    return template.corpo.replace(/\{\{\s*(\d+)\s*\}\}/g, (_match, index: string) => variables[index] || `{{${index}}}`)
+    return template.corpo.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, rawKey: string) => {
+      const key = rawKey.trim()
+      return variables[key] || `{{${key}}}`
+    })
   }
 
   function handleSelectMetaTemplate(template: ApprovedMetaTemplate) {

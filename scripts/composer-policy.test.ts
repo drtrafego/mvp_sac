@@ -17,13 +17,19 @@ test('composer selects only the exact approved template and language returned fo
 
 test('template variables are mandatory and render only after every required value is present', () => {
   const components = templates[0].components
-  assert.deepEqual(readTemplateVariableValues(components, { '1': 'Gastão' }), { values: ['Gastão', ''], missing: [2] })
+  assert.deepEqual(readTemplateVariableValues(components, { '1': 'Gastão' }), { values: ['Gastão', ''], names: [undefined, undefined], missing: ['variavel_2'] })
   const template = templates[0]
   const incomplete = renderApprovedMetaTemplate(template, { '1': 'Gastão' })
-  assert.deepEqual(incomplete.missing, [2])
+  assert.deepEqual(incomplete.missing, ['variavel_2'])
   const complete = renderApprovedMetaTemplate(template, { '1': 'Gastão', '2': '42' })
   assert.deepEqual(complete.missing, [])
   assert.equal(complete.content, 'Olá Gastão, pedido 42.')
+
+  const named = { ...templates[0], components: [{ type: 'BODY', text: 'Olá {{customer_name}}, pedido {{order_reference}}.' }] }
+  const namedRendered = renderApprovedMetaTemplate(named, { customer_name: 'Isabella', order_reference: '42' })
+  assert.deepEqual(namedRendered.names, ['customer_name', 'order_reference'])
+  assert.deepEqual(namedRendered.missing, [])
+  assert.equal(namedRendered.content, 'Olá Isabella, pedido 42.')
 })
 
 test('a closed WhatsApp window disables SAC free text but leaves approved templates available', () => {

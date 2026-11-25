@@ -241,7 +241,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     return noStoreJson({ error: 'A janela de 24h está fechada. Selecione um template Meta aprovado antes de enviar.', code: 'META_TEMPLATE_REQUIRED' }, { status: 400 })
   }
 
-  let outboundTemplate: { name: string; language: string; values: string[] } | null = null
+  let outboundTemplate: { name: string; language: string; values: string[]; names: Array<string | undefined> } | null = null
   let preparedContent = content.trim()
   if (requestedMessageType === 'template') {
     if (effectiveChannel !== 'whatsapp') return noStoreJson({ error: 'Templates Meta só podem ser enviados em uma conversa WhatsApp.' }, { status: 400 })
@@ -262,7 +262,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     const rendered = renderApprovedMetaTemplate(approvedTemplate, templateVariables)
     if (rendered.missing.length > 0) return noStoreJson({ error: `Preencha as variáveis obrigatórias do template: ${rendered.missing.map(index => `{{${index}}}`).join(', ')}.` }, { status: 400 })
     preparedContent = rendered.content
-    outboundTemplate = { name: templateName, language: templateLanguage, values: rendered.values }
+    outboundTemplate = { name: templateName, language: templateLanguage, values: rendered.values, names: rendered.names }
   } else if (templateName || templateLanguage || Object.keys(templateVariables).length > 0) {
     return noStoreJson({ error: 'Dados de template só podem ser enviados com messageType template.' }, { status: 400 })
   }
@@ -276,6 +276,7 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     templateName: outboundTemplate?.name,
     templateLanguage: outboundTemplate?.language,
     templateVariableValues: outboundTemplate?.values,
+    templateVariableNames: outboundTemplate?.names,
     clientRequestId,
     sentBy: 'human',
     channelOverride: channelOverride as LeadDeliveryChannel | null,
