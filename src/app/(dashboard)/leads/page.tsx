@@ -260,7 +260,7 @@ export default function LeadsPage() {
   const [dispatchFeedback, setDispatchFeedback] = useState<string | null>(null)
   const [dispatchError, setDispatchError] = useState<string | null>(null)
   const [dispatchValidationMessage, setDispatchValidationMessage] = useState<string | null>(null)
-  const [dispatchStatus, setDispatchStatus] = useState<{ batchId: number; status: string; error?: string | null } | null>(null)
+  const [dispatchStatus, setDispatchStatus] = useState<{ batchId: number; status: string; deliveryStatus?: string | null; error?: string | null } | null>(null)
   const [tagActionOpen, setTagActionOpen] = useState(false)
   const [tagAction, setTagAction] = useState<'add' | 'remove' | 'replace'>('add')
   const [tagInput, setTagInput] = useState('')
@@ -468,7 +468,7 @@ export default function LeadsPage() {
         const data = await response.json().catch(() => ({}))
         if (!cancelled && response.ok) {
           const jobError = Array.isArray(data.jobs) ? data.jobs.find((job: { error?: string | null }) => job.error)?.error : null
-          const next = { batchId: dispatchStatus.batchId, status: typeof data.batch?.status === 'string' ? data.batch.status : 'processing', error: jobError }
+          const next = { batchId: dispatchStatus.batchId, status: typeof data.batch?.status === 'string' ? data.batch.status : 'processing', deliveryStatus: Array.isArray(data.jobs) ? data.jobs[0]?.deliveryStatus ?? null : null, error: jobError }
           setDispatchStatus(next)
           if (!['accepted', 'failed', 'partial_failure'].includes(next.status)) timer = window.setTimeout(() => void readStatus(), 2500)
         }
@@ -1001,7 +1001,7 @@ export default function LeadsPage() {
           </label>
           {!templateSelection && dispatchValidationMessage && <p id="dispatch-confirmation-reason" role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-micro text-amber-200">{dispatchValidationMessage}</p>}
           {templateSelection && dispatchStatus && <p role="status" className={`rounded-lg border p-3 text-micro ${dispatchStatus.status === 'failed' || dispatchStatus.status === 'partial_failure' ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-cyan-500/30 bg-cyan-500/5 text-cyan-100'}`}>
-            Estado do lote #{dispatchStatus.batchId}: {dispatchStatus.status === 'queued' ? 'enfileirado' : dispatchStatus.status === 'processing' ? 'processando' : dispatchStatus.status === 'accepted' ? 'aceito pela Meta' : dispatchStatus.status === 'partial_failure' ? 'falha parcial' : 'falhou'}.
+            Estado do lote #{dispatchStatus.batchId}: {dispatchStatus.status === 'queued' ? 'enfileirado' : dispatchStatus.status === 'processing' ? 'processando' : dispatchStatus.deliveryStatus === 'read' ? 'lido' : dispatchStatus.deliveryStatus === 'delivered' ? 'entregue' : dispatchStatus.deliveryStatus === 'sent' ? 'enviado' : dispatchStatus.status === 'accepted' ? 'aceito pela Meta' : dispatchStatus.status === 'partial_failure' ? 'falha parcial' : 'falhou'}.
             {dispatchStatus.error ? ` Motivo: ${dispatchStatus.error}` : ''}
           </p>}
           <div className="flex flex-wrap justify-end gap-2 border-t border-line-subtle pt-4">

@@ -59,6 +59,7 @@ test('prévia de template mantém ordem posicional e não inventa valores ausent
 test('interface mostra o motivo e consulta o estado real do lote', () => {
   assert.match(leadsPage, /dispatchValidationMessage/)
   assert.match(leadsPage, /dispatchRecipientLabel/)
+  assert.match(leadsPage, /dispatchStatus\.deliveryStatus === 'delivered'/)
   assert.match(leadsPage, /\/api\/leads\/dispatch\/\$\{dispatchStatus\.batchId\}/)
   assert.match(statusRoute, /deliveryStatus/)
   assert.match(statusRoute, /partial_failure/)
