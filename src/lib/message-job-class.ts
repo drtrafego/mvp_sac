@@ -15,11 +15,11 @@
  *
  *   transactional  -> a pausa NÃO bloqueia (opt-out e consentimento continuam
  *                     bloqueando, ver cron e isOptOutPause)
- *   conversational -> nasce da conversa/IA (ex.: convite do Portal depois do
- *                     desafio): a pausa bloqueia
- *   promotional    -> upsell, disparo em massa, outreach manual, job sem
- *                     jobType, qualquer job fora da lista de permissão: a
- *                     pausa bloqueia
+ *   conversational -> nasce da conversa/IA; o gate de resposta da IA fica em
+ *                     ai-reply-flow.ts, fora do executor de fila.
+ *   promotional    -> upsell, outreach, follow-up e lote/campanha são filas
+ *                     operacionais; a pausa do agente não bloqueia. Opt-out e
+ *                     consentimento continuam sendo verificados separadamente.
  *
  * Regra de dúvida: fora da lista de permissão, é promocional (bloqueado).
  */
@@ -99,9 +99,10 @@ export function classifyMessageJob(
   return 'promotional'
 }
 
-/** A pausa (lead/canal/geral/chave) bloqueia este job? Só o transacional da lista escapa. */
+/** Mantido para compatibilidade de contratos antigos; fila operacional não usa pausa do agente. */
 export function pauseAppliesToJob(jobClass: MessageJobClass): boolean {
-  return jobClass !== 'transactional'
+  void jobClass
+  return false
 }
 
 type PauseState = {
@@ -131,7 +132,7 @@ export function isSwitchGeneratedPause(lead: PauseState): boolean {
     || (lead.botPausedBy != null && lead.botPausedBy.startsWith('auto (canal '))
 }
 
-/** Pausa do lead que NENHUM job (nem o transacional) pode ignorar: opt-out ou pausa individual. */
+/** Compatibilidade de leitura: só opt-out é bloqueio universal; pausa do agente não é. */
 export function isHardLeadPause(lead: PauseState): boolean {
-  return lead.botPaused === true && !isSwitchGeneratedPause(lead)
+  return isOptOutPause(lead)
 }

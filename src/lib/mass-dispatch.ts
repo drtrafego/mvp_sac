@@ -219,8 +219,10 @@ export async function queueMassDispatchBatch(
           LIMIT 1
         ) rs ON true
         JOIN sequence_messages sm ON sm.sequence_id = rs.id AND sm.is_active = true
-        WHERE l.bot_paused IS NOT TRUE
-          AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
+        -- A pausa controla somente o agente automático/IA. A seleção e a
+        -- campanha são operações do SAC e continuam elegíveis; opt-out é um
+        -- bloqueio de consentimento separado e permanece obrigatório.
+        WHERE l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
           AND NOT EXISTS (
             SELECT 1 FROM message_jobs existing_job
             WHERE existing_job.lead_id = l.id
@@ -361,8 +363,9 @@ export async function queueDirectTemplateMassDispatchBatch(
         FROM target_batch b
         JOIN mass_dispatch_recipients r ON r.batch_id = b.id
         JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = b.company_id
-        WHERE l.bot_paused IS NOT TRUE
-          AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
+        -- A pausa do agente não bloqueia lote/campanha. Opt-out continua
+        -- bloqueando o envio por ser consentimento, não pausa do agente.
+        WHERE l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
           AND NOT EXISTS (
             SELECT 1 FROM message_jobs existing_job
             WHERE existing_job.lead_id = l.id

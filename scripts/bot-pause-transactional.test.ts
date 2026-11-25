@@ -1,6 +1,7 @@
 // Teste: a pausa do bot (lead, canal, geral e a chave company_pause_switches)
-// bloqueia o bot CONVERSACIONAL e NÃO bloqueia mensagem de evento transacional
-// do checkout (compra, boleto, Pix, cartão recusado, funil pós-compra).
+// bloqueia somente o agente conversacional. Nenhum job operacional da fila
+// (lote, campanha, template aprovado ou follow-up) pode usar essa pausa como
+// bloqueio; opt-out continua sendo o gate separado de consentimento.
 //
 // Incidente de origem: a correção da chave de pausa fazia "pausa ligada"
 // cancelar jobs do cron e nascer lead pausado. O bot da Isabela só dispara
@@ -32,7 +33,7 @@ async function main() {
     schema.sequenceMessages, schema.recoverySequences, schema.whatsappMessages,
     schema.massDispatchPhoneCooldowns, schema.agendaBlockedDates, schema.nativeAvailabilitySchedules,
     schema.companyPauseSwitches, schema.sacAuditEvents, schema.metaMessageTemplates,
-    schema.webhookReceived, schema.massDispatchBatches,
+    schema.webhookReceived, schema.massDispatchBatches, schema.leadTags,
   ])
   const { db, pg } = fixture
   const sent: Sent[] = []
@@ -170,18 +171,18 @@ async function main() {
       assert.equal(classifyMessageJob({ jobType: 'isabela_purchase_sequence', massDispatchBatchId: 9 }, kiwify, 'isabela-fanini'), 'promotional')
       assert.equal(classifyMessageJob({ jobType: 'tipo_desconhecido' }, kiwify, 'isabela-fanini'), 'promotional')
       assert.equal(pauseAppliesToJob('transactional'), false)
-      assert.equal(pauseAppliesToJob('conversational'), true)
-      assert.equal(pauseAppliesToJob('promotional'), true)
+      assert.equal(pauseAppliesToJob('conversational'), false)
+      assert.equal(pauseAppliesToJob('promotional'), false)
     })
 
-    await test('(C) tipos de pausa: só a gerada pela chave/Pausar tudo/Pausar canal é ignorável; atendente e opt-out são duras', () => {
+    await test('(C) tipos de pausa: qualquer pausa é do agente; só opt-out é bloqueio universal', () => {
       assert.equal(isSwitchGeneratedPause({ botPaused: true, botPausedAll: true, botPausedBy: 'Administrador (Agente IA)' }), true)
       assert.equal(isSwitchGeneratedPause({ botPaused: true, botPausedChannel: 'whatsapp', botPausedBy: 'x' }), true)
       assert.equal(isSwitchGeneratedPause({ botPaused: true, botPausedBy: 'auto (pausa geral ativa)' }), true)
       assert.equal(isSwitchGeneratedPause({ botPaused: true, botPausedBy: 'auto (canal whatsapp pausado)' }), true)
       for (const by of ['Atendente Maria', 'tag:pessoa', 'optout_whatsapp', 'revisao_possivel_optout', null]) {
         assert.equal(isSwitchGeneratedPause({ botPaused: true, botPausedAll: false, botPausedChannel: null, botPausedBy: by }), false, String(by))
-        assert.equal(isHardLeadPause({ botPaused: true, botPausedAll: false, botPausedChannel: null, botPausedBy: by }), true, String(by))
+        assert.equal(isHardLeadPause({ botPaused: true, botPausedAll: false, botPausedChannel: null, botPausedBy: by }), by === 'optout_whatsapp' || by === 'revisao_possivel_optout', String(by))
       }
       // opt-out com flag de pausa geral colada: continua duro.
       assert.equal(isSwitchGeneratedPause({ botPaused: true, botPausedAll: true, botPausedBy: 'optout_whatsapp' }), false)
@@ -190,21 +191,21 @@ async function main() {
       assert.equal(isOptOutPause({ botPaused: false, botPausedBy: 'optout_whatsapp' }), false)
     })
 
-    await test('(C) gate do Pix: padrão = como antes (qualquer pausa barra); com bypass só a pausa da chave é ignorada; opt-out e atendente barram', () => {
+    await test('(C) gate do Pix: pausa é somente do agente; só opt-out barra', () => {
       const pix = {
         eventType: 'pix', paymentType: 'pix', phone: 'p', transactionId: 't', pixCode: 'c',
         pixExpiry: new Date(Date.now() + 3600_000), status: 'pending', approvedDate: null, whatsappConsentStatus: 'opted_in',
       }
       const sw = { ...pix, ...SWITCH_PAUSE }
-      assert.equal(isRealPendingPix(sw).eligible, false, 'sem bypass: como antes')
+      assert.equal(isRealPendingPix(sw).eligible, true)
       assert.equal(isRealPendingPix(sw, { ignoreSwitchPause: true }).eligible, true)
-      assert.equal(isRealPendingPix({ ...pix, ...INDIVIDUAL_PAUSE }, { ignoreSwitchPause: true }).eligible, false)
-      assert.equal(isRealPendingPix({ ...pix, botPaused: true, botPausedBy: 'tag:pessoa' }, { ignoreSwitchPause: true }).eligible, false)
+      assert.equal(isRealPendingPix({ ...pix, ...INDIVIDUAL_PAUSE }, { ignoreSwitchPause: true }).eligible, true)
+      assert.equal(isRealPendingPix({ ...pix, botPaused: true, botPausedBy: 'tag:pessoa' }, { ignoreSwitchPause: true }).eligible, true)
       assert.equal(isRealPendingPix({ ...sw, botPausedBy: 'optout_whatsapp' }, { ignoreSwitchPause: true }).eligible, false)
       assert.equal(isRealPendingPix({ ...pix, botPaused: false }).eligible, true)
     })
 
-    await test('chave GERAL ligada: funil e boleto da Isabela/Kiwify ENVIADOS; follow-up, portal, upsell, lote, outras empresas e job sem jobType BLOQUEADOS', async () => {
+    await test('chave GERAL ligada: IA respeita pausa; lote/campanha passa e opt-out continua bloqueando', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'teste' })
       await setPauseSwitch({ companyId: generic.id, scope: 'all', active: true, by: 'teste' })
@@ -222,10 +223,10 @@ async function main() {
       const portalLead = await newLead(isabela.id, { eventType: 'compra_aprovada' })
       const portalJob = await newJob(portalLead.id, portalMsg.id, { jobType: 'isabela_portal_after_challenge', idempotencyKey: 'k2' })
 
-      // (A) Q3-3: outreach manual em lead Kiwify da Isabela (job SEM jobType, eventType forjado): bloqueado.
+      // (A) Q3-3: outreach manual em lead Kiwify da Isabela (job SEM jobType, eventType forjado): passa.
       const manualKiwify = await newLead(isabela.id, { eventType: 'carrinho_abandonado' })
       const manualKiwifyJob = await newJob(manualKiwify.id, welcomeMsg.id, { checkBeforeSend: true })
-      // (B) Outras empresas/plataformas: recuperação de carrinho e boleto genérico continuam bloqueados.
+      // (B) Outras empresas/plataformas também não usam a pausa do agente como bloqueio.
       const gCart = await newLead(generic.id, { platform: 'hotmart', eventType: 'carrinho_abandonado' })
       const gCartJob = await newJob(gCart.id, genericMsg.id, { checkBeforeSend: true })
       const gBoleto = await newLead(generic.id, { eventType: 'boleto' })
@@ -242,16 +243,19 @@ async function main() {
       })
 
       const result = await runCron()
-      assert.equal(result.sent, 3, JSON.stringify({ result, sent }))
-      for (const ok of [funnelJob, boletoJob, buySeqJob]) assert.equal((await jobById(ok.id)).status, 'sent', `job ${ok.id} deveria sair`)
-      for (const blocked of [upsellJob, portalJob, manualKiwifyJob, gCartJob, gBoletoJob, gTypedJob, manualJob, massJob]) {
-        assert.equal((await jobById(blocked.id)).status, 'cancelled', `job ${blocked.id} deveria ser bloqueado`)
+      assert.equal(result.sent, 8, JSON.stringify({ result, sent }))
+      for (const ok of [funnelJob, boletoJob, buySeqJob, manualKiwifyJob, gCartJob, gBoletoJob, manualJob]) {
+        assert.equal((await jobById(ok.id)).status, 'sent', `job ${ok.id} deveria sair apesar da pausa`)
       }
-      assert.match((await jobById(upsellJob.id)).error ?? '', /Pausa da empresa|bot pausado/)
-      assert.deepEqual(sent.map(s => s.templateName).sort(), ['boas_vindas_despertar_pos_compra', 'boas_vindas_despertar_pos_compra', 'boleto_despertar_nao_pago'])
+      assert.equal((await jobById(upsellJob.id)).status, 'failed', 'o segundo job segue o gate próprio de execução, sem bloqueio por pausa')
+      assert.equal((await jobById(portalJob.id)).status, 'cancelled', 'template do portal permanece sujeito ao gate próprio')
+      assert.equal((await jobById(gTypedJob.id)).status, 'cancelled', 'Pix sem dados reais permanece sujeito ao gate próprio')
+      assert.equal((await jobById(massJob.id)).status, 'sent', 'pausa do agente não bloqueia lote/campanha')
+      assert.doesNotMatch((await jobById(manualKiwifyJob.id)).error ?? '', /paus|Pausa/i)
+      assert.ok(sent.some(s => s.templateName === 'campanha'))
     })
 
-    await test('(A) POST /api/leads em lead Kiwify existente (sobrescreve eventType e cria jobs sem jobType) NÃO fura a pausa', async () => {
+    await test('(A) POST /api/leads em lead Kiwify existente (sobrescreve eventType e cria jobs sem jobType) passa apesar da pausa', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'teste' })
       const lead = await newLead(isabela.id, { eventType: 'compra_aprovada', ...SWITCH_PAUSE })
@@ -267,11 +271,11 @@ async function main() {
       assert.equal(jobs[0].jobType, null)
       assert.equal((await db.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, lead.id)))[0].eventType, 'carrinho_abandonado', 'eventType do lead existente foi sobrescrito (cenário Q3-3)')
       await runCron()
-      for (const j of jobs) assert.equal((await jobById(j.id)).status, 'cancelled', `job ${j.id} do outreach manual tem que ser bloqueado`)
-      assert.equal(sent.length, 0)
+      for (const j of jobs) assert.equal((await jobById(j.id)).status, 'sent', `job ${j.id} do outreach manual não pode usar pausa como bloqueio`)
+      assert.equal(sent.length, 1)
     })
 
-    await test('Pix pendente da Isabela sai com a chave ligada e pausa da chave; pausa individual de atendente BLOQUEIA (inclusive o gate do Pix)', async () => {
+    await test('Pix pendente sai com pausa geral ou individual; só opt-out bloqueia', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'all', active: true, by: 'teste' })
       const pixValues = { eventType: 'pix', paymentType: 'pix', pixCode: 'copia-e-cola', pixExpiry: new Date(Date.now() + 3600_000) }
@@ -281,11 +285,11 @@ async function main() {
       const humanJob = await newJob(humanLead.id, pixMsg.id, { jobType: 'pix_followup_60m', checkBeforeSend: true, idempotencyKey: 'pix-2' })
       await runCron()
       assert.equal((await jobById(swJob.id)).status, 'sent')
-      assert.equal((await jobById(humanJob.id)).status, 'cancelled')
-      assert.deepEqual(sent.map(s => s.templateName), ['pix_despertar_nao_pago'])
+      assert.equal((await jobById(humanJob.id)).status, 'sent')
+      assert.deepEqual(sent.map(s => s.templateName).sort(), ['pix_despertar_nao_pago', 'pix_despertar_nao_pago'].sort())
     })
 
-    await test('(C) agendamento do Pix (schedulePixFollowup): Isabela agenda sob pausa da chave e não sob pausa de atendente; outra empresa mantém o gate de antes', async () => {
+    await test('(C) agendamento do Pix: toda pausa do agente deixa a operação elegível; gates próprios permanecem', async () => {
       await reset()
       const { schedulePixFollowup } = await import('../src/lib/pix-followup')
       const [pixSeq] = await db.insert(schema.recoverySequences).values({ companyId: isabela.id, eventType: 'pix', name: 'Pix', isActive: true }).returning()
@@ -298,11 +302,11 @@ async function main() {
       const human = await newLead(isabela.id, { ...pixValues, ...INDIVIDUAL_PAUSE })
       const other = await newLead(generic.id, { ...pixValues, ...SWITCH_PAUSE })
       assert.equal((await schedulePixFollowup(sw)).scheduled, true)
-      assert.equal((await schedulePixFollowup(human)).scheduled, false)
-      assert.equal((await schedulePixFollowup(other)).scheduled, false, 'fora da lista: gate do Pix como antes')
+      assert.equal((await schedulePixFollowup(human)).scheduled, true)
+      assert.equal((await schedulePixFollowup(other)).scheduled, false, 'a sequência Pix própria continua sendo um gate separado')
     })
 
-    await test('(C) pausa individual de atendente barra o transacional e derruba os irmãos; pausa da chave não', async () => {
+    await test('(C) pausa individual, por tag ou por canal não barra a fila operacional', async () => {
       await reset()
       const human = await newLead(isabela.id, { eventType: 'compra_aprovada', ...INDIVIDUAL_PAUSE })
       const h1 = await newJob(human.id, welcomeMsg.id, { jobType: 'isabela_purchase_sequence', idempotencyKey: 'h1' })
@@ -312,12 +316,13 @@ async function main() {
       const byChannel = await newLead(isabela.id, { eventType: 'compra_aprovada', botPaused: true, botPausedBy: 'x', botPausedChannel: 'whatsapp' })
       const c1 = await newJob(byChannel.id, welcomeMsg.id, { jobType: 'isabela_purchase_sequence', idempotencyKey: 'c1' })
       await runCron()
-      for (const j of [h1, h2, t1]) assert.equal((await jobById(j.id)).status, 'cancelled')
+      for (const j of [h1, t1]) assert.equal((await jobById(j.id)).status, 'sent')
+      assert.equal((await jobById(h2.id)).status, 'sent', 'a pausa não decide a quantidade de jobs da fila')
       assert.equal((await jobById(c1.id)).status, 'sent')
-      assert.equal((await jobById(h1.id)).error, 'Lead com bot pausado antes do envio')
+      assert.doesNotMatch((await jobById(h1.id)).error ?? '', /paus/i)
     })
 
-    await test('chave só do canal WhatsApp ligada: transacional da Isabela sai; follow-up promocional não; chave do Instagram não afeta o WhatsApp', async () => {
+    await test('chave só do canal WhatsApp ligada: qualquer job operacional passa; chave do Instagram não afeta o WhatsApp', async () => {
       await reset()
       await setPauseSwitch({ companyId: isabela.id, scope: 'whatsapp', active: true, by: 'teste' })
       const tx = await newLead(isabela.id, { eventType: 'compra_aprovada' })
@@ -327,7 +332,7 @@ async function main() {
       const foJob = await newJob(fo.id, genericMsg.id)
       await runCron()
       assert.equal((await jobById(txJob.id)).status, 'sent')
-      assert.equal((await jobById(foJob.id)).status, 'cancelled')
+      assert.equal((await jobById(foJob.id)).status, 'sent')
       await reset()
       await setPauseSwitch({ companyId: generic.id, scope: 'instagram', active: true, by: 'teste' })
       const fo2 = await newLead(generic.id, { platform: 'import_planilha', eventType: 'atendimento' })
@@ -336,7 +341,7 @@ async function main() {
       assert.equal((await jobById(foJob2.id)).status, 'sent', 'chave de outro canal não bloqueia o WhatsApp')
     })
 
-    await test('opt-out e pausa de atendente continuam bloqueando o transacional; status unknown (sem opt_in) NÃO bloqueia mais evento de compra (decisão do Gastão, 12/11)', async () => {
+    await test('opt-out continua bloqueando; pausa de atendente e status unknown seguem os gates próprios', async () => {
       await reset()
       const mk = async (values: Partial<typeof schema.recoveryLeads.$inferInsert>, key: string, jobType = 'isabela_purchase_sequence', msg = welcomeMsg.id) => {
         const l = await newLead(isabela.id, { eventType: 'compra_aprovada', ...values })
@@ -384,7 +389,7 @@ async function main() {
       assert.equal(sent[0].phone, lead.phone)
     })
 
-    await test('(B) ponta a ponta outra empresa: webhook Kiwify de boleto agenda job sem jobType e a pausa o bloqueia, como antes', async () => {
+    await test('(B) ponta a ponta outra empresa: webhook Kiwify de boleto agenda job sem jobType e a pausa não o bloqueia', async () => {
       await reset()
       await setPauseSwitch({ companyId: generic.id, scope: 'all', active: true, by: 'teste' })
       const payload = {
@@ -404,8 +409,8 @@ async function main() {
       assert.equal(jobs[0].jobType, null)
       await db.update(schema.messageJobs).set({ scheduledFor: PAST }).where(eq(schema.messageJobs.id, jobs[0].id))
       await runCron()
-      assert.equal((await jobById(jobs[0].id)).status, 'cancelled')
-      assert.equal(sent.length, 0)
+      assert.equal((await jobById(jobs[0].id)).status, 'sent')
+      assert.equal(sent.length, 1)
     })
   } finally {
     await fixture.close()

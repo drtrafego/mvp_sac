@@ -13,13 +13,11 @@ import { companyPauseSwitches, recoveryLeads } from '@/lib/db/schema'
  *   - criação de lead herda a chave (getInheritedPauseFields);
  *   - todo envio automático consulta a chave E lead.botPaused (isBotBlocked).
  *
- * A pausa é do bot CONVERSACIONAL (IA respondendo, follow-up de IA, comentário
- * automático, upsell, disparo em massa). NÃO é do funil de evento da Kiwify da
- * Isabela: os jobs com jobType explícito da lista de permissão
- * (message-job-class.ts: TRANSACTIONAL_BYPASS_ALLOWLIST) passam por cima da
- * pausa GERADA pela chave/"Pausar tudo"/"Pausar canal". Pausa individual de
- * atendente e opt-out bloqueiam sempre. Para todo o resto a pausa vale como
- * antes. "Lead nasce pausado" significa "a IA não conversa com ele".
+ * A pausa é somente do agente automático/IA: decide se a resposta
+ * conversacional automática pode sair. Cadastro, CRM, lotes, campanhas,
+ * templates aprovados, mensagens humanas e demais operações do SAC não usam
+ * esta pausa como bloqueio. Opt-out continua sendo um gate separado de
+ * consentimento. "Lead nasce pausado" significa "a IA não conversa com ele".
  *
  * Escopos: 'all' (geral) vale para qualquer canal; 'whatsapp', 'instagram' e
  * 'email' valem só para leads daquele canal (canal A pausado não afeta B).
@@ -130,9 +128,11 @@ export interface BotBlockDecision {
 }
 
 /**
- * Decisão única para todo envio automático do bot. Bloqueia se o lead está
- * pausado OU se a chave da empresa/canal está ligada. Não captura erro de
- * banco de propósito: um envio automático nunca sai no escuro.
+ * Decisão única para o gate de resposta conversacional automática da IA.
+ * Bloqueia se o lead está pausado OU se a chave da empresa/canal está ligada.
+ * Operações de lote/campanha e mensagens humanas têm gates próprios e não
+ * devem chamar esta função para decidir elegibilidade. Não captura erro de
+ * banco de propósito: uma resposta automática nunca sai no escuro.
  */
 export async function isBotBlocked(input: {
   companyId: number

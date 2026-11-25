@@ -1105,8 +1105,9 @@ export const sacPendingItems = pgTable('sac_pending_items', {
 // instagram | email). Vale para leads existentes E futuros: pause-all e
 // pause-channel só marcavam os leads que já existiam, então lead novo e
 // comentário automático do Instagram saíam do bot mesmo com a empresa
-// "pausada". Toda criação de lead herda a chave e todo envio automático a
-// consulta antes de sair (ver src/lib/bot-pause.ts).
+// "pausada". Toda criação de lead herda a chave e o gate de resposta da IA a
+// consulta antes de sair (ver src/lib/bot-pause.ts); operações de CRM, lotes,
+// campanhas e mensagens humanas têm gates próprios.
 export const companyPauseSwitches = pgTable('company_pause_switches', {
   id: serial('id').primaryKey(),
   companyId: integer('company_id').references(() => companies.id, { onDelete: 'cascade' }).notNull(),

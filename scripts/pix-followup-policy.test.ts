@@ -29,12 +29,12 @@ test('Pix real pendente só passa com código, validade e consentimento explíci
   assert.equal(isRealPendingPix({ ...baseLead, approvedDate: new Date() }).eligible, false)
 })
 
-test('gate do Pix: pausa barra como antes; bypass (lista de permissão) só ignora pausa da chave; atendente e opt-out sempre barram', () => {
+test('gate do Pix: a pausa do agente não bloqueia follow-up; opt-out continua barrando', () => {
   const swPause = { ...baseLead, botPaused: true, botPausedBy: 'Administrador (Agente IA)', botPausedAll: true }
-  assert.equal(isRealPendingPix(swPause).eligible, false)
+  assert.equal(isRealPendingPix(swPause).eligible, true)
   assert.deepEqual(isRealPendingPix(swPause, { ignoreSwitchPause: true }), { eligible: true })
   assert.deepEqual(isRealPendingPix({ ...baseLead, botPaused: true, botPausedBy: 'auto (pausa geral ativa)' }, { ignoreSwitchPause: true }), { eligible: true })
-  assert.equal(isRealPendingPix({ ...baseLead, botPaused: true, botPausedBy: 'Atendente Maria' }, { ignoreSwitchPause: true }).eligible, false)
+  assert.equal(isRealPendingPix({ ...baseLead, botPaused: true, botPausedBy: 'Atendente Maria' }, { ignoreSwitchPause: true }).eligible, true)
   assert.equal(isRealPendingPix({ ...swPause, botPausedBy: 'optout_whatsapp' }, { ignoreSwitchPause: true }).eligible, false)
   assert.equal(isRealPendingPix({ ...swPause, botPausedBy: 'revisao_possivel_optout' }, { ignoreSwitchPause: true }).eligible, false)
 })
@@ -80,12 +80,12 @@ test('template aprovado precisa ser UTILITY e a chave é estável por pedido', (
   assert.equal(buildPixFollowupIdempotencyKey(292, 'pedido-interno-1'), 'pix_followup_60m:292:pedido-interno-1')
 })
 
-test('Pix da Isabela dispensa opt_in só quando quem chama prova a lista de permissão; opt-out e pausa de atendente seguem barrando', () => {
+test('Pix da Isabela dispensa opt_in só quando quem chama prova a lista de permissão; opt-out segue barrando', () => {
   const unknown = { ...baseLead, whatsappConsentStatus: 'unknown' }
   assert.equal(isRealPendingPix(unknown).eligible, false, 'sem a prova: gate de antes')
   assert.deepEqual(isRealPendingPix(unknown, { consentNotRequired: true }), { eligible: true })
   assert.equal(isRealPendingPix({ ...baseLead, whatsappConsentStatus: 'opted_out' }, { consentNotRequired: true }).eligible, false)
-  assert.equal(isRealPendingPix({ ...unknown, botPaused: true, botPausedBy: 'Atendente Maria' }, { consentNotRequired: true, ignoreSwitchPause: true }).eligible, false)
+  assert.equal(isRealPendingPix({ ...unknown, botPaused: true, botPausedBy: 'Atendente Maria' }, { consentNotRequired: true, ignoreSwitchPause: true }).eligible, true)
   assert.equal(isRealPendingPix({ ...unknown, botPaused: true, botPausedBy: 'optout_whatsapp' }, { consentNotRequired: true, ignoreSwitchPause: true }).eligible, false)
   assert.equal(isRealPendingPix({ ...unknown, pixCode: null }, { consentNotRequired: true }).eligible, false)
 })

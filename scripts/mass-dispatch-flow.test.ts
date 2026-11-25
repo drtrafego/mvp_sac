@@ -135,9 +135,7 @@ function resolveSelect(table: unknown): unknown[] {
     if (table === schema.recoveryLeads) {
       recoverySelectCount++
       if (recoverySelectCount === 1) return []
-      if (recoverySelectCount === 2) return [{ botPaused: false }]
-      if (recoverySelectCount === 3) return [validLead]
-      if (recoverySelectCount === 4) return [{ botPaused: false }]
+      if (recoverySelectCount === 2) return [validLead]
     }
     if (table === schema.massDispatchRecipients) return [{ count: recipientLeadIds.size }]
   }

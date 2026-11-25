@@ -44,7 +44,6 @@ function filterConditions(companyId: number, filter: DispatchFilter) {
   const conditions = [
     eq(recoveryLeads.companyId, companyId),
     sql`${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != ''`,
-    sql`${recoveryLeads.botPaused} IS NOT TRUE`,
   ]
   if (eventType) conditions.push(eq(recoveryLeads.eventType, eventType))
   if (status === 'awaiting_contact') conditions.push(sql`(${recoveryLeads.status} IN ('pending', 'new', 'aguardando') OR ${recoveryLeads.status} IS NULL)`)
@@ -119,9 +118,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const ids = [...new Set(input.leadIds as number[])]
     const rows = await db.select({ id: recoveryLeads.id }).from(recoveryLeads).where(and(
       eq(recoveryLeads.companyId, company.id), inArray(recoveryLeads.id, ids),
-      sql`${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != ''`, sql`${recoveryLeads.botPaused} IS NOT TRUE`,
+      sql`${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != ''`,
     ))
-    if (rows.length !== ids.length) return NextResponse.json({ error: 'Alguns leads não existem, não pertencem à empresa, estão sem telefone ou pausados' }, { status: 400 })
+    if (rows.length !== ids.length) return NextResponse.json({ error: 'Alguns leads não existem, não pertencem à empresa ou estão sem telefone' }, { status: 400 })
     leadIds = rows.map(row => row.id)
   } else {
     if (!input.filter || typeof input.filter !== 'object' || Array.isArray(input.filter)) return NextResponse.json({ error: 'Filtro inválido' }, { status: 400 })

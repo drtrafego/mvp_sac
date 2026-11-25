@@ -145,25 +145,34 @@ test('productFilter usa a mesma regra do webhook e restringe destinatários', ()
   assert.match(routeSource, /count\(DISTINCT lead_id\)::int AS recipient_count/)
 })
 
-test('preview e enfileiramento excluem leads pausados ou com opt-out mesmo se estiverem em recipients', () => {
+test('preview e enfileiramento mantêm leads pausados e excluem somente opt-out', () => {
   const queueSource = readFileSync(resolve(process.cwd(), 'src/lib/mass-dispatch.ts'), 'utf8')
   const routeSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/import/[batchId]/dispatch/route.ts'), 'utf8')
+  const directRouteSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/dispatch/route.ts'), 'utf8')
+  const importRouteSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/import/route.ts'), 'utf8')
 
-  assert.match(routeSource, /l\.bot_paused IS NOT TRUE/)
-  assert.match(queueSource, /l\.bot_paused IS NOT TRUE/)
+  assert.doesNotMatch(routeSource, /l\.bot_paused IS NOT TRUE/)
+  assert.doesNotMatch(queueSource, /l\.bot_paused IS NOT TRUE/)
+  assert.doesNotMatch(directRouteSource, /botPaused.*IS NOT TRUE/)
+  assert.doesNotMatch(importRouteSource, /pauseState\?\.botPaused/)
+  assert.doesNotMatch(directRouteSource, /sem telefone ou pausados/)
+  assert.match(directRouteSource, /sem telefone'/)
   assert.match(routeSource, /l\.whatsapp_consent_status IS DISTINCT FROM 'opted_out'/)
   assert.match(queueSource, /l\.whatsapp_consent_status IS DISTINCT FROM 'opted_out'/)
 })
 
-test('cron relê botPaused antes do envio e cancela jobs pendentes do lead pausado', () => {
+test('cron mantém a pausa no gate da IA e não usa botPaused para bloquear lote', () => {
   const cronSource = readFileSync(resolve(process.cwd(), 'src/app/api/cron/route.ts'), 'utf8')
+  const aiSource = readFileSync(resolve(process.cwd(), 'src/lib/ai/ai-reply-flow.ts'), 'utf8')
 
-  // A trava cobre o lead (botPaused) E a chave da empresa/canal (company_pause_switches).
-  assert.match(cronSource, /isBotBlocked\(\{ companyId, channel: 'whatsapp', leadBotPaused: lead\.botPaused \}\)/)
+  // A resposta automática continua protegida pela pausa do bot no fluxo de IA.
+  assert.match(aiSource, /if \(!lead \|\| lead\.botPaused\) return/)
+  // A campanha/lote/follow-up só respeita opt-out, nunca botPaused como bloqueio.
+  assert.match(cronSource, /isOptOutPause\(lead\)/)
+  assert.doesNotMatch(cronSource, /isBotBlocked/)
   assert.match(cronSource, /if \(botBlock\.blocked\)/)
-  assert.match(cronSource, /Pausa da empresa/)
+  assert.match(cronSource, /REGRA DO GASTÃO: a pausa só decide se o agente automático\/IA responde/)
   assert.match(cronSource, /status:\s*'cancelled'/)
-  assert.match(cronSource, /Lead com bot pausado antes do envio/)
   assert.match(cronSource, /inArray\(messageJobs\.status, \['pending', 'processing'\]\)/)
 })
 

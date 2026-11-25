@@ -65,7 +65,7 @@ async function auditPixEvent(args: {
 export async function schedulePixFollowup(lead: DatabaseLead, now = new Date()): Promise<PixScheduleResult> {
   const [company] = await db.select({ slug: companies.slug }).from(companies).where(eq(companies.id, lead.companyId)).limit(1)
   const allowlisted = isPauseBypassAllowed({ jobType: PIX_FOLLOWUP_JOB_TYPE }, lead, company?.slug)
-  const eligibility = isRealPendingPix(lead, { ignoreSwitchPause: allowlisted, consentNotRequired: allowlisted })
+  const eligibility = isRealPendingPix(lead, { ignoreSwitchPause: true, consentNotRequired: allowlisted })
   if (!eligibility.eligible) {
     await auditPixEvent({
       companyId: lead.companyId,
@@ -76,7 +76,6 @@ export async function schedulePixFollowup(lead: DatabaseLead, now = new Date()):
     return { scheduled: false, reason: eligibility.reason }
   }
 
-  // Só para o fluxo allowlistado (Isabela/Kiwify): outras empresas mantêm o comportamento anterior.
   if (allowlisted && await hasApprovedPurchaseForOrder(lead.companyId, lead.transactionId)) {
     return await blockPixSchedule(lead, 'pedido já tem compra aprovada')
   }

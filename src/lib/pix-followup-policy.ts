@@ -1,4 +1,4 @@
-import { isOptOutPause, isSwitchGeneratedPause } from '@/lib/message-job-class'
+import { isOptOutPause } from '@/lib/message-job-class'
 
 export const PIX_FOLLOWUP_JOB_TYPE = 'pix_followup_60m'
 export const PIX_FOLLOWUP_TEMPLATE_NAME = 'pix_despertar_nao_pago'
@@ -75,15 +75,10 @@ export function isRealPendingPix(
   if (lead.status === 'completed' || lead.status === 'converted' || lead.approvedDate) {
     return { eligible: false, reason: 'pagamento já confirmado' }
   }
-  // Opt-out sempre barra. Pausa individual (atendente) sempre barra. A pausa
-  // gerada pela chave/"Pausar tudo"/"Pausar canal" só é ignorada quando quem
-  // chama prova que o job está na lista de permissão (Kiwify da Isabela,
-  // ver message-job-class.ts); para as demais empresas o gate é o de antes.
+  // Opt-out sempre barra. Toda outra pausa é somente do agente automático e
+  // não pode bloquear o follow-up operacional.
   if (isOptOutPause(lead)) {
     return { eligible: false, reason: 'lead pausado por pedido de parar mensagens' }
-  }
-  if (lead.botPaused === true && !(options.ignoreSwitchPause === true && isSwitchGeneratedPause(lead))) {
-    return { eligible: false, reason: 'lead pausado pelo atendimento' }
   }
   // Pix não pago da Kiwify da Isabela é aviso da própria compra e dispensa
   // opt_in (decisão do Gastão, 12/11/2026); quem chama prova isso com a lista de

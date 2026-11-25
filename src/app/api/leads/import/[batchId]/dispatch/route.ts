@@ -32,7 +32,6 @@ async function loadPreview(batchId: number, companyId: number) {
       FROM mass_dispatch_recipients r
       JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = ${companyId}
       WHERE r.batch_id = ${batchId}
-        AND l.bot_paused IS NOT TRUE
         AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
         AND NOT EXISTS (
           SELECT 1 FROM message_jobs existing_job
@@ -98,7 +97,6 @@ async function loadPreview(batchId: number, companyId: number) {
       JOIN sequence_messages sm ON sm.sequence_id = rs.id AND sm.is_active = true
       WHERE b.id = ${batchId}
         AND b.company_id = ${companyId}
-        AND l.bot_paused IS NOT TRUE
         AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
         AND NOT EXISTS (
           SELECT 1 FROM message_jobs existing_job

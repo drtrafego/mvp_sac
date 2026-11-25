@@ -451,7 +451,7 @@ function SwitchBadge({ active, loading, scopeLabel }: { active: boolean; loading
     <p className="text-micro font-semibold text-st-atencao" data-testid={`pause-switch-${scopeLabel}`}>
       {scopeLabel === 'ig'
         ? 'Chave LIGADA: leads novos entram pausados e o bot não envia comentário automático nem mensagem no Instagram.'
-        : 'Chave LIGADA: leads novos entram pausados e o bot de IA não responde, não faz follow-up e não envia disparo promocional. Na conta da Isabela, os avisos de evento da Kiwify (compra, boleto, Pix, cartão recusado, funil pós-compra) continuam sendo enviados, desde que o cliente tenha dado opt-in, não tenha pedido para parar e dentro da janela de atendimento; pausa individual de atendente também os bloqueia.'}
+        : 'Chave LIGADA: leads novos entram pausados e o bot de IA não responde. Lotes, campanhas, templates aprovados e mensagens humanas continuam disponíveis; opt-out do contato continua bloqueando o envio.'}
     </p>
   ) : (
     <p className="text-micro text-fg-subtle" data-testid={`pause-switch-${scopeLabel}`}>
@@ -618,10 +618,8 @@ function PausarTudoSection({ slug }: { slug: string }) {
         Controle o bot de IA de forma isolada por canal (apenas WhatsApp ou apenas Instagram) ou para a empresa inteira.
         Pausas manuais feitas individualmente por atendentes continuam preservadas e nunca são sobrescritas.
         Ao pausar, a chave fica ligada: <strong className="text-fg">leads novos entram pausados</strong> e o bot também
-        não envia resposta automática a comentários do Instagram até você reativar.{' '}
-        Na conta da Isabela, a pausa <strong className="text-fg">não bloqueia os avisos de evento da Kiwify</strong> (compra
-        aprovada, boleto, Pix, cartão recusado e funil pós-compra): esses continuam sendo enviados, desde que o cliente tenha dado opt-in, não tenha pedido para parar e dentro da janela de atendimento; pausa individual de atendente também os bloqueia.
-        Nas demais contas, a pausa bloqueia todo envio automático.
+        não envia resposta automática do agente até você reativar.{' '}
+        Lotes, campanhas, templates aprovados e mensagens humanas continuam disponíveis; o opt-out do contato continua bloqueando o envio.
       </p>
 
       {/* Seção por Canal */}
@@ -810,16 +808,14 @@ function PausarTudoSection({ slug }: { slug: string }) {
                   <>
                     O bot de IA vai parar de responder <strong className="text-fg">{activeCount}</strong> lead(s)
                     ativo(s) em todos os canais e a chave geral fica ligada: leads novos também entram pausados.
-                    Quem já está pausado por decisão individual não é afetado. Na conta da Isabela, os avisos de evento
-                    da Kiwify (compra, boleto, Pix, cartão recusado, funil pós-compra) continuam sendo enviados, desde que o cliente tenha dado opt-in, não tenha pedido para parar e dentro da janela de atendimento; pausa individual de atendente também os bloqueia.
+                    Quem já está pausado por decisão individual não é afetado. Lotes, campanhas, templates aprovados e mensagens humanas continuam disponíveis; opt-out continua bloqueando o envio.
                   </>
                 ) : (
                   <>
                     O bot de IA vai parar de responder <strong className="text-fg">{confirmTarget === 'whatsapp' ? wa.active : ig.active}</strong> lead(s)
                     ativo(s) no canal <strong className="text-fg">{confirmTarget === 'whatsapp' ? 'WhatsApp' : 'Instagram'}</strong>.
                     A chave do canal fica ligada: leads novos desse canal também entram pausados.
-                    Os demais canais e pausas individuais não serão afetados. Na conta da Isabela, os avisos de evento
-                    da Kiwify (compra, boleto, Pix, cartão recusado, funil pós-compra) continuam sendo enviados no WhatsApp, desde que o cliente tenha dado opt-in, não tenha pedido para parar e dentro da janela de atendimento; pausa individual de atendente também os bloqueia.
+                    Os demais canais e pausas individuais não serão afetados. Lotes, campanhas, templates aprovados e mensagens humanas continuam disponíveis; opt-out continua bloqueando o envio.
                   </>
                 )
               ) : confirmTarget === 'all' ? (

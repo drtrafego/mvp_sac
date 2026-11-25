@@ -370,17 +370,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
       if (batch) {
         try {
-          const [pauseState] = await db
-            .select({ botPaused: recoveryLeads.botPaused })
-            .from(recoveryLeads)
-            .where(eq(recoveryLeads.id, leadId))
-            .limit(1)
-
-          if (!pauseState?.botPaused) {
-            await db.insert(massDispatchRecipients)
-              .values({ batchId: batch.id, leadId })
-              .onConflictDoNothing()
-          }
+          // A pausa controla o agente automático; não impede cadastro nem a
+          // inclusão do lead em uma campanha/lote operacional.
+          await db.insert(massDispatchRecipients)
+            .values({ batchId: batch.id, leadId })
+            .onConflictDoNothing()
         } catch (err) {
           dispatchRecipientFailed++
           errors.push(`Lead ${leadId} persistido, mas falhou ao incluir no lote de disparo: ${err instanceof Error ? err.message : String(err)}`)
