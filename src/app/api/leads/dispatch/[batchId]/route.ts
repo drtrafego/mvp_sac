@@ -22,6 +22,7 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ ba
     templateName: massDispatchBatches.templateName,
     templateLanguage: massDispatchBatches.templateLanguage,
     createdAt: massDispatchBatches.createdAt,
+    confirmedAt: massDispatchBatches.confirmedAt,
   }).from(massDispatchBatches).where(and(eq(massDispatchBatches.id, batchId), eq(massDispatchBatches.companyId, company.id))).limit(1)
   if (!batch) return NextResponse.json({ error: 'Lote não encontrado' }, { status: 404 })
 

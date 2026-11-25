@@ -10,6 +10,7 @@ import { queueDirectTemplateMassDispatchBatch } from '@/lib/mass-dispatch'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
 import { renderTemplateVariableTextStrict, unresolvedTemplateVariableKeys, type TemplateLead } from '@/lib/lead-template-variables'
+import { POST as runDispatchCron } from '@/app/api/cron/route'
 
 const MAX_MASS_IMPORT_ROWS = 5000
 
@@ -221,5 +222,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (queued.status === 'non_template') {
     return NextResponse.json({ error: 'O template selecionado não pode ser enfileirado neste disparo', batchId: batch.id, status: 'draft' }, { status: 409 })
   }
-  return NextResponse.json({ success: true, batchId: batch.id, status: 'queued', jobsCreated: queued.jobsCreated, recipientCount: leadIds.length })
+
+  // O lote foi confirmado pelo clique em Leads. Processá-lo nesta mesma
+  // requisição remove a espera pelo próximo Vercel Cron; o filtro batch_id
+  // impede que este acionamento toque em outros jobs da fila.
+  let workerTriggered = false
+  const cronSecret = process.env.CRON_SECRET
+  if (cronSecret) {
+    try {
+      const workerRequest = new NextRequest(new URL(`/api/cron?batch_id=${batch.id}`, req.url), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cronSecret}` },
+      })
+      const workerResponse = await runDispatchCron(workerRequest)
+      workerTriggered = workerResponse.ok
+      if (!workerResponse.ok) console.error('[mass-dispatch] worker imediato não concluiu', { batchId: batch.id, status: workerResponse.status })
+    } catch (error) {
+      console.error('[mass-dispatch] falha ao acionar worker imediato', { batchId: batch.id, error })
+    }
+  } else {
+    console.error('[mass-dispatch] CRON_SECRET ausente; lote ficará para o cron agendado', { batchId: batch.id })
+  }
+
+  return NextResponse.json({ success: true, batchId: batch.id, status: 'queued', jobsCreated: queued.jobsCreated, recipientCount: leadIds.length, workerTriggered })
 }

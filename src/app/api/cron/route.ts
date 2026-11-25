@@ -180,19 +180,25 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const rawTargetBatchId = new URL(req.url).searchParams.get('batch_id')
+  const targetBatchId = rawTargetBatchId == null ? null : Number(rawTargetBatchId)
+  if (targetBatchId !== null && (!Number.isInteger(targetBatchId) || targetBatchId <= 0)) {
+    return NextResponse.json({ error: 'batch_id inválido' }, { status: 400 })
+  }
+
   const lockClient = await tryAcquireCronDispatchLock()
   if (!lockClient) {
-    return NextResponse.json({ processed: 0, sent: 0, failed: 0, skipped: 'cron_already_running' })
+    return NextResponse.json({ processed: 0, sent: 0, failed: 0, skipped: 'cron_already_running', ...(targetBatchId === null ? {} : { targetBatchId }) })
   }
 
   try {
-    return await runDispatchPendingJobs(lockClient)
+    return await runDispatchPendingJobs(lockClient, targetBatchId)
   } finally {
     await releaseCronDispatchLock(lockClient)
   }
 }
 
-async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
+async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | null = null): Promise<NextResponse> {
   // O cliente principal usa neon-http, que não implementa transactions.
   // Este cliente postgres-js é a mesma conexão que mantém o advisory lock,
   // então a seleção e a marcação dos jobs continuam atômicas e serializadas.
@@ -206,17 +212,30 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
   const nowIso = now.toISOString()
   // Ordena por prioridade do lead (desc) para processar cartao_recusado antes de boleto/carrinho
   const pendingJobs: any[] = await transactionalDb.transaction(async (tx: any) => {
+    const staleConditions = [
+      eq(messageJobs.status, 'processing'),
+      lte(messageJobs.processingStartedAt, staleProcessingBefore),
+    ]
+    if (targetBatchId !== null) staleConditions.push(eq(messageJobs.massDispatchBatchId, targetBatchId))
     const stale = await tx.update(messageJobs).set({
       status: 'failed',
       error: 'Job ficou em processing além do lease; revisão manual necessária para evitar reenvio duplicado',
       processingStartedAt: null,
-    }).where(and(
-      eq(messageJobs.status, 'processing'),
-      lte(messageJobs.processingStartedAt, staleProcessingBefore),
-    )).returning()
+    }).where(and(...staleConditions)).returning()
     if (stale.length > 0) {
       console.error('[cron] ALERTA: jobs processing órfãos sinalizados para revisão manual', { jobIds: stale.map((row: { id: number }) => row.id) })
     }
+    const pendingConditions = [
+      eq(messageJobs.status, 'pending'),
+      lte(messageJobs.scheduledFor, now),
+      sql`NOT EXISTS (
+        SELECT 1
+        FROM mass_dispatch_phone_cooldowns c
+        WHERE c.meta_phone_number_id = ${settings.metaPhoneNumberId}
+          AND c.cooldown_until > ${nowIso}
+      )`,
+    ]
+    if (targetBatchId !== null) pendingConditions.push(eq(messageJobs.massDispatchBatchId, targetBatchId))
     const rows = await tx
       .select({
         job: messageJobs,
@@ -237,16 +256,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
       .innerJoin(companies, eq(companies.id, recoveryLeads.companyId))
       .innerJoin(settings, eq(settings.companyId, recoveryLeads.companyId))
       .leftJoin(nativeAvailabilitySchedules, eq(nativeAvailabilitySchedules.companyId, recoveryLeads.companyId))
-      .where(and(
-        eq(messageJobs.status, 'pending'),
-        lte(messageJobs.scheduledFor, now),
-        sql`NOT EXISTS (
-          SELECT 1
-          FROM mass_dispatch_phone_cooldowns c
-          WHERE c.meta_phone_number_id = ${settings.metaPhoneNumberId}
-            AND c.cooldown_until > ${nowIso}
-        )`
-      ))
+      .where(and(...pendingConditions))
       .orderBy(desc(recoveryLeads.priority))
       .limit(MAX_JOBS_PER_RUN)
       .for('update', { of: messageJobs, skipLocked: true })
@@ -999,16 +1009,18 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
   }
 
   // SAC Lote 1: Avaliar regras internas de pendência (retorno vencido, transbordo sem dono, etapa sem retorno)
-  try {
-    const activeCompanies = await db.select({ id: companies.id }).from(companies)
-    for (const c of activeCompanies) {
-      try { await evaluateSacPendingRules({ companyId: c.id }) }
-      catch (error) { console.error('[cron] Falha ao reconciliar pendências SAC', { companyId: c.id, error }) }
+  if (targetBatchId === null) {
+    try {
+      const activeCompanies = await db.select({ id: companies.id }).from(companies)
+      for (const c of activeCompanies) {
+        try { await evaluateSacPendingRules({ companyId: c.id }) }
+        catch (error) { console.error('[cron] Falha ao reconciliar pendências SAC', { companyId: c.id, error }) }
+      }
+    } catch (error) {
+      // Falhas em regras internas não interrompem o cron
+      console.error('[cron] Falha ao listar empresas para pendências SAC', error)
     }
-  } catch (error) {
-    // Falhas em regras internas não interrompem o cron
-    console.error('[cron] Falha ao listar empresas para pendências SAC', error)
   }
 
-  return NextResponse.json({ processed: runnableJobs.length, sent, failed })
+  return NextResponse.json({ processed: runnableJobs.length, sent, failed, ...(targetBatchId === null ? {} : { targetBatchId }) })
 }

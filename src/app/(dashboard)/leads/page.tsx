@@ -139,15 +139,6 @@ function filterOptions(values: string[], labels?: Record<string, string>): LeadF
   return values.map(value => ({ value, label: filterLabel(value, labels) }))
 }
 
-const paymentLabels: Record<string, string> = {
-  boleto: 'Boleto',
-  pix: 'Pix',
-  credit_card: 'Cartão de Crédito',
-  cartao_credito: 'Cartão de Crédito',
-  debit_card: 'Cartão de Débito',
-  paypal: 'PayPal',
-}
-
 const CONTROL_HEIGHT = 'h-[var(--control-lg)] lg:h-[var(--control-md)]'
 const FIELD_SKIN = 'bg-surface-inset dark:bg-surface-inset border-line-subtle focus-visible:ring-0 focus-visible:border-line-default'
 
@@ -158,7 +149,6 @@ const COLUMNS: { label: string; className?: string }[] = [
   { label: 'Telefone / WhatsApp' },
   { label: 'Produto / Oferta', className: 'w-[220px]' },
   { label: 'Valor' },
-  { label: 'Pagamento' },
   { label: 'Evento' },
   { label: 'Status' },
   { label: 'Data' },
@@ -260,7 +250,16 @@ export default function LeadsPage() {
   const [dispatchFeedback, setDispatchFeedback] = useState<string | null>(null)
   const [dispatchError, setDispatchError] = useState<string | null>(null)
   const [dispatchValidationMessage, setDispatchValidationMessage] = useState<string | null>(null)
-  const [dispatchStatus, setDispatchStatus] = useState<{ batchId: number; status: string; deliveryStatus?: string | null; error?: string | null } | null>(null)
+  const [dispatchStatus, setDispatchStatus] = useState<{
+    batchId: number
+    status: string
+    deliveryStatus?: string | null
+    error?: string | null
+    createdAt?: string | null
+    confirmedAt?: string | null
+    processingStartedAt?: string | null
+    sentAt?: string | null
+  } | null>(null)
   const [tagActionOpen, setTagActionOpen] = useState(false)
   const [tagAction, setTagAction] = useState<'add' | 'remove' | 'replace'>('add')
   const [tagInput, setTagInput] = useState('')
@@ -449,7 +448,7 @@ export default function LeadsPage() {
       if (!response.ok) throw new Error(typeof data.error === 'string' ? `${data.error}${data.batchId ? ` (lote #${data.batchId} permanece em rascunho)` : ''}` : 'Não foi possível iniciar o disparo.')
       setDispatchConfirmed(false)
       setDispatchFeedback(action === 'start'
-        ? `Disparo iniciado: lote #${data.batchId}, ${data.jobsCreated ?? 0} job(s) enfileirado(s) para ${data.recipientCount ?? 0} destinatário(s). O estado será atualizado abaixo.`
+        ? `Disparo iniciado: lote #${data.batchId}, ${data.jobsCreated ?? 0} job(s) enfileirado(s) para ${data.recipientCount ?? 0} destinatário(s). ${data.workerTriggered ? 'Processamento imediato acionado; o estado será atualizado abaixo.' : 'O estado será atualizado pelo processamento automático.'}`
         : `Rascunho salvo: lote #${data.batchId}, ${data.recipientCount ?? 0} destinatário(s).`)
       if (action === 'start' && Number.isInteger(data.batchId)) setDispatchStatus({ batchId: data.batchId, status: 'queued' })
       await fetchLeads(page)
@@ -467,10 +466,23 @@ export default function LeadsPage() {
         const response = await fetch(`/api/leads/dispatch/${dispatchStatus.batchId}`)
         const data = await response.json().catch(() => ({}))
         if (!cancelled && response.ok) {
-          const jobError = Array.isArray(data.jobs) ? data.jobs.find((job: { error?: string | null }) => job.error)?.error : null
-          const next = { batchId: dispatchStatus.batchId, status: typeof data.batch?.status === 'string' ? data.batch.status : 'processing', deliveryStatus: Array.isArray(data.jobs) ? data.jobs[0]?.deliveryStatus ?? null : null, error: jobError }
+          const jobs = Array.isArray(data.jobs) ? data.jobs : []
+          const firstJob = jobs[0]
+          const jobError = jobs.find((job: { error?: string | null }) => job.error)?.error ?? null
+          const next = {
+            batchId: dispatchStatus.batchId,
+            status: typeof data.batch?.status === 'string' ? data.batch.status : 'processing',
+            deliveryStatus: firstJob?.deliveryStatus ?? null,
+            error: jobError,
+            createdAt: typeof data.batch?.createdAt === 'string' ? data.batch.createdAt : null,
+            confirmedAt: typeof data.batch?.confirmedAt === 'string' ? data.batch.confirmedAt : null,
+            processingStartedAt: typeof firstJob?.processingStartedAt === 'string' ? firstJob.processingStartedAt : null,
+            sentAt: typeof firstJob?.sentAt === 'string' ? firstJob.sentAt : null,
+          }
           setDispatchStatus(next)
-          if (!['accepted', 'failed', 'partial_failure'].includes(next.status)) timer = window.setTimeout(() => void readStatus(), 2500)
+          const deliveryTerminal = ['delivered', 'read'].includes(next.deliveryStatus ?? '')
+          const processingTerminal = ['failed', 'partial_failure'].includes(next.status) || deliveryTerminal
+          if (!processingTerminal) timer = window.setTimeout(() => void readStatus(), 2500)
         }
       } catch {
         if (!cancelled) timer = window.setTimeout(() => void readStatus(), 4000)
@@ -882,9 +894,6 @@ export default function LeadsPage() {
                       <td className="px-4 py-3 whitespace-nowrap text-fg font-medium">
                         {fmtCurrency(lead.productValue)}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-micro text-fg-subtle">
-                        {paymentLabels[lead.paymentType ?? ''] ?? lead.paymentType ?? '-'}
-                      </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5 text-micro text-fg">
                           <span className={`h-1.5 w-1.5 rounded-full ${evColor} bg-current`} />
@@ -1003,6 +1012,11 @@ export default function LeadsPage() {
           {templateSelection && dispatchStatus && <p role="status" className={`rounded-lg border p-3 text-micro ${dispatchStatus.status === 'failed' || dispatchStatus.status === 'partial_failure' ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-cyan-500/30 bg-cyan-500/5 text-cyan-100'}`}>
             Estado do lote #{dispatchStatus.batchId}: {dispatchStatus.deliveryStatus === 'read' ? 'lido' : dispatchStatus.deliveryStatus === 'delivered' ? 'entregue' : dispatchStatus.deliveryStatus === 'sent' ? 'enviado' : dispatchStatus.status === 'queued' ? 'enfileirado' : dispatchStatus.status === 'processing' ? 'processando' : dispatchStatus.status === 'accepted' ? 'aceito pela Meta' : dispatchStatus.status === 'partial_failure' ? 'falha parcial' : 'falhou'}.
             {dispatchStatus.error ? ` Motivo: ${dispatchStatus.error}` : ''}
+            {(dispatchStatus.createdAt || dispatchStatus.sentAt) && <span className="mt-1 block text-fg-subtle">
+              {dispatchStatus.createdAt ? `Enfileirado ${new Date(dispatchStatus.createdAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
+              {dispatchStatus.sentAt ? ` · Meta respondeu ${new Date(dispatchStatus.sentAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
+              {dispatchStatus.deliveryStatus === 'sent' ? ' · aguardando confirmação de entrega' : ''}
+            </span>}
           </p>}
           <div className="flex flex-wrap justify-end gap-2 border-t border-line-subtle pt-4">
             <Button variant="outline" onClick={() => setDispatchOpen(false)} disabled={creatingDispatch}>Cancelar</Button>

@@ -51,7 +51,7 @@ const DEFAULT_PIPELINE_COLUMNS = [
   { id: 'perdido', label: 'Perdido' },
 ]
 type ApprovedReply = { id: number; title: string; shortcut: string | null; body: string; variables: string[] | null; approvalState?: string }
-type ApprovedMetaTemplate = { nome: string; categoria: string; idioma: string; status: 'APPROVED'; corpo: string; variaveis: string[] }
+type ApprovedMetaTemplate = { id: string; nome: string; categoria: string; idioma: string; status: 'APPROVED'; corpo: string; variaveis: string[] }
 type PendingItem = { id: number; leadId: number; reason: string; dueAt: string | null; leadName?: string | null; leadPhone?: string | null }
 
 export interface ChatLead {
@@ -1357,7 +1357,7 @@ export function ChatWindow({
           )}
 
           {showApprovedReplies && (
-            <div className="rounded-xl border border-line-subtle bg-surface-panel p-3 shadow-xl space-y-2 animate-in fade-in duration-150">
+            <div className="max-h-[min(62vh,calc(100dvh-12rem))] min-h-0 overflow-y-auto overscroll-contain scroll-thin rounded-xl border border-line-subtle bg-surface-panel p-3 shadow-xl space-y-2 animate-in fade-in duration-150">
               <div className="flex items-center justify-between pb-1.5 border-b border-line-subtle">
                 <span className="text-[11px] font-bold text-fg flex items-center gap-1.5 uppercase tracking-wider">
                   <Zap size={12} className="text-amber-400" />
@@ -1436,8 +1436,9 @@ export function ChatWindow({
                     <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-2 space-y-2">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-micro font-semibold text-fg">{selectedMetaTemplate.nome}</span>
-                        <span className="text-[10px] text-cyan-300">APPROVED · {selectedMetaTemplate.idioma}</span>
+                        <span className="text-[10px] text-cyan-300">{selectedMetaTemplate.status} · {selectedMetaTemplate.categoria} · {selectedMetaTemplate.idioma}</span>
                       </div>
+                      <p className="text-[10px] font-mono text-fg-faint">Meta ID {selectedMetaTemplate.id || 'ausente'}</p>
                       <TemplateVariableMapping
                         variables={selectedMetaTemplate.variaveis}
                         values={metaTemplateVariables}
@@ -1464,7 +1465,7 @@ export function ChatWindow({
                             <span className="text-[10px] font-mono text-emerald-400">APPROVED · {template.idioma}</span>
                           </div>
                           <span className="text-[10px] text-fg-faint">{template.categoria}</span>
-                          <p className="text-[11px] text-fg-muted whitespace-pre-wrap line-clamp-2">{template.corpo || 'Template sem prévia textual.'}</p>
+                          <p className="max-h-24 overflow-y-auto text-[11px] text-fg-muted whitespace-pre-wrap">{template.corpo || 'Template sem prévia textual.'}</p>
                         </button>
                       ))}
                     </div>

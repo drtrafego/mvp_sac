@@ -27,14 +27,29 @@ test('provider vazio ou nulo mantém compatibilidade com empresas antigas e assu
 })
 
 test('templates APPROVED viram cards reais e status diferente não aparece', () => {
-  const approved = toApprovedMetaTemplate(tpl('compra_aprovada', 'APPROVED'))
+  const approved = toApprovedMetaTemplate({ ...tpl('compra_aprovada', 'APPROVED'), id: 'meta-123' })
   assert.ok(approved)
+  assert.equal(approved.id, 'meta-123')
   assert.equal(approved.nome, 'compra_aprovada')
   assert.equal(approved.idioma, 'pt_BR')
   assert.deepEqual(approved.variaveis, ['variavel_1', 'variavel_2'])
 
   assert.equal(toApprovedMetaTemplate(tpl('pendente', 'PENDING')), null)
   assert.equal(toApprovedMetaTemplate(tpl('rejeitado', 'REJECTED')), null)
+})
+
+test('BODY oficial preserva parágrafos e capitalização sem normalização do SAC', () => {
+  const body = 'Oii, {{1}}! Tudo bem? 🧡\n\nRecebi suas respostas.\n\nTá podendo conversar agora?'
+  const approved = toApprovedMetaTemplate({
+    ...tpl('isabella_primeiro_contato_formulario_utility_v2', 'APPROVED'),
+    id: '1148704647906919',
+    category: 'MARKETING',
+    components: [{ type: 'BODY', text: body }],
+  })
+  assert.ok(approved)
+  assert.equal(approved.corpo, body)
+  assert.equal(approved.corpo.includes('\\n\\n'), false)
+  assert.equal(approved.corpo.split('\n\n').length, 3)
 })
 
 test('busca usa somente WABA/token da empresa atual e não mistura clientes', async () => {

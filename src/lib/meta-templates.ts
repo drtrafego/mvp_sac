@@ -8,6 +8,7 @@ export interface MetaTemplateSettings {
 }
 
 export interface ApprovedMetaTemplate {
+  id: string
   nome: string
   categoria: string
   idioma: string
@@ -45,6 +46,7 @@ export function toApprovedMetaTemplate(template: MetaTemplate): ApprovedMetaTemp
 
   const corpo = readBodyText(template.components ?? [])
   return {
+    id: template.id ?? '',
     nome: template.name,
     categoria: template.category,
     idioma: template.language,
