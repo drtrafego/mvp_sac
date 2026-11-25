@@ -1,4 +1,5 @@
 import { renderMetaTemplate } from '@/lib/meta-template-utils'
+import { extractTemplateVariableKeys, templateVariableMapKey } from '@/lib/lead-template-variables'
 import type { MetaTemplate } from '@/lib/whatsapp/meta'
 
 export type ComposerChannel = 'whatsapp' | 'instagram' | 'email'
@@ -26,22 +27,22 @@ export function readTemplateVariableValues(
       && String((component as { type?: unknown }).type ?? '').toUpperCase() === 'BODY'
       && typeof (component as { text?: unknown }).text === 'string'
   )) as { text: string } | undefined
-  const keys: string[] = []
-  for (const match of (body?.text ?? '').matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)) {
-    const raw = match[1].trim()
-    const key = /^\d+$/.test(raw) ? `variavel_${Number(raw)}` : raw
-    if (key && !keys.includes(key)) keys.push(key)
-  }
-  const values = keys.map(key => {
-    const numeric = key.startsWith('variavel_') ? key.slice('variavel_'.length) : ''
+  const keys = extractTemplateVariableKeys(body?.text ?? '')
+  const numericKeys = keys.filter(key => /^variavel_\d+$/.test(key))
+  const namedKeys = keys.filter(key => !/^variavel_\d+$/.test(key))
+  const maxNumericIndex = numericKeys.reduce((max, key) => Math.max(max, Number(templateVariableMapKey(key))), 0)
+  const readValue = (key: string) => {
     const direct = variables[key]
-    const numericValue = numeric ? variables[numeric] : undefined
-    return typeof direct === 'string' ? direct.trim() : typeof numericValue === 'string' ? numericValue.trim() : ''
-  })
+    const normalized = variables[templateVariableMapKey(key)]
+    return typeof direct === 'string' ? direct.trim() : typeof normalized === 'string' ? normalized.trim() : ''
+  }
+  const values = Array.from({ length: maxNumericIndex }, (_, position) => readValue('variavel_' + (position + 1)))
+    .concat(namedKeys.map(readValue))
+  const orderedKeys = Array.from({ length: maxNumericIndex }, (_, position) => 'variavel_' + (position + 1)).concat(namedKeys)
   return {
     values,
-    names: keys.map(key => key.startsWith('variavel_') ? undefined : key),
-    missing: keys.filter((_key, position) => !values[position]),
+    names: orderedKeys.map(key => key.startsWith('variavel_') ? undefined : key),
+    missing: keys.filter(key => !readValue(key)),
   }
 }
 

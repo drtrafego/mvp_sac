@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { canUseSacReply, findApprovedMetaTemplate, readTemplateVariableValues, renderApprovedMetaTemplate } from '../src/lib/composer-policy'
 import { createOutboundSender } from '../src/lib/outbound-send'
+import { SUPPORTED_VARIABLES, renderTemplateVariableText } from '../src/lib/lead-template-variables'
+import { pauseAppliesToJob } from '../src/lib/message-job-class'
 
 const templates = [
   { name: 'janela_aberta', language: 'pt_BR', status: 'APPROVED', category: 'UTILITY', components: [{ type: 'BODY', text: 'Olá {{1}}, pedido {{2}}.' }] },
@@ -32,10 +34,37 @@ test('template variables are mandatory and render only after every required valu
   assert.equal(namedRendered.content, 'Olá Isabella, pedido 42.')
 })
 
+test('conversation mapping keeps the same supported sources as the lead composer', () => {
+  assert.deepEqual(
+    SUPPORTED_VARIABLES.slice(0, 3).map(variable => variable.label),
+    ['Nome completo', 'Primeiro nome', 'E-mail'],
+  )
+  assert.equal(SUPPORTED_VARIABLES.at(-1)?.label, 'Afiliado')
+  assert.equal(renderTemplateVariableText('Olá {{1}}.', { '1': '{primeiro_nome}' }, { name: 'Maria Silva' }), 'Olá Maria.')
+  assert.equal(renderTemplateVariableText('Código: {{1}}.', { '1': 'ABC-42' }, { name: 'Maria Silva' }), 'Código: ABC-42.')
+})
+
+test('numeric Meta placeholders are sent and previewed in positional order even when the body is shuffled', () => {
+  const template = {
+    ...templates[0],
+    components: [{ type: 'BODY', text: '{{5}} | {{1}} | {{4}} | {{2}} | {{3}}' }],
+  }
+  const rendered = renderApprovedMetaTemplate(template, { '1': 'um', '2': 'dois', '3': 'três', '4': 'quatro', '5': 'cinco' })
+  assert.deepEqual(rendered.values, ['um', 'dois', 'três', 'quatro', 'cinco'])
+  assert.equal(rendered.content, 'cinco | um | quatro | dois | três')
+  assert.deepEqual(rendered.missing, [])
+})
+
 test('a closed WhatsApp window disables SAC free text but leaves approved templates available', () => {
   assert.equal(canUseSacReply('whatsapp', true), false)
   assert.equal(canUseSacReply('whatsapp', false), true)
   assert.equal(canUseSacReply('email', true), true)
+})
+
+test('pausing the agent does not block manual or queued message classes', () => {
+  assert.equal(pauseAppliesToJob('transactional'), false)
+  assert.equal(pauseAppliesToJob('conversational'), false)
+  assert.equal(pauseAppliesToJob('promotional'), false)
 })
 
 test('template selection reaches the typed transport only on explicit send and never as media', async () => {

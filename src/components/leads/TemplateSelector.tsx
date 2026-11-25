@@ -5,9 +5,10 @@ import { AlertCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { TemplateVariableMapping } from './TemplateVariableMapping'
 import type { MetaTemplate } from '@/lib/whatsapp/meta'
 import { extractBodyPlaceholders, hasDocumentHeader, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
-import { SUPPORTED_VARIABLES, interpolateVariable } from '@/lib/lead-template-variables'
+import { renderTemplateVariableText } from '@/lib/lead-template-variables'
 import { validateTemplateHeaderDocument } from '@/lib/dispatch-document-form'
 
 export type TemplateSelection = {
@@ -61,10 +62,7 @@ export function TemplateSelector({ lead, onChange }: { lead: Record<string, stri
         }
       : null)
   }, [selected, complete, unsupported, variablesMap, hasDocument, headerDocumentValidation, onChange])
-  const preview = body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_, index: string) => {
-    const source = variablesMap[index]
-    return !source ? `{{${index}}}` : SUPPORTED_VARIABLES.some(variable => variable.token === source) ? interpolateVariable(source, lead) : source
-  })
+  const preview = renderTemplateVariableText(body, variablesMap, lead)
 
   if (loading) return <div className="p-5 text-center text-body text-fg-muted"><RefreshCw className="inline mr-2 animate-spin" size={15} />Carregando templates aprovados...</div>
   if (error) return <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-4 text-body text-rose-300"><p>{error}</p><Button variant="outline" className="mt-3" onClick={() => void load()}>Tentar novamente</Button></div>
@@ -78,8 +76,8 @@ export function TemplateSelector({ lead, onChange }: { lead: Record<string, stri
     {selected && <><div className="rounded-lg border border-line-subtle bg-surface-inset p-4"><p className="text-micro font-bold text-cyan-300">{selected.name} · {selected.language} · {selected.category}</p><p className="mt-2 whitespace-pre-wrap rounded bg-black/35 p-3 font-mono text-micro text-fg">{body || '(Template sem texto no BODY)'}</p></div>
       {unsupported ? <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-body text-amber-300"><AlertCircle size={16} />Este template usa HEADER de mídia ou componentes dinâmicos não suportados.</div> : <>
         {hasDocument && <div className="grid gap-3 rounded-lg border border-line-subtle bg-surface-panel p-3 sm:grid-cols-2"><div className="space-y-1"><label className="text-micro font-bold text-fg" htmlFor="template-document-link">Link do PDF (https público) *</label><Input id="template-document-link" type="url" value={headerDocument.link} onChange={event => setHeaderDocument(previous => ({ ...previous, link: event.target.value }))} aria-invalid={Boolean(headerDocumentValidation.linkError)} aria-describedby={headerDocumentValidation.linkError ? 'template-document-link-error' : undefined} className="bg-surface-inset border-line-subtle" placeholder="https://exemplo.com/Material.pdf" />{headerDocumentValidation.linkError && <p id="template-document-link-error" className="text-micro text-rose-300">{headerDocumentValidation.linkError}</p>}</div><div className="space-y-1"><label className="text-micro font-bold text-fg" htmlFor="template-document-filename">Nome do arquivo (ex.: Material.pdf) *</label><Input id="template-document-filename" value={headerDocument.filename} onChange={event => setHeaderDocument(previous => ({ ...previous, filename: event.target.value }))} aria-invalid={Boolean(headerDocumentValidation.filenameError)} aria-describedby={headerDocumentValidation.filenameError ? 'template-document-filename-error' : undefined} className="bg-surface-inset border-line-subtle" placeholder="Material.pdf" />{headerDocumentValidation.filenameError && <p id="template-document-filename-error" className="text-micro text-rose-300">{headerDocumentValidation.filenameError}</p>}</div></div>}
-        {placeholders.map(index => { const value = variablesMap[String(index)] ?? ''; const fixed = Boolean(value) && !SUPPORTED_VARIABLES.some(variable => variable.token === value); return <div key={index} className="grid gap-2 rounded-lg border border-line-subtle bg-surface-panel p-3 sm:grid-cols-2"><div className="space-y-1"><label className="text-micro font-bold text-fg">Variável {'{{'}{index}{'}}'} *</label><Select value={fixed ? '__fixed__' : value || '__none__'} onValueChange={nextValue => setVariablesMap(previous => { const next = { ...previous }; if (!nextValue || nextValue === '__none__') delete next[String(index)]; else next[String(index)] = nextValue === '__fixed__' ? ' ' : nextValue; return next })} items={{ __none__: 'Selecione a origem...', ...Object.fromEntries(SUPPORTED_VARIABLES.map(variable => [variable.token, variable.label])), __fixed__: 'Valor fixo' }}><SelectTrigger className="bg-surface-inset border-line-subtle"><SelectValue /></SelectTrigger><SelectContent className="bg-surface-overlay border-line-subtle"><SelectItem value="__none__">Selecione a origem...</SelectItem>{SUPPORTED_VARIABLES.map(variable => <SelectItem key={variable.token} value={variable.token}>{variable.label}</SelectItem>)}<SelectItem value="__fixed__">Valor fixo</SelectItem></SelectContent></Select></div>{fixed && <div className="space-y-1"><label className="text-micro font-bold text-fg">Valor fixo</label><Input value={value} onChange={event => setVariablesMap(previous => ({ ...previous, [String(index)]: event.target.value }))} className="bg-surface-inset border-line-subtle" /></div>}</div> })}
-        <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3"><p className="text-micro font-bold text-cyan-300">Prévia com um lead selecionado</p>{hasDocument && <p className="mt-2 text-body text-fg">[Documento] {headerDocumentValidation.value?.filename || headerDocument.filename || 'Nome do arquivo pendente'}</p>}<p className="mt-2 whitespace-pre-wrap text-body text-fg">{preview || '(sem conteúdo)'}</p></div>
+        <TemplateVariableMapping variables={placeholders.map(String)} values={variablesMap} onChange={setVariablesMap} preview={preview} idPrefix="template-variable" />
+        {hasDocument && <div className="rounded-lg border border-line-subtle bg-surface-panel p-3 text-body text-fg">[Documento] {headerDocumentValidation.value?.filename || headerDocument.filename || 'Nome do arquivo pendente'}</div>}
       </>}
     </>}
   </div>

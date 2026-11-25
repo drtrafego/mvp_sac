@@ -32,11 +32,13 @@ import Link from 'next/link'
 import { MessageList, type InboxMessage } from './MessageBubble'
 import { ConversationAiPanel } from './ConversationAiPanel'
 import { LeadTags } from './LeadTags'
+import { TemplateVariableMapping } from '@/components/leads/TemplateVariableMapping'
 import { ChannelIcon, ChannelBadge, PlatformBadge, BotStatusPill, EmailEngagementBadge } from './ChannelBadge'
 import { SOURCE_OPTIONS } from '@/components/leads/AddLeadModal'
 import { MetaWindowBanner, getMetaWindowInfo } from './MetaWindowBadge'
 import { cn } from '@/lib/utils'
 import { buildContextPatch, canStartComposerIntent, contextFromLead, draftAfterAccepted, fillReplyTemplate, mergeContextDraft, unresolvedReplyVariables, upsertInboxMessages, type ComposerIntent, type SacContextDraft } from './sac-inbox-state'
+import { renderTemplateVariableText, resolveTemplateVariableSource, templateVariableMapKey } from '@/lib/lead-template-variables'
 import type { EmailEngagement } from '@/lib/email-engagement'
 import { attentionMessageReferenceHref, isAttentionReturnHref, persistedSacContextSummary, type ConversationBaseHref, type ConversationReturnHref } from '@/lib/sac-attention-navigation'
 import type { InboxThreadChannel } from '@/lib/inbox-messages'
@@ -656,28 +658,24 @@ export function ChatWindow({
   }
 
   function templatePreview(template: ApprovedMetaTemplate, variables: Record<string, string>) {
-    return template.corpo.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, rawKey: string) => {
-      const key = rawKey.trim()
-      return variables[key] || `{{${key}}}`
+    return renderTemplateVariableText(template.corpo, variables, {
+      name: leadName ?? lead.name ?? '',
+      email: lead.email ?? '',
+      phone: lead.phone,
+      productName: lead.productName ?? '',
     })
   }
 
   function handleSelectMetaTemplate(template: ApprovedMetaTemplate) {
     if (threadChannel !== 'whatsapp') return
-    const variables = Object.fromEntries(template.variaveis.map(variable => [variable.replace('variavel_', ''), '']))
+    const variables = Object.fromEntries(template.variaveis.map(variable => [templateVariableMapKey(variable), '']))
     setSelectedMetaTemplate(template)
     setMetaTemplateVariables(variables)
     setReplyError(null)
     setText(templatePreview(template, variables))
   }
 
-  function handleTemplateVariableChange(index: string, value: string) {
-    setMetaTemplateVariables(previous => {
-      const next = { ...previous, [index]: value }
-      if (selectedMetaTemplate) setText(templatePreview(selectedMetaTemplate, next))
-      return next
-    })
-  }
+  const selectedTemplateComplete = !selectedMetaTemplate || selectedMetaTemplate.variaveis.every(variable => Boolean(metaTemplateVariables[templateVariableMapKey(variable)]?.trim()))
 
   async function loadPending() {
     setLoadingPending(true)
@@ -866,7 +864,7 @@ export function ChatWindow({
     }
     if (selectedMetaTemplate) {
       const missingTemplateVariables = selectedMetaTemplate.variaveis
-        .map(variable => variable.replace('variavel_', ''))
+        .map(variable => templateVariableMapKey(variable))
         .filter(index => !metaTemplateVariables[index]?.trim())
       if (missingTemplateVariables.length) {
         setSendError(`Preencha as variáveis obrigatórias: ${missingTemplateVariables.map(index => `{{${index}}}`).join(', ')}.`)
@@ -892,6 +890,12 @@ export function ChatWindow({
     }
     pendingIntentRef.current = intent
     try {
+      const conversationLead = {
+        name: leadName ?? lead.name ?? '',
+        email: lead.email ?? '',
+        phone: lead.phone,
+        productName: lead.productName ?? '',
+      }
       const response = await fetch(`/api/inbox/${lead.id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-Request-Id': intent.clientRequestId },
         body: JSON.stringify({
@@ -902,7 +906,10 @@ export function ChatWindow({
             messageType: 'template',
             templateName: selectedMetaTemplate.nome,
             templateLanguage: selectedMetaTemplate.idioma,
-            templateVariables: metaTemplateVariables,
+            templateVariables: Object.fromEntries(selectedMetaTemplate.variaveis.map(variable => {
+              const key = templateVariableMapKey(variable)
+              return [key, resolveTemplateVariableSource(metaTemplateVariables[key], conversationLead)]
+            })),
           } : {}),
         }),
       })
@@ -1431,11 +1438,16 @@ export function ChatWindow({
                         <span className="text-micro font-semibold text-fg">{selectedMetaTemplate.nome}</span>
                         <span className="text-[10px] text-cyan-300">APPROVED · {selectedMetaTemplate.idioma}</span>
                       </div>
-                      {selectedMetaTemplate.variaveis.map(variable => {
-                        const index = variable.replace('variavel_', '')
-                        return <label key={variable} className="block text-micro text-fg-muted">Variável {'{{'}{index}{'}}'}<input required value={metaTemplateVariables[index] || ''} onChange={event => handleTemplateVariableChange(index, event.target.value)} className="mt-1 block w-full rounded-lg border border-line-subtle bg-surface-inset p-2 text-fg" /></label>
-                      })}
-                      <p className="text-[11px] text-fg whitespace-pre-wrap">{templatePreview(selectedMetaTemplate, metaTemplateVariables)}</p>
+                      <TemplateVariableMapping
+                        variables={selectedMetaTemplate.variaveis}
+                        values={metaTemplateVariables}
+                        onChange={next => {
+                          setMetaTemplateVariables(next)
+                          setText(templatePreview(selectedMetaTemplate, next))
+                        }}
+                        preview={templatePreview(selectedMetaTemplate, metaTemplateVariables)}
+                        idPrefix="conversation-template-variable"
+                      />
                       <button type="button" onClick={() => { setSelectedMetaTemplate(null); setMetaTemplateVariables({}); setText('') }} className="text-micro text-fg-muted underline">Cancelar template</button>
                     </div>
                   )}
@@ -1476,7 +1488,7 @@ export function ChatWindow({
             />
             <button
               onClick={handleSend}
-              disabled={(!text.trim() && !selectedMetaTemplate) || sending || historyMode || (composerMetaWindow.requiresTemplate && !selectedMetaTemplate)}
+              disabled={(!text.trim() && !selectedMetaTemplate) || !selectedTemplateComplete || sending || historyMode || (composerMetaWindow.requiresTemplate && !selectedMetaTemplate)}
               aria-label="Enviar mensagem"
               title={`Enviar mensagem via ${channelLabel}`}
               className="focus-ring flex items-center justify-center h-11 w-11 shrink-0 rounded-xl bg-brand-solid text-on-accent transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs"

@@ -1,4 +1,5 @@
 import { listMetaTemplates, type MetaTemplate } from '@/lib/whatsapp/meta'
+import { extractTemplateVariableKeys } from '@/lib/lead-template-variables'
 
 export interface MetaTemplateSettings {
   whatsappProvider?: string | null
@@ -39,18 +40,6 @@ function readBodyText(components: unknown[]): string {
   return ''
 }
 
-function extractVariables(body: string): string[] {
-  const variables = new Set<string>()
-  for (const match of body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)) {
-    variables.add(`variavel_${Number(match[1])}`)
-  }
-  for (const match of body.matchAll(/\{\{\s*([^}\d][^}]*)\s*\}\}/g)) {
-    const name = match[1].trim()
-    if (name) variables.add(name)
-  }
-  return Array.from(variables)
-}
-
 export function toApprovedMetaTemplate(template: MetaTemplate): ApprovedMetaTemplate | null {
   if (template.status !== 'APPROVED') return null
 
@@ -61,7 +50,7 @@ export function toApprovedMetaTemplate(template: MetaTemplate): ApprovedMetaTemp
     idioma: template.language,
     status: 'APPROVED',
     corpo,
-    variaveis: extractVariables(corpo),
+    variaveis: extractTemplateVariableKeys(corpo),
   }
 }
 

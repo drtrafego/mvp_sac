@@ -27,6 +27,7 @@ import { extractBodyPlaceholders, hasDocumentHeader, hasUnsupportedDynamicCompon
 import { SUPPORTED_VARIABLES, interpolateVariable } from '@/lib/lead-template-variables'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 import { validateTemplateHeaderDocument } from '@/lib/dispatch-document-form'
+import { TemplateVariableMapping } from './TemplateVariableMapping'
 
 interface ImportLeadsModalProps {
   open: boolean
@@ -1128,46 +1129,14 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
                       </div>
                     ) : <>
                       {templateHasDocumentHeader && <div className="grid grid-cols-1 gap-3 rounded-[var(--r-md)] border border-line-subtle bg-surface-panel p-3 sm:grid-cols-2"><div className="space-y-1"><label className="text-micro font-bold text-fg" htmlFor="import-template-document-link">Link do PDF (https público) *</label><Input id="import-template-document-link" type="url" value={templateHeaderDocument.link} onChange={event => setTemplateHeaderDocument(previous => ({ ...previous, link: event.target.value }))} aria-invalid={Boolean(templateHeaderDocumentValidation.linkError)} aria-describedby={templateHeaderDocumentValidation.linkError ? 'import-template-document-link-error' : undefined} placeholder="https://exemplo.com/Material.pdf" className={cn(FIELD, CONTROL_H, 'text-body')} />{templateHeaderDocumentValidation.linkError && <p id="import-template-document-link-error" className="text-micro text-rose-300">{templateHeaderDocumentValidation.linkError}</p>}</div><div className="space-y-1"><label className="text-micro font-bold text-fg" htmlFor="import-template-document-filename">Nome do arquivo (ex.: Material.pdf) *</label><Input id="import-template-document-filename" value={templateHeaderDocument.filename} onChange={event => setTemplateHeaderDocument(previous => ({ ...previous, filename: event.target.value }))} aria-invalid={Boolean(templateHeaderDocumentValidation.filenameError)} aria-describedby={templateHeaderDocumentValidation.filenameError ? 'import-template-document-filename-error' : undefined} placeholder="Material.pdf" className={cn(FIELD, CONTROL_H, 'text-body')} />{templateHeaderDocumentValidation.filenameError && <p id="import-template-document-filename-error" className="text-micro text-rose-300">{templateHeaderDocumentValidation.filenameError}</p>}</div></div>}
-                      {templatePlaceholders.map(index => {
-                      const currentValue = templateVariablesMap[String(index)] ?? ''
-                      const isFixed = Boolean(currentValue) && !SUPPORTED_VARIABLES.some(variable => variable.token === currentValue)
-                      return (
-                        <div key={index} className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-[var(--r-md)] border border-line-subtle bg-surface-panel p-3">
-                          <div className="space-y-1">
-                            <label className="text-micro font-bold text-fg">Variável {'{{'}{index}{'}}'} *</label>
-                            <Select
-                              value={isFixed ? '__fixed__' : currentValue || '__none__'}
-                              onValueChange={value => setTemplateVariablesMap(previous => {
-                                const next = { ...previous }
-                                if (!value || value === '__none__') delete next[String(index)]
-                                else next[String(index)] = value === '__fixed__' ? ' ' : value
-                                return next
-                              })}
-                              items={{ __none__: 'Selecione a origem...', ...Object.fromEntries(SUPPORTED_VARIABLES.map(variable => [variable.token, variable.label])), __fixed__: 'Valor fixo' }}
-                            >
-                              <SelectTrigger className={cn(FIELD, CONTROL_H, 'text-body', !currentValue && 'border-rose-500/50')}><SelectValue placeholder="Selecione a origem..." /></SelectTrigger>
-                              <SelectContent className="bg-surface-overlay text-fg max-h-56 border border-line-subtle">
-                                <SelectItem value="__none__">Selecione a origem...</SelectItem>
-                                {SUPPORTED_VARIABLES.map(variable => <SelectItem key={variable.token} value={variable.token}>{variable.label}</SelectItem>)}
-                                <SelectItem value="__fixed__">Valor fixo</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          {isFixed && <div className="space-y-1"><label className="text-micro font-bold text-fg">Valor fixo</label><Input value={currentValue} onChange={event => setTemplateVariablesMap(previous => ({ ...previous, [String(index)]: event.target.value }))} className={cn(FIELD, CONTROL_H, 'text-body')} /></div>}
-                        </div>
-                      )
-                      })}
+                      <TemplateVariableMapping variables={templatePlaceholders.map(String)} values={templateVariablesMap} onChange={setTemplateVariablesMap} preview={templatePreviewText} idPrefix="import-template-variable" />
 
                     {rowsWithEmptyTemplateVariables > 0 && (
                       <div className="rounded-[var(--r-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-micro text-amber-300">
                         {rowsWithEmptyTemplateVariables} linha(s) com telefone teriam valor vazio em alguma variável selecionada.
                       </div>
                     )}
-                    <div className="rounded-[var(--r-md)] border border-cyan-500/30 bg-cyan-500/5 p-3">
-                      <p className="text-micro font-bold text-cyan-300">Prévia com a primeira linha do CSV</p>
-                      {templateHasDocumentHeader && <p className="mt-2 text-body text-fg">[Documento] {templateHeaderDocumentValidation.value?.filename || templateHeaderDocument.filename || 'Nome do arquivo pendente'}</p>}
-                      <p className="mt-2 whitespace-pre-wrap text-body text-fg">{templatePreviewText || '(sem conteúdo)'}</p>
-                    </div>
+                    {templateHasDocumentHeader && <div className="rounded-[var(--r-md)] border border-line-subtle bg-surface-panel p-3 text-body text-fg">[Documento] {templateHeaderDocumentValidation.value?.filename || templateHeaderDocument.filename || 'Nome do arquivo pendente'}</div>}
                     </>}
                   </div>
                 )}

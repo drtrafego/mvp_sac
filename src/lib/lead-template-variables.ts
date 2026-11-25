@@ -22,6 +22,36 @@ export const SUPPORTED_VARIABLES = [
 
 export type VariableSource = { token: string; label: string } | { fixedValue: string }
 
+export function templateVariableMapKey(variable: string | number): string {
+  const key = String(variable).trim()
+  return key.replace(/^variavel_/, '')
+}
+
+export function templateVariableLabel(variable: string | number): string {
+  const key = templateVariableMapKey(variable)
+  return `Variável {{${key}}}`
+}
+
+export function isSupportedVariableSource(source: string): boolean {
+  return SUPPORTED_VARIABLES.some(variable => variable.token === source)
+}
+
+/**
+ * Retorna as variáveis na ordem que a Meta espera: posições numéricas 1..N,
+ * seguidas das variáveis nomeadas na ordem em que aparecem no texto.
+ */
+export function extractTemplateVariableKeys(body: string): string[] {
+  const numeric = new Set<number>()
+  const named: string[] = []
+  for (const match of body.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)) {
+    const raw = match[1].trim()
+    if (!raw) continue
+    if (/^\d+$/.test(raw)) numeric.add(Number(raw))
+    else if (!named.includes(raw)) named.push(raw)
+  }
+  return [...numeric].sort((a, b) => a - b).map(index => `variavel_${index}`).concat(named)
+}
+
 function value(lead: Record<string, string>, ...keys: string[]): string {
   for (const key of keys) {
     const candidate = lead[key]
@@ -68,4 +98,16 @@ export function interpolateVariable(token: string, lead: Record<string, string>)
     case '{afiliado}': return value(lead, 'affiliateCode', 'afiliado')
     default: return ''
   }
+}
+
+export function resolveTemplateVariableSource(source: string | undefined, lead: Record<string, string>): string {
+  if (!source?.trim()) return ''
+  return isSupportedVariableSource(source) ? interpolateVariable(source, lead) : source.trim()
+}
+
+export function renderTemplateVariableText(body: string, variables: Record<string, string>, lead: Record<string, string>): string {
+  return body.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, rawKey: string) => {
+    const key = rawKey.trim()
+    return resolveTemplateVariableSource(variables[templateVariableMapKey(key)] ?? variables[key], lead) || `{{${key}}}`
+  })
 }
