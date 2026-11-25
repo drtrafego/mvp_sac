@@ -24,6 +24,8 @@ export interface OutboundSendInput {
   templateLanguage?: string | null
   templateVariableValues?: string[]
   templateVariableNames?: Array<string | undefined>
+  emailReplyTo?: { email: string; name?: string }
+  emailHeaders?: Record<string, string>
   /** Explicit channel selected from a channel-specific conversation thread. */
   channelOverride?: LeadDeliveryChannel | null
   beforeTransport?: () => Promise<boolean>
@@ -88,6 +90,8 @@ function payloadHash(input: OutboundSendInput, channel: string): string {
     templateLanguage: input.templateLanguage || null,
     templateVariableValues: input.templateVariableValues || [],
     templateVariableNames: input.templateVariableNames || [],
+    emailReplyTo: input.emailReplyTo || null,
+    emailHeaders: input.emailHeaders || null,
     subject: channel === 'email' ? input.subject || `Re: Atendimento - ${input.lead.productName || 'SAC'}` : null,
   })).digest('hex')
 }
@@ -239,6 +243,8 @@ async function transport(input: OutboundSendInput, channel: 'whatsapp' | 'instag
       to: [{ email: input.lead.email!, name: input.lead.name || undefined }],
       subject: input.subject || `Re: Atendimento - ${input.lead.productName || 'SAC'}`,
       htmlContent: `<p>${escaped.replace(/\n/g, '<br/>')}</p>`, textContent: content, companyId: input.companyId,
+      replyTo: input.emailReplyTo,
+      headers: input.emailHeaders,
     })
     return { ...result, externalId: result.data?.messageId || null }
   }

@@ -9,7 +9,7 @@ type Lead = typeof recoveryLeads.$inferSelect
 type Config = typeof settings.$inferSelect
 type Company = typeof companies.$inferSelect
 type Message = typeof whatsappMessages.$inferSelect
-export type AiReplyHistoryRow = Pick<Message, 'id' | 'direction' | 'content' | 'messageType' | 'mediaUrl' | 'createdAt' | 'sendState' | 'externalId'>
+export type AiReplyHistoryRow = Pick<Message, 'id' | 'direction' | 'content' | 'messageType' | 'mediaUrl' | 'createdAt' | 'sendState' | 'externalId'> & { reasoning?: Message['reasoning'] }
 
 /** The production handler and tests share this workflow. External effects are injected. */
 export interface AiReplyDependencies {
@@ -61,6 +61,34 @@ const BOT_POR_SLUG: Record<string, Bot> = {
 }
 const textOf = (row: AiReplyHistoryRow) => row.content?.trim() ? row.content : `[${row.messageType || 'mídia'}]`
 
+function emailMetadata(row: AiReplyHistoryRow): { subject?: string; references?: string } {
+  if (!row.reasoning) return {}
+  try {
+    const value = JSON.parse(row.reasoning) as { emailSubject?: unknown; references?: unknown }
+    return {
+      subject: typeof value.emailSubject === 'string' ? value.emailSubject.slice(0, 998) : undefined,
+      references: typeof value.references === 'string' ? value.references.slice(0, 998) : undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
+function emailDelivery(lead: Lead, current: AiReplyHistoryRow) {
+  if (lead.channel !== 'email' || !current.externalId) return {}
+  const metadata = emailMetadata(current)
+  const references = [metadata.references, current.externalId].filter(Boolean).join(' ').slice(0, 998)
+  return {
+    channelOverride: 'email' as const,
+    subject: metadata.subject ? `Re: ${metadata.subject.replace(/^(?:Re:\s*)+/i, '')}` : undefined,
+    emailReplyTo: { email: 'nara@casaldotrafego.email', name: 'Nara' },
+    emailHeaders: {
+      'In-Reply-To': current.externalId,
+      References: references,
+    },
+  }
+}
+
 export function createAiReplyHandler(deps: AiReplyDependencies) {
   return async function generateAndSendAiReply(leadId: number): Promise<void> {
     let auditCompanyId: number | null = null
@@ -108,6 +136,7 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
       const currentIndex = rows.findIndex(row => row.direction === 'inbound')
       if (currentIndex < 0) return
       const current = rows[currentIndex]
+      const delivery = emailDelivery(lead, current)
       const previous = rows.slice(currentIndex + 1).reverse()
       // Stable per inbound event: a failed notice is retried without regenerating or redoing an action.
       const requestId = `ai-reply:${lead.companyId}:${lead.id}:${current.id}`
@@ -124,6 +153,7 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
           companyId: lead.companyId, lead, content: existing.content, messageType: 'text',
           clientRequestId: requestId, sentBy: 'bot', senderName,
           agentId: bot, beforeTransport: controlAllowsEffects,
+          ...delivery,
         })
         await audit({
           type: retry.ok ? 'ai_reply_sent' : 'ai_reply_send_failed',
@@ -233,6 +263,7 @@ export function createAiReplyHandler(deps: AiReplyDependencies) {
         companyId: lead.companyId, lead, content: text, messageType: 'text',
         clientRequestId: requestId, sentBy: 'bot', senderName,
         agentId: bot, beforeTransport: controlAllowsEffects,
+        ...delivery,
       })
       await audit({
         type: sent.ok ? 'ai_reply_sent' : 'ai_reply_send_failed',

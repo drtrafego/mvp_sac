@@ -8,6 +8,8 @@ export interface SendEmailOptions {
   htmlContent: string
   textContent?: string
   replyTo?: { email: string; name?: string }
+  /** RFC 5322 headers used to keep replies in the original thread. */
+  headers?: Record<string, string>
   companyId?: number
 }
 
@@ -62,6 +64,7 @@ export async function sendBrevoEmail({
         htmlContent,
         ...(textContent ? { textContent } : {}),
         ...(replyTo ? { replyTo } : {}),
+        ...(headers ? { headers } : {}),
       }),
     })
 

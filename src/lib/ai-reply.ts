@@ -162,7 +162,7 @@ const productionDependencies: AiReplyDependencies = {
     return company
   },
   async readHistory(companyId, leadId) {
-    return db.select({ id: whatsappMessages.id, direction: whatsappMessages.direction, content: whatsappMessages.content, messageType: whatsappMessages.messageType, mediaUrl: whatsappMessages.mediaUrl, createdAt: whatsappMessages.createdAt, sendState: whatsappMessages.sendState, externalId: whatsappMessages.externalId })
+    return db.select({ id: whatsappMessages.id, direction: whatsappMessages.direction, content: whatsappMessages.content, messageType: whatsappMessages.messageType, mediaUrl: whatsappMessages.mediaUrl, createdAt: whatsappMessages.createdAt, sendState: whatsappMessages.sendState, externalId: whatsappMessages.externalId, reasoning: whatsappMessages.reasoning })
       .from(whatsappMessages).where(and(eq(whatsappMessages.companyId, companyId), eq(whatsappMessages.leadId, leadId), or(
         eq(whatsappMessages.direction, 'inbound'),
         and(eq(whatsappMessages.direction, 'outbound'), or(eq(whatsappMessages.sendState, 'accepted'), and(isNull(whatsappMessages.sendState), isNotNull(whatsappMessages.externalId)))),
