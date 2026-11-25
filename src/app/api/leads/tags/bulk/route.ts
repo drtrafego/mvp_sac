@@ -196,7 +196,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return { altered, ignored, failed }
     })
 
-    return NextResponse.json({ ok: true, preview: false, selectedCount: ids.length, ...summary, ...result, messagesCreated: 0, jobsCreated: 0 })
+    return NextResponse.json({ ok: true, preview: false, ...summary, ...result, messagesCreated: 0, jobsCreated: 0 })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Não foi possível alterar as tags.'
     const status = /seleção|selecione|IDs|não pertencem|limite/i.test(message) ? 400 : 500
