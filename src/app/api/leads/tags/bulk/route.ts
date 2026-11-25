@@ -143,58 +143,60 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const user = await getCurrentUser()
     const actorName = user?.displayName || user?.primaryEmail?.split('@')[0] || 'humano'
-    const result = await db.transaction(async tx => {
-      let altered = 0
-      let ignored = 0
-      const failed: Array<{ leadId: number; error: string }> = []
+    // Production uses neon-http, whose database wrapper does not implement
+    // transactions. Keep each lead operation idempotent and tenant-scoped,
+    // then write one audit event after the batch. A failed lead is isolated in
+    // the result instead of aborting the whole request before any response.
+    let altered = 0
+    let ignored = 0
+    const failed: Array<{ leadId: number; error: string }> = []
 
-      for (const leadId of ids) {
-        try {
-          let changed = false
-          if (checked.action === 'add') {
-            for (const tag of checked.tags) {
-              const inserted = await tx.insert(leadTags).values({ leadId, tag, scopeChannel: null, createdBy: actorName }).onConflictDoNothing().returning({ id: leadTags.id })
-              if (inserted.length) changed = true
-            }
-          } else if (checked.action === 'remove') {
-            const deleted = await tx.delete(leadTags).where(and(eq(leadTags.leadId, leadId), inArray(leadTags.tag, checked.tags))).returning({ id: leadTags.id })
-            changed = deleted.length > 0
-          } else {
-            const deleted = await tx.delete(leadTags).where(and(eq(leadTags.leadId, leadId), eq(leadTags.tag, checked.fromTag!))).returning({ id: leadTags.id })
-            if (deleted.length) {
-              await tx.insert(leadTags).values({ leadId, tag: checked.toTag!, scopeChannel: null, createdBy: actorName }).onConflictDoNothing()
-              changed = true
-            }
+    for (const leadId of ids) {
+      try {
+        let changed = false
+        if (checked.action === 'add') {
+          for (const tag of checked.tags) {
+            const inserted = await db.insert(leadTags).values({ leadId, tag, scopeChannel: null, createdBy: actorName }).onConflictDoNothing().returning({ id: leadTags.id })
+            if (inserted.length) changed = true
           }
-          if (changed) altered += 1
-          else ignored += 1
-        } catch (error) {
-          failed.push({ leadId, error: error instanceof Error ? error.message : 'Falha ao alterar tags.' })
+        } else if (checked.action === 'remove') {
+          const deleted = await db.delete(leadTags).where(and(eq(leadTags.leadId, leadId), inArray(leadTags.tag, checked.tags))).returning({ id: leadTags.id })
+          changed = deleted.length > 0
+        } else {
+          const deleted = await db.delete(leadTags).where(and(eq(leadTags.leadId, leadId), eq(leadTags.tag, checked.fromTag!))).returning({ id: leadTags.id })
+          if (deleted.length) {
+            await db.insert(leadTags).values({ leadId, tag: checked.toTag!, scopeChannel: null, createdBy: actorName }).onConflictDoNothing()
+            changed = true
+          }
         }
+        if (changed) altered += 1
+        else ignored += 1
+      } catch (error) {
+        failed.push({ leadId, error: error instanceof Error ? error.message : 'Falha ao alterar tags.' })
       }
+    }
 
-      await tx.insert(sacAuditEvents).values({
-        companyId: company.id,
-        actorType: 'human',
-        actorId: user?.id ? String(user.id) : null,
-        actorName,
-        type: 'lead_tags_bulk_updated',
-        referenceType: 'lead_tags_bulk',
-        payload: {
-          action: checked.action,
-          leadCount: ids.length,
-          altered,
-          ignored,
-          failed: failed.length,
-          tags: checked.tags,
-          fromTag: checked.fromTag ?? null,
-          toTag: checked.toTag ?? null,
-          messagesCreated: 0,
-          jobsCreated: 0,
-        },
-      })
-      return { altered, ignored, failed }
+    await db.insert(sacAuditEvents).values({
+      companyId: company.id,
+      actorType: 'human',
+      actorId: user?.id ? String(user.id) : null,
+      actorName,
+      type: 'lead_tags_bulk_updated',
+      referenceType: 'lead_tags_bulk',
+      payload: {
+        action: checked.action,
+        leadCount: ids.length,
+        altered,
+        ignored,
+        failed: failed.length,
+        tags: checked.tags,
+        fromTag: checked.fromTag ?? null,
+        toTag: checked.toTag ?? null,
+        messagesCreated: 0,
+        jobsCreated: 0,
+      },
     })
+    const result = { altered, ignored, failed }
 
     return NextResponse.json({ ok: true, preview: false, ...summary, ...result, messagesCreated: 0, jobsCreated: 0 })
   } catch (error) {
