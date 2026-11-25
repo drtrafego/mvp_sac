@@ -41,6 +41,28 @@ interface ImportItem {
   }
 }
 
+type ImportedMetadata = { import: Record<string, unknown> } | undefined
+
+function mergeImportedRawPayload(existing: unknown, imported: ImportedMetadata) {
+  if (!imported || !Object.values(imported.import).some(Boolean)) return existing
+  const current = existing && typeof existing === 'object' && !Array.isArray(existing)
+    ? existing as Record<string, unknown>
+    : {}
+  const currentImport = current.import && typeof current.import === 'object' && !Array.isArray(current.import)
+    ? current.import as Record<string, unknown>
+    : {}
+  const incomingImport = Object.fromEntries(
+    Object.entries(imported.import).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  )
+  return {
+    ...current,
+    import: {
+      ...currentImport,
+      ...incomingImport,
+    },
+  }
+}
+
 export async function GET(): Promise<NextResponse> {
   const company = await requireCompany()
   const batches = await db
@@ -274,6 +296,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           status: recoveryLeads.status,
           phone: recoveryLeads.phone,
           channel: recoveryLeads.channel,
+          rawPayload: recoveryLeads.rawPayload,
         })
         .from(recoveryLeads)
         .where(and(eq(recoveryLeads.companyId, company.id), eq(recoveryLeads.phone, phone)))
@@ -297,6 +320,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             status: recordType === 'closed_sale' ? 'completed' : undefined,
             pipelineStage: recordType === 'closed_sale' ? 'fechado' : undefined,
             trackingSource,
+            rawPayload: mergeImportedRawPayload(existing.rawPayload, importedMetadata),
             updatedAt: new Date(),
           })
           .where(eq(recoveryLeads.id, existing.id))
