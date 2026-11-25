@@ -478,6 +478,118 @@ async function main() {
       assert.ok(tags.every(row => row.createdBy === 'import:csv'))
     })
 
+    await test('import CSV preserva metadata existente, mescla metadata da planilha e é idempotente', async () => {
+      const existente = await testDb
+        .insert(schema.recoveryLeads)
+        .values({
+          companyId: company.id,
+          eventType: 'test',
+          phone: '5511911110028',
+          platform: 'sac',
+          productName: 'Produto melhor já cadastrado',
+          trackingSource: 'origem_existente',
+          rawPayload: { sistema: 'preservar' },
+        })
+        .returning()
+
+      const body = {
+        items: [{
+          phone: existente[0].phone,
+          name: 'Nome Atualizado',
+          productName: 'Produto Principal',
+          preserveExistingProductName: true,
+          trackingSource: 'mineracao',
+          preserveExistingTrackingSource: true,
+          tags: ['VIP', 'vip'],
+          sourceMetadata: {
+            externalId: 'csv-6289224',
+            title: 'Mentora',
+            instagramAccountId: 'ig-123',
+            messengerId: 'ms-123',
+            telegramUserName: 'usuario_tg',
+            timezone: 'America/Sao_Paulo',
+            locale: 'pt-BR',
+            language: 'pt',
+          },
+        }],
+      }
+
+      const run = () => IMPORT_POST(new NextRequest('https://sac.example.com/api/leads/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }))
+
+      const first = await run()
+      assert.equal(first.status, 200)
+      const firstJson = await first.json()
+      assert.equal(firstJson.inserted, 0)
+      assert.equal(firstJson.updated, 1)
+      assert.equal(firstJson.alreadyExisting, 1)
+      assert.equal(firstJson.tagFailed, 0)
+
+      const [afterFirst] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, existente[0].id))
+      assert.equal(afterFirst.name, 'Nome Atualizado')
+      assert.equal(afterFirst.productName, 'Produto melhor já cadastrado')
+      assert.equal(afterFirst.trackingSource, 'origem_existente')
+      assert.deepEqual(afterFirst.rawPayload, {
+        sistema: 'preservar',
+        import: {
+          externalId: 'csv-6289224',
+          title: 'Mentora',
+          instagramAccountId: 'ig-123',
+          messengerId: 'ms-123',
+          telegramUserName: 'usuario_tg',
+          timezone: 'America/Sao_Paulo',
+          locale: 'pt-BR',
+          language: 'pt',
+          recordType: 'lead',
+          platform: 'import_planilha',
+        },
+      })
+
+      const second = await run()
+      const secondJson = await second.json()
+      assert.equal(secondJson.inserted, 0)
+      assert.equal(secondJson.updated, 1)
+      assert.equal(secondJson.alreadyExisting, 1)
+      const tags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.leadId, existente[0].id))
+      assert.deepEqual(tags.map(row => row.tag), ['vip'])
+    })
+
+    await test('import CSV não atravessa tenant e preserva duplicidades históricas sem criar outra linha', async () => {
+      const [otherCompany] = await testDb
+        .insert(schema.companies)
+        .values({ name: 'Outra Empresa Import Teste', slug: 'outra-empresa-import-teste' })
+        .returning()
+      const [foreignLead] = await testDb
+        .insert(schema.recoveryLeads)
+        .values({ companyId: otherCompany.id, eventType: 'test', phone: '5511911110029', platform: 'sac' })
+        .returning()
+      const [duplicateA, duplicateB] = await Promise.all([
+        testDb.insert(schema.recoveryLeads).values({ companyId: company.id, eventType: 'test', phone: '5511911110030', platform: 'hotmart' }).returning(),
+        testDb.insert(schema.recoveryLeads).values({ companyId: company.id, eventType: 'test', phone: '5511911110030', platform: 'kiwify' }).returning(),
+      ]).then(rows => [rows[0][0], rows[1][0]])
+
+      const response = await IMPORT_POST(new NextRequest('https://sac.example.com/api/leads/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ items: [{ phone: '5511911110030', name: 'Duplicado Histórico', tags: ['não-usado'] }] }),
+      }))
+      assert.equal(response.status, 200)
+      const json = await response.json()
+      assert.equal(json.inserted, 0)
+      assert.equal(json.updated, 1)
+      assert.equal(json.alreadyExisting, 1)
+
+      const duplicateTags = await testDb.select().from(schema.leadTags).where(eq(schema.leadTags.tag, 'não-usado'))
+      assert.deepEqual(new Set(duplicateTags.map(row => row.leadId)), new Set([duplicateA.id, duplicateB.id]))
+      const [foreignAfter] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, foreignLead.id))
+      assert.equal(foreignAfter.name, null)
+      const samePhone = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.phone, '5511911110030'))
+      assert.equal(samePhone.length, 2)
+    })
+
     await test('import CSV com tag "pessoa" pausa o bot sem sobrescrever pausa de outro motivo', async () => {
       mockFetchOk()
       const pausaManual = 'Atendente assumiu manualmente'

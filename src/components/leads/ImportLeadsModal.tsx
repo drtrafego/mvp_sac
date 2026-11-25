@@ -375,6 +375,17 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     const sourceIdx = sourceCol ? parsedData.headers.indexOf(sourceCol) : -1
     const externalIdIdx = externalIdCol ? parsedData.headers.indexOf(externalIdCol) : -1
     const createdAtIdx = createdAtCol ? parsedData.headers.indexOf(createdAtCol) : -1
+    const metadataIndex = (...names: string[]) => parsedData.headers.findIndex(header => {
+      const normalized = normalizeHeader(header)
+      return names.some(name => normalized === normalizeHeader(name))
+    })
+    const titleIdx = metadataIndex('Title', 'Cargo')
+    const instagramIdIdx = metadataIndex('Instagram account id', 'Instagram ID')
+    const messengerIdIdx = metadataIndex('Messenger ID')
+    const telegramUserNameIdx = metadataIndex('Telegram user name', 'Telegram username')
+    const timezoneIdx = metadataIndex('Timezone', 'Fuso horário')
+    const localeIdx = metadataIndex('Locale', 'Localidade')
+    const languageIdx = metadataIndex('Language', 'Languauge', 'Idioma')
 
     const items = parsedData.rows.map(row => ({
       phone: row[phoneIdx] || (phoneFallbackIdx >= 0 ? row[phoneFallbackIdx] : '') || '',
@@ -382,15 +393,24 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
       email: emailIdx >= 0 ? row[emailIdx] : undefined,
       productName: productIdx >= 0 && row[productIdx] ? row[productIdx] : defaultProduct,
       productValue: valueIdx >= 0 && row[valueIdx] ? row[valueIdx] : defaultProductValue || undefined,
+      preserveExistingProductName: productIdx < 0 || !row[productIdx]?.trim(),
       eventType: recordType === 'closed_sale' ? 'compra_aprovada' : undefined,
       recordType,
       platform: recordPlatform,
       trackingSource: sourceIdx >= 0 && row[sourceIdx]?.trim() ? row[sourceIdx].trim() : defaultSource,
+      preserveExistingTrackingSource: sourceIdx < 0 || !row[sourceIdx]?.trim(),
       tags: tagsIdx >= 0 ? splitTags(row[tagsIdx] || '') : [],
       sourceMetadata: {
         externalId: externalIdIdx >= 0 ? row[externalIdIdx]?.trim() || undefined : undefined,
         createdOn: createdAtIdx >= 0 ? row[createdAtIdx]?.trim() || undefined : undefined,
         originalSource: sourceIdx >= 0 ? row[sourceIdx]?.trim() || undefined : undefined,
+        title: titleIdx >= 0 ? row[titleIdx]?.trim() || undefined : undefined,
+        instagramAccountId: instagramIdIdx >= 0 ? row[instagramIdIdx]?.trim() || undefined : undefined,
+        messengerId: messengerIdIdx >= 0 ? row[messengerIdIdx]?.trim() || undefined : undefined,
+        telegramUserName: telegramUserNameIdx >= 0 ? row[telegramUserNameIdx]?.trim() || undefined : undefined,
+        timezone: timezoneIdx >= 0 ? row[timezoneIdx]?.trim() || undefined : undefined,
+        locale: localeIdx >= 0 ? row[localeIdx]?.trim() || undefined : undefined,
+        language: languageIdx >= 0 ? row[languageIdx]?.trim() || undefined : undefined,
       },
     })).filter(i => i.phone.trim().length > 0)
 

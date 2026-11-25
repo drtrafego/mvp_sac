@@ -34,11 +34,9 @@ interface ImportItem {
   platform?: string
   trackingSource?: string
   tags?: string[]
-  sourceMetadata?: {
-    externalId?: string
-    createdOn?: string
-    originalSource?: string
-  }
+  preserveExistingProductName?: boolean
+  preserveExistingTrackingSource?: boolean
+  sourceMetadata?: Record<string, string | number | boolean | null | undefined>
 }
 
 type ImportedMetadata = { import: Record<string, unknown> } | undefined
@@ -156,6 +154,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let skipped = 0
   let tagFailed = 0
   let dispatchRecipientFailed = 0
+  let alreadyExisting = 0
   const errors: string[] = []
 
   const shouldCreateMassDispatch = Boolean(createMassDispatch || massDispatch || triggerMassDispatch)
@@ -266,7 +265,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
       const name = item.name?.trim() || null
       const email = item.email?.trim() || null
-      const productName = item.productName?.trim() || 'Produto Principal'
+      const importedProductName = item.productName?.trim() || null
+      const productName = importedProductName || 'Produto Principal'
       const productValue = parseValueToCents(item.productValue)
       // Importações simples ficam sem evento de recuperação específico. O
       // banco exige um valor, então usamos a categoria neutra de atendimento;
@@ -277,7 +277,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         : shouldCreateMassDispatch
         ? itemEventType || importEventType
         : importEventType
-      const trackingSource = item.trackingSource || defaultSource
+      const importedTrackingSource = typeof item.trackingSource === 'string' ? item.trackingSource.trim() : ''
+      const trackingSource = importedTrackingSource || defaultSource
       const itemPlatform = typeof item.platform === 'string' && item.platform.trim() ? item.platform.trim() : platform
       const itemTags = Array.isArray(item.tags)
         ? [...new Set(item.tags
@@ -290,7 +291,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         : undefined
 
       // Verificar existência por telefone e empresa para idempotência
-      const [existing] = await db
+      const existing = await db
         .select({
           id: recoveryLeads.id,
           status: recoveryLeads.status,
@@ -300,34 +301,35 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         })
         .from(recoveryLeads)
         .where(and(eq(recoveryLeads.companyId, company.id), eq(recoveryLeads.phone, phone)))
-        .limit(1)
+        .orderBy(recoveryLeads.id)
 
-      let leadId: number
-      let leadPhone: string
-      let leadChannel: string | null
+      let targetLeads: Array<{ id: number; phone: string; channel: string | null }>
 
-      if (existing) {
-        // Atualiza dados adicionais se ainda não convertido
-        await db
-          .update(recoveryLeads)
-          .set({
-            name: name ?? undefined,
-            email: email ?? undefined,
-            productName: productName ?? undefined,
-            productValue: productValue > 0 ? productValue : undefined,
-            platform: recordType === 'closed_sale' ? itemPlatform : undefined,
-            eventType: recordType === 'closed_sale' ? eventType : undefined,
-            status: recordType === 'closed_sale' ? 'completed' : undefined,
-            pipelineStage: recordType === 'closed_sale' ? 'fechado' : undefined,
-            trackingSource,
-            rawPayload: mergeImportedRawPayload(existing.rawPayload, importedMetadata),
-            updatedAt: new Date(),
-          })
-          .where(eq(recoveryLeads.id, existing.id))
-        
-        leadId = existing.id
-        leadPhone = existing.phone
-        leadChannel = existing.channel
+      if (existing.length > 0) {
+        // Registros históricos duplicados continuam vivos para preservar
+        // mensagens/auditoria. O import deve reconciliar todos eles, sem
+        // criar outra linha nem deixar uma cópia sem as tags da planilha.
+        for (const current of existing) {
+          await db
+            .update(recoveryLeads)
+            .set({
+              name: name ?? undefined,
+              email: email ?? undefined,
+              productName: item.preserveExistingProductName ? undefined : importedProductName ?? undefined,
+              productValue: productValue > 0 ? productValue : undefined,
+              platform: recordType === 'closed_sale' ? itemPlatform : undefined,
+              eventType: recordType === 'closed_sale' ? eventType : undefined,
+              status: recordType === 'closed_sale' ? 'completed' : undefined,
+              pipelineStage: recordType === 'closed_sale' ? 'fechado' : undefined,
+              trackingSource: item.preserveExistingTrackingSource ? undefined : trackingSource,
+              rawPayload: mergeImportedRawPayload(current.rawPayload, importedMetadata),
+              updatedAt: new Date(),
+            })
+            .where(eq(recoveryLeads.id, current.id))
+        }
+
+        targetLeads = existing.map(current => ({ id: current.id, phone: current.phone, channel: current.channel }))
+        alreadyExisting++
         updated++
       } else {
         const [created] = await db
@@ -365,30 +367,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             channel: recoveryLeads.channel,
           })
 
-        leadId = created.id
-        leadPhone = created.phone
-        leadChannel = created.channel
+        targetLeads = [{ id: created.id, phone: created.phone, channel: created.channel }]
         inserted++
       }
 
       const tagsToApply = [...new Set([...itemTags, ...(tag ? [tag] : [])])]
-      for (const tagToApply of tagsToApply) {
-        try {
-          await db
-            .insert(leadTags)
-            .values({ leadId, tag: tagToApply, scopeChannel: tagToApply === tag ? scopeChannel : null, createdBy: 'import:csv' })
-            .onConflictDoNothing()
+      for (const target of targetLeads) {
+        for (const tagToApply of tagsToApply) {
+          try {
+            await db
+              .insert(leadTags)
+              .values({ leadId: target.id, tag: tagToApply, scopeChannel: tagToApply === tag ? scopeChannel : null, createdBy: 'import:csv' })
+              .onConflictDoNothing()
 
-          if (tagToApply === PESSOA_TAG) {
-            await pauseBotForPessoaTag({ id: leadId, phone: leadPhone, channel: leadChannel })
+            if (tagToApply === PESSOA_TAG) {
+              await pauseBotForPessoaTag({ id: target.id, phone: target.phone, channel: target.channel })
+            }
+          } catch (err) {
+            // O lead já foi persistido de verdade. Não o classificar como
+            // skipped: isso sugeriria que nada aconteceu e falsearia os
+            // contadores. A falha da tag tem categoria própria e inserted /
+            // updated continuam descrevendo corretamente o estado do banco.
+            tagFailed++
+            errors.push(`Lead ${target.id} persistido, mas falhou ao aplicar a tag "${tagToApply}": ${err instanceof Error ? err.message : String(err)}`)
           }
-        } catch (err) {
-          // O lead já foi persistido de verdade. Não o classificar como
-          // skipped: isso sugeriria que nada aconteceu e falsearia os
-          // contadores. A falha da tag tem categoria própria e inserted /
-          // updated continuam descrevendo corretamente o estado do banco.
-          tagFailed++
-          errors.push(`Lead ${leadId} persistido, mas falhou ao aplicar a tag "${tagToApply}": ${err instanceof Error ? err.message : String(err)}`)
         }
       }
 
@@ -397,11 +399,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           // A pausa controla o agente automático; não impede cadastro nem a
           // inclusão do lead em uma campanha/lote operacional.
           await db.insert(massDispatchRecipients)
-            .values({ batchId: batch.id, leadId })
+            // Uma campanha tem um destinatário por item importado. Em uma
+            // duplicidade histórica, usa o registro canônico mais antigo,
+            // enquanto as tags acima continuam reconciliando todas as cópias.
+            .values({ batchId: batch.id, leadId: targetLeads[0].id })
             .onConflictDoNothing()
         } catch (err) {
           dispatchRecipientFailed++
-          errors.push(`Lead ${leadId} persistido, mas falhou ao incluir no lote de disparo: ${err instanceof Error ? err.message : String(err)}`)
+          errors.push(`Lead ${targetLeads[0].id} persistido, mas falhou ao incluir no lote de disparo: ${err instanceof Error ? err.message : String(err)}`)
         }
       }
     } catch (err) {
@@ -431,6 +436,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     total: items.length,
     inserted,
     updated,
+    alreadyExisting,
     skipped,
     tagFailed,
     dispatchRecipientFailed,
