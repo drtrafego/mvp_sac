@@ -60,6 +60,36 @@ export function buildMassDispatchPreview(input: {
   }
 }
 
+export type MassDispatchStatusRow = {
+  status: string | null
+  deliveryStatus: string | null
+}
+
+/** Deriva o estado exibido a partir dos jobs, que é a fonte atual do envio. */
+export function deriveMassDispatchDisplayStatus(
+  jobs: readonly MassDispatchStatusRow[],
+  fallback: string,
+): string {
+  if (jobs.length === 0) return fallback
+
+  const pending = jobs.some(job => ['pending', 'processing', 'queued'].includes(job.status ?? ''))
+  if (pending) return 'queued'
+
+  const failed = jobs.filter(job => job.status === 'failed')
+  if (failed.length === jobs.length) return 'failed'
+  if (failed.length > 0) return 'partial_failure'
+
+  const accepted = jobs.filter(job =>
+    ['sent', 'sent_unconfirmed'].includes(job.status ?? '')
+      || ['sent', 'delivered', 'read'].includes(job.deliveryStatus ?? '')
+  )
+  if (accepted.length !== jobs.length) return 'processing'
+
+  if (jobs.every(job => job.deliveryStatus === 'read')) return 'read'
+  if (jobs.every(job => ['delivered', 'read'].includes(job.deliveryStatus ?? ''))) return 'delivered'
+  return 'accepted'
+}
+
 function stableJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableJsonValue)
   if (value && typeof value === 'object') {

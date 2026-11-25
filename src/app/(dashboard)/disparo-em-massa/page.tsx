@@ -43,6 +43,10 @@ interface DispatchPreview {
 function batchStatusLabel(status: string): string {
   if (status === 'draft') return 'Rascunho · não enviado'
   if (status === 'queued') return 'Na fila · aguardando execução'
+  if (status === 'delivered') return 'Entregue'
+  if (status === 'read') return 'Lido'
+  if (status === 'accepted') return 'Aceito pela Meta'
+  if (status === 'partial_failure') return 'Falha parcial'
   if (status === 'completed') return 'Concluído'
   if (status === 'failed') return 'Falhou'
   return status

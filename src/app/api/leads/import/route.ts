@@ -10,6 +10,7 @@ import { formatBrazilianPhone } from '@/lib/phone'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
 import { buildCanonicalSnapshot, extractBodyPlaceholders, hasDocumentHeader, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
+import { deriveMassDispatchDisplayStatus } from '@/lib/mass-dispatch'
 
 function parseValueToCents(raw: string | number | null | undefined): number {
   if (raw == null) return 0
@@ -81,16 +82,21 @@ export async function GET(): Promise<NextResponse> {
     .select({
       batchId: messageJobs.massDispatchBatchId,
       status: messageJobs.status,
+      deliveryStatus: messageJobs.deliveryStatus,
       count: sql<number>`cast(count(*) as int)`,
     })
     .from(messageJobs)
     .innerJoin(massDispatchBatches, eq(messageJobs.massDispatchBatchId, massDispatchBatches.id))
     .where(eq(massDispatchBatches.companyId, company.id))
-    .groupBy(messageJobs.massDispatchBatchId, messageJobs.status)
+    .groupBy(messageJobs.massDispatchBatchId, messageJobs.status, messageJobs.deliveryStatus)
 
   const statsByBatch = new Map<number, { pending: number; sent: number; failed: number; total: number }>()
+  const jobsByBatch = new Map<number, Array<{ status: string | null; deliveryStatus: string | null }>>()
   for (const row of statsRows) {
     if (!row.batchId) continue
+    const jobs = jobsByBatch.get(row.batchId) ?? []
+    jobs.push(...Array.from({ length: Number(row.count) || 0 }, () => ({ status: row.status, deliveryStatus: row.deliveryStatus })))
+    jobsByBatch.set(row.batchId, jobs)
     const stats = statsByBatch.get(row.batchId) ?? { pending: 0, sent: 0, failed: 0, total: 0 }
     const count = Number(row.count) || 0
     stats.total += count
@@ -103,6 +109,7 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json({
     batches: batches.map(batch => ({
       ...batch,
+      status: deriveMassDispatchDisplayStatus(jobsByBatch.get(batch.id) ?? [], batch.status),
       stats: statsByBatch.get(batch.id) ?? { pending: 0, sent: 0, failed: 0, total: 0 },
     })),
   })

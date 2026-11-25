@@ -7,7 +7,7 @@ import {
   messageJobs,
   settings,
 } from '@/lib/db/schema'
-import { buildMassDispatchPreview, isApprovedTemplateOnlySequence, queueDirectTemplateMassDispatchBatch, queueMassDispatchBatch } from '@/lib/mass-dispatch'
+import { buildMassDispatchPreview, deriveMassDispatchDisplayStatus, isApprovedTemplateOnlySequence, queueDirectTemplateMassDispatchBatch, queueMassDispatchBatch } from '@/lib/mass-dispatch'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
 import { buildCanonicalSnapshot, hasDocumentHeader, hasUnsupportedDynamicComponents, metaTemplateKey, templateHeaderDocument } from '@/lib/meta-template-utils'
 
@@ -20,11 +20,16 @@ async function loadPreview(batchId: number, companyId: number) {
   )).limit(1)
   if (!batch) return null
 
-  const statsRows = await db.select({
+  const jobRows = await db.select({
     status: messageJobs.status,
-    count: sql<number>`cast(count(*) as int)`,
-  }).from(messageJobs).where(eq(messageJobs.massDispatchBatchId, batchId)).groupBy(messageJobs.status)
-  const stats = Object.fromEntries(statsRows.map(row => [row.status ?? 'unknown', row.count]))
+    deliveryStatus: messageJobs.deliveryStatus,
+  }).from(messageJobs).where(eq(messageJobs.massDispatchBatchId, batchId))
+  const stats = Object.fromEntries(jobRows.reduce<Map<string, number>>((counts, row) => {
+    const key = row.status ?? 'unknown'
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+    return counts
+  }, new Map()))
+  const status = deriveMassDispatchDisplayStatus(jobRows, batch.status)
 
   if (batch.dispatchSource === 'direct_template') {
     const recipientRows = await db.execute<{ recipient_count: number }>(sql`
@@ -45,7 +50,7 @@ async function loadPreview(batchId: number, companyId: number) {
     return {
       ...buildMassDispatchPreview({
         batchId,
-        status: batch.status,
+        status,
         recipientCount: Number(recipientRowsArray[0]?.recipient_count ?? 0),
         eventType: batch.eventType,
         messages: hasTemplate ? [{
@@ -123,7 +128,7 @@ async function loadPreview(batchId: number, companyId: number) {
   return {
     ...buildMassDispatchPreview({
       batchId,
-      status: batch.status,
+      status,
       recipientCount: eligibleRecipientCount,
       eventType: batch.eventType,
       messages: rows.map(message => ({
