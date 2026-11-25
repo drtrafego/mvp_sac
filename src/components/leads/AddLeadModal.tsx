@@ -82,6 +82,7 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
   const [trackingSource, setTrackingSource] = useState("indicacao")
   const [utmMedium, setUtmMedium] = useState("indicacao")
   const [triggerSequence, setTriggerSequence] = useState(false)
+  const [tags, setTags] = useState("")
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
@@ -97,6 +98,7 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
     setTrackingSource("indicacao")
     setUtmMedium("indicacao")
     setTriggerSequence(false)
+    setTags("")
     setError("")
     setSuccessMsg("")
   }
@@ -127,6 +129,7 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
           trackingSource,
           utmMedium,
           triggerSequence,
+          tags: tags.split(',').map(tag => tag.trim()).filter(Boolean),
         }),
       })
 
@@ -144,8 +147,8 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
         onOpenChange(false)
         onSuccess()
       }, 700)
-    } catch (err: any) {
-      setError(err.message || "Erro de conexão ao salvar lead.")
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erro de conexão ao salvar lead.")
     } finally {
       setSaving(false)
     }
@@ -332,6 +335,23 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
                 />
               </div>
             </div>
+          </div>
+
+          {/* Tags definidas junto com o cadastro */}
+          <div className="p-3.5 sm:p-4 rounded-xl bg-surface-panel border border-line-subtle space-y-2.5">
+            <Label className="text-micro font-semibold text-fg flex items-center gap-1.5">
+              <Tag size={13} className="text-amber-400" /> Tags do contato
+            </Label>
+            <Input
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              placeholder="Ex.: vip, retorno, quente"
+              className="bg-surface-inset border-line-subtle h-10 text-sm"
+              aria-describedby="add-lead-tags-help"
+            />
+            <p id="add-lead-tags-help" className="text-[11px] text-fg-subtle">
+              Separe várias tags por vírgula. Elas serão salvas junto com o lead e não iniciam mensagens.
+            </p>
           </div>
 
           {/* Disparo de Sequência Automática */}
