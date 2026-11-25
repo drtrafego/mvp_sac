@@ -3,7 +3,7 @@ export const SUPPORTED_VARIABLES = [
   { token: '{primeiro_nome}', label: 'Primeiro nome' },
   { token: '{email}', label: 'E-mail' },
   { token: '{telefone}', label: 'Telefone' },
-  { token: '{produto}', label: 'Produto' },
+  { token: '{produto}', label: 'Produto / oferta' },
   { token: '{transacao}', label: 'Transação' },
   { token: '{cpf}', label: 'CPF/CNPJ' },
   { token: '{cidade}', label: 'Cidade' },
@@ -21,6 +21,8 @@ export const SUPPORTED_VARIABLES = [
 ] as const
 
 export type VariableSource = { token: string; label: string } | { fixedValue: string }
+
+export type TemplateLead = Record<string, string | null | undefined>
 
 export function templateVariableMapKey(variable: string | number): string {
   const key = String(variable).trim()
@@ -52,12 +54,16 @@ export function extractTemplateVariableKeys(body: string): string[] {
   return [...numeric].sort((a, b) => a - b).map(index => `variavel_${index}`).concat(named)
 }
 
-function value(lead: Record<string, string>, ...keys: string[]): string {
+function value(lead: TemplateLead, ...keys: string[]): string {
   for (const key of keys) {
     const candidate = lead[key]
-    if (candidate) return candidate
+    if (candidate !== null && candidate !== undefined && String(candidate).trim()) return String(candidate)
   }
   return ''
+}
+
+function hasValue(lead: TemplateLead, ...keys: string[]): boolean {
+  return Boolean(value(lead, ...keys))
 }
 
 function formatCurrency(valueInCents: string): string {
@@ -72,7 +78,7 @@ function formatDate(value: string): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('pt-BR')
 }
 
-export function interpolateVariable(token: string, lead: Record<string, string>): string {
+export function interpolateVariable(token: string, lead: TemplateLead): string {
   const normalizedToken = token.trim().toLowerCase()
   const name = value(lead, 'name', 'nome') || 'Cliente'
 
@@ -100,14 +106,67 @@ export function interpolateVariable(token: string, lead: Record<string, string>)
   }
 }
 
-export function resolveTemplateVariableSource(source: string | undefined, lead: Record<string, string>): string {
+export function resolveTemplateVariableSource(source: string | undefined, lead: TemplateLead): string {
   if (!source?.trim()) return ''
   return isSupportedVariableSource(source) ? interpolateVariable(source, lead) : source.trim()
 }
 
-export function renderTemplateVariableText(body: string, variables: Record<string, string>, lead: Record<string, string>): string {
+export function renderTemplateVariableText(body: string, variables: Record<string, string>, lead: TemplateLead): string {
   return body.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, rawKey: string) => {
     const key = rawKey.trim()
     return resolveTemplateVariableSource(variables[templateVariableMapKey(key)] ?? variables[key], lead) || `{{${key}}}`
   })
+}
+
+/**
+ * Resolve a mapping without the display fallbacks used by the conversation
+ * renderer. Dispatch previews must prove that every value exists on the
+ * selected lead before a job is created.
+ */
+export function resolveTemplateVariableSourceStrict(source: string | undefined, lead: TemplateLead): string {
+  const normalized = source?.trim() ?? ''
+  if (!normalized) return ''
+  if (!isSupportedVariableSource(normalized)) return normalized
+
+  switch (normalized.toLowerCase()) {
+    case '{nome}': return value(lead, 'name', 'nome')
+    case '{primeiro_nome}': {
+      const name = value(lead, 'name', 'nome')
+      return name ? name.split(/\s+/)[0] : ''
+    }
+    case '{email}': return value(lead, 'email')
+    case '{telefone}': return value(lead, 'phone', 'telefone')
+    case '{produto}': return value(lead, 'productName', 'produto')
+    case '{transacao}': return value(lead, 'transactionId', 'transacao')
+    case '{cpf}': return value(lead, 'cpfCnpj', 'cpf')
+    case '{cidade}': return value(lead, 'city', 'cidade')
+    case '{estado}': return value(lead, 'state', 'estado')
+    case '{valor}': return hasValue(lead, 'productValue', 'valor') ? formatCurrency(value(lead, 'productValue', 'valor')) : ''
+    case '{parcelas}': return value(lead, 'installments', 'parcelas')
+    case '{forma_pagamento}': return value(lead, 'paymentType', 'forma_pagamento')
+    case '{boleto_codigo}': return value(lead, 'boletoCode', 'boleto_codigo')
+    case '{boleto_url}': return value(lead, 'boletoUrl', 'boleto_url')
+    case '{boleto_validade}': return formatDate(value(lead, 'boletoExpiry', 'boleto_validade'))
+    case '{pix_codigo}': return value(lead, 'pixCode', 'pix_codigo')
+    case '{pix_validade}': return formatDate(value(lead, 'pixExpiry', 'pix_validade'))
+    case '{link_checkout}': return value(lead, 'checkoutUrl', 'link_checkout')
+    case '{afiliado}': return value(lead, 'affiliateCode', 'afiliado')
+    default: return ''
+  }
+}
+
+export function renderTemplateVariableTextStrict(body: string, variables: Record<string, string>, lead: TemplateLead): string {
+  return body.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, rawKey: string) => {
+    const key = rawKey.trim()
+    return resolveTemplateVariableSourceStrict(variables[templateVariableMapKey(key)] ?? variables[key], lead) || `{{${key}}}`
+  })
+}
+
+export function unresolvedTemplateVariableKeys(text: string): string[] {
+  return [...new Set([...text.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map(match => match[1]))]
+}
+
+export function getAvailableVariableSources(leads: TemplateLead[]): Array<{ token: string; label: string }> {
+  if (!leads.length) return [...SUPPORTED_VARIABLES]
+  return SUPPORTED_VARIABLES.filter(source => leads.every(lead => Boolean(resolveTemplateVariableSourceStrict(source.token, lead))))
 }

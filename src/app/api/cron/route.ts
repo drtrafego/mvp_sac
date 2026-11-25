@@ -843,6 +843,17 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
           templateVariableNames = Object.keys(varMap)
           templateVariableValues = templateVariableNames.map(name => interpolate(varMap[name], lead, isabelaEventJob))
         }
+        const unresolvedTemplateValueIndex = templateVariableValues.findIndex(value => !value.trim() || /\{\{\s*\d+\s*\}\}/.test(value))
+        if (unresolvedTemplateValueIndex >= 0) {
+          const variableIndex = numericKeys.length > 0 ? unresolvedTemplateValueIndex + 1 : unresolvedTemplateValueIndex
+          await db.update(messageJobs).set({
+            status: 'failed',
+            error: `Variável {{${variableIndex}}} não foi resolvida antes da chamada à Meta`,
+            processingStartedAt: null,
+          }).where(eq(messageJobs.id, job.id))
+          failed++
+          continue
+        }
       }
 
       let templateHistoryContent: string | null = null

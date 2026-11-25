@@ -1,7 +1,6 @@
 'use client'
 
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SUPPORTED_VARIABLES, isSupportedVariableSource, templateVariableLabel, templateVariableMapKey } from '@/lib/lead-template-variables'
 
 export function TemplateVariableMapping({
@@ -10,14 +9,17 @@ export function TemplateVariableMapping({
   onChange,
   preview,
   idPrefix,
+  sources = SUPPORTED_VARIABLES,
 }: {
   variables: string[]
   values: Record<string, string>
   onChange: (values: Record<string, string>) => void
   preview: string
   idPrefix: string
+  sources?: readonly { token: string; label: string }[]
 }) {
   return <div className="space-y-3">
+    <p className="text-micro text-fg-muted">Preencher com: escolha um campo real do destinatário ou informe um valor fixo para cada posição.</p>
     {variables.map(variable => {
       const key = templateVariableMapKey(variable)
       const value = values[key] ?? ''
@@ -26,23 +28,22 @@ export function TemplateVariableMapping({
       return <div key={variable} className="grid gap-2 rounded-lg border border-line-subtle bg-surface-panel p-3 sm:grid-cols-2">
         <div className="space-y-1">
           <label className="text-micro font-bold text-fg" htmlFor={`${fieldId}-source`}>{templateVariableLabel(variable)} *</label>
-          <Select
+          <select
+            id={`${fieldId}-source`}
             value={fixed ? '__fixed__' : value || '__none__'}
-            onValueChange={nextValue => {
+            onChange={event => {
               const next = { ...values }
+              const nextValue = event.target.value
               if (!nextValue || nextValue === '__none__') delete next[key]
               else next[key] = nextValue === '__fixed__' ? ' ' : nextValue
               onChange(next)
             }}
-            items={{ __none__: 'Selecione a origem...', ...Object.fromEntries(SUPPORTED_VARIABLES.map(source => [source.token, source.label])), __fixed__: 'Valor fixo' }}
+            className="flex h-10 w-full min-w-0 rounded-md border border-line-subtle bg-surface-inset px-3 text-body text-fg outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/30"
           >
-            <SelectTrigger id={`${fieldId}-source`} className="bg-surface-inset border-line-subtle"><SelectValue /></SelectTrigger>
-            <SelectContent className="bg-surface-overlay border-line-subtle">
-              <SelectItem value="__none__">Selecione a origem...</SelectItem>
-              {SUPPORTED_VARIABLES.map(source => <SelectItem key={source.token} value={source.token}>{source.label}</SelectItem>)}
-              <SelectItem value="__fixed__">Valor fixo</SelectItem>
-            </SelectContent>
-          </Select>
+            <option value="__none__">Selecione a origem...</option>
+            {sources.map(source => <option key={source.token} value={source.token}>{source.label}</option>)}
+            <option value="__fixed__">Valor fixo</option>
+          </select>
         </div>
         {fixed && <div className="space-y-1">
           <label className="text-micro font-bold text-fg" htmlFor={`${fieldId}-fixed`}>Valor fixo</label>
