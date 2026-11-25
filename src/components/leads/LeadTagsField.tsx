@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, Tag, X } from 'lucide-react'
 import { normalizeTag, MAX_TAG_LENGTH } from '@/lib/lead-tags'
 
@@ -17,7 +17,23 @@ interface LeadTagsFieldProps {
  */
 export function LeadTagsField({ value, onChange, id = 'lead-tags', disabled = false }: LeadTagsFieldProps) {
   const [draft, setDraft] = useState('')
+  const [suggestions, setSuggestions] = useState<string[]>([])
   const tags = [...new Set(value.map(normalizeTag).filter(Boolean))]
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/leads/tags')
+      .then(response => response.ok ? response.json() : null)
+      .then(data => {
+        if (!cancelled && Array.isArray(data?.tags)) {
+          setSuggestions(data.tags.filter((tag: unknown): tag is string => typeof tag === 'string').map(normalizeTag))
+        }
+      })
+      .catch(() => {
+        // O cadastro manual continua funcionando se a lista de sugestões falhar.
+      })
+    return () => { cancelled = true }
+  }, [])
 
   function addTag(raw: string) {
     const tag = normalizeTag(raw)
@@ -55,6 +71,22 @@ export function LeadTagsField({ value, onChange, id = 'lead-tags', disabled = fa
           </span>
         ))}
       </div>
+
+      {suggestions.filter(tag => !tags.includes(tag)).length > 0 && (
+        <div className="flex flex-wrap gap-1.5" aria-label="Tags existentes">
+          {suggestions.filter(tag => !tags.includes(tag)).slice(0, 12).map(tag => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => addTag(tag)}
+              disabled={disabled}
+              className="min-h-9 rounded-full border border-line-subtle bg-surface-inset px-2.5 text-[11px] font-medium text-fg-muted transition-colors hover:border-brand-solid/50 hover:bg-brand-glow hover:text-brand-ink disabled:opacity-40"
+            >
+              + {tag}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <input
