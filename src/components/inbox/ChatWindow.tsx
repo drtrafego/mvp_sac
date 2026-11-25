@@ -1239,7 +1239,7 @@ export function ChatWindow({
         </div>
 
         {/* 3. Área de Envio da Mensagem */}
-        <div className="studio-chat-composer border-t border-line-subtle bg-surface-panel p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:pb-3 shrink-0 space-y-2">
+        <div className="studio-chat-composer min-h-0 max-h-[min(65vh,calc(100dvh-10rem))] overflow-y-auto overscroll-contain scroll-thin border-t border-line-subtle bg-surface-panel p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:pb-3 shrink-0 space-y-2">
           {sendError && (
             <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-micro flex items-center justify-between gap-2">
               <span className="flex-1">⚠️ {sendError}</span>
