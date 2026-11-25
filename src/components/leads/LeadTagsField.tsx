@@ -22,7 +22,7 @@ export function LeadTagsField({ value, onChange, id = 'lead-tags', disabled = fa
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/leads/tags')
+    fetch('/api/lead-tags')
       .then(response => response.ok ? response.json() : null)
       .then(data => {
         if (!cancelled && Array.isArray(data?.tags)) {
