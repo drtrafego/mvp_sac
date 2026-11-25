@@ -555,9 +555,7 @@ async function runDispatchPendingJobs(lockClient: any): Promise<NextResponse> {
           .update(messageJobs)
           .set({
             status: 'cancelled',
-            error: botBlock.reason === 'switch'
-              ? `Pausa da empresa (${botBlock.scope}) ativa antes do envio`
-              : 'Lead com bot pausado antes do envio',
+            error: 'Lead com opt-out de WhatsApp antes do envio',
             processingStartedAt: null,
           })
           .where(and(
