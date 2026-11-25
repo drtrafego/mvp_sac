@@ -3,8 +3,8 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 
 import { db } from '@/lib/db'
-import { recoveryLeads, sacAuditEvents, companyMembers } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { recoveryLeads, sacAuditEvents, companyMembers, settings, whatsappMessages } from '@/lib/db/schema'
+import { eq, and, desc, sql } from 'drizzle-orm'
 import { sendOutboundForLead } from '@/lib/outbound-send'
 import { requireCompany, requireSacActor, ForbiddenError, AuthError } from '@/lib/auth'
 import { parseSacObject, parsePositiveId, parseExpectedVersion, validateSacContextFields, sacEpisodeForState, SacInputError } from '@/lib/sac-access'
@@ -18,7 +18,10 @@ import {
   normalizeInboxThreadChannel,
 } from '@/lib/inbox-messages'
 import { parseIntegerQuery } from '@/lib/request-validation'
-import type { LeadDeliveryChannel } from '@/lib/lead-delivery-channel'
+import { resolveLeadDeliveryChannel, type LeadDeliveryChannel } from '@/lib/lead-delivery-channel'
+import { getMetaWindowInfo } from '@/lib/meta-window'
+import { listMetaTemplates } from '@/lib/whatsapp/meta'
+import { findApprovedMetaTemplate, renderApprovedMetaTemplate } from '@/lib/composer-policy'
 function noStoreJson(body: unknown, init?: ResponseInit): NextResponse {
   const response = NextResponse.json(body, init)
   response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
@@ -187,10 +190,20 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
   if (body.threadChannel != null && typeof body.threadChannel !== 'string') {
     return noStoreJson({ error: 'O campo threadChannel deve ser um texto.' }, { status: 400 })
   }
+  if (body.templateName != null && typeof body.templateName !== 'string') {
+    return noStoreJson({ error: 'O campo templateName deve ser um texto.' }, { status: 400 })
+  }
+  if (body.templateLanguage != null && typeof body.templateLanguage !== 'string') {
+    return noStoreJson({ error: 'O campo templateLanguage deve ser um texto.' }, { status: 400 })
+  }
+  if (body.templateVariables != null && (typeof body.templateVariables !== 'object' || Array.isArray(body.templateVariables))) {
+    return noStoreJson({ error: 'O campo templateVariables deve ser um objeto.' }, { status: 400 })
+  }
 
+  const requestedMessageType = typeof body.messageType === 'string' ? body.messageType : 'text'
   const content = typeof body.content === 'string' ? body.content : ''
   const mediaUrl = typeof body.mediaUrl === 'string' ? body.mediaUrl : undefined
-  const messageType = typeof body.messageType === 'string' ? body.messageType : undefined
+  const messageType = requestedMessageType
   const rawThreadChannel = typeof body.threadChannel === 'string' ? body.threadChannel : null
   const channelOverride = rawThreadChannel ? normalizeInboxThreadChannel(rawThreadChannel) : null
   if (rawThreadChannel && !channelOverride) {
@@ -201,16 +214,68 @@ export async function POST(req: NextRequest, { params }: Params): Promise<NextRe
     req.headers.get('x-client-request-id')?.trim() ||
     null
 
-  if (!content.trim() && !mediaUrl) {
+  if (!content.trim() && !mediaUrl && requestedMessageType !== 'template') {
     return noStoreJson({ error: 'Mensagem vazia' }, { status: 400 })
+  }
+
+  const effectiveChannel = channelOverride || resolveLeadDeliveryChannel(lead)
+
+  const lastInbound = await db.select({ createdAt: whatsappMessages.createdAt })
+    .from(whatsappMessages)
+    .where(and(
+      eq(whatsappMessages.companyId, company.id),
+      eq(whatsappMessages.leadId, lead.id),
+      eq(whatsappMessages.direction, 'inbound'),
+      eq(whatsappMessages.channel, effectiveChannel),
+    ))
+    .orderBy(desc(whatsappMessages.createdAt))
+    .limit(1)
+  const metaWindow = getMetaWindowInfo({ lastInboundAt: lastInbound[0]?.createdAt?.toISOString() ?? null })
+  const templateName = typeof body.templateName === 'string' ? body.templateName.trim() : ''
+  const templateLanguage = typeof body.templateLanguage === 'string' ? body.templateLanguage.trim() : ''
+  const templateVariables = (body.templateVariables && typeof body.templateVariables === 'object' && !Array.isArray(body.templateVariables))
+    ? body.templateVariables as Record<string, unknown>
+    : {}
+
+  if (effectiveChannel === 'whatsapp' && metaWindow.requiresTemplate && requestedMessageType !== 'template') {
+    return noStoreJson({ error: 'A janela de 24h está fechada. Selecione um template Meta aprovado antes de enviar.', code: 'META_TEMPLATE_REQUIRED' }, { status: 400 })
+  }
+
+  let outboundTemplate: { name: string; language: string; values: string[] } | null = null
+  let preparedContent = content.trim()
+  if (requestedMessageType === 'template') {
+    if (effectiveChannel !== 'whatsapp') return noStoreJson({ error: 'Templates Meta só podem ser enviados em uma conversa WhatsApp.' }, { status: 400 })
+    if (!templateName || !templateLanguage) return noStoreJson({ error: 'Selecione um template Meta aprovado e o idioma.' }, { status: 400 })
+    const [config] = await db.select({ whatsappProvider: settings.whatsappProvider, metaWabaId: settings.metaWabaId, metaAccessToken: settings.metaAccessToken, metaPhoneNumberId: settings.metaPhoneNumberId })
+      .from(settings).where(eq(settings.companyId, company.id)).limit(1)
+    if (config?.whatsappProvider !== 'meta' || !config.metaWabaId || !config.metaAccessToken || !config.metaPhoneNumberId) {
+      return noStoreJson({ error: 'A empresa não tem uma conta WhatsApp Meta configurada para este template.' }, { status: 400 })
+    }
+    let approvedTemplate
+    try {
+      const templates = await listMetaTemplates(config.metaWabaId, config.metaAccessToken)
+      approvedTemplate = findApprovedMetaTemplate(templates, templateName, templateLanguage)
+    } catch {
+      return noStoreJson({ error: 'Não foi possível confirmar o template aprovado na Meta agora.' }, { status: 502 })
+    }
+    if (!approvedTemplate) return noStoreJson({ error: 'Este template não está APPROVED para a WABA desta empresa.' }, { status: 400 })
+    const rendered = renderApprovedMetaTemplate(approvedTemplate, templateVariables)
+    if (rendered.missing.length > 0) return noStoreJson({ error: `Preencha as variáveis obrigatórias do template: ${rendered.missing.map(index => `{{${index}}}`).join(', ')}.` }, { status: 400 })
+    preparedContent = rendered.content
+    outboundTemplate = { name: templateName, language: templateLanguage, values: rendered.values }
+  } else if (templateName || templateLanguage || Object.keys(templateVariables).length > 0) {
+    return noStoreJson({ error: 'Dados de template só podem ser enviados com messageType template.' }, { status: 400 })
   }
 
   const sendResult = await sendOutboundForLead({
     companyId: company.id,
     lead,
-    content,
+    content: preparedContent,
     mediaUrl,
     messageType,
+    templateName: outboundTemplate?.name,
+    templateLanguage: outboundTemplate?.language,
+    templateVariableValues: outboundTemplate?.values,
     clientRequestId,
     sentBy: 'human',
     channelOverride: channelOverride as LeadDeliveryChannel | null,

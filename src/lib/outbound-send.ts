@@ -20,6 +20,10 @@ export interface OutboundSendInput {
   senderName?: string | null
   agentId?: string | null
   subject?: string | null
+  templateName?: string | null
+  templateLanguage?: string | null
+  templateVariableValues?: string[]
+  templateVariableNames?: string[]
   /** Explicit channel selected from a channel-specific conversation thread. */
   channelOverride?: LeadDeliveryChannel | null
   beforeTransport?: () => Promise<boolean>
@@ -80,6 +84,10 @@ function payloadHash(input: OutboundSendInput, channel: string): string {
     recipient: channel === 'email' ? input.lead.email : input.lead.phone,
     content: input.content || '', mediaUrl: input.mediaUrl || null,
     messageType: input.messageType || 'text', sentBy: input.sentBy || 'human',
+    templateName: input.templateName || null,
+    templateLanguage: input.templateLanguage || null,
+    templateVariableValues: input.templateVariableValues || [],
+    templateVariableNames: input.templateVariableNames || [],
     subject: channel === 'email' ? input.subject || `Re: Atendimento - ${input.lead.productName || 'SAC'}` : null,
   })).digest('hex')
 }
@@ -112,11 +120,13 @@ export function createOutboundSender({ store, transport }: OutboundSendDependenc
     const channel = input.channelOverride || resolveLeadDeliveryChannel(input.lead)
     if (input.lead.companyId !== input.companyId) return { ok: false, status: 400, message: null, error: 'Empresa do contato incompatível.' }
     if (typeof input.content !== 'string' && input.content != null) return { ok: false, status: 400, message: null, error: 'Conteúdo inválido.' }
-    if (!(input.content || '').trim() && !input.mediaUrl) return { ok: false, status: 400, message: null, error: 'Informe texto ou mídia para envio.' }
     const type = input.messageType || 'text'
-    if (!['text', 'image', 'video', 'audio', 'document'].includes(type)) return { ok: false, status: 400, message: null, error: 'Tipo de mensagem não suportado neste endpoint.' }
+    if (!['text', 'template', 'image', 'video', 'audio', 'document'].includes(type)) return { ok: false, status: 400, message: null, error: 'Tipo de mensagem não suportado neste endpoint.' }
+    if (!(input.content || '').trim() && !input.mediaUrl && type !== 'template') return { ok: false, status: 400, message: null, error: 'Informe texto ou mídia para envio.' }
+    if (type === 'template' && !input.templateName?.trim()) return { ok: false, status: 400, message: null, error: 'Template Meta sem nome aprovado.' }
     if (input.mediaUrl && type === 'text') return { ok: false, status: 400, message: null, error: 'Informe o tipo da mídia (imagem, vídeo, áudio ou documento).' }
-    if (type !== 'text' && !input.mediaUrl) return { ok: false, status: 400, message: null, error: 'Informe a mídia para este tipo de mensagem.' }
+    if (type !== 'text' && type !== 'template' && !input.mediaUrl) return { ok: false, status: 400, message: null, error: 'Informe a mídia para este tipo de mensagem.' }
+    if (type === 'template' && input.mediaUrl) return { ok: false, status: 400, message: null, error: 'Template Meta não aceita mídia neste envio.' }
     if (channel === 'email' && input.mediaUrl) return { ok: false, status: 400, message: null, error: 'Anexos por e-mail ainda não são suportados neste endpoint.' }
     if (channel === 'instagram' && type === 'document') return { ok: false, status: 400, message: null, error: 'Este canal não aceita documento neste endpoint.' }
     if (channel === 'email' && !input.lead.email) return { ok: false, status: 400, message: null, error: 'Contato sem endereço de e-mail.' }
@@ -235,6 +245,10 @@ async function transport(input: OutboundSendInput, channel: 'whatsapp' | 'instag
   try {
     const externalId = await sendWhatsAppMessage(input.lead.phone, {
       type: input.messageType || 'text', content: input.content || '', mediaUrl: input.mediaUrl || undefined, caption: input.content || undefined,
+      templateName: input.templateName || undefined,
+      templateLanguage: input.templateLanguage || undefined,
+      templateVariableValues: input.templateVariableValues,
+      templateVariableNames: input.templateVariableNames,
     }, input.companyId)
     return { ok: true, externalId }
   } catch (error) {

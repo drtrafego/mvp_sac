@@ -49,6 +49,7 @@ const DEFAULT_PIPELINE_COLUMNS = [
   { id: 'perdido', label: 'Perdido' },
 ]
 type ApprovedReply = { id: number; title: string; shortcut: string | null; body: string; variables: string[] | null; approvalState?: string }
+type ApprovedMetaTemplate = { nome: string; categoria: string; idioma: string; status: 'APPROVED'; corpo: string; variaveis: string[] }
 type PendingItem = { id: number; leadId: number; reason: string; dueAt: string | null; leadName?: string | null; leadPhone?: string | null }
 
 export interface ChatLead {
@@ -237,6 +238,11 @@ export function ChatWindow({
   const [loadingReplies, setLoadingReplies] = useState(false)
   const [replyFilter, setReplyFilter] = useState('')
   const [replyError, setReplyError] = useState<string | null>(null)
+  const [approvedMetaTemplates, setApprovedMetaTemplates] = useState<ApprovedMetaTemplate[]>([])
+  const [metaTemplatesMessage, setMetaTemplatesMessage] = useState<string | null>(null)
+  const [loadingComposerOptions, setLoadingComposerOptions] = useState(false)
+  const [selectedMetaTemplate, setSelectedMetaTemplate] = useState<ApprovedMetaTemplate | null>(null)
+  const [metaTemplateVariables, setMetaTemplateVariables] = useState<Record<string, string>>({})
 
   // SAC Lote 2: Copiloto no Editor
   const [copilotLoading, setCopilotLoading] = useState(false)
@@ -604,23 +610,29 @@ export function ChatWindow({
     }
   }
 
-  // ── SAC Lote 1: Handlers de Respostas Aprovadas ────────────────────────────
-  const loadReplies = useCallback(async () => {
+  // ── Composer: respostas SAC e templates Meta da empresa atual ─────────────
+  const loadComposerOptions = useCallback(async () => {
     setLoadingReplies(true)
+    setLoadingComposerOptions(true)
     setReplyError(null)
     try {
-      const res = await fetch('/api/approved-replies?state=approved', { cache: 'no-store' })
+      const res = await fetch(`/api/inbox/${lead.id}/composer-options?thread=${encodeURIComponent(threadChannel)}`, { cache: 'no-store' })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Não foi possível carregar as respostas aprovadas.')
+      if (!res.ok) throw new Error(data.error || 'Não foi possível carregar as mensagens aprovadas.')
       setApprovedReplies((data.replies || []).filter((reply: ApprovedReply) => reply.approvalState === 'approved'))
+      setApprovedMetaTemplates(data.templates || [])
+      setMetaTemplatesMessage(data.metaMessage || null)
     } catch (error) {
-      setReplyError(error instanceof Error ? error.message : 'Erro de conexão ao carregar respostas.')
+      setReplyError(error instanceof Error ? error.message : 'Erro de conexão ao carregar mensagens aprovadas.')
     } finally {
       setLoadingReplies(false)
+      setLoadingComposerOptions(false)
     }
-  }, [])
+  }, [lead.id, threadChannel])
 
   function insertPreparedReply(body: string) {
+    setSelectedMetaTemplate(null)
+    setMetaTemplateVariables({})
     setText(previous => previous.trim() ? `${previous}\n\n${body}` : body)
     setVariableReply(null)
     setReplyVariables({})
@@ -629,6 +641,10 @@ export function ChatWindow({
   }
 
   function handleInsertReply(reply: ApprovedReply) {
+    if (getMetaWindowInfo(persistedLead).requiresTemplate && threadChannel === 'whatsapp') {
+      setReplyError('A janela de 24h está fechada. Nesta conversa, selecione um template Meta aprovado.')
+      return
+    }
     const prepared = fillReplyTemplate(reply.body, { nome: leadName, produto: lead.productName })
     const missing = unresolvedReplyVariables(prepared)
     if (missing.length) {
@@ -637,6 +653,27 @@ export function ChatWindow({
       return
     }
     insertPreparedReply(prepared)
+  }
+
+  function templatePreview(template: ApprovedMetaTemplate, variables: Record<string, string>) {
+    return template.corpo.replace(/\{\{\s*(\d+)\s*\}\}/g, (_match, index: string) => variables[index] || `{{${index}}}`)
+  }
+
+  function handleSelectMetaTemplate(template: ApprovedMetaTemplate) {
+    if (threadChannel !== 'whatsapp') return
+    const variables = Object.fromEntries(template.variaveis.map(variable => [variable.replace('variavel_', ''), '']))
+    setSelectedMetaTemplate(template)
+    setMetaTemplateVariables(variables)
+    setReplyError(null)
+    setText(templatePreview(template, variables))
+  }
+
+  function handleTemplateVariableChange(index: string, value: string) {
+    setMetaTemplateVariables(previous => {
+      const next = { ...previous, [index]: value }
+      if (selectedMetaTemplate) setText(templatePreview(selectedMetaTemplate, next))
+      return next
+    })
   }
 
   async function loadPending() {
@@ -689,6 +726,14 @@ export function ChatWindow({
       (r.shortcut && r.shortcut.toLowerCase().includes(q)) ||
       r.body.toLowerCase().includes(q)
     )
+  })
+  const filteredMetaTemplates = approvedMetaTemplates.filter(template => {
+    if (!replyFilter.trim()) return true
+    const q = replyFilter.toLowerCase()
+    return template.nome.toLowerCase().includes(q)
+      || template.idioma.toLowerCase().includes(q)
+      || template.categoria.toLowerCase().includes(q)
+      || template.corpo.toLowerCase().includes(q)
   })
 
   // ── SAC Lote 1: Handlers de Atendimento Humano & Contexto ──────────────────
@@ -805,16 +850,31 @@ export function ChatWindow({
   }
 
   async function handleSend() {
-    if (!text.trim() || sending) return
+    if ((!text.trim() && !selectedMetaTemplate) || sending) return
     if (historyMode) {
       setSendError('Volte para a conversa atual antes de enviar uma mensagem.')
       return
     }
     const content = text.trim()
-    const missingVariables = unresolvedReplyVariables(content)
-    if (missingVariables.length) {
-      setSendError(`Preencha as variáveis antes de enviar: ${missingVariables.join(', ')}.`)
+    const metaWindow = getMetaWindowInfo(persistedLead)
+    if (threadChannel === 'whatsapp' && metaWindow.requiresTemplate && !selectedMetaTemplate) {
+      setSendError('A janela de 24h está fechada. Selecione um template Meta aprovado antes de enviar.')
       return
+    }
+    if (selectedMetaTemplate) {
+      const missingTemplateVariables = selectedMetaTemplate.variaveis
+        .map(variable => variable.replace('variavel_', ''))
+        .filter(index => !metaTemplateVariables[index]?.trim())
+      if (missingTemplateVariables.length) {
+        setSendError(`Preencha as variáveis obrigatórias: ${missingTemplateVariables.map(index => `{{${index}}}`).join(', ')}.`)
+        return
+      }
+    } else {
+      const missingVariables = unresolvedReplyVariables(content)
+      if (missingVariables.length) {
+        setSendError(`Preencha as variáveis antes de enviar: ${missingVariables.join(', ')}.`)
+        return
+      }
     }
     if (!canStartComposerIntent(pendingIntentRef.current, content)) {
       setSendError('Há um envio anterior em processamento ou com resultado incerto. Verifique seu estado antes de enviar outro texto; seu rascunho foi mantido.')
@@ -831,7 +891,17 @@ export function ChatWindow({
     try {
       const response = await fetch(`/api/inbox/${lead.id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Client-Request-Id': intent.clientRequestId },
-        body: JSON.stringify({ content: intent.content, clientRequestId: intent.clientRequestId, threadChannel }),
+        body: JSON.stringify({
+          content: intent.content,
+          clientRequestId: intent.clientRequestId,
+          threadChannel,
+          ...(selectedMetaTemplate ? {
+            messageType: 'template',
+            templateName: selectedMetaTemplate.nome,
+            templateLanguage: selectedMetaTemplate.idioma,
+            templateVariables: metaTemplateVariables,
+          } : {}),
+        }),
       })
       const data = await response.json().catch(() => ({}))
       const message = data.message ?? (Number.isInteger(data.id) ? data : null)
@@ -842,6 +912,8 @@ export function ChatWindow({
         setSendError(data.error || (state === 'uncertain' ? 'O resultado do envio é incerto. Verifique o estado antes de tentar novamente.' : 'Envio em processamento. Aguardando confirmação do transporte.'))
       } else if (response.ok && state !== 'failed') {
         setText(current => draftAfterAccepted(current, intent.content))
+        setSelectedMetaTemplate(null)
+        setMetaTemplateVariables({})
         pendingIntentRef.current = null
         shouldScrollToBottomRef.current = true
       } else {
@@ -880,6 +952,7 @@ export function ChatWindow({
   // agente resolvido (companies.agentDisplayName nulo), pra nunca quebrar a
   // tela por falta desse dado.
   const agentLabel = lead.agentDisplayName?.trim() || 'Bot IA'
+  const composerMetaWindow = getMetaWindowInfo(persistedLead)
   const conversationBaseHref = conversationHref ?? (backHref === '/instagram' ? '/instagram' : '/inbox')
   const summary = persistedSacContextSummary(persistedLead)
   const savedContext = contextFromLead(persistedLead)
@@ -1185,11 +1258,12 @@ export function ChatWindow({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => { if (!showApprovedReplies) void loadReplies(); setShowApprovedReplies(prev => !prev) }}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-line-subtle bg-surface-inset hover:bg-surface-raised text-fg-muted hover:text-fg text-[11px] font-semibold transition-colors cursor-pointer"
+                onClick={() => { if (!showApprovedReplies) void loadComposerOptions(); setShowApprovedReplies(prev => !prev) }}
+                disabled={loadingComposerOptions}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-line-subtle bg-surface-inset hover:bg-surface-raised text-fg-muted hover:text-fg text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-50"
               >
                 <Zap size={12} className="text-amber-400" />
-                <span>Respostas Aprovadas</span>
+                <span>Mensagens aprovadas</span>
                 <ChevronDown size={11} className={cn("transition-transform", showApprovedReplies && "rotate-180")} />
               </button>
 
@@ -1293,11 +1367,16 @@ export function ChatWindow({
                 type="text"
                 value={replyFilter}
                 onChange={e => setReplyFilter(e.target.value)}
-                placeholder="Filtrar por título, atalho (/pix) ou texto..."
+                placeholder="Buscar por nome, idioma ou conteúdo..."
                 className="w-full bg-surface-inset border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg placeholder:text-fg-faint focus:outline-none focus:border-brand-solid"
               />
 
               {replyError && <p role="alert" className="text-micro text-rose-400">{replyError}</p>}
+              {composerMetaWindow.requiresTemplate && threadChannel === 'whatsapp' && (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-micro text-amber-300">
+                  A janela de 24h está fechada: somente templates Meta APPROVED podem ser enviados nesta conversa.
+                </p>
+              )}
               {variableReply && (
                 <form className="p-3 border-b border-line-subtle space-y-2" onSubmit={event => {
                   event.preventDefault()
@@ -1320,6 +1399,7 @@ export function ChatWindow({
                       key={reply.id}
                       type="button"
                       onClick={() => handleInsertReply(reply)}
+                      disabled={composerMetaWindow.requiresTemplate && threadChannel === 'whatsapp'}
                       className="w-full text-left p-2 rounded-lg hover:bg-surface-inset transition-colors flex flex-col gap-0.5 cursor-pointer"
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -1335,6 +1415,47 @@ export function ChatWindow({
                   ))
                 )}
               </div>
+
+              {threadChannel === 'whatsapp' && (
+                <div className="space-y-2 border-t border-line-subtle pt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-fg-subtle">Templates Meta aprovados</span>
+                    <span className="text-[10px] text-fg-faint">WhatsApp · WABA da empresa</span>
+                  </div>
+                  {selectedMetaTemplate && (
+                    <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-2 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-micro font-semibold text-fg">{selectedMetaTemplate.nome}</span>
+                        <span className="text-[10px] text-cyan-300">APPROVED · {selectedMetaTemplate.idioma}</span>
+                      </div>
+                      {selectedMetaTemplate.variaveis.map(variable => {
+                        const index = variable.replace('variavel_', '')
+                        return <label key={variable} className="block text-micro text-fg-muted">Variável {'{{'}{index}{'}}'}<input required value={metaTemplateVariables[index] || ''} onChange={event => handleTemplateVariableChange(index, event.target.value)} className="mt-1 block w-full rounded-lg border border-line-subtle bg-surface-inset p-2 text-fg" /></label>
+                      })}
+                      <p className="text-[11px] text-fg whitespace-pre-wrap">{templatePreview(selectedMetaTemplate, metaTemplateVariables)}</p>
+                      <button type="button" onClick={() => { setSelectedMetaTemplate(null); setMetaTemplateVariables({}); setText('') }} className="text-micro text-fg-muted underline">Cancelar template</button>
+                    </div>
+                  )}
+                  {loadingComposerOptions ? (
+                    <p className="text-[11px] text-fg-muted p-2 text-center">Consultando templates da WABA...</p>
+                  ) : filteredMetaTemplates.length === 0 ? (
+                    <p className="text-[11px] text-fg-muted p-2 text-center">{metaTemplatesMessage || 'Nenhum template Meta APPROVED disponível para esta empresa.'}</p>
+                  ) : (
+                    <div className="max-h-48 overflow-y-auto scroll-thin space-y-1 divide-y divide-line-subtle/50">
+                      {filteredMetaTemplates.map(template => (
+                        <button key={`${template.nome}:${template.idioma}`} type="button" onClick={() => handleSelectMetaTemplate(template)} className="w-full text-left p-2 rounded-lg hover:bg-surface-inset transition-colors flex flex-col gap-1 cursor-pointer">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[12px] font-semibold text-fg">{template.nome}</span>
+                            <span className="text-[10px] font-mono text-emerald-400">APPROVED · {template.idioma}</span>
+                          </div>
+                          <span className="text-[10px] text-fg-faint">{template.categoria}</span>
+                          <p className="text-[11px] text-fg-muted whitespace-pre-wrap line-clamp-2">{template.corpo || 'Template sem prévia textual.'}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1342,16 +1463,17 @@ export function ChatWindow({
             <textarea
               ref={textareaRef}
               value={text}
-              onChange={e => setText(e.target.value)}
+              onChange={e => { setSelectedMetaTemplate(null); setMetaTemplateVariables({}); setText(e.target.value) }}
               onKeyDown={handleComposerKeyDown}
               placeholder="Escreva aqui..."
               rows={1}
+              disabled={Boolean(selectedMetaTemplate)}
               className="focus-ring flex-1 resize-none rounded-xl border border-line-subtle bg-surface-inset px-4 py-2.5 text-body text-fg placeholder:text-fg-subtle outline-none max-h-32 overflow-y-auto scroll-thin leading-relaxed"
               style={{ minHeight: 44 }}
             />
             <button
               onClick={handleSend}
-              disabled={!text.trim() || sending || historyMode}
+              disabled={(!text.trim() && !selectedMetaTemplate) || sending || historyMode || (composerMetaWindow.requiresTemplate && !selectedMetaTemplate)}
               aria-label="Enviar mensagem"
               title={`Enviar mensagem via ${channelLabel}`}
               className="focus-ring flex items-center justify-center h-11 w-11 shrink-0 rounded-xl bg-brand-solid text-on-accent transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-xs"
