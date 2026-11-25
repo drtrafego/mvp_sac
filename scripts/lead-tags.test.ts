@@ -46,7 +46,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '..')
 const CONTAINER_NAME = 'lead_tags_test'
 
 function dockerAvailable(): boolean {
-  const r = spawnSync('docker', ['info'], { stdio: 'ignore' })
+  const r = spawnSync('timeout', ['20', 'docker', 'info'], { stdio: 'ignore' })
   return r.status === 0
 }
 
@@ -67,10 +67,10 @@ async function pickFreePortAsync(): Promise<number> {
 }
 
 async function startDisposablePostgres(): Promise<{ url: string; stop: () => void }> {
-  spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
+  spawnSync('timeout', ['20', 'docker', 'rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
   const port = await pickFreePortAsync()
   console.log(`[setup] subindo postgres:16-alpine descartável na porta ${port} (container ${CONTAINER_NAME})...`)
-  execFileSync('docker', [
+  execFileSync('timeout', ['20', 'docker',
     'run', '--rm', '-d',
     '--name', CONTAINER_NAME,
     '-e', 'POSTGRES_PASSWORD=test',
@@ -101,7 +101,7 @@ async function startDisposablePostgres(): Promise<{ url: string; stop: () => voi
     url,
     stop: () => {
       console.log('[teardown] derrubando container descartável...')
-      spawnSync('docker', ['rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
+      spawnSync('timeout', ['20', 'docker', 'rm', '-f', '-v', CONTAINER_NAME], { stdio: 'ignore' })
     },
   }
 }
@@ -252,10 +252,12 @@ async function main() {
     namedExports: { db: testDb },
   })
 
+  let activeCompany = company
+
   mock.module('@/lib/auth', {
     namedExports: {
       requireCompany: async () => {
-        const [c] = await testDb.select().from(schema.companies).where(eq(schema.companies.id, company.id))
+        const [c] = await testDb.select().from(schema.companies).where(eq(schema.companies.id, activeCompany.id))
         return c
       },
       getCurrentUser: async () => ({ id: 'user-teste', displayName: 'Operador Teste', primaryEmail: 'operador@example.com', isAdmin: false }),
@@ -484,7 +486,7 @@ async function main() {
         .values({
           companyId: company.id,
           eventType: 'test',
-          phone: '5511911110028',
+          phone: '5511911999028',
           platform: 'sac',
           productName: 'Produto melhor já cadastrado',
           trackingSource: 'origem_existente',
@@ -567,14 +569,14 @@ async function main() {
         .values({ companyId: otherCompany.id, eventType: 'test', phone: '5511911110029', platform: 'sac' })
         .returning()
       const [duplicateA, duplicateB] = await Promise.all([
-        testDb.insert(schema.recoveryLeads).values({ companyId: company.id, eventType: 'test', phone: '5511911110030', platform: 'hotmart' }).returning(),
-        testDb.insert(schema.recoveryLeads).values({ companyId: company.id, eventType: 'test', phone: '5511911110030', platform: 'kiwify' }).returning(),
+        testDb.insert(schema.recoveryLeads).values({ companyId: company.id, eventType: 'test', phone: '5511911999030', platform: 'hotmart' }).returning(),
+        testDb.insert(schema.recoveryLeads).values({ companyId: company.id, eventType: 'test', phone: '5511911999030', platform: 'kiwify' }).returning(),
       ]).then(rows => [rows[0][0], rows[1][0]])
 
       const response = await IMPORT_POST(new NextRequest('https://sac.example.com/api/leads/import', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ items: [{ phone: '5511911110030', name: 'Duplicado Histórico', tags: ['não-usado'] }] }),
+        body: JSON.stringify({ items: [{ phone: '5511911999030', name: 'Duplicado Histórico', tags: ['não-usado'] }] }),
       }))
       assert.equal(response.status, 200)
       const json = await response.json()
@@ -586,8 +588,93 @@ async function main() {
       assert.deepEqual(new Set(duplicateTags.map(row => row.leadId)), new Set([duplicateA.id, duplicateB.id]))
       const [foreignAfter] = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.id, foreignLead.id))
       assert.equal(foreignAfter.name, null)
-      const samePhone = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.phone, '5511911110030'))
+      const samePhone = await testDb.select().from(schema.recoveryLeads).where(eq(schema.recoveryLeads.phone, '5511911999030'))
       assert.equal(samePhone.length, 2)
+    })
+
+    await test('importador e tags funcionam em outro tenant sem hardcode de empresa', async () => {
+      const [otherCompany] = await testDb
+        .insert(schema.companies)
+        .values({ name: 'Segundo Tenant Import Teste', slug: 'segundo-tenant-import-teste' })
+        .returning()
+      const [existingOtherLead] = await testDb
+        .insert(schema.recoveryLeads)
+        .values({
+          companyId: otherCompany.id,
+          eventType: 'test',
+          phone: '5511911999031',
+          platform: 'sac',
+          productName: 'Produto melhor do segundo tenant',
+          trackingSource: 'origem_segundo_tenant',
+          rawPayload: { sistema: 'segundo-tenant' },
+        })
+        .returning()
+      const [samePhoneInCurrentTenant] = await testDb
+        .insert(schema.recoveryLeads)
+        .values({ companyId: company.id, eventType: 'test', phone: '5511911999031', platform: 'sac' })
+        .returning()
+
+      activeCompany = otherCompany
+      try {
+        const response = await IMPORT_POST(new NextRequest('https://sac.example.com/api/leads/import', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            items: [{
+              phone: existingOtherLead.phone,
+              name: 'Nome do Segundo Tenant',
+              productName: 'Produto Principal',
+              preserveExistingProductName: true,
+              trackingSource: 'mineracao',
+              preserveExistingTrackingSource: true,
+              tags: ['SEGUNDO_TENANT'],
+              sourceMetadata: { externalId: 'segundo-tenant-csv-1', locale: 'pt-BR' },
+            }],
+          }),
+        }))
+        assert.equal(response.status, 200)
+        const json = await response.json()
+        assert.equal(json.inserted, 0)
+        assert.equal(json.updated, 1)
+        assert.equal(json.alreadyExisting, 1)
+        assert.equal(json.tagFailed, 0)
+
+        const [updatedOtherLead] = await testDb
+          .select()
+          .from(schema.recoveryLeads)
+          .where(eq(schema.recoveryLeads.id, existingOtherLead.id))
+        assert.equal(updatedOtherLead.name, 'Nome do Segundo Tenant')
+        assert.equal(updatedOtherLead.productName, 'Produto melhor do segundo tenant')
+        assert.equal(updatedOtherLead.trackingSource, 'origem_segundo_tenant')
+        assert.deepEqual(updatedOtherLead.rawPayload, {
+          sistema: 'segundo-tenant',
+          import: {
+            externalId: 'segundo-tenant-csv-1',
+            locale: 'pt-BR',
+            recordType: 'lead',
+            platform: 'import_planilha',
+          },
+        })
+
+        const otherTags = await testDb
+          .select()
+          .from(schema.leadTags)
+          .where(eq(schema.leadTags.leadId, existingOtherLead.id))
+        assert.deepEqual(otherTags.map(row => row.tag), ['segundo_tenant'])
+
+        const [currentTenantAfter] = await testDb
+          .select()
+          .from(schema.recoveryLeads)
+          .where(eq(schema.recoveryLeads.id, samePhoneInCurrentTenant.id))
+        assert.equal(currentTenantAfter.name, null, 'o mesmo telefone do tenant atual não pode ser tocado')
+        const currentTenantTags = await testDb
+          .select()
+          .from(schema.leadTags)
+          .where(eq(schema.leadTags.leadId, samePhoneInCurrentTenant.id))
+        assert.equal(currentTenantTags.length, 0)
+      } finally {
+        activeCompany = company
+      }
     })
 
     await test('import CSV com tag "pessoa" pausa o bot sem sobrescrever pausa de outro motivo', async () => {
@@ -741,6 +828,7 @@ async function main() {
             items: [{ phone: '11911110032', name: 'Tag Antes Do Lote' }],
             tag: 'vip-dispatch',
             createMassDispatch: true,
+            defaultEventType: 'falha_lote',
           }),
         })
         const res = await IMPORT_POST(req)

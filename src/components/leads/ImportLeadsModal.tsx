@@ -175,6 +175,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
     total: number
     inserted: number
     updated: number
+    alreadyExisting: number
     skipped: number
     tagFailed: number
     dispatchRecipientFailed: number
@@ -1198,7 +1199,7 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               <p className="text-micro text-fg-muted">Os contatos já estão disponíveis no painel de Leads, CRM e Origens.</p>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="panel p-3.5 rounded-[var(--r-md)] border border-line-subtle bg-surface-panel text-center">
                 <span className="text-label uppercase text-fg-subtle font-bold block">Novos Inseridos</span>
                 <span className="num text-h2 font-bold text-emerald-400 mt-1 block">{importResult.inserted}</span>
@@ -1206,6 +1207,10 @@ export function ImportLeadsModal({ open, onOpenChange, onSuccess }: ImportLeadsM
               <div className="panel p-3.5 rounded-[var(--r-md)] border border-line-subtle bg-surface-panel text-center">
                 <span className="text-label uppercase text-fg-subtle font-bold block">Atualizados</span>
                 <span className="num text-h2 font-bold text-cyan-400 mt-1 block">{importResult.updated}</span>
+              </div>
+              <div className="panel p-3.5 rounded-[var(--r-md)] border border-line-subtle bg-surface-panel text-center">
+                <span className="text-label uppercase text-fg-subtle font-bold block">Já existentes</span>
+                <span className="num text-h2 font-bold text-violet-400 mt-1 block">{importResult.alreadyExisting}</span>
               </div>
               <div className="panel p-3.5 rounded-[var(--r-md)] border border-line-subtle bg-surface-panel text-center">
                 <span className="text-label uppercase text-fg-subtle font-bold block">Ignorados / Inválidos</span>
