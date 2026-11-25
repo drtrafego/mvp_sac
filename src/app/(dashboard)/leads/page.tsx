@@ -22,6 +22,9 @@ import {
   CheckCircle2,
   Users,
   Send,
+  ArrowLeftRight,
+  Minus,
+  Plus,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -51,6 +54,7 @@ interface Lead extends LeadForEdit {
   platform: string | null
   transactionId?: string | null
   createdAt: string | null
+  tags?: string[]
 }
 
 const eventLabels: Record<string, string> = {
@@ -155,6 +159,7 @@ const FIELD_SKIN = 'bg-surface-inset dark:bg-surface-inset border-line-subtle fo
 const COLUMNS: { label: string; className?: string }[] = [
   { label: 'Selecionar', className: 'w-12' },
   { label: 'Nome / Cliente', className: 'w-[260px]' },
+  { label: 'Tags', className: 'w-[180px]' },
   { label: 'Telefone / WhatsApp' },
   { label: 'Produto / Oferta', className: 'w-[220px]' },
   { label: 'Valor' },
@@ -202,6 +207,16 @@ function WhatsAppGlyph({ size = 14 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className="shrink-0">
       <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
     </svg>
+  )
+}
+
+function TagPills({ tags }: { tags?: string[] }) {
+  if (!tags?.length) return <span className="text-micro text-fg-faint">-</span>
+  return (
+    <div className="flex max-w-[180px] flex-wrap gap-1">
+      {tags.slice(0, 4).map(tag => <span key={tag} className="max-w-[84px] truncate rounded-full border border-brand-solid/30 bg-brand-glow px-1.5 py-0.5 text-[10px] text-brand-ink" title={tag}>{tag}</span>)}
+      {tags.length > 4 && <span className="text-[10px] text-fg-subtle">+{tags.length - 4}</span>}
+    </div>
   )
 }
 
@@ -254,6 +269,14 @@ export default function LeadsPage() {
   const [dispatchOpen, setDispatchOpen] = useState(false)
   const [templateSelection, setTemplateSelection] = useState<TemplateSelection | null>(null)
   const [creatingDispatch, setCreatingDispatch] = useState(false)
+  const [tagActionOpen, setTagActionOpen] = useState(false)
+  const [tagAction, setTagAction] = useState<'add' | 'remove' | 'replace'>('add')
+  const [tagInput, setTagInput] = useState('')
+  const [fromTag, setFromTag] = useState('')
+  const [toTag, setToTag] = useState('')
+  const [tagPreview, setTagPreview] = useState<{ selectedCount: number; fromTagCount: number | null; withoutFromTagCount: number | null } | null>(null)
+  const [tagResult, setTagResult] = useState<{ altered: number; ignored: number; failed: number } | null>(null)
+  const [tagLoading, setTagLoading] = useState(false)
 
   const { from, to } = resolvePeriod({
     from: searchParams.get('from') ?? undefined,
@@ -371,6 +394,62 @@ export default function LeadsPage() {
   }
   const clearSelection = () => { setSelectedLeadIds([]); setSelectAllFilter(false) }
   const selectionCount = selectAllFilter ? 'Todos os leads filtrados' : `${selectedLeadIds.length} selecionado${selectedLeadIds.length === 1 ? '' : 's'}`
+  const tagSelection = useMemo(() => ({
+    mode: selectAllFilter ? 'filter' : 'ids',
+    leadIds: selectAllFilter ? undefined : selectedLeadIds,
+    filter: selectAllFilter ? dispatchFilter : undefined,
+  }), [selectAllFilter, selectedLeadIds, dispatchFilter])
+  const parsedTags = useMemo(() => [...new Set(tagInput.split(',').map(value => value.trim().toLowerCase()).filter(Boolean))], [tagInput])
+  const canPreviewTags = tagAction === 'replace' ? Boolean(fromTag.trim() && toTag.trim() && fromTag.trim().toLowerCase() !== toTag.trim().toLowerCase()) : parsedTags.length > 0
+
+  const resetTagAction = () => {
+    setTagActionOpen(false)
+    setTagPreview(null)
+    setTagResult(null)
+    setTagInput('')
+    setFromTag('')
+    setToTag('')
+    setTagLoading(false)
+  }
+  const tagPayload = () => ({
+    ...tagSelection,
+    action: tagAction,
+    tags: parsedTags,
+    fromTag: fromTag.trim(),
+    toTag: toTag.trim(),
+  })
+  const previewTags = async () => {
+    if (!canPreviewTags) return
+    setTagLoading(true)
+    setTagResult(null)
+    try {
+      const response = await fetch('/api/leads/tags/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...tagPayload(), preview: true }) })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Não foi possível preparar a prévia.')
+      setTagPreview(data)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível preparar a prévia.')
+    } finally {
+      setTagLoading(false)
+    }
+  }
+  const applyTags = async () => {
+    if (!tagPreview) return
+    setTagLoading(true)
+    try {
+      const response = await fetch('/api/leads/tags/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...tagPayload(), confirm: true }) })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Não foi possível aplicar as tags.')
+      setTagResult({ altered: data.altered ?? 0, ignored: data.ignored ?? 0, failed: data.failed?.length ?? 0 })
+      setTagPreview(null)
+      clearSelection()
+      await fetchLeads(page)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível aplicar as tags.')
+    } finally {
+      setTagLoading(false)
+    }
+  }
   const handleTemplateChange = useCallback((selection: TemplateSelection | null) => setTemplateSelection(selection), [])
   const createDispatch = async () => {
     if (!templateSelection || (!selectAllFilter && !selectedLeadIds.length)) return
@@ -486,7 +565,7 @@ export default function LeadsPage() {
   })()
 
   return (
-    <div className="space-y-5">
+    <div className="w-full min-w-0 max-w-none space-y-5">
       {sourceParam && (
         <div className="flex items-center gap-2 text-micro">
           <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">
@@ -507,7 +586,7 @@ export default function LeadsPage() {
           {subtitle}
         </>}
         actions={<>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
             <Button
               onClick={() => setAddLeadModalOpen(true)}
               className="shrink-0 gap-1.5 bg-brand-solid hover:bg-brand-solid/90 text-on-accent font-bold text-micro shadow-sm cursor-pointer"
@@ -794,6 +873,8 @@ export default function LeadsPage() {
                   }
                   meta={
                     <>
+                      <TagPills tags={lead.tags} />
+                      <span>•</span>
                       <span className="truncate">{lead.productName ?? '-'}</span>
                       <span>•</span>
                       <span className={`inline-flex items-center gap-1 text-micro text-fg`}>
@@ -840,7 +921,7 @@ export default function LeadsPage() {
       </div>
 
       {/* Tabela Desktop */}
-      <div className="hidden lg:block panel overflow-hidden">
+      <div className="hidden w-full min-w-0 lg:block panel overflow-hidden">
         {!loading && leads.length > 0 && leads.every(lead => selectedLeadIds.includes(lead.id)) && !selectAllFilter && (
           <div className="flex items-center justify-between gap-3 border-b border-cyan-500/30 bg-cyan-500/5 px-4 py-2 text-micro text-cyan-200">
             <span>Todos os {leads.length} leads desta página estão selecionados?</span>
@@ -848,7 +929,7 @@ export default function LeadsPage() {
           </div>
         )}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-body">
+          <table className="w-full min-w-[1120px] text-left text-body">
             <thead>
               <tr className="border-b border-line-subtle">
                 {COLUMNS.map(col => (
@@ -897,6 +978,7 @@ export default function LeadsPage() {
                         <p className="font-semibold text-fg truncate">{lead.name ?? 'Cliente'}</p>
                         {lead.email && <p className="text-micro text-fg-subtle truncate">{lead.email}</p>}
                       </td>
+                      <td className="px-4 py-3"><TagPills tags={lead.tags} /></td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <Link
                           href={`/inbox/${lead.id}`}
@@ -1019,7 +1101,50 @@ export default function LeadsPage() {
         </DialogContent>
       </Dialog>
 
-      {(selectAllFilter || selectedLeadIds.length > 0) && <div className="fixed bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-line-subtle bg-surface-overlay px-4 py-3 shadow-xl"><span className="text-body font-semibold text-fg">{selectionCount}</span><Button size="sm" onClick={() => setDispatchOpen(true)} className="gap-1.5 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={14} />Disparar Template</Button><Button size="sm" variant="ghost" onClick={clearSelection}>Limpar seleção</Button></div>}
+      <Dialog open={tagActionOpen} onOpenChange={(open) => open ? setTagActionOpen(true) : resetTagAction()}>
+        <DialogContent className="w-[calc(100%-1.5rem)] max-h-[90vh] max-w-xl overflow-y-auto bg-surface-panel border-line-subtle">
+          <DialogHeader><DialogTitle>Alterar tags dos leads selecionados</DialogTitle></DialogHeader>
+          <p className="text-micro text-fg-muted">A seleção vem da página Leads. A operação só altera tags e não cria mensagens, campanhas ou jobs.</p>
+
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Ação de tags">
+            {([
+              ['add', 'Adicionar', Plus],
+              ['remove', 'Remover', Minus],
+              ['replace', 'Trocar', ArrowLeftRight],
+            ] as const).map(([value, label, Icon]) => (
+              <button key={value} type="button" onClick={() => { setTagAction(value); setTagPreview(null); setTagResult(null) }} className={cn('flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-micro font-semibold transition-colors', tagAction === value ? 'border-brand-solid bg-brand-glow text-brand-ink' : 'border-line-subtle bg-surface-inset text-fg-muted hover:text-fg')}>
+                <Icon size={14} /> {label}
+              </button>
+            ))}
+          </div>
+
+          {tagAction === 'replace' ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="space-y-1 text-micro font-semibold text-fg">Tag de origem<Input value={fromTag} onChange={event => { setFromTag(event.target.value); setTagPreview(null) }} placeholder="ex.: prospecto" className="mt-1 bg-surface-inset border-line-subtle" /></label>
+              <label className="space-y-1 text-micro font-semibold text-fg">Tag de destino<Input value={toTag} onChange={event => { setToTag(event.target.value); setTagPreview(null) }} placeholder="ex.: cliente" className="mt-1 bg-surface-inset border-line-subtle" /></label>
+            </div>
+          ) : (
+            <label className="space-y-1 text-micro font-semibold text-fg">{tagAction === 'add' ? 'Tags para adicionar' : 'Tags para remover'}<Input value={tagInput} onChange={event => { setTagInput(event.target.value); setTagPreview(null) }} placeholder="Separe várias por vírgula" className="mt-1 bg-surface-inset border-line-subtle" /></label>
+          )}
+
+          {tagPreview && (
+            <div className="rounded-xl border border-brand-solid/30 bg-brand-glow/40 p-3 text-micro text-fg space-y-1">
+              <p className="font-semibold">Prévia para {tagPreview.selectedCount} lead{tagPreview.selectedCount === 1 ? '' : 's'}</p>
+              {tagAction === 'replace' && <p>{tagPreview.fromTagCount} possuem a tag de origem e {tagPreview.withoutFromTagCount} serão ignorados por não possuí-la.</p>}
+              <p className="text-fg-muted">As demais tags de cada lead serão preservadas.</p>
+            </div>
+          )}
+          {tagResult && <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3 text-micro text-emerald-200">Alterados: {tagResult.altered} · Ignorados: {tagResult.ignored} · Falhas: {tagResult.failed}</div>}
+
+          <div className="flex flex-wrap justify-end gap-2 border-t border-line-subtle pt-4">
+            <Button variant="outline" onClick={resetTagAction}>Fechar</Button>
+            {!tagPreview && !tagResult && <Button disabled={!canPreviewTags || tagLoading} onClick={() => void previewTags()} className="bg-brand-solid text-on-accent hover:bg-brand-solid/90">{tagLoading ? 'Calculando...' : 'Ver prévia'}</Button>}
+            {tagPreview && <Button disabled={tagLoading} onClick={() => void applyTags()} className="bg-brand-solid text-on-accent hover:bg-brand-solid/90">{tagLoading ? 'Aplicando...' : 'Confirmar alteração'}</Button>}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {(selectAllFilter || selectedLeadIds.length > 0) && <div className="sticky bottom-3 z-30 mx-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 rounded-xl border border-line-subtle bg-surface-overlay px-3 py-2.5 shadow-xl sm:gap-3 sm:px-4"><span className="text-micro font-semibold text-fg">{selectionCount}</span><Button size="sm" onClick={() => { setTagActionOpen(true); setTagResult(null) }} className="gap-1.5 bg-brand-solid text-on-accent hover:bg-brand-solid/90"><Tag size={14} />Alterar tags</Button><Button size="sm" onClick={() => setDispatchOpen(true)} className="gap-1.5 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={14} />Disparar Template</Button><Button size="sm" variant="ghost" onClick={clearSelection}>Limpar seleção</Button></div>}
     </div>
   )
 }

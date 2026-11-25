@@ -15,7 +15,12 @@ export function PageSurface({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div className="workspace-page" data-page-mode={mode} data-conversation-open={activeConversation || undefined}>
+      <div
+        className="workspace-page"
+        data-page-mode={mode}
+        data-page-route={pathname === '/leads' ? 'leads' : undefined}
+        data-conversation-open={activeConversation || undefined}
+      >
         {children}
       </div>
       {!activeConversation && (

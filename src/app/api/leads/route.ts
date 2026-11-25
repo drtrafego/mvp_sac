@@ -1,8 +1,8 @@
 import { getInheritedPauseFields } from '@/lib/bot-pause'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoveryLeads, recoverySequences, sequenceMessages, messageJobs } from '@/lib/db/schema'
-import { eq, desc, and, gte, lte, sql } from 'drizzle-orm'
+import { leadTags, recoveryLeads, recoverySequences, sacAuditEvents, sequenceMessages, messageJobs } from '@/lib/db/schema'
+import { eq, desc, and, gte, lte, inArray, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { getDateRange } from '@/lib/date-utils'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
@@ -241,8 +241,20 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   const leads = await query
+  const tagsByLead = new Map<number, string[]>()
+  if (leads.length) {
+    const tags = await db
+      .select({ leadId: leadTags.leadId, tag: leadTags.tag })
+      .from(leadTags)
+      .where(inArray(leadTags.leadId, leads.map(lead => lead.id)))
+    for (const row of tags) {
+      const current = tagsByLead.get(row.leadId) ?? []
+      current.push(row.tag)
+      tagsByLead.set(row.leadId, current)
+    }
+  }
 
-  return NextResponse.json(leads)
+  return NextResponse.json(leads.map(lead => ({ ...lead, tags: tagsByLead.get(lead.id) ?? [] })))
 }
 
 /**
@@ -267,6 +279,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     utmMedium = 'whatsapp',
     paymentType = 'pix',
     triggerSequence = false,
+    tags: rawTags,
   } = body
 
   if (!rawPhone || typeof rawPhone !== 'string') {
@@ -297,6 +310,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const cleanTrackingSource = typeof trackingSource === 'string' ? trackingSource : 'mineracao'
   const cleanUtmMedium = typeof utmMedium === 'string' ? utmMedium : 'whatsapp'
   const cleanPaymentType = typeof paymentType === 'string' ? paymentType : 'pix'
+  const tags = Array.isArray(rawTags)
+    ? [...new Set(rawTags.filter((tag): tag is string => typeof tag === 'string').map(tag => tag.trim().toLowerCase()).filter(Boolean))].slice(0, 20)
+    : []
+  if (tags.some(tag => tag.length > 50)) {
+    return NextResponse.json({ error: 'Cada tag pode ter no máximo 50 caracteres.' }, { status: 400 })
+  }
 
   const phone = cleanPhone(rawPhone)
   if (phone.length < 10) {
@@ -382,5 +401,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  return NextResponse.json({ success: true, lead: leadRecord })
+  if (tags.length && leadRecord) {
+    const createdBy = 'cadastro_manual'
+    await db.transaction(async tx => {
+      for (const tag of tags) {
+        await tx.insert(leadTags)
+          .values({ leadId: leadRecord.id, tag, scopeChannel: null, createdBy })
+          .onConflictDoNothing()
+      }
+      await tx.insert(sacAuditEvents).values({
+        companyId: company.id,
+        leadId: leadRecord.id,
+        actorType: 'human',
+        actorName: createdBy,
+        type: 'lead_tags_created_with_lead',
+        referenceType: 'lead',
+        referenceId: String(leadRecord.id),
+        payload: { tags, messagesCreated: 0, jobsCreated: 0 },
+      })
+    })
+  }
+
+  const currentTags = await db
+    .select({ tag: leadTags.tag })
+    .from(leadTags)
+    .where(eq(leadTags.leadId, leadRecord.id))
+  return NextResponse.json({ success: true, lead: { ...leadRecord, tags: currentTags.map(row => row.tag) } })
 }
