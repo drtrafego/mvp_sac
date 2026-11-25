@@ -15,6 +15,9 @@ export type TemplateSelection = {
   templateName: string
   templateLanguage: string
   templateVariablesMap: Record<string, string>
+  templateMetaId: string
+  templateCategory: string
+  templateBodyText: string
   templateHeaderDocument?: { link: string; filename: string }
 }
 
@@ -51,17 +54,20 @@ export function TemplateSelector({ lead, onChange }: { lead: Record<string, stri
     const component = selected?.components.find(value => value && typeof value === 'object' && !Array.isArray(value) && String((value as Record<string, unknown>).type ?? '').toUpperCase() === 'BODY') as Record<string, unknown> | undefined
     return typeof component?.text === 'string' ? component.text : ''
   }, [selected])
-  const complete = placeholders.every(index => Boolean(variablesMap[String(index)]?.trim()))
+  const complete = Boolean(selected?.id) && placeholders.every(index => Boolean(variablesMap[String(index)]?.trim()))
   useEffect(() => {
     onChange(selected && complete && !unsupported && headerDocumentValidation.isValid
       ? {
           templateName: selected.name,
           templateLanguage: selected.language,
           templateVariablesMap: variablesMap,
+          templateMetaId: selected.id ?? '',
+          templateCategory: selected.category,
+          templateBodyText: body,
           ...(hasDocument && headerDocumentValidation.value ? { templateHeaderDocument: headerDocumentValidation.value } : {}),
         }
       : null)
-  }, [selected, complete, unsupported, variablesMap, hasDocument, headerDocumentValidation, onChange])
+  }, [selected, body, complete, unsupported, variablesMap, hasDocument, headerDocumentValidation, onChange])
   const preview = renderTemplateVariableText(body, variablesMap, lead)
 
   if (loading) return <div className="p-5 text-center text-body text-fg-muted"><RefreshCw className="inline mr-2 animate-spin" size={15} />Carregando templates aprovados...</div>
@@ -73,7 +79,7 @@ export function TemplateSelector({ lead, onChange }: { lead: Record<string, stri
         <SelectTrigger className="bg-surface-inset border-line-subtle"><SelectValue placeholder="Selecione o template..." /></SelectTrigger><SelectContent className="bg-surface-overlay border-line-subtle"><SelectItem value="__none__">Selecione o template...</SelectItem>{templates.map(template => <SelectItem key={metaTemplateKey(template.name, template.language)} value={metaTemplateKey(template.name, template.language)}>{template.name} ({template.language})</SelectItem>)}</SelectContent>
       </Select>
     </div>
-    {selected && <><div className="rounded-lg border border-line-subtle bg-surface-inset p-4"><p className="text-micro font-bold text-cyan-300">{selected.name} · {selected.language} · {selected.category}</p><p className="mt-2 whitespace-pre-wrap rounded bg-black/35 p-3 font-mono text-micro text-fg">{body || '(Template sem texto no BODY)'}</p></div>
+    {selected && <><div className="rounded-lg border border-line-subtle bg-surface-inset p-4"><p className="text-micro font-bold text-cyan-300">{selected.name} · {selected.language} · {selected.category} · Meta ID {selected.id || 'ausente'}</p><p className="mt-2 text-micro font-semibold text-fg-muted">Corpo oficial da prévia</p><p className="mt-2 whitespace-pre-wrap rounded bg-black/35 p-3 font-mono text-micro text-fg">{body || '(Template sem texto no BODY)'}</p></div>
       {unsupported ? <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-body text-amber-300"><AlertCircle size={16} />Este template usa HEADER de mídia ou componentes dinâmicos não suportados.</div> : <>
         {hasDocument && <div className="grid gap-3 rounded-lg border border-line-subtle bg-surface-panel p-3 sm:grid-cols-2"><div className="space-y-1"><label className="text-micro font-bold text-fg" htmlFor="template-document-link">Link do PDF (https público) *</label><Input id="template-document-link" type="url" value={headerDocument.link} onChange={event => setHeaderDocument(previous => ({ ...previous, link: event.target.value }))} aria-invalid={Boolean(headerDocumentValidation.linkError)} aria-describedby={headerDocumentValidation.linkError ? 'template-document-link-error' : undefined} className="bg-surface-inset border-line-subtle" placeholder="https://exemplo.com/Material.pdf" />{headerDocumentValidation.linkError && <p id="template-document-link-error" className="text-micro text-rose-300">{headerDocumentValidation.linkError}</p>}</div><div className="space-y-1"><label className="text-micro font-bold text-fg" htmlFor="template-document-filename">Nome do arquivo (ex.: Material.pdf) *</label><Input id="template-document-filename" value={headerDocument.filename} onChange={event => setHeaderDocument(previous => ({ ...previous, filename: event.target.value }))} aria-invalid={Boolean(headerDocumentValidation.filenameError)} aria-describedby={headerDocumentValidation.filenameError ? 'template-document-filename-error' : undefined} className="bg-surface-inset border-line-subtle" placeholder="Material.pdf" />{headerDocumentValidation.filenameError && <p id="template-document-filename-error" className="text-micro text-rose-300">{headerDocumentValidation.filenameError}</p>}</div></div>}
         <TemplateVariableMapping variables={placeholders.map(String)} values={variablesMap} onChange={setVariablesMap} preview={preview} idPrefix="template-variable" />

@@ -60,6 +60,11 @@ export const MassDispatchTemplateSelection = z.object({
   templateLanguage: z.string().trim().min(1).max(64),
   templateVariablesMap: templateVariablesMapSchema,
   templateHeaderDocument: templateHeaderDocumentSchema.optional(),
+  // Bind the human-visible review to the exact Meta template selected in the
+  // current tenant. The import flow may omit these legacy review fields.
+  templateMetaId: z.string().trim().min(1).max(256).optional(),
+  templateCategory: z.string().trim().min(1).max(64).optional(),
+  templateBodyText: z.string().max(20_000).optional(),
 }).strict()
 
 export type MassDispatchTemplateSelectionInput = z.infer<typeof MassDispatchTemplateSelection>

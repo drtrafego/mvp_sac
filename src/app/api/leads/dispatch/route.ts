@@ -6,6 +6,7 @@ import { massDispatchBatches, massDispatchRecipients, recoveryLeads, settings } 
 import { getDateRange } from '@/lib/date-utils'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
 import { buildCanonicalSnapshot, extractBodyPlaceholders, hasDocumentHeader, hasUnsupportedDynamicComponents, metaTemplateKey } from '@/lib/meta-template-utils'
+import { queueDirectTemplateMassDispatchBatch } from '@/lib/mass-dispatch'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
 
@@ -81,6 +82,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const body: unknown = await req.json().catch(() => null)
   if (!body || typeof body !== 'object' || Array.isArray(body)) return NextResponse.json({ error: 'Corpo inválido' }, { status: 400 })
   const input = body as Record<string, unknown>
+  const action = input.action === undefined ? 'save_draft' : input.action
+  if (action !== 'save_draft' && action !== 'start') return NextResponse.json({ error: 'Ação de disparo inválida' }, { status: 400 })
   const mode = input.mode
   if (mode !== 'ids' && mode !== 'filter') return NextResponse.json({ error: 'Modo de seleção inválido' }, { status: 400 })
   const parsedTemplate = MassDispatchTemplateSelection.safeParse(input.template)
@@ -99,6 +102,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Não foi possível validar o template aprovado na Meta' }, { status: 503 })
   }
   if (!template) return NextResponse.json({ error: 'O template selecionado não está aprovado na Meta' }, { status: 409 })
+  if (!template.id) return NextResponse.json({ error: 'O template aprovado não possui ID oficial da Meta' }, { status: 409 })
+  if (action === 'start' && (
+    parsedTemplate.data.templateMetaId !== template.id
+    || parsedTemplate.data.templateCategory !== template.category
+  )) {
+    return NextResponse.json({ error: 'A prévia não corresponde ao template aprovado selecionado; revise antes de confirmar' }, { status: 409 })
+  }
   if (hasUnsupportedDynamicComponents(template.components ?? [], { allowDocumentHeader: true })) return NextResponse.json({ error: 'Templates com HEADER de mídia exceto DOCUMENT ou componentes dinâmicos não são suportados' }, { status: 400 })
   const documentHeaderRequired = hasDocumentHeader(template.components ?? [])
   if (documentHeaderRequired !== Boolean(parsedTemplate.data.templateHeaderDocument)) {
@@ -130,14 +140,48 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
   if (!leadIds.length) return NextResponse.json({ error: 'Nenhum lead elegível com telefone foi encontrado' }, { status: 409 })
 
+  const templateSnapshot = buildCanonicalSnapshot(template, { headerDocument: parsedTemplate.data.templateHeaderDocument })
+  if (action === 'start' && parsedTemplate.data.templateBodyText !== templateSnapshot.bodyText) {
+    return NextResponse.json({ error: 'O corpo da prévia diverge do corpo oficial do template; revise antes de confirmar' }, { status: 409 })
+  }
   const [batch] = await db.insert(massDispatchBatches).values({
     companyId: company.id, fileName: 'Seleção interna de leads', eventType: 'mass_dispatch', trackingSource: 'internal_leads', status: 'draft', recipientCount: leadIds.length,
     dispatchSource: 'direct_template', templateName: template.name, templateLanguage: template.language,
     templateVariablesMap: parsedTemplate.data.templateVariablesMap,
-    templateSnapshot: buildCanonicalSnapshot(template, { headerDocument: parsedTemplate.data.templateHeaderDocument }),
+    templateSnapshot,
     updatedAt: new Date(),
   }).returning({ id: massDispatchBatches.id })
   if (!batch) return NextResponse.json({ error: 'Não foi possível criar o lote' }, { status: 500 })
   await db.insert(massDispatchRecipients).values(leadIds.map(leadId => ({ batchId: batch.id, leadId }))).onConflictDoNothing()
-  return NextResponse.json({ batchId: batch.id, recipientCount: leadIds.length })
+
+  if (action === 'save_draft') {
+    return NextResponse.json({ batchId: batch.id, status: 'draft', jobsCreated: 0, recipientCount: leadIds.length })
+  }
+
+  const queued = await queueDirectTemplateMassDispatchBatch(batch.id, company.id, config.metaPhoneNumberId, [{
+    id: 0,
+    order: 1,
+    delayMinutes: 0,
+    messageType: 'template',
+    content: templateSnapshot.bodyText,
+    templateName: template.name,
+    templateLanguage: template.language,
+    templateVariablesMap: parsedTemplate.data.templateVariablesMap,
+  }])
+  if (queued.status === 'daily_limit') {
+    return NextResponse.json({ error: 'Limite técnico de volume nas últimas 24h atingido para este número', batchId: batch.id, status: 'draft', requested: queued.requested, available: queued.available }, { status: 429 })
+  }
+  if (queued.status === 'no_eligible_messages') {
+    return NextResponse.json({ error: 'Nenhum destinatário é elegível para o disparo', batchId: batch.id, status: 'draft' }, { status: 409 })
+  }
+  if (queued.status === 'preview_changed') {
+    return NextResponse.json({ error: 'A mensagem mudou depois da revisão; revise e tente novamente', batchId: batch.id, status: 'draft' }, { status: 409 })
+  }
+  if (queued.status === 'not_found_or_claimed') {
+    return NextResponse.json({ error: 'O lote foi confirmado por outra requisição ou não pôde ser enfileirado', batchId: batch.id, status: 'draft' }, { status: 409 })
+  }
+  if (queued.status === 'non_template') {
+    return NextResponse.json({ error: 'O template selecionado não pode ser enfileirado neste disparo', batchId: batch.id, status: 'draft' }, { status: 409 })
+  }
+  return NextResponse.json({ success: true, batchId: batch.id, status: 'queued', jobsCreated: queued.jobsCreated, recipientCount: leadIds.length })
 }

@@ -2,8 +2,9 @@
 
 import { PageHeader } from '@/components/ui/page-header'
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import {
+  AlertCircle,
   Search,
   RefreshCw,
   Inbox,
@@ -223,7 +224,6 @@ function TagPills({ tags }: { tags?: string[] }) {
 const PAGE_SIZE = 50
 
 export default function LeadsPage() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const initialStatus = searchParams.get('status') || 'all'
   const sourceParam = searchParams.get('source') || ''
@@ -269,6 +269,9 @@ export default function LeadsPage() {
   const [dispatchOpen, setDispatchOpen] = useState(false)
   const [templateSelection, setTemplateSelection] = useState<TemplateSelection | null>(null)
   const [creatingDispatch, setCreatingDispatch] = useState(false)
+  const [dispatchConfirmed, setDispatchConfirmed] = useState(false)
+  const [dispatchFeedback, setDispatchFeedback] = useState<string | null>(null)
+  const [dispatchError, setDispatchError] = useState<string | null>(null)
   const [tagActionOpen, setTagActionOpen] = useState(false)
   const [tagAction, setTagAction] = useState<'add' | 'remove' | 'replace'>('add')
   const [tagInput, setTagInput] = useState('')
@@ -450,16 +453,28 @@ export default function LeadsPage() {
       setTagLoading(false)
     }
   }
-  const handleTemplateChange = useCallback((selection: TemplateSelection | null) => setTemplateSelection(selection), [])
-  const createDispatch = async () => {
-    if (!templateSelection || (!selectAllFilter && !selectedLeadIds.length)) return
+  const handleTemplateChange = useCallback((selection: TemplateSelection | null) => {
+    setTemplateSelection(selection)
+    setDispatchError(null)
+    setDispatchFeedback(null)
+  }, [])
+  const createDispatch = async (action: 'save_draft' | 'start') => {
+    if (!templateSelection || (!selectAllFilter && !selectedLeadIds.length) || (action === 'start' && !dispatchConfirmed)) return
     setCreatingDispatch(true)
+    setDispatchError(null)
+    setDispatchFeedback(null)
     try {
-      const response = await fetch('/api/leads/dispatch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: selectAllFilter ? 'filter' : 'ids', leadIds: selectAllFilter ? undefined : selectedLeadIds, filter: selectAllFilter ? dispatchFilter : undefined, template: templateSelection }) })
+      const response = await fetch('/api/leads/dispatch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, mode: selectAllFilter ? 'filter' : 'ids', leadIds: selectAllFilter ? undefined : selectedLeadIds, filter: selectAllFilter ? dispatchFilter : undefined, template: templateSelection }) })
       const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Não foi possível criar o lote.')
-      router.push(`/disparo-em-massa?batchId=${data.batchId}`)
-    } catch (error) { alert(error instanceof Error ? error.message : 'Não foi possível criar o lote.') } finally { setCreatingDispatch(false) }
+      if (!response.ok) throw new Error(typeof data.error === 'string' ? `${data.error}${data.batchId ? ` (lote #${data.batchId} permanece em rascunho)` : ''}` : 'Não foi possível iniciar o disparo.')
+      setDispatchConfirmed(false)
+      setDispatchFeedback(action === 'start'
+        ? `Disparo iniciado: lote #${data.batchId}, ${data.jobsCreated ?? 0} job(s) enfileirado(s) para ${data.recipientCount ?? 0} destinatário(s).`
+        : `Rascunho salvo: lote #${data.batchId}, ${data.recipientCount ?? 0} destinatário(s).`)
+      await fetchLeads(page)
+    } catch (error) {
+      setDispatchError(error instanceof Error ? error.message : 'Não foi possível iniciar o disparo.')
+    } finally { setCreatingDispatch(false) }
   }
 
   useEffect(() => {
@@ -1092,12 +1107,30 @@ export default function LeadsPage() {
         onSuccess={() => fetchLeads(page)}
       />
 
-      <Dialog open={dispatchOpen} onOpenChange={setDispatchOpen}>
+      <Dialog open={dispatchOpen} onOpenChange={(open) => {
+        setDispatchOpen(open)
+        if (!open) {
+          setTemplateSelection(null)
+          setDispatchConfirmed(false)
+          setDispatchFeedback(null)
+          setDispatchError(null)
+        }
+      }}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto bg-surface-panel border-line-subtle">
           <DialogHeader><DialogTitle>Disparar template aprovado</DialogTitle></DialogHeader>
-          <p className="text-body text-fg-muted">Destinatários: <strong className="text-fg">{selectionCount}</strong>. O lote será criado como rascunho para sua revisão final.</p>
+          <p className="text-body text-fg-muted">Destinatários: <strong className="text-fg">{selectionCount}</strong>. Revise a prévia abaixo e confirme o disparo antes de enfileirar.</p>
           <TemplateSelector lead={Object.fromEntries(Object.entries(leads.find(lead => selectedLeadIds.includes(lead.id)) ?? leads[0] ?? {}).map(([key, value]) => [key, value == null ? '' : String(value)]))} onChange={handleTemplateChange} />
-          <div className="flex justify-end gap-2 border-t border-line-subtle pt-4"><Button variant="outline" onClick={() => setDispatchOpen(false)}>Cancelar</Button><Button disabled={!templateSelection || creatingDispatch} onClick={() => void createDispatch()} className="gap-2 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={15} />{creatingDispatch ? 'Criando lote...' : 'Criar Lote e Revisar'}</Button></div>
+          {dispatchError && <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-body text-rose-300"><AlertCircle size={16} className="mt-0.5 shrink-0" />{dispatchError}</p>}
+          {dispatchFeedback && <p role="status" className="flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-body text-emerald-300"><CheckCircle2 size={16} className="mt-0.5 shrink-0" />{dispatchFeedback}</p>}
+          <label className="flex items-start gap-2.5 rounded-lg border border-line-subtle bg-surface-inset p-3 text-body text-fg cursor-pointer">
+            <input type="checkbox" checked={dispatchConfirmed} onChange={event => setDispatchConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4" disabled={!templateSelection || creatingDispatch} />
+            <span>Confirmo a prévia e autorizo o disparo real para os {selectionCount} destinatário(s) selecionados.</span>
+          </label>
+          <div className="flex flex-wrap justify-end gap-2 border-t border-line-subtle pt-4">
+            <Button variant="outline" onClick={() => setDispatchOpen(false)} disabled={creatingDispatch}>Cancelar</Button>
+            <Button variant="outline" disabled={!templateSelection || creatingDispatch} onClick={() => void createDispatch('save_draft')}>Salvar rascunho</Button>
+            <Button disabled={!templateSelection || !dispatchConfirmed || creatingDispatch} onClick={() => void createDispatch('start')} className="gap-2 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={15} />{creatingDispatch ? 'Iniciando disparo...' : 'Iniciar disparo'}</Button>
+          </div>
         </DialogContent>
       </Dialog>
 
