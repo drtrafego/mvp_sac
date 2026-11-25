@@ -22,6 +22,7 @@ export async function sendBrevoEmail({
   htmlContent,
   textContent,
   replyTo,
+  headers,
   companyId,
 }: SendEmailOptions): Promise<{ ok: boolean; data?: { messageId?: string }; error?: string; uncertain?: boolean; isTimeout?: boolean }> {
   let apiKey = process.env.BREVO_API_KEY

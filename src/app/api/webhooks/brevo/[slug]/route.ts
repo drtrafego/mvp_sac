@@ -119,7 +119,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       companyId: company.id, platform: 'sac', eventType: 'atendimento', phone,
       name: displayName(item.From), email: fromEmail, channel: 'email', status: 'in_conversation',
       trackingSource: 'email_inbound',
-    }).onConflictDoNothing({ target: [recoveryLeads.companyId, recoveryLeads.phone], targetWhere: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')` }).returning()
+    }).onConflictDoNothing({ target: [recoveryLeads.companyId, recoveryLeads.phone], where: sql`${recoveryLeads.platform} in ('instagram', 'sac', 'hermes', 'import_planilha')` }).returning()
     lead = inserted[0] ?? (await db.select().from(recoveryLeads).where(and(eq(recoveryLeads.companyId, company.id), eq(recoveryLeads.phone, phone))).limit(1))[0]
   }
   if (!lead) return jsonResponse({ error: 'lead_resolution_failed' }, 500)
