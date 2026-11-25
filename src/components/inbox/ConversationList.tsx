@@ -469,7 +469,7 @@ export function ConversationList({
   return (
     <aside
       className={cn(
-        'studio-conversation-list w-full shrink-0 md:w-[330px] xl:w-[380px] flex flex-col border-r border-line-subtle bg-surface-panel h-full min-h-0 overflow-hidden',
+        'studio-conversation-list w-full shrink-0 md:w-[clamp(280px,28vw,380px)] xl:w-[clamp(320px,24vw,420px)] flex flex-col border-r border-line-subtle bg-surface-panel h-full min-h-0 overflow-hidden',
         activeId ? 'hidden md:flex' : 'flex'
       )}
     >

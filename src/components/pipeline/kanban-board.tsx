@@ -625,7 +625,7 @@ export function KanbanBoard({
               key={stage.id}
               onDragOver={handleDragOver}
               onDrop={() => handleDrop(stage.id)}
-              className="studio-pipeline-column flex flex-col rounded-[var(--r-md)] bg-surface-base border border-line-subtle min-w-[280px] max-w-[320px] shrink-0 h-full overflow-hidden shadow-xs"
+              className="studio-pipeline-column flex flex-[1_1_0%] min-w-[240px] shrink-0 flex-col rounded-[var(--r-md)] bg-surface-base border border-line-subtle h-full overflow-hidden shadow-xs"
             >
               {/* Topo da Coluna com Controles de Reordenação e Edição */}
               <div

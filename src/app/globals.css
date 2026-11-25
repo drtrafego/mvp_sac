@@ -861,7 +861,8 @@ html:not(.dark) {
 .sac-shell .sidebar-rail .nav-item[aria-current='page'] svg { color:var(--studio-accent-ink); }
 .sac-shell .sidebar-rail nav > div { margin-bottom:19px; }
 .sac-shell .sidebar-rail nav button { letter-spacing:.1em; font-size:10px; }
-.sac-shell .workspace-page[data-page-mode='content'] { max-width:1580px; margin-inline:auto; padding:32px clamp(20px,3vw,48px) 40px; }
+.sac-shell .shell { max-width:none; }
+.sac-shell .workspace-page[data-page-mode='content'] { max-width:none; margin-inline:0; padding:32px clamp(20px,3vw,48px) 40px; }
 .sac-shell .workspace-page[data-page-route='leads'] { max-width:none; margin-inline:0; }
 .sac-shell .shell:has(.workspace-page[data-page-route='leads']) { max-width:none; }
 .sac-shell .page-heading { position:relative; padding:4px 0 24px; border-bottom:0; align-items:center; gap:20px; }

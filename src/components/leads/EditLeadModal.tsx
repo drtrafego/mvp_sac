@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Tag,
-  Share2,
   Compass,
   MessageSquare,
   Clock,
@@ -25,7 +24,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { EVENT_TYPE_OPTIONS, SOURCE_OPTIONS, MEDIUM_OPTIONS } from "./AddLeadModal"
+import { SOURCE_OPTIONS } from "./AddLeadModal"
+import { LeadTagsField } from "./LeadTagsField"
+import { normalizeTag } from "@/lib/lead-tags"
 import Link from "next/link"
 
 export interface LeadForEdit {
@@ -51,6 +52,7 @@ export interface LeadForEdit {
   nextActionDueAt?: string | null
   sacCaseState?: string | null
   createdAt?: string | null
+  tags?: string[]
 }
 
 interface EditLeadModalProps {
@@ -89,9 +91,9 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
   const [paymentType, setPaymentType] = useState("pix")
   const [trackingSource, setTrackingSource] = useState("indicacao")
   const [trackingSourceTouched, setTrackingSourceTouched] = useState(false)
-  const [utmMedium, setUtmMedium] = useState("indicacao")
   const [platform, setPlatform] = useState("")
   const [notes, setNotes] = useState("")
+  const [tags, setTags] = useState<string[]>([])
 
   // Contexto SAC
   const [requestSummary, setRequestSummary] = useState("")
@@ -107,6 +109,9 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
 
   useEffect(() => {
     if (!lead) return
+    // O modal é um formulário controlado por um lead externo; a sincronização
+    // ocorre apenas quando a seleção recebida muda.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setName(lead.name || "")
     setPhone(lead.phone || "")
     setEmail(lead.email || "")
@@ -118,9 +123,9 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
     setPaymentType(lead.paymentType || "pix")
     setTrackingSource(lead.trackingSource || "indicacao")
     setTrackingSourceTouched(false)
-    setUtmMedium(lead.utmMedium || "indicacao")
     setPlatform(lead.platform || "")
     setNotes(lead.notes || "")
+    setTags(lead.tags || [])
     setRequestSummary(lead.requestSummary || "")
     setCommitment(lead.commitment || "")
     setNextAction(lead.nextAction || "")
@@ -135,6 +140,8 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    const currentLead = lead
+    if (!currentLead) return
     setError("")
     setSuccessMsg("")
 
@@ -161,7 +168,6 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
           paymentType,
           // Só envia a origem se a pessoa mudou: lead sem origem não vira "Indicação" por editar outro campo.
           ...(trackingSourceTouched ? { trackingSource } : {}),
-          utmMedium,
           platform: platform.trim() || null,
           notes: notes.trim() || null,
           requestSummary: requestSummary.trim() || null,
@@ -181,13 +187,35 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
         return
       }
 
+      // Atualiza tags por delta usando as rotas canônicas. Assim, outras tags
+      // gravadas no lead sobrevivem e a tag especial "pessoa" mantém seu
+      // comportamento de pausar somente o agente automático.
+      if (currentLead.tags) {
+        const previous = new Set(currentLead.tags.map(normalizeTag).filter(Boolean))
+        const next = new Set(tags.map(normalizeTag).filter(Boolean))
+        const added = [...next].filter(tag => !previous.has(tag))
+        const removed = [...previous].filter(tag => !next.has(tag))
+        const tagResults = await Promise.all([
+          ...added.map(tag => fetch(`/api/leads/${currentLead.id}/tags`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tag }),
+          })),
+          ...removed.map(tag => fetch(`/api/leads/${currentLead.id}/tags/${encodeURIComponent(tag)}`, { method: "DELETE" })),
+        ])
+        const failedTagUpdate = tagResults.find(result => !result.ok)
+        if (failedTagUpdate) {
+          throw new Error("Os dados do lead foram salvos, mas não foi possível atualizar todas as tags.")
+        }
+      }
+
       setSuccessMsg("Lead atualizado com sucesso!")
       setTimeout(() => {
         onOpenChange(false)
         onSuccess()
       }, 600)
-    } catch (err: any) {
-      setError(err.message || "Erro de conexão ao salvar lead.")
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erro de conexão ao salvar lead.")
     } finally {
       setSaving(false)
     }
@@ -246,7 +274,7 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
               1. Dados do Contato
             </span>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5 sm:col-span-1">
                 <Label className="text-micro font-semibold text-fg flex items-center gap-1.5">
                   <User size={13} className="text-fg-subtle" /> Nome
@@ -374,24 +402,9 @@ export function EditLeadModal({ lead, open, onOpenChange, onSuccess }: EditLeadM
                 </Select>
               </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-micro font-semibold text-fg flex items-center gap-1.5">
-                  <Share2 size={13} className="text-purple-400" /> Canal de Abordagem
-                </Label>
-                <Select value={utmMedium} onValueChange={(v) => v && setUtmMedium(v)} items={MEDIUM_OPTIONS}>
-                  <SelectTrigger className="bg-surface-inset border-line-subtle h-10 text-xs sm:text-sm w-full font-medium">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-surface-overlay border-line-subtle max-h-64">
-                    {Object.entries(MEDIUM_OPTIONS).map(([val, label]) => (
-                      <SelectItem key={val} value={val} className="text-xs sm:text-sm py-2">
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
+
+            <LeadTagsField value={tags} onChange={setTags} id="edit-lead-tags" disabled={saving} />
           </div>
 
           {/* Seção 3: Card de Contexto SAC & Operação */}

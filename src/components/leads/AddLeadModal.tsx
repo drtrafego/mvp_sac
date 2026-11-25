@@ -12,7 +12,6 @@ import {
   AlertCircle,
   Zap,
   Tag,
-  Share2,
   Compass,
 } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -20,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { LeadTagsField } from "./LeadTagsField"
 
 interface AddLeadModalProps {
   open: boolean
@@ -58,20 +58,6 @@ export const SOURCE_OPTIONS: Record<string, string> = {
   organico: "🌐 Direto / Site / Orgânico",
 }
 
-export const MEDIUM_OPTIONS: Record<string, string> = {
-  indicacao: "🤝 Indicação Direta / Recomendação",
-  parceria: "👥 Parceria / Co-produção",
-  whatsapp: "💬 WhatsApp Outreach (Prospecção Ativa)",
-  whatsapp_inbound: "🟢 WhatsApp Receptivo (Conversão / Dúvidas)",
-  instagram: "📸 Instagram Direct / DM",
-  instagram_stories: "📲 Instagram Stories / Menções",
-  email: "✉️ E-mail Frio / Cold Mail (Brevo)",
-  email_marketing: "📧 E-mail Marketing / Newsletter",
-  ligacao_call: "📞 Ligação Telefônica / Call 1:1",
-  trafego_pago: "🎯 Tráfego Pago / Anúncios Segmentados",
-  evento: "🎟️ Evento Presencial / Networking",
-}
-
 export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProps) {
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
@@ -80,9 +66,8 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
   const [productValue, setProductValue] = useState("")
   const [eventType, setEventType] = useState("mentoria")
   const [trackingSource, setTrackingSource] = useState("indicacao")
-  const [utmMedium, setUtmMedium] = useState("indicacao")
   const [triggerSequence, setTriggerSequence] = useState(false)
-  const [tags, setTags] = useState("")
+  const [tags, setTags] = useState<string[]>([])
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
@@ -96,9 +81,8 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
     setProductValue("")
     setEventType("mentoria")
     setTrackingSource("indicacao")
-    setUtmMedium("indicacao")
     setTriggerSequence(false)
-    setTags("")
+    setTags([])
     setError("")
     setSuccessMsg("")
   }
@@ -127,9 +111,8 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
           productValue: productValue.trim() || "0",
           eventType,
           trackingSource,
-          utmMedium,
           triggerSequence,
-          tags: tags.split(',').map(tag => tag.trim()).filter(Boolean),
+          tags,
         }),
       })
 
@@ -282,26 +265,6 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-micro font-semibold text-fg flex items-center gap-1.5">
-                <Share2 size={13} className="text-cyan-400" /> Subcategoria / Canal de Abordagem
-              </Label>
-              <Select value={utmMedium} onValueChange={(v) => v && setUtmMedium(v)} items={MEDIUM_OPTIONS}>
-                <SelectTrigger className="bg-surface-inset border-line-subtle h-10 text-xs sm:text-sm w-full font-medium">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-surface-overlay border-line-subtle max-h-64">
-                  {Object.entries(MEDIUM_OPTIONS).map(([val, label]) => (
-                    <SelectItem key={val} value={val} className="text-xs sm:text-sm py-2">
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[11px] text-fg-subtle">
-                Identifica se o contato veio de <strong>Indicação</strong>, <strong>WhatsApp Ativo</strong>, <strong>Instagram</strong>, etc.
-              </p>
-            </div>
           </div>
 
           {/* Seção 3: Produto e Valor */}
@@ -337,22 +300,7 @@ export function AddLeadModal({ open, onOpenChange, onSuccess }: AddLeadModalProp
             </div>
           </div>
 
-          {/* Tags definidas junto com o cadastro */}
-          <div className="p-3.5 sm:p-4 rounded-xl bg-surface-panel border border-line-subtle space-y-2.5">
-            <Label className="text-micro font-semibold text-fg flex items-center gap-1.5">
-              <Tag size={13} className="text-amber-400" /> Tags do contato
-            </Label>
-            <Input
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              placeholder="Ex.: vip, retorno, quente"
-              className="bg-surface-inset border-line-subtle h-10 text-sm"
-              aria-describedby="add-lead-tags-help"
-            />
-            <p id="add-lead-tags-help" className="text-[11px] text-fg-subtle">
-              Separe várias tags por vírgula. Elas serão salvas junto com o lead e não iniciam mensagens.
-            </p>
-          </div>
+          <LeadTagsField value={tags} onChange={setTags} id="add-lead-tags" />
 
           {/* Disparo de Sequência Automática */}
           <div className="p-3.5 rounded-xl bg-surface-inset/80 border border-line-subtle flex items-start gap-3">
