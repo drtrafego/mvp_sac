@@ -16,10 +16,7 @@ import {
   Edit,
   MessageSquare,
   SlidersHorizontal,
-  DollarSign,
   Tag,
-  CreditCard,
-  Layers,
   CheckCircle2,
   Users,
   Send,
@@ -28,7 +25,6 @@ import {
   Plus,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { ImportLeadsModal } from '@/components/leads/ImportLeadsModal'
 import { AddLeadModal } from '@/components/leads/AddLeadModal'
@@ -40,6 +36,7 @@ import PeriodBar from '@/components/shared/PeriodBar'
 import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
+import { LeadFilterMultiSelect, type LeadFilterOption } from '@/components/leads/LeadFilterMultiSelect'
 
 interface Lead extends LeadForEdit {
   id: number
@@ -73,8 +70,7 @@ const eventLabels: Record<string, string> = {
   compra_aprovada: 'Compra Aprovada',
 }
 
-const EVENT_TYPE_OPTIONS: Record<string, string> = {
-  all: 'Todos os tipos de evento',
+const EVENT_TYPE_LABELS: Record<string, string> = {
   mentoria: '🎓 Mentoria',
   aulas: '📚 Aulas / Cursos',
   projeto_individual: '💼 Projeto Individual',
@@ -89,36 +85,13 @@ const EVENT_TYPE_OPTIONS: Record<string, string> = {
   compra_aprovada: 'Compra Aprovada',
 }
 
-const STATUS_OPTIONS: Record<string, string> = {
-  all: 'Todos os status',
+const STATUS_LABELS: Record<string, string> = {
   awaiting_contact: '⏳ Aguardando Abordagem',
   pending: 'Aguardando',
   in_progress: 'Em atendimento',
   converted: 'Convertido / Fechado',
   completed: 'Sem conversão',
   failed: 'Falhou',
-}
-
-const PAYMENT_OPTIONS: Record<string, string> = {
-  all: 'Todas as formas de pagamento',
-  pix: '⚡ Pix',
-  cartao_credito: '💳 Cartão de Crédito',
-  boleto: '📄 Boleto',
-  debit_card: '💳 Cartão de Débito',
-  paypal: 'PayPal',
-}
-
-const SALE_FILTER_OPTIONS: Record<string, string> = {
-  all: 'Vendas & Leads (Todos)',
-  true: '💰 Apenas Vendas Fechadas',
-  false: '👥 Apenas Leads (Não convertidos)',
-}
-
-const HAS_FILTER_OPTIONS: Record<string, string> = {
-  all: 'Qualquer contato',
-  has_phone: '📱 Somente com Telefone',
-  has_email: '✉️ Somente com E-mail',
-  has_tags: '🏷️ Somente com Tags',
 }
 
 const eventDot: Record<string, string> = {
@@ -136,12 +109,34 @@ const eventDot: Record<string, string> = {
   compra_aprovada: 'text-ev-aprovada',
 }
 
-const SOURCE_FILTER_LABELS: Record<string, string> = {
+const SOURCE_LABELS: Record<string, string> = {
   instagram: '📸 Instagram',
   mineracao: '⛏️ Mineração',
   whatsapp: '💬 WhatsApp',
   email: '✉️ E-mail',
   anuncio: '📣 Anúncio',
+}
+
+type LeadFilterOptions = {
+  eventTypes: string[]
+  statuses: string[]
+  sources: string[]
+  platforms: string[]
+  channels: string[]
+  products: string[]
+  tags: string[]
+}
+
+const EMPTY_FILTER_OPTIONS: LeadFilterOptions = {
+  eventTypes: [], statuses: [], sources: [], platforms: [], channels: [], products: [], tags: [],
+}
+
+function filterLabel(value: string, labels: Record<string, string> = {}) {
+  return labels[value] ?? value.replace(/[_-]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase())
+}
+
+function filterOptions(values: string[], labels?: Record<string, string>): LeadFilterOption[] {
+  return values.map(value => ({ value, label: filterLabel(value, labels) }))
 }
 
 const paymentLabels: Record<string, string> = {
@@ -154,7 +149,6 @@ const paymentLabels: Record<string, string> = {
 }
 
 const CONTROL_HEIGHT = 'h-[var(--control-lg)] lg:h-[var(--control-md)]'
-const SELECT_HEIGHT = 'data-[size=default]:h-[var(--control-lg)] lg:data-[size=default]:h-[var(--control-md)]'
 const FIELD_SKIN = 'bg-surface-inset dark:bg-surface-inset border-line-subtle focus-visible:ring-0 focus-visible:border-line-default'
 
 const COLUMNS: { label: string; className?: string }[] = [
@@ -225,34 +219,27 @@ const PAGE_SIZE = 50
 
 export default function LeadsPage() {
   const searchParams = useSearchParams()
-  const initialStatus = searchParams.get('status') || 'all'
-  const sourceParam = searchParams.get('source') || ''
+  const initialList = (key: string) => (searchParams.get(key) ?? '').split(',').map(value => value.trim()).filter(Boolean)
 
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)
 
   // Filtros Básicos
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [eventType, setEventType] = useState('all')
-  const [status, setStatus] = useState(initialStatus)
+  const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>(() => initialList('event_type'))
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(() => initialList('status'))
 
-  // Filtros Avançados solicitados
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
-  const [productFilter, setProductFilter] = useState('all')
-  const [platformFilter, setPlatformFilter] = useState('all')
-  const [paymentFilter, setPaymentFilter] = useState('all')
-  const [tagFilter, setTagFilter] = useState('')
-  const [debouncedTag, setDebouncedTag] = useState('')
-  const [isSaleFilter, setIsSaleFilter] = useState('all')
-  const [hasFilter, setHasFilter] = useState('all')
-  const [minValue, setMinValue] = useState('')
-  const [maxValue, setMaxValue] = useState('')
-  const [transactionIdFilter, setTransactionIdFilter] = useState('')
+  // Os filtros principais ficam no mesmo painel e aceitam OR dentro de cada grupo.
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(true)
+  const [selectedProducts, setSelectedProducts] = useState<string[]>(() => initialList('product'))
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(() => initialList('platform'))
+  const [selectedSources, setSelectedSources] = useState<string[]>(() => initialList('source'))
+  const [selectedChannels, setSelectedChannels] = useState<string[]>(() => initialList('channel'))
+  const [selectedTags, setSelectedTags] = useState<string[]>(() => initialList('tag'))
 
   // Listas Dinâmicas para os Selects
-  const [availableProducts, setAvailableProducts] = useState<string[]>([])
-  const [availablePlatforms, setAvailablePlatforms] = useState<string[]>([])
+  const [filterOptionsData, setFilterOptionsData] = useState<LeadFilterOptions>(EMPTY_FILTER_OPTIONS)
 
   // Paginação
   const [page, setPage] = useState(0)
@@ -272,6 +259,8 @@ export default function LeadsPage() {
   const [dispatchConfirmed, setDispatchConfirmed] = useState(false)
   const [dispatchFeedback, setDispatchFeedback] = useState<string | null>(null)
   const [dispatchError, setDispatchError] = useState<string | null>(null)
+  const [dispatchValidationMessage, setDispatchValidationMessage] = useState<string | null>(null)
+  const [dispatchStatus, setDispatchStatus] = useState<{ batchId: number; status: string; error?: string | null } | null>(null)
   const [tagActionOpen, setTagActionOpen] = useState(false)
   const [tagAction, setTagAction] = useState<'add' | 'remove' | 'replace'>('add')
   const [tagInput, setTagInput] = useState('')
@@ -295,30 +284,21 @@ export default function LeadsPage() {
     return () => clearTimeout(handler)
   }, [search])
 
-  // Debounce para Tag
+  // Carrega apenas opções existentes no tenant autenticado.
   useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedTag(tagFilter)
-      setPage(0)
-    }, 400)
-    return () => clearTimeout(handler)
-  }, [tagFilter])
-
-  // Carrega lista dinâmica de produtos e plataformas distintos
-  useEffect(() => {
-    fetch('/api/leads?products_only=true')
+    let cancelled = false
+    fetch('/api/leads?options_only=true')
       .then(r => r.json())
       .then(data => {
-        if (Array.isArray(data)) setAvailableProducts(data)
+        if (!cancelled && data && typeof data === 'object') {
+          setFilterOptionsData({
+            ...EMPTY_FILTER_OPTIONS,
+            ...Object.fromEntries(Object.keys(EMPTY_FILTER_OPTIONS).map(key => [key, Array.isArray(data[key]) ? data[key].filter((value: unknown): value is string => typeof value === 'string') : []])),
+          } as LeadFilterOptions)
+        }
       })
       .catch(() => {})
-
-    fetch('/api/leads?platforms_only=true')
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) setAvailablePlatforms(data)
-      })
-      .catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
   // Busca de Leads Global no Banco de Dados
@@ -332,20 +312,13 @@ export default function LeadsPage() {
     })
 
     if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim())
-    if (eventType !== 'all') params.set('event_type', eventType)
-    if (status !== 'all') params.set('status', status)
-    if (sourceParam) params.set('source', sourceParam)
-    if (productFilter !== 'all') params.set('product', productFilter)
-    if (platformFilter !== 'all') params.set('platform', platformFilter)
-    if (paymentFilter !== 'all') params.set('payment_type', paymentFilter)
-    if (debouncedTag.trim()) params.set('tag', debouncedTag.trim())
-    if (isSaleFilter !== 'all') params.set('is_sale', isSaleFilter)
-    if (hasFilter === 'has_phone') params.set('has_phone', 'true')
-    if (hasFilter === 'has_email') params.set('has_email', 'true')
-    if (hasFilter === 'has_tags') params.set('has_tags', 'true')
-    if (minValue.trim()) params.set('min_value', minValue.trim())
-    if (maxValue.trim()) params.set('max_value', maxValue.trim())
-    if (transactionIdFilter.trim()) params.set('transaction_id', transactionIdFilter.trim())
+    if (selectedEventTypes.length) params.set('event_type', selectedEventTypes.join(','))
+    if (selectedStatuses.length) params.set('status', selectedStatuses.join(','))
+    if (selectedSources.length) params.set('source', selectedSources.join(','))
+    if (selectedProducts.length) params.set('product', selectedProducts.join(','))
+    if (selectedPlatforms.length) params.set('platform', selectedPlatforms.join(','))
+    if (selectedChannels.length) params.set('channel', selectedChannels.join(','))
+    if (selectedTags.length) params.set('tag', selectedTags.join(','))
 
     try {
       const data = await fetch(`/api/leads?${params}`).then(r => r.json())
@@ -359,32 +332,28 @@ export default function LeadsPage() {
     }
   }, [
     debouncedSearch,
-    eventType,
-    status,
-    sourceParam,
-    productFilter,
-    platformFilter,
-    paymentFilter,
-    debouncedTag,
-    isSaleFilter,
-    hasFilter,
-    minValue,
-    maxValue,
-    transactionIdFilter,
+    selectedEventTypes,
+    selectedStatuses,
+    selectedSources,
+    selectedProducts,
+    selectedPlatforms,
+    selectedChannels,
+    selectedTags,
     from,
     to,
   ])
 
   const dispatchFilter = useMemo(() => ({
-    search: debouncedSearch || undefined, event_type: eventType !== 'all' ? eventType : undefined,
-    status: status !== 'all' ? status : undefined, source: sourceParam || undefined,
-    product: productFilter !== 'all' ? productFilter : undefined, platform: platformFilter !== 'all' ? platformFilter : undefined,
-    payment_type: paymentFilter !== 'all' ? paymentFilter : undefined, tag: debouncedTag || undefined,
-    is_sale: isSaleFilter !== 'all' ? isSaleFilter : undefined,
-    has_phone: hasFilter === 'has_phone' || undefined, has_email: hasFilter === 'has_email' || undefined,
-    has_tags: hasFilter === 'has_tags' || undefined, min_value: minValue || undefined, max_value: maxValue || undefined,
-    transaction_id: transactionIdFilter || undefined, from, to,
-  }), [debouncedSearch, eventType, status, sourceParam, productFilter, platformFilter, paymentFilter, debouncedTag, isSaleFilter, hasFilter, minValue, maxValue, transactionIdFilter, from, to])
+    search: debouncedSearch || undefined,
+    event_type: selectedEventTypes.length ? selectedEventTypes.join(',') : undefined,
+    status: selectedStatuses.length ? selectedStatuses.join(',') : undefined,
+    source: selectedSources.length ? selectedSources.join(',') : undefined,
+    product: selectedProducts.length ? selectedProducts.join(',') : undefined,
+    platform: selectedPlatforms.length ? selectedPlatforms.join(',') : undefined,
+    channel: selectedChannels.length ? selectedChannels.join(',') : undefined,
+    tag: selectedTags.length ? selectedTags.join(',') : undefined,
+    from, to,
+  }), [debouncedSearch, selectedEventTypes, selectedStatuses, selectedSources, selectedProducts, selectedPlatforms, selectedChannels, selectedTags, from, to])
 
   const toggleLead = (id: number) => {
     setSelectAllFilter(false)
@@ -397,6 +366,16 @@ export default function LeadsPage() {
   }
   const clearSelection = () => { setSelectedLeadIds([]); setSelectAllFilter(false) }
   const selectionCount = selectAllFilter ? 'Todos os leads filtrados' : `${selectedLeadIds.length} selecionado${selectedLeadIds.length === 1 ? '' : 's'}`
+  const dispatchRecipientLabel = selectAllFilter
+    ? 'os destinatários selecionados'
+    : selectedLeadIds.length === 1
+      ? '1 destinatário selecionado'
+      : `${selectedLeadIds.length} destinatários selecionados`
+  const dispatchPreviewLeads = useMemo(() => {
+    const candidates = selectAllFilter ? leads : leads.filter(lead => selectedLeadIds.includes(lead.id))
+    const source = candidates.length ? candidates : leads.slice(0, 1)
+    return source.map(lead => Object.fromEntries(Object.entries(lead).map(([key, value]) => [key, value == null ? '' : String(value)])))
+  }, [leads, selectAllFilter, selectedLeadIds])
   const tagSelection = useMemo(() => ({
     mode: selectAllFilter ? 'filter' : 'ids',
     leadIds: selectAllFilter ? undefined : selectedLeadIds,
@@ -455,6 +434,7 @@ export default function LeadsPage() {
   }
   const handleTemplateChange = useCallback((selection: TemplateSelection | null) => {
     setTemplateSelection(selection)
+    if (!selection) setDispatchConfirmed(false)
     setDispatchError(null)
     setDispatchFeedback(null)
   }, [])
@@ -469,13 +449,36 @@ export default function LeadsPage() {
       if (!response.ok) throw new Error(typeof data.error === 'string' ? `${data.error}${data.batchId ? ` (lote #${data.batchId} permanece em rascunho)` : ''}` : 'Não foi possível iniciar o disparo.')
       setDispatchConfirmed(false)
       setDispatchFeedback(action === 'start'
-        ? `Disparo iniciado: lote #${data.batchId}, ${data.jobsCreated ?? 0} job(s) enfileirado(s) para ${data.recipientCount ?? 0} destinatário(s).`
+        ? `Disparo iniciado: lote #${data.batchId}, ${data.jobsCreated ?? 0} job(s) enfileirado(s) para ${data.recipientCount ?? 0} destinatário(s). O estado será atualizado abaixo.`
         : `Rascunho salvo: lote #${data.batchId}, ${data.recipientCount ?? 0} destinatário(s).`)
+      if (action === 'start' && Number.isInteger(data.batchId)) setDispatchStatus({ batchId: data.batchId, status: 'queued' })
       await fetchLeads(page)
     } catch (error) {
       setDispatchError(error instanceof Error ? error.message : 'Não foi possível iniciar o disparo.')
     } finally { setCreatingDispatch(false) }
   }
+
+  useEffect(() => {
+    if (!dispatchStatus?.batchId) return
+    let cancelled = false
+    let timer: number | undefined
+    const readStatus = async () => {
+      try {
+        const response = await fetch(`/api/leads/dispatch/${dispatchStatus.batchId}`)
+        const data = await response.json().catch(() => ({}))
+        if (!cancelled && response.ok) {
+          const jobError = Array.isArray(data.jobs) ? data.jobs.find((job: { error?: string | null }) => job.error)?.error : null
+          const next = { batchId: dispatchStatus.batchId, status: typeof data.batch?.status === 'string' ? data.batch.status : 'processing', error: jobError }
+          setDispatchStatus(next)
+          if (!['accepted', 'failed', 'partial_failure'].includes(next.status)) timer = window.setTimeout(() => void readStatus(), 2500)
+        }
+      } catch {
+        if (!cancelled) timer = window.setTimeout(() => void readStatus(), 4000)
+      }
+    }
+    void readStatus()
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer) }
+  }, [dispatchStatus?.batchId])
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void fetchLeads(page) }, 0)
@@ -497,20 +500,13 @@ export default function LeadsPage() {
       })
 
       if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim())
-      if (eventType !== 'all') params.set('event_type', eventType)
-      if (status !== 'all') params.set('status', status)
-      if (sourceParam) params.set('source', sourceParam)
-      if (productFilter !== 'all') params.set('product', productFilter)
-      if (platformFilter !== 'all') params.set('platform', platformFilter)
-      if (paymentFilter !== 'all') params.set('payment_type', paymentFilter)
-      if (debouncedTag.trim()) params.set('tag', debouncedTag.trim())
-      if (isSaleFilter !== 'all') params.set('is_sale', isSaleFilter)
-      if (hasFilter === 'has_phone') params.set('has_phone', 'true')
-      if (hasFilter === 'has_email') params.set('has_email', 'true')
-      if (hasFilter === 'has_tags') params.set('has_tags', 'true')
-      if (minValue.trim()) params.set('min_value', minValue.trim())
-      if (maxValue.trim()) params.set('max_value', maxValue.trim())
-      if (transactionIdFilter.trim()) params.set('transaction_id', transactionIdFilter.trim())
+      if (selectedEventTypes.length) params.set('event_type', selectedEventTypes.join(','))
+      if (selectedStatuses.length) params.set('status', selectedStatuses.join(','))
+      if (selectedSources.length) params.set('source', selectedSources.join(','))
+      if (selectedProducts.length) params.set('product', selectedProducts.join(','))
+      if (selectedPlatforms.length) params.set('platform', selectedPlatforms.join(','))
+      if (selectedChannels.length) params.set('channel', selectedChannels.join(','))
+      if (selectedTags.length) params.set('tag', selectedTags.join(','))
 
       const res = await fetch(`/api/leads?${params}`)
       if (!res.ok) throw new Error('Falha ao exportar CSV de leads.')
@@ -532,37 +528,28 @@ export default function LeadsPage() {
   }
 
   function clearFilters() {
-    setEventType('all')
-    setStatus('all')
+    setSelectedEventTypes([])
+    setSelectedStatuses([])
     setSearch('')
     setDebouncedSearch('')
-    setProductFilter('all')
-    setPlatformFilter('all')
-    setPaymentFilter('all')
-    setTagFilter('')
-    setDebouncedTag('')
-    setIsSaleFilter('all')
-    setHasFilter('all')
-    setMinValue('')
-    setMaxValue('')
-    setTransactionIdFilter('')
+    setSelectedProducts([])
+    setSelectedPlatforms([])
+    setSelectedSources([])
+    setSelectedChannels([])
+    setSelectedTags([])
     setPage(0)
   }
 
   const hasAdvancedFiltersActive =
-    productFilter !== 'all' ||
-    platformFilter !== 'all' ||
-    paymentFilter !== 'all' ||
-    tagFilter.trim().length > 0 ||
-    isSaleFilter !== 'all' ||
-    hasFilter !== 'all' ||
-    minValue.trim().length > 0 ||
-    maxValue.trim().length > 0 ||
-    transactionIdFilter.trim().length > 0
+    selectedProducts.length > 0 ||
+    selectedPlatforms.length > 0 ||
+    selectedSources.length > 0 ||
+    selectedChannels.length > 0 ||
+    selectedTags.length > 0
 
   const hasAnyFilter =
-    eventType !== 'all' ||
-    status !== 'all' ||
+    selectedEventTypes.length > 0 ||
+    selectedStatuses.length > 0 ||
     search.trim().length > 0 ||
     hasAdvancedFiltersActive
 
@@ -572,24 +559,17 @@ export default function LeadsPage() {
         search.trim() ? `para a busca global "${search}"` : `na página ${page + 1}`
       }`
 
-  const clearSourceHref = (() => {
-    const params = new URLSearchParams(searchParams.toString())
-    params.delete('source')
-    const qs = params.toString()
-    return qs ? `/leads?${qs}` : '/leads'
-  })()
-
   return (
     <div className="w-full min-w-0 max-w-none space-y-5">
-      {sourceParam && (
+      {selectedSources.length > 0 && (
         <div className="flex items-center gap-2 text-micro">
           <span className="inline-flex items-center gap-1.5 font-semibold text-brand-ink bg-brand-glow px-2.5 py-1 rounded-full border border-brand-solid/30">
             <Target size={12} />
-            Filtrando por origem: {SOURCE_FILTER_LABELS[sourceParam] ?? sourceParam}
+            Filtrando por origem: {selectedSources.map(source => filterLabel(source, SOURCE_LABELS)).join(', ')}
           </span>
-          <Link href={clearSourceHref} className="text-fg-subtle hover:text-fg underline underline-offset-2">
+          <button type="button" onClick={() => setSelectedSources([])} className="text-fg-subtle hover:text-fg underline underline-offset-2">
             Limpar filtro
-          </Link>
+          </button>
         </div>
       )}
 
@@ -648,7 +628,7 @@ export default function LeadsPage() {
             <Input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar no banco por Nome, WhatsApp, E-mail, Produto ou Transação..."
+              placeholder="Buscar por nome, WhatsApp ou e-mail..."
               aria-label="Buscar leads globalmente"
               className={`${FIELD_SKIN} ${CONTROL_HEIGHT} pl-9 text-base lg:text-sm`}
             />
@@ -663,189 +643,80 @@ export default function LeadsPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2.5 flex-wrap">
-            <Select value={eventType} onValueChange={v => { if (v) { setEventType(v); setPage(0); } }} items={EVENT_TYPE_OPTIONS}>
-              <SelectTrigger aria-label="Filtrar por evento" className={`${FIELD_SKIN} ${SELECT_HEIGHT} min-w-0 sm:w-48 text-micro font-medium`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-surface-overlay border-line-subtle">
-                {Object.entries(EVENT_TYPE_OPTIONS).map(([val, label]) => (
-                  <SelectItem key={val} value={val}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={status} onValueChange={v => { if (v) { setStatus(v); setPage(0); } }} items={STATUS_OPTIONS}>
-              <SelectTrigger aria-label="Filtrar por status" className={`${FIELD_SKIN} ${SELECT_HEIGHT} min-w-0 sm:w-44 text-micro font-medium`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-surface-overlay border-line-subtle">
-                {Object.entries(STATUS_OPTIONS).map(([val, label]) => (
-                  <SelectItem key={val} value={val}>{label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(210px,1fr)_minmax(210px,1fr)_auto] sm:items-start">
+            <LeadFilterMultiSelect
+              label="Status"
+              placeholder="Todos os status"
+              options={filterOptions(filterOptionsData.statuses, STATUS_LABELS)}
+              values={selectedStatuses}
+              onChange={values => { setSelectedStatuses(values); setPage(0) }}
+            />
+            <LeadFilterMultiSelect
+              label="Evento / tipo de evento"
+              placeholder="Todos os eventos"
+              options={filterOptions(filterOptionsData.eventTypes, EVENT_TYPE_LABELS)}
+              values={selectedEventTypes}
+              onChange={values => { setSelectedEventTypes(values); setPage(0) }}
+            />
             <Button
               type="button"
               variant={showAdvancedFilters || hasAdvancedFiltersActive ? "secondary" : "outline"}
               onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+              aria-expanded={showAdvancedFilters}
+              aria-controls="leads-filter-panel"
               className={cn(
-                "gap-1.5 text-micro font-bold border-line-subtle cursor-pointer",
+                "min-h-10 gap-1.5 text-micro font-bold border-line-subtle cursor-pointer",
                 hasAdvancedFiltersActive && "border-brand-solid text-brand-ink bg-brand-glow"
               )}
             >
               <SlidersHorizontal size={14} />
-              <span>Filtros Avançados</span>
-              {hasAdvancedFiltersActive && (
-                <span className="h-2 w-2 rounded-full bg-brand-solid" />
-              )}
+              <span>Mais filtros</span>
+              {(hasAdvancedFiltersActive || selectedEventTypes.length > 0 || selectedStatuses.length > 0) && <span className="h-2 w-2 rounded-full bg-brand-solid" />}
             </Button>
           </div>
         </div>
 
-        {/* Painel Expansível de Filtros Avançados */}
+        {/* Painel responsivo: no celular ocupa uma coluna e permanece recolhível. */}
         {showAdvancedFilters && (
-          <div className="pt-3 border-t border-line-subtle grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 animate-in fade-in duration-150">
-            {/* Produto */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-fg-subtle flex items-center gap-1">
-                <Layers size={11} /> Produto em Lista
-              </label>
-              <select
-                value={productFilter}
-                onChange={e => { setProductFilter(e.target.value); setPage(0); }}
-                className="w-full bg-surface-inset border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg focus:outline-none"
-              >
-                <option value="all">Todos os produtos ({availableProducts.length})</option>
-                {availableProducts.map(p => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Plataforma */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-fg-subtle flex items-center gap-1">
-                <Target size={11} /> Plataforma (Kiwify, Hotmart, etc.)
-              </label>
-              <select
-                value={platformFilter}
-                onChange={e => { setPlatformFilter(e.target.value); setPage(0); }}
-                className="w-full bg-surface-inset border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg focus:outline-none"
-              >
-                <option value="all">Todas as plataformas</option>
-                <option value="import_planilha">📥 Importação de Planilha</option>
-                <option value="kiwify">🥝 Kiwify</option>
-                <option value="hotmart">🔥 Hotmart</option>
-                <option value="greenn">🌿 Greenn</option>
-                <option value="zouti">⚡ Zouti</option>
-                <option value="instagram">📸 Instagram</option>
-                <option value="sac">💬 WhatsApp SAC</option>
-                {availablePlatforms.filter(p => !['import_planilha','kiwify','hotmart','greenn','zouti','instagram','sac'].includes(p)).map(p => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Forma de Pagamento */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-fg-subtle flex items-center gap-1">
-                <CreditCard size={11} /> Forma de Pagamento
-              </label>
-              <select
-                value={paymentFilter}
-                onChange={e => { setPaymentFilter(e.target.value); setPage(0); }}
-                className="w-full bg-surface-inset border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg focus:outline-none"
-              >
-                {Object.entries(PAYMENT_OPTIONS).map(([val, label]) => (
-                  <option key={val} value={val}>{label}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Venda vs Lead */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-fg-subtle flex items-center gap-1">
-                <CheckCircle2 size={11} /> Conversão / Venda
-              </label>
-              <select
-                value={isSaleFilter}
-                onChange={e => { setIsSaleFilter(e.target.value); setPage(0); }}
-                className="w-full bg-surface-inset border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg focus:outline-none"
-              >
-                {Object.entries(SALE_FILTER_OPTIONS).map(([val, label]) => (
-                  <option key={val} value={val}>{label}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Filtro por Tags */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-fg-subtle flex items-center gap-1">
-                <Tag size={11} /> Filtrar por Tag
-              </label>
-              <Input
-                value={tagFilter}
-                onChange={e => setTagFilter(e.target.value)}
-                placeholder="Ex: vip, qualificado, retorno..."
-                className="h-8 bg-surface-inset border-line-subtle text-micro"
-              />
-            </div>
-
-            {/* Somente com... */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-fg-subtle flex items-center gap-1">
-                Requisitos de Contato
-              </label>
-              <select
-                value={hasFilter}
-                onChange={e => { setHasFilter(e.target.value); setPage(0); }}
-                className="w-full bg-surface-inset border border-line-subtle rounded-lg px-2.5 py-1.5 text-micro text-fg focus:outline-none"
-              >
-                {Object.entries(HAS_FILTER_OPTIONS).map(([val, label]) => (
-                  <option key={val} value={val}>{label}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* ID Transação */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-fg-subtle">
-                ID da Transação / Pedido
-              </label>
-              <Input
-                value={transactionIdFilter}
-                onChange={e => { setTransactionIdFilter(e.target.value); setPage(0); }}
-                placeholder="Ex: HP12345678"
-                className="h-8 bg-surface-inset border-line-subtle text-micro font-mono"
-              />
-            </div>
-
-            {/* Faixa de Valor */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-fg-subtle flex items-center gap-1">
-                <DollarSign size={11} /> Faixa de Valor (R$)
-              </label>
-              <div className="flex items-center gap-1.5">
-                <Input
-                  value={minValue}
-                  onChange={e => { setMinValue(e.target.value); setPage(0); }}
-                  placeholder="Mín"
-                  className="h-8 bg-surface-inset border-line-subtle text-micro font-mono"
-                />
-                <span className="text-fg-subtle text-xs">-</span>
-                <Input
-                  value={maxValue}
-                  onChange={e => { setMaxValue(e.target.value); setPage(0); }}
-                  placeholder="Máx"
-                  className="h-8 bg-surface-inset border-line-subtle text-micro font-mono"
-                />
-              </div>
-            </div>
+          <div id="leads-filter-panel" className="grid grid-cols-1 gap-3 border-t border-line-subtle pt-3 sm:grid-cols-2 lg:grid-cols-3 animate-in fade-in duration-150">
+            <LeadFilterMultiSelect
+              label="Tags"
+              placeholder="Todas as tags"
+              options={filterOptions(filterOptionsData.tags)}
+              values={selectedTags}
+              onChange={values => { setSelectedTags(values); setPage(0) }}
+            />
+            <LeadFilterMultiSelect
+              label="Produto / oferta"
+              placeholder="Todos os produtos"
+              options={filterOptions(filterOptionsData.products)}
+              values={selectedProducts}
+              onChange={values => { setSelectedProducts(values); setPage(0) }}
+            />
+            <LeadFilterMultiSelect
+              label="Origem"
+              placeholder="Todas as origens"
+              options={filterOptions(filterOptionsData.sources, SOURCE_LABELS)}
+              values={selectedSources}
+              onChange={values => { setSelectedSources(values); setPage(0) }}
+            />
+            <LeadFilterMultiSelect
+              label="Plataforma"
+              placeholder="Todas as plataformas"
+              options={filterOptions(filterOptionsData.platforms)}
+              values={selectedPlatforms}
+              onChange={values => { setSelectedPlatforms(values); setPage(0) }}
+            />
+            <LeadFilterMultiSelect
+              label="Canal"
+              placeholder="Todos os canais"
+              options={filterOptions(filterOptionsData.channels)}
+              values={selectedChannels}
+              onChange={values => { setSelectedChannels(values); setPage(0) }}
+            />
 
             {hasAnyFilter && (
-              <div className="sm:col-span-2 lg:col-span-4 flex justify-end pt-1">
+              <div className="flex items-end justify-end pt-1 sm:col-span-2 lg:col-span-3">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1114,18 +985,25 @@ export default function LeadsPage() {
           setDispatchConfirmed(false)
           setDispatchFeedback(null)
           setDispatchError(null)
+          setDispatchValidationMessage(null)
+          setDispatchStatus(null)
         }
       }}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto bg-surface-panel border-line-subtle">
           <DialogHeader><DialogTitle>Disparar template aprovado</DialogTitle></DialogHeader>
           <p className="text-body text-fg-muted">Destinatários: <strong className="text-fg">{selectionCount}</strong>. Revise a prévia abaixo e confirme o disparo antes de enfileirar.</p>
-          <TemplateSelector lead={Object.fromEntries(Object.entries(leads.find(lead => selectedLeadIds.includes(lead.id)) ?? leads[0] ?? {}).map(([key, value]) => [key, value == null ? '' : String(value)]))} onChange={handleTemplateChange} />
+          <TemplateSelector lead={dispatchPreviewLeads[0] ?? {}} leads={dispatchPreviewLeads} onChange={handleTemplateChange} onValidationChange={setDispatchValidationMessage} />
           {dispatchError && <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-body text-rose-300"><AlertCircle size={16} className="mt-0.5 shrink-0" />{dispatchError}</p>}
           {dispatchFeedback && <p role="status" className="flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-body text-emerald-300"><CheckCircle2 size={16} className="mt-0.5 shrink-0" />{dispatchFeedback}</p>}
           <label className="flex items-start gap-2.5 rounded-lg border border-line-subtle bg-surface-inset p-3 text-body text-fg cursor-pointer">
-            <input type="checkbox" checked={dispatchConfirmed} onChange={event => setDispatchConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4" disabled={!templateSelection || creatingDispatch} />
-            <span>Confirmo a prévia e autorizo o disparo real para os {selectionCount} destinatário(s) selecionados.</span>
+            <input type="checkbox" checked={dispatchConfirmed} onChange={event => setDispatchConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4" disabled={!templateSelection || creatingDispatch} aria-describedby={dispatchValidationMessage ? 'dispatch-confirmation-reason' : undefined} />
+            <span>Confirmo a prévia e autorizo o envio para {dispatchRecipientLabel}.</span>
           </label>
+          {!templateSelection && dispatchValidationMessage && <p id="dispatch-confirmation-reason" role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-micro text-amber-200">{dispatchValidationMessage}</p>}
+          {templateSelection && dispatchStatus && <p role="status" className={`rounded-lg border p-3 text-micro ${dispatchStatus.status === 'failed' || dispatchStatus.status === 'partial_failure' ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-cyan-500/30 bg-cyan-500/5 text-cyan-100'}`}>
+            Estado do lote #{dispatchStatus.batchId}: {dispatchStatus.status === 'queued' ? 'enfileirado' : dispatchStatus.status === 'processing' ? 'processando' : dispatchStatus.status === 'accepted' ? 'aceito pela Meta' : dispatchStatus.status === 'partial_failure' ? 'falha parcial' : 'falhou'}.
+            {dispatchStatus.error ? ` Motivo: ${dispatchStatus.error}` : ''}
+          </p>}
           <div className="flex flex-wrap justify-end gap-2 border-t border-line-subtle pt-4">
             <Button variant="outline" onClick={() => setDispatchOpen(false)} disabled={creatingDispatch}>Cancelar</Button>
             <Button variant="outline" disabled={!templateSelection || creatingDispatch} onClick={() => void createDispatch('save_draft')}>Salvar rascunho</Button>

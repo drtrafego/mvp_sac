@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, lte, or, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { massDispatchBatches, massDispatchRecipients, recoveryLeads, settings } from '@/lib/db/schema'
@@ -9,6 +9,7 @@ import { buildCanonicalSnapshot, extractBodyPlaceholders, hasDocumentHeader, has
 import { queueDirectTemplateMassDispatchBatch } from '@/lib/mass-dispatch'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
+import { renderTemplateVariableTextStrict, unresolvedTemplateVariableKeys, type TemplateLead } from '@/lib/lead-template-variables'
 
 const MAX_MASS_IMPORT_ROWS = 5000
 
@@ -19,6 +20,10 @@ function stringValue(filter: DispatchFilter, key: string): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function stringList(filter: DispatchFilter, key: string): string[] {
+  return [...new Set(stringValue(filter, key).split(',').map(value => value.trim()).filter(Boolean))]
+}
+
 function parseValueToCents(raw: string): number {
   const cleaned = raw.replace(/[^0-9,-.]/g, '').trim()
   if (!cleaned) return 0
@@ -27,13 +32,14 @@ function parseValueToCents(raw: string): number {
 }
 
 function filterConditions(companyId: number, filter: DispatchFilter) {
-  const eventType = stringValue(filter, 'event_type')
-  const status = stringValue(filter, 'status')
-  const product = stringValue(filter, 'product')
-  const source = stringValue(filter, 'source')
-  const platform = stringValue(filter, 'platform')
+  const eventTypes = stringList(filter, 'event_type')
+  const statuses = stringList(filter, 'status')
+  const products = stringList(filter, 'product')
+  const sources = stringList(filter, 'source')
+  const platforms = stringList(filter, 'platform')
+  const channels = stringList(filter, 'channel')
   const paymentType = stringValue(filter, 'payment_type')
-  const tag = stringValue(filter, 'tag')
+  const tags = stringList(filter, 'tag')
   const transactionId = stringValue(filter, 'transaction_id')
   const search = stringValue(filter, 'search') || stringValue(filter, 'q')
   const minValue = stringValue(filter, 'min_value')
@@ -46,18 +52,20 @@ function filterConditions(companyId: number, filter: DispatchFilter) {
     eq(recoveryLeads.companyId, companyId),
     sql`${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != ''`,
   ]
-  if (eventType) conditions.push(eq(recoveryLeads.eventType, eventType))
-  if (status === 'awaiting_contact') conditions.push(sql`(${recoveryLeads.status} IN ('pending', 'new', 'aguardando') OR ${recoveryLeads.status} IS NULL)`)
-  else if (status) conditions.push(eq(recoveryLeads.status, status))
-  if (source) conditions.push(channelWhereCondition(source) ?? sql`${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'}`)
-  if (platform) conditions.push(eq(recoveryLeads.platform, platform))
-  if (product) conditions.push(eq(recoveryLeads.productName, product))
+  if (eventTypes.length) conditions.push(inArray(recoveryLeads.eventType, eventTypes))
+  if (statuses.length) conditions.push(or(...statuses.map(status => status === 'awaiting_contact'
+    ? sql`(${recoveryLeads.status} IN ('pending', 'new', 'aguardando') OR ${recoveryLeads.status} IS NULL)`
+    : eq(recoveryLeads.status, status)))!)
+  if (sources.length) conditions.push(or(...sources.map(source => channelWhereCondition(source) ?? sql`${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'}`))!)
+  if (platforms.length) conditions.push(inArray(recoveryLeads.platform, platforms))
+  if (products.length) conditions.push(inArray(recoveryLeads.productName, products))
+  if (channels.length) conditions.push(inArray(recoveryLeads.channel, channels))
   if (paymentType) conditions.push(eq(recoveryLeads.paymentType, paymentType))
   if (search) {
     const pattern = `%${search}%`
-    conditions.push(sql`(${recoveryLeads.name} ILIKE ${pattern} OR ${recoveryLeads.phone} ILIKE ${pattern} OR ${recoveryLeads.email} ILIKE ${pattern} OR ${recoveryLeads.productName} ILIKE ${pattern} OR ${recoveryLeads.transactionId} ILIKE ${pattern})`)
+    conditions.push(sql`(${recoveryLeads.name} ILIKE ${pattern} OR ${recoveryLeads.phone} ILIKE ${pattern} OR ${recoveryLeads.email} ILIKE ${pattern})`)
   }
-  if (tag) conditions.push(sql`EXISTS (SELECT 1 FROM lead_tags WHERE lead_tags.lead_id = ${recoveryLeads.id} AND lead_tags.tag ILIKE ${'%' + tag + '%'})`)
+  if (tags.length) conditions.push(or(...tags.map(tag => sql`EXISTS (SELECT 1 FROM lead_tags WHERE lead_tags.lead_id = ${recoveryLeads.id} AND lead_tags.tag ILIKE ${'%' + tag + '%'})`))!)
   if (filter.has_tags === true || filter.has_tags === 'true') conditions.push(sql`EXISTS (SELECT 1 FROM lead_tags WHERE lead_tags.lead_id = ${recoveryLeads.id})`)
   if (filter.has_email === true || filter.has_email === 'true') conditions.push(sql`(${recoveryLeads.email} IS NOT NULL AND ${recoveryLeads.email} != '')`)
   if (filter.is_sale === true || filter.is_sale === 'true') conditions.push(eq(recoveryLeads.status, 'converted'))
@@ -143,6 +151,36 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const templateSnapshot = buildCanonicalSnapshot(template, { headerDocument: parsedTemplate.data.templateHeaderDocument })
   if (action === 'start' && parsedTemplate.data.templateBodyText !== templateSnapshot.bodyText) {
     return NextResponse.json({ error: 'O corpo da prévia diverge do corpo oficial do template; revise antes de confirmar' }, { status: 409 })
+  }
+  const selectedLeads = await db.select({
+    id: recoveryLeads.id,
+    name: recoveryLeads.name,
+    email: recoveryLeads.email,
+    phone: recoveryLeads.phone,
+    productName: recoveryLeads.productName,
+    productValue: recoveryLeads.productValue,
+    transactionId: recoveryLeads.transactionId,
+    cpfCnpj: recoveryLeads.cpfCnpj,
+    city: recoveryLeads.city,
+    state: recoveryLeads.state,
+    paymentType: recoveryLeads.paymentType,
+    installments: recoveryLeads.installments,
+    boletoCode: recoveryLeads.boletoCode,
+    boletoUrl: recoveryLeads.boletoUrl,
+    boletoExpiry: recoveryLeads.boletoExpiry,
+    pixCode: recoveryLeads.pixCode,
+    pixExpiry: recoveryLeads.pixExpiry,
+    checkoutUrl: recoveryLeads.checkoutUrl,
+    affiliateCode: recoveryLeads.affiliateCode,
+  }).from(recoveryLeads).where(and(eq(recoveryLeads.companyId, company.id), inArray(recoveryLeads.id, leadIds)))
+  const unresolvedByLead = selectedLeads.flatMap(lead => {
+    const templateLead: TemplateLead = Object.fromEntries(Object.entries(lead).map(([key, value]) => [key, value == null ? '' : String(value)]))
+    const preview = renderTemplateVariableTextStrict(templateSnapshot.bodyText, parsedTemplate.data.templateVariablesMap, templateLead)
+    return unresolvedTemplateVariableKeys(preview)
+  })
+  const unresolved = [...new Set(unresolvedByLead)]
+  if (unresolved.length) {
+    return NextResponse.json({ error: `A prévia não pode ser enviada: ${unresolved.map(index => `{{${index}}}`).join(', ')} não foi resolvida para todos os destinatários. Escolha outra origem ou um valor fixo.` }, { status: 409 })
   }
   const [batch] = await db.insert(massDispatchBatches).values({
     companyId: company.id, fileName: 'Seleção interna de leads', eventType: 'mass_dispatch', trackingSource: 'internal_leads', status: 'draft', recipientCount: leadIds.length,

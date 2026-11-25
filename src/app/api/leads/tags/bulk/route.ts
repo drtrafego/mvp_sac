@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { getCurrentUser, requireCompany } from '@/lib/auth'
 import { leadTags, recoveryLeads, sacAuditEvents } from '@/lib/db/schema'
@@ -20,6 +20,10 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
+function stringList(value: unknown): string[] {
+  return [...new Set((typeof value === 'string' ? value : '').split(',').map(item => item.trim()).filter(Boolean))]
+}
+
 function normalizedTags(value: unknown): string[] {
   const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []
   return [...new Set(values
@@ -31,27 +35,31 @@ function normalizedTags(value: unknown): string[] {
 function filterConditions(companyId: number, filter: Record<string, unknown>) {
   const conditions = [eq(recoveryLeads.companyId, companyId)]
   const search = stringValue(filter.search)
-  const eventType = stringValue(filter.event_type)
-  const status = stringValue(filter.status)
-  const source = stringValue(filter.source)
-  const product = stringValue(filter.product)
-  const platform = stringValue(filter.platform)
+  const eventTypes = stringList(filter.event_type)
+  const statuses = stringList(filter.status)
+  const sources = stringList(filter.source)
+  const products = stringList(filter.product)
+  const platforms = stringList(filter.platform)
+  const channels = stringList(filter.channel)
   const paymentType = stringValue(filter.payment_type)
-  const tag = stringValue(filter.tag)
+  const tags = stringList(filter.tag)
   const transactionId = stringValue(filter.transaction_id)
   const { fromDate, toDate } = getDateRange('30d', new Date(), stringValue(filter.from), stringValue(filter.to))
 
-  if (eventType) conditions.push(eq(recoveryLeads.eventType, eventType))
-  if (status) conditions.push(eq(recoveryLeads.status, status))
-  if (source) conditions.push(sql`(${recoveryLeads.channel} = ${source} OR ${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'})`)
-  if (product) conditions.push(eq(recoveryLeads.productName, product))
-  if (platform) conditions.push(eq(recoveryLeads.platform, platform))
+  if (eventTypes.length) conditions.push(inArray(recoveryLeads.eventType, eventTypes))
+  if (statuses.length) conditions.push(or(...statuses.map(status => status === 'awaiting_contact'
+    ? sql`(${recoveryLeads.status} IN ('pending', 'new', 'aguardando') OR ${recoveryLeads.status} IS NULL)`
+    : eq(recoveryLeads.status, status)))!)
+  if (sources.length) conditions.push(or(...sources.map(source => sql`(${recoveryLeads.channel} = ${source} OR ${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'})`))!)
+  if (products.length) conditions.push(inArray(recoveryLeads.productName, products))
+  if (platforms.length) conditions.push(inArray(recoveryLeads.platform, platforms))
+  if (channels.length) conditions.push(inArray(recoveryLeads.channel, channels))
   if (paymentType) conditions.push(eq(recoveryLeads.paymentType, paymentType))
   if (search) {
     const pattern = `%${search}%`
-    conditions.push(sql`(${recoveryLeads.name} ILIKE ${pattern} OR ${recoveryLeads.phone} ILIKE ${pattern} OR ${recoveryLeads.email} ILIKE ${pattern} OR ${recoveryLeads.productName} ILIKE ${pattern} OR ${recoveryLeads.transactionId} ILIKE ${pattern})`)
+    conditions.push(sql`(${recoveryLeads.name} ILIKE ${pattern} OR ${recoveryLeads.phone} ILIKE ${pattern} OR ${recoveryLeads.email} ILIKE ${pattern})`)
   }
-  if (tag) conditions.push(sql`EXISTS (SELECT 1 FROM lead_tags WHERE lead_tags.lead_id = ${recoveryLeads.id} AND lead_tags.tag ILIKE ${'%' + tag + '%'})`)
+  if (tags.length) conditions.push(or(...tags.map(tag => sql`EXISTS (SELECT 1 FROM lead_tags WHERE lead_tags.lead_id = ${recoveryLeads.id} AND lead_tags.tag ILIKE ${'%' + tag + '%'})`))!)
   if (filter.has_tags === true || filter.has_tags === 'true') conditions.push(sql`EXISTS (SELECT 1 FROM lead_tags WHERE lead_tags.lead_id = ${recoveryLeads.id})`)
   if (filter.has_phone === true || filter.has_phone === 'true') conditions.push(sql`COALESCE(${recoveryLeads.phone}, '') <> ''`)
   if (filter.has_email === true || filter.has_email === 'true') conditions.push(sql`COALESCE(${recoveryLeads.email}, '') <> ''`)

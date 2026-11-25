@@ -2,7 +2,7 @@ import { getInheritedPauseFields } from '@/lib/bot-pause'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { leadTags, recoveryLeads, recoverySequences, sacAuditEvents, sequenceMessages, messageJobs } from '@/lib/db/schema'
-import { eq, desc, and, gte, lte, inArray, sql } from 'drizzle-orm'
+import { eq, desc, and, gte, lte, inArray, or, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { getDateRange } from '@/lib/date-utils'
 import { channelWhereCondition } from '@/lib/inbox-channel-filter'
@@ -11,6 +11,10 @@ import { parseIntegerQuery } from '@/lib/request-validation'
 const LEADS_PAGE_SIZE_DEFAULT = 200
 const LEADS_PAGE_SIZE_MAX = 200
 const LEADS_OFFSET_MAX = 100_000
+
+function parseFilterList(raw: string | null): string[] {
+  return [...new Set((raw ?? '').split(',').map(value => value.trim()).filter(Boolean))]
+}
 
 function cleanPhone(raw: string): string {
   let digits = raw.replace(/\D/g, '')
@@ -52,13 +56,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!parsedOffset.ok) return NextResponse.json({ error: parsedOffset.error }, { status: 400 })
 
   const company = await requireCompany()
-  const eventType = searchParams.get('event_type')
-  const status = searchParams.get('status')
-  const product = searchParams.get('product')
-  const source = searchParams.get('source')
-  const platform = searchParams.get('platform')
+  const eventTypes = parseFilterList(searchParams.get('event_type'))
+  const statuses = parseFilterList(searchParams.get('status'))
+  const products = parseFilterList(searchParams.get('product'))
+  const sources = parseFilterList(searchParams.get('source'))
+  const platforms = parseFilterList(searchParams.get('platform'))
+  const channels = parseFilterList(searchParams.get('channel'))
   const paymentType = searchParams.get('payment_type')
-  const tag = searchParams.get('tag')?.trim()
+  const tags = parseFilterList(searchParams.get('tag'))
   const transactionId = searchParams.get('transaction_id')?.trim()
   const hasPhone = searchParams.get('has_phone')
   const hasEmail = searchParams.get('has_email')
@@ -73,11 +78,34 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const fromStr = searchParams.get('from') ?? undefined
   const toStr = searchParams.get('to') ?? undefined
 
+  if (searchParams.get('options_only') === 'true') {
+    const [eventRows, statusRows, sourceRows, platformRows, channelRows, productRows, tagRows] = await Promise.all([
+      db.selectDistinct({ value: recoveryLeads.eventType }).from(recoveryLeads).where(eq(recoveryLeads.companyId, company.id)),
+      db.selectDistinct({ value: recoveryLeads.status }).from(recoveryLeads).where(eq(recoveryLeads.companyId, company.id)),
+      db.selectDistinct({ value: recoveryLeads.trackingSource }).from(recoveryLeads).where(eq(recoveryLeads.companyId, company.id)),
+      db.selectDistinct({ value: recoveryLeads.platform }).from(recoveryLeads).where(eq(recoveryLeads.companyId, company.id)),
+      db.selectDistinct({ value: recoveryLeads.channel }).from(recoveryLeads).where(eq(recoveryLeads.companyId, company.id)),
+      db.selectDistinct({ value: recoveryLeads.productName }).from(recoveryLeads).where(eq(recoveryLeads.companyId, company.id)),
+      db.selectDistinct({ value: leadTags.tag }).from(leadTags).innerJoin(recoveryLeads, eq(recoveryLeads.id, leadTags.leadId)).where(eq(recoveryLeads.companyId, company.id)),
+    ])
+    const values = (rows: Array<{ value: string | null }>) => [...new Set(rows.map(row => row.value).filter((value): value is string => Boolean(value?.trim())).map(value => value.trim()))].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+    const statusValues = values(statusRows)
+    return NextResponse.json({
+      eventTypes: values(eventRows),
+      statuses: statusValues,
+      sources: values(sourceRows),
+      platforms: values(platformRows),
+      channels: values(channelRows),
+      products: values(productRows),
+      tags: values(tagRows),
+    })
+  }
+
   // Retorna lista de produtos distintos para o dropdown de filtro
   if (searchParams.get('products_only') === 'true') {
     const conditions = [eq(recoveryLeads.companyId, company.id)]
-    if (eventType) conditions.push(eq(recoveryLeads.eventType, eventType))
-    if (platform) conditions.push(eq(recoveryLeads.platform, platform))
+    if (eventTypes.length) conditions.push(inArray(recoveryLeads.eventType, eventTypes))
+    if (platforms.length) conditions.push(inArray(recoveryLeads.platform, platforms))
     const rows = await db
       .selectDistinct({ productName: recoveryLeads.productName })
       .from(recoveryLeads)
@@ -101,41 +129,42 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const { fromDate, toDate } = getDateRange(period, new Date(), fromStr, toStr)
 
   const conditions = [eq(recoveryLeads.companyId, company.id)]
-  if (eventType) conditions.push(eq(recoveryLeads.eventType, eventType))
-  if (status) {
-    if (status === 'awaiting_contact') {
-      conditions.push(sql`(${recoveryLeads.status} IN ('pending', 'new', 'aguardando') OR ${recoveryLeads.status} IS NULL)`)
-    } else {
-      conditions.push(eq(recoveryLeads.status, status))
-    }
+  if (eventTypes.length) conditions.push(inArray(recoveryLeads.eventType, eventTypes))
+  if (statuses.length) {
+    const statusConditions = statuses.map(status => {
+      if (status === 'awaiting_contact') {
+        return sql`(${recoveryLeads.status} IN ('pending', 'new', 'aguardando') OR ${recoveryLeads.status} IS NULL)`
+      }
+      return eq(recoveryLeads.status, status)
+    })
+    conditions.push(or(...statusConditions)!)
   }
-  if (source) {
-    const knownChannelCondition = channelWhereCondition(source)
-    conditions.push(knownChannelCondition ?? sql`${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'}`)
+  if (sources.length) {
+    const sourceConditions = sources.map(source => channelWhereCondition(source) ?? sql`${recoveryLeads.trackingSource} ILIKE ${'%' + source + '%'}`)
+    conditions.push(or(...sourceConditions)!)
   }
-  if (platform) conditions.push(eq(recoveryLeads.platform, platform))
-  if (product) conditions.push(eq(recoveryLeads.productName, product))
+  if (platforms.length) conditions.push(inArray(recoveryLeads.platform, platforms))
+  if (products.length) conditions.push(inArray(recoveryLeads.productName, products))
+  if (channels.length) conditions.push(inArray(recoveryLeads.channel, channels))
   if (paymentType) conditions.push(eq(recoveryLeads.paymentType, paymentType))
 
-  // Busca textual global no banco (nome, telefone, email, produto, id da transação)
+  // Busca textual global no banco (nome, telefone ou e-mail).
   if (search) {
     const pattern = `%${search}%`
     conditions.push(sql`(
       ${recoveryLeads.name} ILIKE ${pattern} OR
       ${recoveryLeads.phone} ILIKE ${pattern} OR
-      ${recoveryLeads.email} ILIKE ${pattern} OR
-      ${recoveryLeads.productName} ILIKE ${pattern} OR
-      ${recoveryLeads.transactionId} ILIKE ${pattern}
+      ${recoveryLeads.email} ILIKE ${pattern}
     )`)
   }
 
   // Filtro por tags
-  if (tag) {
-    conditions.push(sql`EXISTS (
+  if (tags.length) {
+    conditions.push(or(...tags.map(tag => sql`EXISTS (
       SELECT 1 FROM lead_tags
       WHERE lead_tags.lead_id = ${recoveryLeads.id}
         AND lead_tags.tag ILIKE ${'%' + tag + '%'}
-    )`)
+    )`))!)
   }
 
   // Filtro por existência de tags, telefone ou e-mail
