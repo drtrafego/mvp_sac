@@ -32,7 +32,7 @@ function parseValueToCents(raw: string): number {
   return Math.round((parseFloat(cleaned) || 0) * 100)
 }
 
-function filterConditions(companyId: number, filter: DispatchFilter) {
+export function filterConditions(companyId: number, filter: DispatchFilter, options: { requirePhone?: boolean } = {}) {
   const eventTypes = stringList(filter, 'event_type')
   const statuses = stringList(filter, 'status')
   const products = stringList(filter, 'product')
@@ -49,10 +49,8 @@ function filterConditions(companyId: number, filter: DispatchFilter) {
   const from = stringValue(filter, 'from') || undefined
   const to = stringValue(filter, 'to') || undefined
   const { fromDate, toDate } = getDateRange(period, new Date(), from, to)
-  const conditions = [
-    eq(recoveryLeads.companyId, companyId),
-    sql`${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != ''`,
-  ]
+  const conditions = [eq(recoveryLeads.companyId, companyId)]
+  if (options.requirePhone !== false) conditions.push(sql`${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != ''`)
   if (eventTypes.length) conditions.push(inArray(recoveryLeads.eventType, eventTypes))
   if (statuses.length) conditions.push(or(...statuses.map(status => status === 'awaiting_contact'
     ? sql`(${recoveryLeads.status} IN ('pending', 'new', 'aguardando') OR ${recoveryLeads.status} IS NULL)`
@@ -135,11 +133,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: `Selecione de 1 a ${MAX_MASS_IMPORT_ROWS} leads válidos` }, { status: 400 })
     }
     const ids = [...new Set(input.leadIds as number[])]
-    const rows = await db.select({ id: recoveryLeads.id }).from(recoveryLeads).where(and(
+    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone }).from(recoveryLeads).where(and(
       eq(recoveryLeads.companyId, company.id), inArray(recoveryLeads.id, ids),
-      sql`${recoveryLeads.phone} IS NOT NULL AND ${recoveryLeads.phone} != ''`,
     ))
-    if (rows.length !== ids.length) return NextResponse.json({ error: 'Alguns leads não existem, não pertencem à empresa ou estão sem telefone' }, { status: 400 })
+    const knownIds = new Set(rows.map(row => row.id))
+    const missingCount = ids.filter(id => !knownIds.has(id)).length
+    const noPhoneCount = rows.filter(row => !row.phone?.trim()).length
+    if (missingCount || noPhoneCount) return NextResponse.json({
+      error: `Seleção inválida: ${missingCount} lead(s) não existem ou não pertencem à empresa e ${noPhoneCount} lead(s) estão sem telefone elegível. Nenhum destinatário foi enfileirado.`,
+      eligibility: { requestedCount: input.leadIds.length, uniqueRequestedCount: ids.length, duplicateCount: input.leadIds.length - ids.length, eligibleCount: rows.length - noPhoneCount, missingCount, noPhoneCount },
+    }, { status: 400 })
     leadIds = rows.map(row => row.id)
   } else {
     if (!input.filter || typeof input.filter !== 'object' || Array.isArray(input.filter)) return NextResponse.json({ error: 'Filtro inválido' }, { status: 400 })

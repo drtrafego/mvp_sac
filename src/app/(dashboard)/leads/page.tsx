@@ -37,6 +37,7 @@ import { resolvePeriod } from '@/lib/period'
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
 import { LeadFilterMultiSelect, type LeadFilterOption } from '@/components/leads/LeadFilterMultiSelect'
+import type { DispatchEligibility } from '@/lib/mass-dispatch-eligibility'
 
 interface Lead extends LeadForEdit {
   id: number
@@ -250,6 +251,8 @@ export default function LeadsPage() {
   const [dispatchFeedback, setDispatchFeedback] = useState<string | null>(null)
   const [dispatchError, setDispatchError] = useState<string | null>(null)
   const [dispatchValidationMessage, setDispatchValidationMessage] = useState<string | null>(null)
+  const [dispatchEligibility, setDispatchEligibility] = useState<DispatchEligibility | null>(null)
+  const [dispatchEligibilityLoading, setDispatchEligibilityLoading] = useState(false)
   const [dispatchStatus, setDispatchStatus] = useState<{
     batchId: number
     status: string
@@ -437,8 +440,39 @@ export default function LeadsPage() {
     setDispatchError(null)
     setDispatchFeedback(null)
   }, [])
+  const validateDispatchSelection = async () => {
+    setDispatchEligibility(null)
+    setDispatchEligibilityLoading(true)
+    setDispatchError(null)
+    try {
+      const params = new URLSearchParams({ mode: selectAllFilter ? 'filter' : 'ids' })
+      if (selectAllFilter) params.set('filter', JSON.stringify(dispatchFilter))
+      else params.set('lead_ids', selectedLeadIds.join(','))
+      const response = await fetch(`/api/leads/dispatch/validate?${params}`, { cache: 'no-store' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.eligibility) throw new Error(data.error || 'Não foi possível validar os leads selecionados.')
+      setDispatchEligibility(data.eligibility as DispatchEligibility)
+    } catch (error) {
+      setDispatchError(error instanceof Error ? error.message : 'Não foi possível validar os leads selecionados.')
+    } finally {
+      setDispatchEligibilityLoading(false)
+    }
+  }
+  const openDispatchForSelection = () => {
+    setTemplateSelection(null)
+    setDispatchConfirmed(false)
+    setDispatchFeedback(null)
+    setDispatchError(null)
+    setDispatchValidationMessage(null)
+    setDispatchStatus(null)
+    setDispatchOpen(true)
+    void validateDispatchSelection()
+  }
   const createDispatch = async (action: 'save_draft' | 'start') => {
-    if (!templateSelection || (!selectAllFilter && !selectedLeadIds.length) || (action === 'start' && !dispatchConfirmed)) return
+    // Once the confirmation POST has been accepted, this modal becomes a
+    // receipt. Keeping this guard next to the request prevents a stale click
+    // or an event replay from creating a second POST for the same composer.
+    if (dispatchStatus || dispatchEligibilityLoading || !dispatchEligibility || dispatchEligibility.eligibleCount !== dispatchEligibility.uniqueRequestedCount || !templateSelection || (!selectAllFilter && !selectedLeadIds.length) || (action === 'start' && !dispatchConfirmed)) return
     setCreatingDispatch(true)
     setDispatchError(null)
     setDispatchFeedback(null)
@@ -447,10 +481,12 @@ export default function LeadsPage() {
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(typeof data.error === 'string' ? `${data.error}${data.batchId ? ` (lote #${data.batchId} permanece em rascunho)` : ''}` : 'Não foi possível iniciar o disparo.')
       setDispatchConfirmed(false)
-      setDispatchFeedback(action === 'start'
-        ? `Disparo iniciado: lote #${data.batchId}, ${data.jobsCreated ?? 0} job(s) enfileirado(s) para ${data.recipientCount ?? 0} destinatário(s). ${data.workerTriggered ? 'Processamento imediato acionado; o estado será atualizado abaixo.' : 'O estado será atualizado pelo processamento automático.'}`
-        : `Rascunho salvo: lote #${data.batchId}, ${data.recipientCount ?? 0} destinatário(s).`)
-      if (action === 'start' && Number.isInteger(data.batchId)) setDispatchStatus({ batchId: data.batchId, status: 'queued' })
+      if (action === 'start' && Number.isInteger(data.batchId)) {
+        setDispatchFeedback(null)
+        setDispatchStatus({ batchId: data.batchId, status: 'queued' })
+      } else {
+        setDispatchFeedback(`Rascunho salvo: lote #${data.batchId}, ${data.recipientCount ?? 0} destinatário(s).`)
+      }
       await fetchLeads(page)
     } catch (error) {
       setDispatchError(error instanceof Error ? error.message : 'Não foi possível iniciar o disparo.')
@@ -996,32 +1032,53 @@ export default function LeadsPage() {
           setDispatchError(null)
           setDispatchValidationMessage(null)
           setDispatchStatus(null)
+          setDispatchEligibility(null)
+          setDispatchEligibilityLoading(false)
         }
       }}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto bg-surface-panel border-line-subtle">
-          <DialogHeader><DialogTitle>Disparar template aprovado</DialogTitle></DialogHeader>
-          <p className="text-body text-fg-muted">Destinatários: <strong className="text-fg">{selectionCount}</strong>. Revise a prévia abaixo e confirme o disparo antes de enfileirar.</p>
-          <TemplateSelector lead={dispatchPreviewLeads[0] ?? {}} leads={dispatchPreviewLeads} onChange={handleTemplateChange} onValidationChange={setDispatchValidationMessage} />
+          <DialogHeader><DialogTitle>{dispatchStatus ? 'Recibo do disparo' : 'Disparar template aprovado'}</DialogTitle></DialogHeader>
+          {!dispatchStatus && <p className="text-body text-fg-muted">Destinatários: <strong className="text-fg">{selectionCount}</strong>. Revise a prévia abaixo e confirme o disparo antes de enfileirar.</p>}
+          {!dispatchStatus && <TemplateSelector lead={dispatchPreviewLeads[0] ?? {}} leads={dispatchPreviewLeads} onChange={handleTemplateChange} onValidationChange={setDispatchValidationMessage} />}
           {dispatchError && <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-body text-rose-300"><AlertCircle size={16} className="mt-0.5 shrink-0" />{dispatchError}</p>}
           {dispatchFeedback && <p role="status" className="flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-body text-emerald-300"><CheckCircle2 size={16} className="mt-0.5 shrink-0" />{dispatchFeedback}</p>}
-          <label className="flex items-start gap-2.5 rounded-lg border border-line-subtle bg-surface-inset p-3 text-body text-fg cursor-pointer">
-            <input type="checkbox" checked={dispatchConfirmed} onChange={event => setDispatchConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4" disabled={!templateSelection || creatingDispatch} aria-describedby={dispatchValidationMessage ? 'dispatch-confirmation-reason' : undefined} />
-            <span>Confirmo a prévia e autorizo o envio para {dispatchRecipientLabel}.</span>
-          </label>
-          {!templateSelection && dispatchValidationMessage && <p id="dispatch-confirmation-reason" role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-micro text-amber-200">{dispatchValidationMessage}</p>}
-          {templateSelection && dispatchStatus && <p role="status" className={`rounded-lg border p-3 text-micro ${dispatchStatus.status === 'failed' || dispatchStatus.status === 'partial_failure' ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-cyan-500/30 bg-cyan-500/5 text-cyan-100'}`}>
-            Estado do lote #{dispatchStatus.batchId}: {dispatchStatus.deliveryStatus === 'read' ? 'lido' : dispatchStatus.deliveryStatus === 'delivered' ? 'entregue' : dispatchStatus.deliveryStatus === 'sent' ? 'enviado' : dispatchStatus.status === 'queued' ? 'enfileirado' : dispatchStatus.status === 'processing' ? 'processando' : dispatchStatus.status === 'accepted' ? 'aceito pela Meta' : dispatchStatus.status === 'partial_failure' ? 'falha parcial' : 'falhou'}.
-            {dispatchStatus.error ? ` Motivo: ${dispatchStatus.error}` : ''}
-            {(dispatchStatus.createdAt || dispatchStatus.sentAt) && <span className="mt-1 block text-fg-subtle">
+          {!dispatchStatus && dispatchEligibilityLoading && <p role="status" className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3 text-micro text-cyan-100">Validando a seleção antes de permitir o disparo...</p>}
+          {!dispatchStatus && dispatchEligibility && <p role="status" className={`rounded-lg border p-3 text-micro ${dispatchEligibility.eligibleCount === dispatchEligibility.uniqueRequestedCount ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-rose-500/40 bg-rose-500/10 text-rose-200'}`}>
+            Seleção validada: {dispatchEligibility.eligibleCount} de {dispatchEligibility.uniqueRequestedCount} lead(s) têm telefone elegível.
+            {dispatchEligibility.missingCount > 0 && ` ${dispatchEligibility.missingCount} não existem ou não pertencem a esta empresa.`}
+            {dispatchEligibility.noPhoneCount > 0 && ` ${dispatchEligibility.noPhoneCount} estão sem telefone elegível.`}
+            {dispatchEligibility.duplicateCount > 0 && ` ${dispatchEligibility.duplicateCount} seleção(ões) repetida(s).`}
+            {dispatchEligibility.eligibleCount !== dispatchEligibility.uniqueRequestedCount && ' Nenhum envio parcial será permitido; revise a seleção.'}
+          </p>}
+          {!dispatchStatus && <>
+            <label className="flex items-start gap-2.5 rounded-lg border border-line-subtle bg-surface-inset p-3 text-body text-fg cursor-pointer">
+              <input type="checkbox" checked={dispatchConfirmed} onChange={event => setDispatchConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4" disabled={!templateSelection || creatingDispatch || dispatchEligibilityLoading || !dispatchEligibility || dispatchEligibility.eligibleCount !== dispatchEligibility.uniqueRequestedCount} aria-describedby={dispatchValidationMessage ? 'dispatch-confirmation-reason' : undefined} />
+              <span>Confirmo a prévia e autorizo o envio para {dispatchRecipientLabel}.</span>
+            </label>
+            {!templateSelection && dispatchValidationMessage && <p id="dispatch-confirmation-reason" role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-micro text-amber-200">{dispatchValidationMessage}</p>}
+          </>}
+          {dispatchStatus && <div role="status" aria-live="polite" aria-atomic="true" className={`rounded-lg border p-4 ${dispatchStatus.status === 'failed' || dispatchStatus.status === 'partial_failure' ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : dispatchStatus.deliveryStatus === 'delivered' || dispatchStatus.deliveryStatus === 'read' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-cyan-500/30 bg-cyan-500/5 text-cyan-100'}`}>
+            <p className="flex items-center gap-2 text-body font-semibold">
+              {dispatchStatus.status === 'failed' || dispatchStatus.status === 'partial_failure' ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}
+              {dispatchStatus.deliveryStatus === 'read' ? 'Mensagem lida' : dispatchStatus.deliveryStatus === 'delivered' ? 'Mensagem entregue' : dispatchStatus.deliveryStatus === 'sent' ? 'Mensagem aceita pela Meta' : dispatchStatus.status === 'queued' ? 'Disparo enfileirado' : dispatchStatus.status === 'processing' ? 'Disparo em processamento' : dispatchStatus.status === 'accepted' ? 'Disparo aceito pela Meta' : dispatchStatus.status === 'partial_failure' ? 'Disparo com falha parcial' : 'Disparo falhou'}
+            </p>
+            <p className="mt-1 text-micro">Lote #{dispatchStatus.batchId}. {dispatchStatus.deliveryStatus === 'delivered' || dispatchStatus.deliveryStatus === 'read' ? 'O envio foi confirmado; este formulário está encerrado para evitar reenvio.' : dispatchStatus.status === 'failed' || dispatchStatus.status === 'partial_failure' ? 'O envio não será repetido por este formulário. Consulte o histórico antes de preparar uma nova ação.' : 'Acompanhe o estado abaixo; não é necessário iniciar novamente.'}</p>
+            {dispatchStatus.error && <p className="mt-2 text-micro">Motivo: {dispatchStatus.error}</p>}
+            {(dispatchStatus.createdAt || dispatchStatus.sentAt) && <p className="mt-2 text-micro text-fg-subtle">
               {dispatchStatus.createdAt ? `Enfileirado ${new Date(dispatchStatus.createdAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
               {dispatchStatus.sentAt ? ` · Meta respondeu ${new Date(dispatchStatus.sentAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}` : ''}
               {dispatchStatus.deliveryStatus === 'sent' ? ' · aguardando confirmação de entrega' : ''}
-            </span>}
-          </p>}
+            </p>}
+          </div>}
           <div className="flex flex-wrap justify-end gap-2 border-t border-line-subtle pt-4">
-            <Button variant="outline" onClick={() => setDispatchOpen(false)} disabled={creatingDispatch}>Cancelar</Button>
-            <Button variant="outline" disabled={!templateSelection || creatingDispatch} onClick={() => void createDispatch('save_draft')}>Salvar rascunho</Button>
-            <Button disabled={!templateSelection || !dispatchConfirmed || creatingDispatch} onClick={() => void createDispatch('start')} className="gap-2 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={15} />{creatingDispatch ? 'Iniciando disparo...' : 'Iniciar disparo'}</Button>
+            {dispatchStatus ? <>
+              <Link href={`/disparo-em-massa?batchId=${dispatchStatus.batchId}`} className="inline-flex min-h-11 items-center rounded-md border border-line-subtle px-4 text-micro font-semibold text-fg-muted hover:bg-surface-inset hover:text-fg">Abrir histórico</Link>
+              <Button variant="outline" onClick={() => setDispatchOpen(false)}>Fechar</Button>
+            </> : <>
+              <Button variant="outline" onClick={() => setDispatchOpen(false)} disabled={creatingDispatch}>Cancelar</Button>
+              <Button variant="outline" disabled={!templateSelection || creatingDispatch || dispatchEligibilityLoading} onClick={() => void createDispatch('save_draft')}>Salvar rascunho</Button>
+              <Button disabled={!templateSelection || !dispatchConfirmed || creatingDispatch || dispatchEligibilityLoading || !dispatchEligibility || dispatchEligibility.eligibleCount !== dispatchEligibility.uniqueRequestedCount} onClick={() => void createDispatch('start')} className="gap-2 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={15} />{creatingDispatch ? 'Iniciando disparo...' : 'Iniciar disparo'}</Button>
+            </>}
           </div>
         </DialogContent>
       </Dialog>
@@ -1069,7 +1126,7 @@ export default function LeadsPage() {
         </DialogContent>
       </Dialog>
 
-      {(selectAllFilter || selectedLeadIds.length > 0) && <div className="sticky bottom-3 z-30 mx-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 rounded-xl border border-line-subtle bg-surface-overlay px-3 py-2.5 shadow-xl sm:gap-3 sm:px-4"><span className="text-micro font-semibold text-fg">{selectionCount}</span><Button size="sm" onClick={() => { setTagActionOpen(true); setTagResult(null) }} className="gap-1.5 bg-brand-solid text-on-accent hover:bg-brand-solid/90"><Tag size={14} />Alterar tags</Button><Button size="sm" onClick={() => setDispatchOpen(true)} className="gap-1.5 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={14} />Disparar Template</Button><Button size="sm" variant="ghost" onClick={clearSelection}>Limpar seleção</Button></div>}
+      {(selectAllFilter || selectedLeadIds.length > 0) && <div className="sticky bottom-3 z-30 mx-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-2 rounded-xl border border-line-subtle bg-surface-overlay px-3 py-2.5 shadow-xl sm:gap-3 sm:px-4"><span className="text-micro font-semibold text-fg">{selectionCount}</span><Button size="sm" onClick={() => { setTagActionOpen(true); setTagResult(null) }} className="gap-1.5 bg-brand-solid text-on-accent hover:bg-brand-solid/90"><Tag size={14} />Alterar tags</Button><Button size="sm" onClick={openDispatchForSelection} className="gap-1.5 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={14} />Disparar Template</Button><Button size="sm" variant="ghost" onClick={clearSelection}>Limpar seleção</Button></div>}
     </div>
   )
 }

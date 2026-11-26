@@ -7,11 +7,13 @@ import {
   renderTemplateVariableTextStrict,
   unresolvedTemplateVariableKeys,
 } from '../src/lib/lead-template-variables'
+import { summarizeDispatchEligibility } from '../src/lib/mass-dispatch-eligibility'
 
 const leadsPage = readFileSync(resolve(process.cwd(), 'src/app/(dashboard)/leads/page.tsx'), 'utf8')
 const dispatchRoute = readFileSync(resolve(process.cwd(), 'src/app/api/leads/dispatch/route.ts'), 'utf8')
 const queueSource = readFileSync(resolve(process.cwd(), 'src/lib/mass-dispatch.ts'), 'utf8')
 const statusRoute = readFileSync(resolve(process.cwd(), 'src/app/api/leads/dispatch/[batchId]/route.ts'), 'utf8')
+const validationRoute = readFileSync(resolve(process.cwd(), 'src/app/api/leads/dispatch/validate/route.ts'), 'utf8')
 
 test('Leads mantém confirmação humana no mesmo fluxo e separa salvar de iniciar', () => {
   assert.match(leadsPage, /createDispatch\('save_draft'\)/)
@@ -69,6 +71,44 @@ test('interface mostra o motivo e consulta o estado real do lote', () => {
   assert.match(statusRoute, /confirmedAt/)
   assert.match(dispatchRoute, /renderTemplateVariableTextStrict/)
   assert.match(dispatchRoute, /não foi resolvida para todos os destinatários/)
+})
+
+test('modal vira recibo após confirmação e não mantém CTA de reenvio', () => {
+  assert.match(leadsPage, /if \(dispatchStatus \|\| dispatchEligibilityLoading/)
+  assert.match(leadsPage, /dispatchStatus \? 'Recibo do disparo'/)
+  assert.match(leadsPage, /O envio foi confirmado; este formulário está encerrado para evitar reenvio/)
+  assert.match(leadsPage, /Abrir histórico/)
+  assert.match(leadsPage, /<Button variant="outline" onClick=\{\(\) => setDispatchOpen\(false\)\}>Fechar<\/Button>/)
+  assert.match(leadsPage, /!dispatchStatus && <TemplateSelector/)
+  assert.match(leadsPage, /!dispatchStatus && <>/)
+})
+
+test('seleção nova é validada por contagem e nunca permite disparo parcial', () => {
+  assert.match(leadsPage, /openDispatchForSelection/)
+  assert.match(leadsPage, /setDispatchStatus\(null\)/)
+  assert.match(leadsPage, /dispatchEligibility\.eligibleCount !== dispatchEligibility\.uniqueRequestedCount/)
+  assert.match(leadsPage, /Nenhum envio parcial será permitido/)
+  assert.match(leadsPage, /\/api\/leads\/dispatch\/validate\?\$\{params\}/)
+  assert.match(validationRoute, /GET\(request: NextRequest\)/)
+  assert.match(validationRoute, /summarizeDispatchEligibility/)
+  assert.match(validationRoute, /eq\(recoveryLeads\.companyId, company\.id\)/)
+  assert.match(validationRoute, /requirePhone: false/)
+  assert.match(dispatchRoute, /Nenhum destinatário foi enfileirado/)
+  assert.match(dispatchRoute, /missingCount/)
+})
+
+test('resumo da seleção separa IDs ausentes, sem telefone e duplicados sem expor PII', () => {
+  assert.deepEqual(summarizeDispatchEligibility([10, 11, 11, 12], [
+    { id: 10, phone: '5511999990000' },
+    { id: 11, phone: '' },
+  ]), {
+    requestedCount: 4,
+    uniqueRequestedCount: 3,
+    duplicateCount: 1,
+    eligibleCount: 1,
+    missingCount: 1,
+    noPhoneCount: 1,
+  })
 })
 
 test('worker bloqueia variáveis vazias antes da chamada Meta', () => {

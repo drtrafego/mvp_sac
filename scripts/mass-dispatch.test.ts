@@ -156,7 +156,7 @@ test('preview e enfileiramento mantêm leads pausados e excluem somente opt-out'
   assert.doesNotMatch(directRouteSource, /botPaused.*IS NOT TRUE/)
   assert.doesNotMatch(importRouteSource, /pauseState\?\.botPaused/)
   assert.doesNotMatch(directRouteSource, /sem telefone ou pausados/)
-  assert.match(directRouteSource, /sem telefone'/)
+  assert.match(directRouteSource, /sem telefone elegível/)
   assert.match(routeSource, /l\.whatsapp_consent_status IS DISTINCT FROM 'opted_out'/)
   assert.match(queueSource, /l\.whatsapp_consent_status IS DISTINCT FROM 'opted_out'/)
 })
