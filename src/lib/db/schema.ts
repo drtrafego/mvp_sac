@@ -608,6 +608,8 @@ export const massDispatchBatches = pgTable('mass_dispatch_batches', {
   trackingSource: text('tracking_source').notNull(),
   status: text('status').notNull().default('draft'),
   recipientCount: integer('recipient_count').notNull().default(0),
+  requestedCount: integer('requested_count').notNull().default(0),
+  skippedCount: integer('skipped_count').notNull().default(0),
   dispatchSource: text('dispatch_source').notNull().default('sequence'),
   templateName: text('template_name'),
   templateLanguage: text('template_language'),

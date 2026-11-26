@@ -373,6 +373,10 @@ export default function LeadsPage() {
     : selectedLeadIds.length === 1
       ? '1 destinatário selecionado'
       : `${selectedLeadIds.length} destinatários selecionados`
+  const dispatchHasBlockingEligibilityIssue = Boolean(dispatchEligibility && (dispatchEligibility.missingCount > 0 || dispatchEligibility.eligibleCount === 0))
+  const dispatchSkippedLabel = dispatchEligibility?.noPhoneCount === 1
+    ? '1 sem telefone será ignorado'
+    : `${dispatchEligibility?.noPhoneCount ?? 0} sem telefone serão ignorados`
   const dispatchPreviewLeads = useMemo(() => {
     const candidates = selectAllFilter ? leads : leads.filter(lead => selectedLeadIds.includes(lead.id))
     const source = candidates.length ? candidates : leads.slice(0, 1)
@@ -472,7 +476,7 @@ export default function LeadsPage() {
     // Once the confirmation POST has been accepted, this modal becomes a
     // receipt. Keeping this guard next to the request prevents a stale click
     // or an event replay from creating a second POST for the same composer.
-    if (dispatchStatus || dispatchEligibilityLoading || !dispatchEligibility || dispatchEligibility.eligibleCount !== dispatchEligibility.uniqueRequestedCount || !templateSelection || (!selectAllFilter && !selectedLeadIds.length) || (action === 'start' && !dispatchConfirmed)) return
+    if (dispatchStatus || dispatchEligibilityLoading || !dispatchEligibility || dispatchHasBlockingEligibilityIssue || !templateSelection || (!selectAllFilter && !selectedLeadIds.length) || (action === 'start' && !dispatchConfirmed)) return
     setCreatingDispatch(true)
     setDispatchError(null)
     setDispatchFeedback(null)
@@ -1043,17 +1047,18 @@ export default function LeadsPage() {
           {dispatchError && <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-body text-rose-300"><AlertCircle size={16} className="mt-0.5 shrink-0" />{dispatchError}</p>}
           {dispatchFeedback && <p role="status" className="flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-body text-emerald-300"><CheckCircle2 size={16} className="mt-0.5 shrink-0" />{dispatchFeedback}</p>}
           {!dispatchStatus && dispatchEligibilityLoading && <p role="status" className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3 text-micro text-cyan-100">Validando a seleção antes de permitir o disparo...</p>}
-          {!dispatchStatus && dispatchEligibility && <p role="status" className={`rounded-lg border p-3 text-micro ${dispatchEligibility.eligibleCount === dispatchEligibility.uniqueRequestedCount ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-rose-500/40 bg-rose-500/10 text-rose-200'}`}>
-            Seleção validada: {dispatchEligibility.eligibleCount} de {dispatchEligibility.uniqueRequestedCount} lead(s) têm telefone elegível.
+          {!dispatchStatus && dispatchEligibility && <p role="status" className={`rounded-lg border p-3 text-micro ${dispatchHasBlockingEligibilityIssue ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'}`}>
+            Seleção: {dispatchEligibility.uniqueRequestedCount} selecionado(s); {dispatchEligibility.eligibleCount} receberão.
             {dispatchEligibility.missingCount > 0 && ` ${dispatchEligibility.missingCount} não existem ou não pertencem a esta empresa.`}
-            {dispatchEligibility.noPhoneCount > 0 && ` ${dispatchEligibility.noPhoneCount} estão sem telefone elegível.`}
+            {dispatchEligibility.noPhoneCount > 0 && ` ${dispatchSkippedLabel} automaticamente.`}
             {dispatchEligibility.duplicateCount > 0 && ` ${dispatchEligibility.duplicateCount} seleção(ões) repetida(s).`}
-            {dispatchEligibility.eligibleCount !== dispatchEligibility.uniqueRequestedCount && ' Nenhum envio parcial será permitido; revise a seleção.'}
+            {dispatchHasBlockingEligibilityIssue && dispatchEligibility.missingCount > 0 && ' Revise a seleção antes de continuar.'}
+            {dispatchHasBlockingEligibilityIssue && dispatchEligibility.eligibleCount === 0 && ' Não há destinatários com telefone elegível.'}
           </p>}
           {!dispatchStatus && <>
             <label className="flex items-start gap-2.5 rounded-lg border border-line-subtle bg-surface-inset p-3 text-body text-fg cursor-pointer">
-              <input type="checkbox" checked={dispatchConfirmed} onChange={event => setDispatchConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4" disabled={!templateSelection || creatingDispatch || dispatchEligibilityLoading || !dispatchEligibility || dispatchEligibility.eligibleCount !== dispatchEligibility.uniqueRequestedCount} aria-describedby={dispatchValidationMessage ? 'dispatch-confirmation-reason' : undefined} />
-              <span>Confirmo a prévia e autorizo o envio para {dispatchRecipientLabel}.</span>
+              <input type="checkbox" checked={dispatchConfirmed} onChange={event => setDispatchConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4" disabled={!templateSelection || creatingDispatch || dispatchEligibilityLoading || !dispatchEligibility || dispatchHasBlockingEligibilityIssue} aria-describedby={dispatchValidationMessage ? 'dispatch-confirmation-reason' : undefined} />
+              <span aria-label={`Seleção original: ${dispatchRecipientLabel}`}>Confirmo a prévia e autorizo exatamente o envio para {dispatchEligibility?.eligibleCount ?? 0} destinatário(s) elegível(is){dispatchEligibility?.noPhoneCount ? `; ${dispatchSkippedLabel} automaticamente` : ''}.</span>
             </label>
             {!templateSelection && dispatchValidationMessage && <p id="dispatch-confirmation-reason" role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-micro text-amber-200">{dispatchValidationMessage}</p>}
           </>}
@@ -1077,7 +1082,7 @@ export default function LeadsPage() {
             </> : <>
               <Button variant="outline" onClick={() => setDispatchOpen(false)} disabled={creatingDispatch}>Cancelar</Button>
               <Button variant="outline" disabled={!templateSelection || creatingDispatch || dispatchEligibilityLoading} onClick={() => void createDispatch('save_draft')}>Salvar rascunho</Button>
-              <Button disabled={!templateSelection || !dispatchConfirmed || creatingDispatch || dispatchEligibilityLoading || !dispatchEligibility || dispatchEligibility.eligibleCount !== dispatchEligibility.uniqueRequestedCount} onClick={() => void createDispatch('start')} className="gap-2 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={15} />{creatingDispatch ? 'Iniciando disparo...' : 'Iniciar disparo'}</Button>
+              <Button disabled={!templateSelection || !dispatchConfirmed || creatingDispatch || dispatchEligibilityLoading || !dispatchEligibility || dispatchHasBlockingEligibilityIssue} onClick={() => void createDispatch('start')} className="gap-2 bg-cyan-500 text-black hover:bg-cyan-400"><Send size={15} />{creatingDispatch ? 'Iniciando disparo...' : 'Iniciar disparo'}</Button>
             </>}
           </div>
         </DialogContent>

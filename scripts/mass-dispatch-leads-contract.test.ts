@@ -86,8 +86,9 @@ test('modal vira recibo após confirmação e não mantém CTA de reenvio', () =
 test('seleção nova é validada por contagem e nunca permite disparo parcial', () => {
   assert.match(leadsPage, /openDispatchForSelection/)
   assert.match(leadsPage, /setDispatchStatus\(null\)/)
-  assert.match(leadsPage, /dispatchEligibility\.eligibleCount !== dispatchEligibility\.uniqueRequestedCount/)
-  assert.match(leadsPage, /Nenhum envio parcial será permitido/)
+  assert.match(leadsPage, /dispatchEligibility\.eligibleCount === 0/)
+  assert.match(leadsPage, /sem telefone será ignorado/)
+  assert.match(leadsPage, /autorizo exatamente o envio para/)
   assert.match(leadsPage, /\/api\/leads\/dispatch\/validate\?\$\{params\}/)
   assert.match(validationRoute, /GET\(request: NextRequest\)/)
   assert.match(validationRoute, /summarizeDispatchEligibility/)
@@ -95,6 +96,9 @@ test('seleção nova é validada por contagem e nunca permite disparo parcial', 
   assert.match(validationRoute, /requirePhone: false/)
   assert.match(dispatchRoute, /Nenhum destinatário foi enfileirado/)
   assert.match(dispatchRoute, /missingCount/)
+  assert.match(dispatchRoute, /requirePhone: false/)
+  assert.match(dispatchRoute, /rows\.filter\(row => Boolean\(row\.phone\?\.trim\(\)\)\)/)
+  assert.match(queueSource, /l\.phone IS NOT NULL/)
 })
 
 test('resumo da seleção separa IDs ausentes, sem telefone e duplicados sem expor PII', () => {
@@ -108,6 +112,39 @@ test('resumo da seleção separa IDs ausentes, sem telefone e duplicados sem exp
     eligibleCount: 1,
     missingCount: 1,
     noPhoneCount: 1,
+  })
+})
+
+test('49 com telefone e 1 sem telefone libera somente os 49 elegíveis', () => {
+  const rows = [
+    ...Array.from({ length: 49 }, (_, index) => ({ id: index + 1, phone: `551199999${String(index).padStart(4, '0')}` })),
+    { id: 50, phone: '   ' },
+  ]
+  assert.deepEqual(summarizeDispatchEligibility(rows.map(row => row.id), rows), {
+    requestedCount: 50,
+    uniqueRequestedCount: 50,
+    duplicateCount: 0,
+    eligibleCount: 49,
+    missingCount: 0,
+    noPhoneCount: 1,
+  })
+})
+
+test('todos sem telefone não criam destinatário elegível', () => {
+  assert.equal(summarizeDispatchEligibility([1, 2], [
+    { id: 1, phone: null },
+    { id: 2, phone: '' },
+  ]).eligibleCount, 0)
+})
+
+test('ID ausente/fora do tenant continua distinto de sem telefone e duplicidade não aumenta a seleção', () => {
+  assert.deepEqual(summarizeDispatchEligibility([10, 10, 99], [{ id: 10, phone: '5511999990000' }]), {
+    requestedCount: 3,
+    uniqueRequestedCount: 2,
+    duplicateCount: 1,
+    eligibleCount: 1,
+    missingCount: 1,
+    noPhoneCount: 0,
   })
 })
 

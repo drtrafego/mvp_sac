@@ -10,6 +10,7 @@ import { queueDirectTemplateMassDispatchBatch } from '@/lib/mass-dispatch'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
 import { renderTemplateVariableTextStrict, unresolvedTemplateVariableKeys, type TemplateLead } from '@/lib/lead-template-variables'
+import { summarizeDispatchEligibility } from '@/lib/mass-dispatch-eligibility'
 import { POST as runDispatchCron } from '@/app/api/cron/route'
 
 const MAX_MASS_IMPORT_ROWS = 5000
@@ -128,6 +129,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   let leadIds: number[]
+  let requestedCount = 0
+  let skippedCount = 0
   if (mode === 'ids') {
     if (!Array.isArray(input.leadIds) || input.leadIds.length === 0 || input.leadIds.length > MAX_MASS_IMPORT_ROWS || input.leadIds.some(id => !Number.isInteger(id) || id <= 0)) {
       return NextResponse.json({ error: `Selecione de 1 a ${MAX_MASS_IMPORT_ROWS} leads válidos` }, { status: 400 })
@@ -136,21 +139,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone }).from(recoveryLeads).where(and(
       eq(recoveryLeads.companyId, company.id), inArray(recoveryLeads.id, ids),
     ))
-    const knownIds = new Set(rows.map(row => row.id))
-    const missingCount = ids.filter(id => !knownIds.has(id)).length
-    const noPhoneCount = rows.filter(row => !row.phone?.trim()).length
-    if (missingCount || noPhoneCount) return NextResponse.json({
-      error: `Seleção inválida: ${missingCount} lead(s) não existem ou não pertencem à empresa e ${noPhoneCount} lead(s) estão sem telefone elegível. Nenhum destinatário foi enfileirado.`,
-      eligibility: { requestedCount: input.leadIds.length, uniqueRequestedCount: ids.length, duplicateCount: input.leadIds.length - ids.length, eligibleCount: rows.length - noPhoneCount, missingCount, noPhoneCount },
+    const eligibility = summarizeDispatchEligibility(input.leadIds as number[], rows)
+    if (eligibility.missingCount) return NextResponse.json({
+      error: `Seleção inválida: ${eligibility.missingCount} lead(s) não existem ou não pertencem à empresa. Nenhum destinatário foi enfileirado.`,
+      eligibility,
     }, { status: 400 })
-    leadIds = rows.map(row => row.id)
+    requestedCount = eligibility.uniqueRequestedCount
+    skippedCount = eligibility.noPhoneCount
+    leadIds = rows.filter(row => Boolean(row.phone?.trim())).map(row => row.id)
   } else {
     if (!input.filter || typeof input.filter !== 'object' || Array.isArray(input.filter)) return NextResponse.json({ error: 'Filtro inválido' }, { status: 400 })
-    const rows = await db.select({ id: recoveryLeads.id }).from(recoveryLeads).where(and(...filterConditions(company.id, input.filter as DispatchFilter))).limit(MAX_MASS_IMPORT_ROWS + 1)
+    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone }).from(recoveryLeads).where(and(...filterConditions(company.id, input.filter as DispatchFilter, { requirePhone: false }))).limit(MAX_MASS_IMPORT_ROWS + 1)
     if (rows.length > MAX_MASS_IMPORT_ROWS) return NextResponse.json({ error: `O filtro encontrou mais de ${MAX_MASS_IMPORT_ROWS} leads. Refine os filtros antes de criar o lote.` }, { status: 400 })
-    leadIds = rows.map(row => row.id)
+    const eligibility = summarizeDispatchEligibility(rows.map(row => row.id), rows)
+    requestedCount = eligibility.uniqueRequestedCount
+    skippedCount = eligibility.noPhoneCount
+    leadIds = rows.filter(row => Boolean(row.phone?.trim())).map(row => row.id)
   }
-  if (!leadIds.length) return NextResponse.json({ error: 'Nenhum lead elegível com telefone foi encontrado' }, { status: 409 })
+  if (!leadIds.length) return NextResponse.json({
+    error: 'Nenhum lead selecionado possui telefone elegível; leads sem telefone elegível são ignorados e nenhum destinatário foi enfileirado.',
+    eligibility: { requestedCount, uniqueRequestedCount: requestedCount, duplicateCount: 0, eligibleCount: 0, missingCount: 0, noPhoneCount: skippedCount },
+  }, { status: 409 })
 
   const templateSnapshot = buildCanonicalSnapshot(template, { headerDocument: parsedTemplate.data.templateHeaderDocument })
   if (action === 'start' && parsedTemplate.data.templateBodyText !== templateSnapshot.bodyText) {
@@ -188,6 +197,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
   const [batch] = await db.insert(massDispatchBatches).values({
     companyId: company.id, fileName: 'Seleção interna de leads', eventType: 'mass_dispatch', trackingSource: 'internal_leads', status: 'draft', recipientCount: leadIds.length,
+    requestedCount, skippedCount,
     dispatchSource: 'direct_template', templateName: template.name, templateLanguage: template.language,
     templateVariablesMap: parsedTemplate.data.templateVariablesMap,
     templateSnapshot,
@@ -197,7 +207,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   await db.insert(massDispatchRecipients).values(leadIds.map(leadId => ({ batchId: batch.id, leadId }))).onConflictDoNothing()
 
   if (action === 'save_draft') {
-    return NextResponse.json({ batchId: batch.id, status: 'draft', jobsCreated: 0, recipientCount: leadIds.length })
+    return NextResponse.json({ batchId: batch.id, status: 'draft', jobsCreated: 0, recipientCount: leadIds.length, requestedCount, skippedCount })
   }
 
   const queued = await queueDirectTemplateMassDispatchBatch(batch.id, company.id, config.metaPhoneNumberId, [{
@@ -247,5 +257,5 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     console.error('[mass-dispatch] CRON_SECRET ausente; lote ficará para o cron agendado', { batchId: batch.id })
   }
 
-  return NextResponse.json({ success: true, batchId: batch.id, status: 'queued', jobsCreated: queued.jobsCreated, recipientCount: leadIds.length, workerTriggered })
+  return NextResponse.json({ success: true, batchId: batch.id, status: 'queued', jobsCreated: queued.jobsCreated, recipientCount: leadIds.length, requestedCount, skippedCount, workerTriggered })
 }

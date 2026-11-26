@@ -19,6 +19,8 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ ba
     id: massDispatchBatches.id,
     status: massDispatchBatches.status,
     recipientCount: massDispatchBatches.recipientCount,
+    requestedCount: massDispatchBatches.requestedCount,
+    skippedCount: massDispatchBatches.skippedCount,
     templateName: massDispatchBatches.templateName,
     templateLanguage: massDispatchBatches.templateLanguage,
     createdAt: massDispatchBatches.createdAt,

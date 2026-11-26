@@ -898,6 +898,8 @@ export function ensureSchema(client: any): Promise<void> {
             ON message_jobs (mass_dispatch_batch_id, lead_id, message_id)
           `
           await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS dispatch_source text NOT NULL DEFAULT 'sequence'`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS requested_count integer NOT NULL DEFAULT 0`
+          await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS skipped_count integer NOT NULL DEFAULT 0`
           await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_name text`
           await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_language text`
           await client`ALTER TABLE mass_dispatch_batches ADD COLUMN IF NOT EXISTS template_variables_map jsonb`

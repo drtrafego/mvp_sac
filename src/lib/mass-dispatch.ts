@@ -373,6 +373,26 @@ export async function queueDirectTemplateMassDispatchBatch(
   const dailyLimit = metaDailyMessageLimit()
   return withConfirmationTransaction(async tx => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(77421, hashtext(${metaPhoneNumberId}))`)
+    // Compatibilidade com clientes antigos: um lote já criado pode conter
+    // destinatários sem telefone. Registre-os como ignorados e nunca os
+    // transforme em jobs.
+    await tx.execute(sql`
+      UPDATE mass_dispatch_batches b
+      SET requested_count = GREATEST(COALESCE(b.requested_count, 0), counts.requested_count),
+          skipped_count = GREATEST(COALESCE(b.skipped_count, 0), counts.no_phone_count),
+          updated_at = now()
+      FROM (
+        SELECT r.batch_id,
+               count(*)::int AS requested_count,
+               count(*) FILTER (WHERE l.phone IS NULL OR btrim(l.phone) = '')::int AS no_phone_count
+        FROM mass_dispatch_recipients r
+        JOIN recovery_leads l ON l.id = r.lead_id
+        JOIN mass_dispatch_batches scope ON scope.id = r.batch_id AND scope.company_id = l.company_id
+        WHERE r.batch_id = ${batchId}
+        GROUP BY r.batch_id
+      ) counts
+      WHERE b.id = counts.batch_id AND b.id = ${batchId}
+    `)
     const result = await tx.execute<{
     batch_count: number
     eligible_job_count: number
@@ -396,6 +416,8 @@ export async function queueDirectTemplateMassDispatchBatch(
         -- A pausa do agente não bloqueia lote/campanha. Opt-out continua
         -- bloqueando o envio por ser consentimento, não pausa do agente.
         WHERE l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
+          AND l.phone IS NOT NULL
+          AND btrim(l.phone) <> ''
           AND NOT EXISTS (
             SELECT 1 FROM message_jobs existing_job
             WHERE existing_job.lead_id = l.id

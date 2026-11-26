@@ -9,17 +9,21 @@ export type DispatchEligibility = {
   noPhoneCount: number
 }
 
+export function hasDispatchPhone(row: DispatchEligibilityRow): boolean {
+  return Boolean(row.phone?.trim())
+}
+
 /** Summarizes a selection without returning contact data. */
 export function summarizeDispatchEligibility(requestedIds: number[], rows: DispatchEligibilityRow[]): DispatchEligibility {
   const uniqueIds = [...new Set(requestedIds)]
   const knownIds = new Set(rows.map(row => row.id))
   const missingCount = uniqueIds.filter(id => !knownIds.has(id)).length
-  const noPhoneCount = rows.filter(row => !row.phone?.trim()).length
+  const noPhoneCount = rows.filter(row => !hasDispatchPhone(row)).length
   return {
     requestedCount: requestedIds.length,
     uniqueRequestedCount: uniqueIds.length,
     duplicateCount: requestedIds.length - uniqueIds.length,
-    eligibleCount: rows.length - noPhoneCount,
+    eligibleCount: rows.filter(hasDispatchPhone).length,
     missingCount,
     noPhoneCount,
   }
