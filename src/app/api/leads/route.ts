@@ -148,13 +148,27 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (channels.length) conditions.push(inArray(recoveryLeads.channel, channels))
   if (paymentType) conditions.push(eq(recoveryLeads.paymentType, paymentType))
 
-  // Busca textual global no banco (nome, telefone ou e-mail).
+  // Busca textual global no banco. Além dos dados de contato, inclui os campos
+  // que identificam a origem do lead no SAC (produto, evento, plataforma,
+  // origem, transação e tags). Sem isso, um lead do quiz continuava no banco e
+  // aparecia pelo filtro/tag, mas a busca literal "quiz" devolvia zero.
   if (search) {
     const pattern = `%${search}%`
     conditions.push(sql`(
       ${recoveryLeads.name} ILIKE ${pattern} OR
       ${recoveryLeads.phone} ILIKE ${pattern} OR
-      ${recoveryLeads.email} ILIKE ${pattern}
+      ${recoveryLeads.email} ILIKE ${pattern} OR
+      ${recoveryLeads.productName} ILIKE ${pattern} OR
+      ${recoveryLeads.eventType} ILIKE ${pattern} OR
+      ${recoveryLeads.platform} ILIKE ${pattern} OR
+      ${recoveryLeads.trackingSource} ILIKE ${pattern} OR
+      ${recoveryLeads.transactionId} ILIKE ${pattern} OR
+      ${recoveryLeads.notes} ILIKE ${pattern} OR
+      EXISTS (
+        SELECT 1 FROM lead_tags
+        WHERE lead_tags.lead_id = ${recoveryLeads.id}
+          AND lead_tags.tag ILIKE ${pattern}
+      )
     )`)
   }
 
