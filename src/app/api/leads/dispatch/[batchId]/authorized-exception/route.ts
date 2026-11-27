@@ -28,6 +28,27 @@ function idempotencyKey(jobId: number): string {
   return `${EXCEPTION_SCOPE}:original-job:${jobId}`
 }
 
+function exceptionMessageSnapshot(batch: {
+  templateName: string | null
+  templateLanguage: string | null
+  templateVariablesMap: unknown
+  templateSnapshot: unknown
+}) {
+  const canonical = batch.templateSnapshot as { bodyText?: unknown } | null
+  return {
+    messageType: 'template',
+    content: typeof canonical?.bodyText === 'string' ? canonical.bodyText : null,
+    mediaUrl: null,
+    caption: null,
+    buttonsJson: null,
+    templateName: batch.templateName,
+    templateLanguage: batch.templateLanguage,
+    templateVariablesMap: batch.templateVariablesMap,
+    templateSnapshot: batch.templateSnapshot,
+    source: 'quiz_isabella_authorized_exception',
+  }
+}
+
 function responseJob(job: { id: number; leadId: number | null; status: string | null; externalWamid: string | null; idempotencyKey: string | null }, phone: string) {
   return {
     jobId: job.id,
@@ -56,6 +77,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
     companyId: massDispatchBatches.companyId,
     templateName: massDispatchBatches.templateName,
     templateLanguage: massDispatchBatches.templateLanguage,
+    templateVariablesMap: massDispatchBatches.templateVariablesMap,
     templateSnapshot: massDispatchBatches.templateSnapshot,
   }).from(massDispatchBatches).where(and(
     eq(massDispatchBatches.id, QUIZ_BATCH_ID),
@@ -80,6 +102,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
     status: messageJobs.status,
     externalWamid: messageJobs.externalWamid,
     idempotencyKey: messageJobs.idempotencyKey,
+    error: messageJobs.error,
     phone: recoveryLeads.phone,
     consent: recoveryLeads.whatsappConsentStatus,
   }).from(messageJobs).innerJoin(recoveryLeads, eq(recoveryLeads.id, messageJobs.leadId)).where(and(
@@ -98,6 +121,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
     status: messageJobs.status,
     externalWamid: messageJobs.externalWamid,
     idempotencyKey: messageJobs.idempotencyKey,
+    error: messageJobs.error,
     phone: recoveryLeads.phone,
   }).from(messageJobs).innerJoin(recoveryLeads, eq(recoveryLeads.id, messageJobs.leadId)).where(and(
     eq(recoveryLeads.companyId, company.id),
@@ -122,7 +146,17 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
     const key = idempotencyKey(original.jobId)
     const existingJob = existingByKey.get(key)
     if (existingJob) {
-      results.push(responseJob(existingJob, existingJob.phone))
+      if (existingJob.status === 'failed' && existingJob.error === 'Snapshot de lote inválido: template obrigatório com nome' && !existingJob.externalWamid) {
+        await db.update(messageJobs).set({
+          status: 'pending',
+          error: null,
+          processingStartedAt: null,
+          messageSnapshot: exceptionMessageSnapshot(batch),
+        }).where(and(eq(messageJobs.id, existingJob.id), eq(messageJobs.status, 'failed'), eq(messageJobs.idempotencyKey, key)))
+        results.push(responseJob({ ...existingJob, status: 'pending' }, existingJob.phone))
+      } else {
+        results.push(responseJob(existingJob, existingJob.phone))
+      }
       continue
     }
     if (original.status !== 'cancelled') {
@@ -177,7 +211,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
       jobType: ISABELLA_QUIZ_AUTHORIZED_EXCEPTION_JOB_TYPE,
       idempotencyKey: key,
       massDispatchBatchId: null,
-      messageSnapshot: batch.templateSnapshot,
+      messageSnapshot: exceptionMessageSnapshot(batch),
       messageOrder: null,
     }).onConflictDoNothing({ target: messageJobs.idempotencyKey }).returning({
       id: messageJobs.id,
