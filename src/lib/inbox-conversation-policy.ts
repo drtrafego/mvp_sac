@@ -24,6 +24,7 @@ export function conversationVisibilityCondition(companyId: number): SQL {
       SELECT inbox_by_phone.phone, coalesce(inbox_by_phone.channel, 'whatsapp')
       FROM whatsapp_messages inbox_by_phone
       WHERE inbox_by_phone.company_id = ${companyId}
+        AND inbox_by_phone.lead_id IS NULL
         AND inbox_by_phone.phone IS NOT NULL
     )
     OR (
@@ -35,6 +36,7 @@ export function conversationVisibilityCondition(companyId: number): SQL {
                coalesce(inbox_by_normalized_phone.channel, 'whatsapp')
         FROM whatsapp_messages inbox_by_normalized_phone
         WHERE inbox_by_normalized_phone.company_id = ${companyId}
+          AND inbox_by_normalized_phone.lead_id IS NULL
           AND inbox_by_normalized_phone.phone IS NOT NULL
       )
     )

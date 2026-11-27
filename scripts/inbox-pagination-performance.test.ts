@@ -93,6 +93,69 @@ async function main() {
       from recovery_leads where company_id = $1
     `, [company.id])
 
+    // Uma mensagem vinculada a outro lead com o mesmo telefone não deve tornar
+    // o lead duplicado uma conversa nem contaminar sua posição no Inbox.
+    const [duplicateLead] = await client`
+      select id, phone
+      from recovery_leads
+      where company_id = ${company.id}
+      order by id
+      offset 10 limit 1
+    `
+    const [duplicateMessageOwner] = await client`
+      select id
+      from recovery_leads
+      where company_id = ${company.id}
+      order by id
+      offset 11 limit 1
+    `
+    await client`
+      update recovery_leads
+      set phone = ${duplicateMessageOwner.id}::text
+      where id = ${duplicateLead.id}
+    `
+    await client`
+      update whatsapp_messages
+      set phone = ${duplicateMessageOwner.id}::text
+      where lead_id = ${duplicateMessageOwner.id}
+    `
+    const duplicateProbe = await import('../src/lib/inbox-conversations')
+    const duplicatePage = await duplicateProbe.loadInboxPage({ companyId: company.id, limit: TOTAL })
+    assert.equal(
+      duplicatePage.conversations.some(conversation => conversation.id === duplicateLead.id),
+      false,
+      'lead duplicado não deve herdar a mensagem vinculada a outro lead pelo telefone'
+    )
+
+    // Mensagem sem lead_id pode chegar com formatação de telefone diferente;
+    // ela precisa ser a prévia e o horário da mesma conversa, sem divergir da
+    // chave usada para ordenar a página.
+    const [formattedLead] = await testDb.insert(schema.recoveryLeads).values({
+      companyId: company.id,
+      phone: '+55 (11) 90000-4242',
+      name: 'Lead telefone formatado',
+      eventType: 'atendimento',
+      status: 'in_conversation',
+      channel: 'whatsapp',
+      createdAt: new Date('2026-09-01T00:00:00Z'),
+      updatedAt: new Date('2026-09-01T00:00:00Z'),
+      lastActionAt: new Date('2026-09-01T00:00:00Z'),
+    }).returning()
+    const formattedAt = new Date('2026-09-03T00:00:00Z')
+    await testDb.insert(schema.whatsappMessages).values({
+      companyId: company.id,
+      leadId: null,
+      phone: '5511900004242',
+      direction: 'inbound',
+      content: 'mensagem sem lead com telefone normalizado',
+      createdAt: formattedAt,
+    })
+    const formattedPage = await duplicateProbe.loadInboxPage({ companyId: company.id, limit: TOTAL + 1 })
+    const formattedConversation = formattedPage.conversations.find(conversation => conversation.id === formattedLead.id)
+    assert.ok(formattedConversation, 'lead com mensagem sem lead_id deveria entrar no Inbox')
+    assert.equal(formattedConversation.lastMessage, 'mensagem sem lead com telefone normalizado')
+    assert.equal(formattedConversation.lastMessageAt, formattedAt.toISOString())
+
     // Um telefone repetido entre dois leads não pode fazer a atividade de um
     // lead aparecer no cursor do outro. Mensagens sem lead_id continuam sendo
     // resolvidas por telefone; mensagens já vinculadas pertencem só ao lead.

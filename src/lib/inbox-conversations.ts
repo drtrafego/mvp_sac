@@ -225,6 +225,11 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
 
   const leadIds = leads.map(lead => lead.id)
   const phones = leads.map(lead => lead.phone).filter((phone): phone is string => Boolean(phone?.trim()))
+  const normalizedPhones = [...new Set(phones.map(normalizePhoneDigits).filter(Boolean))]
+  const normalizedMessagePhone = sql<string>`regexp_replace(${whatsappMessages.phone}, '\\D', '', 'g')`
+  const normalizedPhoneFilter = normalizedPhones.length > 0
+    ? sql`${normalizedMessagePhone} IN (${sql.join(normalizedPhones.map(phone => sql`${phone}`), sql`, `)})`
+    : sql`false`
 
   const [lastMessageByLeadId, lastMessageByPhone, unreadRows] = await Promise.all([
     db
@@ -239,8 +244,9 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
       .orderBy(whatsappMessages.leadId, desc(whatsappMessages.createdAt)),
     phones.length > 0
       ? db
-          .selectDistinctOn([whatsappMessages.phone], {
+          .selectDistinctOn([normalizedMessagePhone], {
             phone: whatsappMessages.phone,
+            normalizedPhone: normalizedMessagePhone,
             direction: whatsappMessages.direction,
             content: whatsappMessages.content,
             createdAt: whatsappMessages.createdAt,
@@ -248,10 +254,10 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
           .from(whatsappMessages)
           .where(and(
             eq(whatsappMessages.companyId, options.companyId),
-            inArray(whatsappMessages.phone, phones),
+            normalizedPhoneFilter,
             isNull(whatsappMessages.leadId),
           ))
-          .orderBy(whatsappMessages.phone, desc(whatsappMessages.createdAt))
+          .orderBy(normalizedMessagePhone, desc(whatsappMessages.createdAt))
       : Promise.resolve([]),
     db
       .select({ leadId: whatsappMessages.leadId, count: sql<number>`count(*)::int` })
@@ -265,7 +271,7 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
   ])
 
   const msgByLead = new Map(lastMessageByLeadId.flatMap(message => message.leadId == null ? [] : [[message.leadId, message] as const]))
-  const msgByPhone = new Map(lastMessageByPhone.flatMap(message => message.phone ? [[message.phone, message] as const] : []))
+  const msgByPhone = new Map(lastMessageByPhone.flatMap(message => message.normalizedPhone ? [[message.normalizedPhone, message] as const] : []))
   const unreadCountByLead = new Map(unreadRows.flatMap(row => row.leadId == null ? [] : [[row.leadId, row.count] as const]))
 
   // SAC Lote 1: Se a busca inclui termo textual, localizar a mensagem correspondente para cada conversa
@@ -302,7 +308,8 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
   }
 
   const conversations = leads.map((lead): ConversationSummary => {
-    const lastMessage = msgByLead.get(lead.id) || msgByPhone.get(lead.phone)
+    const lastMessage = msgByLead.get(lead.id) || msgByPhone.get(normalizePhoneDigits(lead.phone))
+    const activityAtIso = lead.activityAt instanceof Date ? lead.activityAt.toISOString() : String(lead.activityAt ?? '')
     return {
       id: lead.id,
       phone: lead.phone,
@@ -324,7 +331,10 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
       createdAt: lead.createdAt?.toISOString() ?? null,
       lastMessage: lastMessage?.content ?? null,
       lastDirection: lastMessage?.direction ?? null,
-      lastMessageAt: lastMessage?.createdAt?.toISOString() ?? lead.updatedAt?.toISOString() ?? null,
+      // Keep the displayed timestamp identical to the ordering/cursor key.
+      // Otherwise updatedAt could make a card look newer than its position
+      // when the lead has no directly linked message.
+      lastMessageAt: activityAtIso || lastMessage?.createdAt?.toISOString() || lead.updatedAt?.toISOString() || null,
       lastInboundAt: lastMessage?.direction === 'inbound' ? lastMessage.createdAt?.toISOString() ?? null : null,
       lastOutboundAt: lastMessage?.direction === 'outbound' ? lastMessage.createdAt?.toISOString() ?? null : null,
       unread: unreadCountByLead.get(lead.id) ?? 0,
