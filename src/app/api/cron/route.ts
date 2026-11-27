@@ -27,6 +27,11 @@ import { formatDateSaoPaulo, isabelaFirstName, isabelaOrderReference } from '@/l
 import { hasDocumentHeader, renderMetaTemplate, renderMetaTemplateBody, templateHeaderDocument as snapshotTemplateHeaderDocument } from '@/lib/meta-template-utils'
 
 const DEFAULT_PROCESSING_LEASE_TIMEOUT_MS = 5 * 60_000
+export const ISABELLA_QUIZ_AUTHORIZED_EXCEPTION_JOB_TYPE = 'isabella_quiz_authorized_exception'
+
+function isAuthorizedQuizExceptionJob(job: { jobType?: string | null }): boolean {
+  return job.jobType === ISABELLA_QUIZ_AUTHORIZED_EXCEPTION_JOB_TYPE
+}
 
 function processingLeaseTimeoutMs(): number {
   const configured = Number.parseInt(process.env.MASS_DISPATCH_PROCESSING_LEASE_TIMEOUT_MS ?? '', 10)
@@ -180,11 +185,14 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const rawTargetBatchId = new URL(req.url).searchParams.get('batch_id')
+  const searchParams = new URL(req.url).searchParams
+  const rawTargetBatchId = searchParams.get('batch_id')
   const targetBatchId = rawTargetBatchId == null ? null : Number(rawTargetBatchId)
   if (targetBatchId !== null && (!Number.isInteger(targetBatchId) || targetBatchId <= 0)) {
     return NextResponse.json({ error: 'batch_id inválido' }, { status: 400 })
   }
+
+  const authorizedQuizExceptionOnly = searchParams.get('authorized_quiz_exception') === 'isabella_batch_35'
 
   const lockClient = await tryAcquireCronDispatchLock()
   if (!lockClient) {
@@ -192,13 +200,13 @@ async function dispatchPendingJobs(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    return await runDispatchPendingJobs(lockClient, targetBatchId)
+    return await runDispatchPendingJobs(lockClient, targetBatchId, authorizedQuizExceptionOnly)
   } finally {
     await releaseCronDispatchLock(lockClient)
   }
 }
 
-async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | null = null): Promise<NextResponse> {
+async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | null = null, authorizedQuizExceptionOnly = false): Promise<NextResponse> {
   // O cliente principal usa neon-http, que não implementa transactions.
   // Este cliente postgres-js é a mesma conexão que mantém o advisory lock,
   // então a seleção e a marcação dos jobs continuam atômicas e serializadas.
@@ -216,7 +224,9 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
       eq(messageJobs.status, 'processing'),
       lte(messageJobs.processingStartedAt, staleProcessingBefore),
     ]
-    if (targetBatchId !== null) staleConditions.push(eq(messageJobs.massDispatchBatchId, targetBatchId))
+    if (authorizedQuizExceptionOnly) {
+      staleConditions.push(and(eq(messageJobs.jobType, ISABELLA_QUIZ_AUTHORIZED_EXCEPTION_JOB_TYPE), eq(companies.slug, 'isabela-fanini'))!)
+    } else if (targetBatchId !== null) staleConditions.push(eq(messageJobs.massDispatchBatchId, targetBatchId))
     const stale = await tx.update(messageJobs).set({
       status: 'failed',
       error: 'Job ficou em processing além do lease; revisão manual necessária para evitar reenvio duplicado',
@@ -235,7 +245,9 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
           AND c.cooldown_until > ${nowIso}
       )`,
     ]
-    if (targetBatchId !== null) pendingConditions.push(eq(messageJobs.massDispatchBatchId, targetBatchId))
+    if (authorizedQuizExceptionOnly) {
+      pendingConditions.push(and(eq(messageJobs.jobType, ISABELLA_QUIZ_AUTHORIZED_EXCEPTION_JOB_TYPE), eq(companies.slug, 'isabela-fanini'))!)
+    } else if (targetBatchId !== null) pendingConditions.push(eq(messageJobs.massDispatchBatchId, targetBatchId))
     const rows = await tx
       .select({
         job: messageJobs,
@@ -437,7 +449,8 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
 
       // Jobs de template direto em lote carregam o conteúdo no snapshot
       // imutável e, por definição, não têm message_id de sequência.
-      if (!job.leadId || (!job.messageId && !job.upsellContent && job.massDispatchBatchId == null)) {
+      const authorizedQuizException = isAuthorizedQuizExceptionJob(job)
+      if (!job.leadId || (!job.messageId && !job.upsellContent && job.massDispatchBatchId == null && !authorizedQuizException)) {
         await db.update(messageJobs).set({ status: 'failed', error: 'Missing lead or message', processingStartedAt: null }).where(eq(messageJobs.id, job.id))
         failed++
         continue
@@ -497,22 +510,44 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
 
       // Barreira de defesa do disparo em massa: uma alteração de consentimento
       // entre a seleção e o envio cancela apenas o job atual e deixa auditoria.
-      if (job.massDispatchBatchId != null && lead.whatsappConsentStatus !== 'opted_in') {
+      let quizExceptionAuthorized = false
+      if (authorizedQuizException && companySlug === 'isabela-fanini' && job.idempotencyKey) {
+        const [authorization] = await db
+          .select({ id: schema.sacAuditEvents.id })
+          .from(schema.sacAuditEvents)
+          .where(and(
+            eq(schema.sacAuditEvents.companyId, companyId),
+            eq(schema.sacAuditEvents.leadId, lead.id),
+            eq(schema.sacAuditEvents.type, 'mass_dispatch_exception_authorized'),
+            eq(schema.sacAuditEvents.referenceType, 'quiz_isabella_batch_35_original_job'),
+            eq(schema.sacAuditEvents.referenceId, job.idempotencyKey),
+          ))
+          .limit(1)
+        quizExceptionAuthorized = Boolean(authorization)
+      }
+
+      if ((job.massDispatchBatchId != null && lead.whatsappConsentStatus !== 'opted_in')
+        || (authorizedQuizException && !quizExceptionAuthorized)) {
         await db.update(messageJobs).set({
           status: 'cancelled',
-          error: 'Disparo em massa bloqueado: consentimento de WhatsApp não está opted_in',
+          error: authorizedQuizException
+            ? 'Exceção do Quiz Isabella sem autorização auditada'
+            : 'Disparo em massa bloqueado: consentimento de WhatsApp não está opted_in',
           processingStartedAt: null,
         }).where(eq(messageJobs.id, job.id))
         await db.insert(schema.sacAuditEvents).values({
           companyId,
           leadId: lead.id,
-          type: 'mass_dispatch_blocked',
+          type: authorizedQuizException ? 'mass_dispatch_exception_blocked' : 'mass_dispatch_blocked',
           actorType: 'system',
-          actorId: 'mass_dispatch_consent_gate',
+          actorId: authorizedQuizException ? 'quiz_isabella_exception_gate' : 'mass_dispatch_consent_gate',
           actorName: 'SAC disparo em massa',
           referenceType: 'message_job',
           referenceId: String(job.id),
-          payload: { reason: 'whatsapp_consent_not_opted_in', consentStatus: lead.whatsappConsentStatus },
+          payload: {
+            reason: authorizedQuizException ? 'missing_audited_exception' : 'whatsapp_consent_not_opted_in',
+            consentStatus: lead.whatsappConsentStatus,
+          },
         }).catch(() => {})
         continue
       }
@@ -740,7 +775,7 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
       }
 
       let message: MessageSnapshot | undefined
-      if (job.massDispatchBatchId != null) {
+      if (job.massDispatchBatchId != null || authorizedQuizException) {
         // Segurança central do disparo em massa: nunca reler o template vivo.
         // Jobs legados sem snapshot falham fechados em vez de enviar conteúdo
         // que o usuário não aprovou no preview.
@@ -760,13 +795,13 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
       }
 
       if (!message) {
-        const error = job.massDispatchBatchId != null ? 'Missing immutable message snapshot' : 'Message not found'
+        const error = job.massDispatchBatchId != null || authorizedQuizException ? 'Missing immutable message snapshot' : 'Message not found'
         await db.update(messageJobs).set({ status: 'failed', error, processingStartedAt: null }).where(eq(messageJobs.id, job.id))
         failed++
         continue
       }
 
-      if (job.massDispatchBatchId != null && (
+      if ((job.massDispatchBatchId != null || authorizedQuizException) && (
         message.messageType !== 'template' || !message.templateName?.trim()
       )) {
         await db.update(messageJobs).set({
@@ -817,6 +852,43 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
             referenceType: 'message_job',
             referenceId: String(job.id),
             payload: { reason: 'template_not_approved_or_not_explicit', jobType: job.jobType },
+          }).catch(() => {})
+          continue
+        }
+      }
+
+      if (authorizedQuizException) {
+        const [approvedTemplate] = await db
+          .select({ name: schema.metaMessageTemplates.name, language: schema.metaMessageTemplates.language, status: schema.metaMessageTemplates.status, category: schema.metaMessageTemplates.category })
+          .from(schema.metaMessageTemplates)
+          .where(and(
+            eq(schema.metaMessageTemplates.companyId, companyId),
+            eq(schema.metaMessageTemplates.name, 'coringa_bela_contexto_atendimento_v2'),
+            eq(schema.metaMessageTemplates.language, 'pt_BR'),
+          ))
+          .limit(1)
+        if (
+          message.messageType !== 'template'
+          || message.templateName !== 'coringa_bela_contexto_atendimento_v2'
+          || (message.templateLanguage ?? 'pt_BR') !== 'pt_BR'
+          || approvedTemplate?.status !== 'APPROVED'
+          || approvedTemplate.category !== 'UTILITY'
+        ) {
+          await db.update(messageJobs).set({
+            status: 'cancelled',
+            error: 'Exceção do Quiz Isabella bloqueada: template coringa não está APPROVED/UTILITY',
+            processingStartedAt: null,
+          }).where(eq(messageJobs.id, job.id))
+          await db.insert(schema.sacAuditEvents).values({
+            companyId,
+            leadId: lead.id,
+            type: 'mass_dispatch_exception_blocked',
+            actorType: 'system',
+            actorId: 'quiz_isabella_template_gate',
+            actorName: 'SAC Quiz Isabella',
+            referenceType: 'message_job',
+            referenceId: String(job.id),
+            payload: { reason: 'quiz_template_not_approved_utility', jobType: job.jobType },
           }).catch(() => {})
           continue
         }
@@ -892,10 +964,11 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
       let templateHeaderDocument: { link: string; filename: string } | undefined
       if (msgType === 'template') {
         let templateSnapshot = message.templateSnapshot
-        if (!templateSnapshot && job.massDispatchBatchId != null) {
+        const snapshotBatchId = job.massDispatchBatchId ?? (authorizedQuizException ? 35 : null)
+        if (!templateSnapshot && snapshotBatchId != null) {
           const [batch] = await db.select({ templateSnapshot: massDispatchBatches.templateSnapshot })
             .from(massDispatchBatches)
-            .where(eq(massDispatchBatches.id, job.massDispatchBatchId))
+            .where(eq(massDispatchBatches.id, snapshotBatchId))
             .limit(1)
           templateSnapshot = batch?.templateSnapshot
         }
@@ -915,7 +988,7 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
         }
 
         let rendered = renderMetaTemplate(templateSnapshotComponents(templateSnapshot), templateVariableValues, templateVariableNames)
-        if (!rendered.complete && job.massDispatchBatchId == null && message.templateName) {
+        if (!rendered.complete && job.massDispatchBatchId == null && !authorizedQuizException && message.templateName) {
           const [approvedTemplate] = await db.select({ components: schema.metaMessageTemplates.components })
             .from(schema.metaMessageTemplates)
             .where(and(
@@ -1032,7 +1105,7 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
   }
 
   // SAC Lote 1: Avaliar regras internas de pendência (retorno vencido, transbordo sem dono, etapa sem retorno)
-  if (targetBatchId === null) {
+  if (targetBatchId === null && !authorizedQuizExceptionOnly) {
     try {
       const activeCompanies = await db.select({ id: companies.id }).from(companies)
       for (const c of activeCompanies) {
