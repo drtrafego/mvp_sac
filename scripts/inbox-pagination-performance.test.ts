@@ -93,6 +93,28 @@ async function main() {
       from recovery_leads where company_id = $1
     `, [company.id])
 
+    // Um telefone repetido entre dois leads não pode fazer a atividade de um
+    // lead aparecer no cursor do outro. Mensagens sem lead_id continuam sendo
+    // resolvidas por telefone; mensagens já vinculadas pertencem só ao lead.
+    const [phoneSource] = await client`
+      select id, phone
+      from recovery_leads
+      where company_id = ${company.id}
+      order by id
+      offset 100 limit 1
+    `
+    const [phoneDuplicate] = await client`
+      select id
+      from recovery_leads
+      where company_id = ${company.id}
+      order by id
+      offset 2_100 limit 1
+    `
+    await client`
+      update recovery_leads
+      set phone = ${phoneSource.phone}
+      where id = ${phoneDuplicate.id}
+    `
     const { loadInboxPage, INBOX_PAGE_SIZE } = await import('../src/lib/inbox-conversations')
 
     await test('primeiro lote é pequeno e rápido mesmo com milhares de conversas', async () => {
@@ -110,7 +132,10 @@ async function main() {
     await test('cursor percorre tudo sem teto, duplicação ou lacuna', async () => {
       const ids: number[] = []
       let cursor: string | null = null
+      let pageCount = 0
       do {
+        pageCount += 1
+        assert.ok(pageCount <= 100, `cursor não avançou após ${pageCount} páginas`)
         const page = await loadInboxPage({ companyId: company.id, cursor })
         ids.push(...page.conversations.map(conversation => conversation.id))
         cursor = page.nextCursor

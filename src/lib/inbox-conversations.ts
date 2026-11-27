@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, not, or, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, not, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { recoveryLeads, whatsappMessages } from '@/lib/db/schema'
 import { channelWhereCondition, normalizePhoneDigits } from '@/lib/inbox-channel-filter'
@@ -101,14 +101,25 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
   // A lead can retain an old lastActionAt from its creation or a CRM action.
   // The inbox must rank by the latest real message first, then fall back to
   // lead activity for contacts that have no message timestamp.
+  // Keep the outer lead columns qualified inside this correlated expression.
+  // Drizzle renders interpolated columns without their table qualifier in a
+  // SELECT projection; that makes the subquery accidentally correlate to
+  // inbox_activity itself and returns the global newest timestamp. The
+  // qualified identifiers keep SELECT, ORDER BY and cursor predicates on the
+  // same lead row.
+  const leadIdColumn = sql.raw('\"recovery_leads\".\"id\"')
+  const leadPhoneColumn = sql.raw('\"recovery_leads\".\"phone\"')
   const activityAt = sql<Date>`COALESCE(
     (
       SELECT MAX(inbox_activity.created_at)
       FROM whatsapp_messages inbox_activity
       WHERE inbox_activity.company_id = ${options.companyId}
         AND (
-          inbox_activity.lead_id = ${recoveryLeads.id}
-          OR regexp_replace(inbox_activity.phone, '\\D', '', 'g') = regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g')
+          inbox_activity.lead_id = ${leadIdColumn}
+          OR (
+            inbox_activity.lead_id IS NULL
+            AND regexp_replace(inbox_activity.phone, '\\D', '', 'g') = regexp_replace(${leadPhoneColumn}, '\\D', '', 'g')
+          )
         )
     ),
     ${recoveryLeads.lastActionAt},
@@ -235,7 +246,11 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
             createdAt: whatsappMessages.createdAt,
           })
           .from(whatsappMessages)
-          .where(and(eq(whatsappMessages.companyId, options.companyId), inArray(whatsappMessages.phone, phones)))
+          .where(and(
+            eq(whatsappMessages.companyId, options.companyId),
+            inArray(whatsappMessages.phone, phones),
+            isNull(whatsappMessages.leadId),
+          ))
           .orderBy(whatsappMessages.phone, desc(whatsappMessages.createdAt))
       : Promise.resolve([]),
     db
