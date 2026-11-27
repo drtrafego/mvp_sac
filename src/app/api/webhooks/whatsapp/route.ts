@@ -10,7 +10,7 @@ import { extractAudioMedia } from '@/lib/whatsapp/audio-media'
 import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { db } from '@/lib/db'
-import { whatsappMessages, recoveryLeads, settings, messageJobs, sacAuditEvents, companies } from '@/lib/db/schema'
+import { whatsappMessages, recoveryLeads, settings, messageJobs, sacAuditEvents, companies, leadTags } from '@/lib/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { checkWebhookToken } from '@/lib/webhook-auth'
 import { markLeadContacted } from '@/lib/leads'
@@ -377,6 +377,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // Opt-out é persistente por telefone/empresa. A atualização cobre todos
       // os eventos de checkout do mesmo contato e cancela a fila antes de
       // qualquer nova tentativa do cron.
+      const matchingLeads = await db.select({ id: recoveryLeads.id })
+        .from(recoveryLeads)
+        .where(and(
+          eq(recoveryLeads.companyId, companyId),
+          sql`regexp_replace(${recoveryLeads.phone}, '[^0-9]', '', 'g') = ${phone}`,
+        ))
+      const matchingLeadIds = matchingLeads.map(row => row.id)
       await db.update(recoveryLeads).set({
         whatsappConsentStatus: 'opted_out',
         whatsappConsentAt: new Date(),
@@ -385,7 +392,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         botPausedBy: 'optout_whatsapp',
         botControlVersion: sql`coalesce(${recoveryLeads.botControlVersion}, 0) + 1`,
         updatedAt: new Date(),
-      }).where(and(eq(recoveryLeads.companyId, companyId), eq(recoveryLeads.phone, phone)))
+      }).where(and(
+        eq(recoveryLeads.companyId, companyId),
+        sql`regexp_replace(${recoveryLeads.phone}, '[^0-9]', '', 'g') = ${phone}`,
+      ))
+      if (matchingLeadIds.length > 0) {
+        await db.insert(leadTags).values(matchingLeadIds.map(leadId => ({
+          leadId,
+          tag: 'naoenviar',
+          createdBy: 'optout_whatsapp',
+        }))).onConflictDoNothing()
+      }
       await db.execute(sql`
         UPDATE message_jobs
         SET status = 'cancelled',
@@ -393,7 +410,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             processing_started_at = NULL
         WHERE lead_id IN (
           SELECT id FROM recovery_leads
-          WHERE company_id = ${companyId} AND phone = ${phone}
+          WHERE company_id = ${companyId}
+            AND regexp_replace(phone, '[^0-9]', '', 'g') = ${phone}
         )
           AND status IN ('pending', 'processing')
       `)
