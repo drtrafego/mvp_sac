@@ -21,7 +21,6 @@ test('reposição e paginação preservam a ordem SQL dentro do mesmo milissegun
   const next = [head[1], card(7, '123400'), card(9, '123100')]
   assert.deepEqual(ids(mergeInboxPage(head, next, 'append')), [2, 4, 7, 9])
 })
-
 test('polling promove o cartão atualizado, insere o novo e conserva o restante sem duplicar', () => {
   const current = [card(2, '123900'), card(4, '123500'), card(9, '123100')]
   const updated = { ...card(9, '123990'), lastMessage: 'nova' }
@@ -67,4 +66,3 @@ test('cursor do loader real conserva microssegundos e desempata timestamps idên
     await fixture.close()
   }
 })
-
