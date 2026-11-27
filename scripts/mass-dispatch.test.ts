@@ -185,6 +185,8 @@ test('opt-out de qualquer empresa e snapshot de lote incompleto são bloqueados'
   assert.match(webhookSource, /if \(optOutRequested \|\| textOptOut\)/)
   assert.match(webhookSource, /type === 'button'/)
   assert.match(webhookSource, /isWhatsAppOptOutExactText\(content\)/)
+  assert.match(webhookSource, /tag: 'naoenviar'/)
+  assert.match(webhookSource, /regexp_replace\(\$\{recoveryLeads\.phone\}/)
   assert.match(webhookSource, /slug === 'isabela-fanini'/)
   assert.match(cronSource, /Snapshot de lote inválido: template obrigatório com nome/)
   assert.match(cronSource, /message\.messageType !== 'template'/)

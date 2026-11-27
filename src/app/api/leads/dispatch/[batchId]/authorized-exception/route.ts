@@ -182,8 +182,8 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
       skipped.push({ jobId: original.jobId, reason: 'original_job_has_wamid', hasWamid: true })
       continue
     }
-    if (original.consent === 'opted_out') {
-      skipped.push({ jobId: original.jobId, reason: 'opted_out' })
+    if (original.consent !== 'opted_in') {
+      skipped.push({ jobId: original.jobId, reason: 'consent_not_opted_in', consent: original.consent })
       continue
     }
     const normalizedPhone = phoneDigits(original.phone)

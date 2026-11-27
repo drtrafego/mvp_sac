@@ -100,6 +100,7 @@ test('Quiz Isabella: exceção fixa só aceita falha Meta comprovada e deduplica
 
   assert.match(routeSource, /const FAILED_JOB_IDS = \[174, 183, 186, 188, 190, 191\]/)
   assert.match(routeSource, /original\.status === 'sent' && original\.deliveryStatus === 'failed' && Boolean\(original\.externalWamid\)/)
+  assert.match(routeSource, /original\.consent !== 'opted_in'/)
   assert.match(routeSource, /duplicate_phone_in_exception_scope/)
   assert.match(routeSource, /failedOriginalWamids/)
   assert.match(routeSource, /rejectedLeaseJobs: 25/)
