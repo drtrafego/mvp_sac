@@ -1910,14 +1910,14 @@ export default function ConfiguracoesPage() {
         </div>
 
         <div className="space-y-1.5">
-          <Label>Token de Acesso do Instagram (Meta System User Token)</Label>
+          <Label>Token de Acesso do Instagram (Instagram Login / IGAA)</Label>
           <SecretInput
             value={form.instagramAccessToken}
             onChange={v => set('instagramAccessToken', v)}
-            placeholder="EAAxxxxxxx..."
+            placeholder="IGAAxxxxxxx..."
           />
           <p className="text-micro text-fg-subtle max-w-[var(--w-form)]">
-            Token próprio do Instagram com as permissões de mensagens e dados básicos da API do Instagram. Se não preenchido, usa o Access Token geral da Meta.
+            Use o token emitido pela configuração da API com login empresarial no Instagram do app, com as permissões de mensagens e comentários necessárias. Este campo aceita o token IGAA do Instagram Login; não use App Access Token, token de Página, App Secret ou Verify Token. O SAC envia por graph.instagram.com.
           </p>
         </div>
 
