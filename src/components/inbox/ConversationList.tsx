@@ -35,20 +35,12 @@ import {
 import { matchesInboxSourceFilter } from '@/lib/inbox-source-filter'
 import { isInstagramDelivery } from '@/lib/lead-delivery-channel'
 import type { ConversationSummary, InboxPage } from '@/lib/inbox-conversations'
-import { inboxClientErrorMessage, readInboxResponse } from '@/lib/inbox-client'
+import { inboxClientErrorMessage, mergeInboxPage, readInboxResponse } from '@/lib/inbox-client'
 import type { ActiveConnections } from '@/components/layout/sidebar'
 export type { ConversationSummary } from '@/lib/inbox-conversations'
 
 const CONVERSATION_LIST_POLL_MS = 15_000
 const CONVERSATION_COUNTS_POLL_MS = 30_000
-
-function sortConversations(conversations: ConversationSummary[]): ConversationSummary[] {
-  return [...conversations].sort((a, b) => {
-    const at = a.lastMessageAt || a.createdAt || ''
-    const bt = b.lastMessageAt || b.createdAt || ''
-    return new Date(bt).getTime() - new Date(at).getTime() || b.id - a.id
-  })
-}
 
 function formatMessageTimestamp(dateStr: string | null | undefined): { time: string; full: string; relative: string } {
   if (!dateStr) return { time: '', full: '', relative: '' }
@@ -252,15 +244,8 @@ export function ConversationList({
         if (requestId !== requestSequence.current) return
         const data: InboxPage = await readInboxResponse(res)
         setLoadedSearch(debouncedSearch)
-        setConvs(current => {
-          if (!append && !merge) return sortConversations(data.conversations)
-          const incomingIds = new Set(data.conversations.map(conversation => conversation.id))
-          const currentIds = new Set(current.map(conversation => conversation.id))
-          const merged = merge
-            ? [...data.conversations, ...current.filter(conversation => !incomingIds.has(conversation.id))]
-            : [...current, ...data.conversations.filter(conversation => !currentIds.has(conversation.id))]
-          return sortConversations(merged)
-        })
+        const mode = append ? 'append' : merge ? 'poll' : 'replace'
+        setConvs(current => mergeInboxPage(current, data.conversations, mode))
         if (!merge) {
           setNextCursor(data.nextCursor)
           setHasMore(data.hasMore)

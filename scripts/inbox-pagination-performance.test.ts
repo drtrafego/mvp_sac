@@ -96,14 +96,14 @@ async function main() {
     // Uma mensagem vinculada a outro lead com o mesmo telefone não deve tornar
     // o lead duplicado uma conversa nem contaminar sua posição no Inbox.
     const [duplicateLead] = await client`
-      select id, phone
+      select id
       from recovery_leads
       where company_id = ${company.id}
       order by id
       offset 10 limit 1
     `
     const [duplicateMessageOwner] = await client`
-      select id
+      select id, phone
       from recovery_leads
       where company_id = ${company.id}
       order by id
@@ -111,16 +111,16 @@ async function main() {
     `
     await client`
       update recovery_leads
-      set phone = ${duplicateMessageOwner.id}::text
+      set phone = ${duplicateMessageOwner.phone}, name = 'Duplicata sem histórico'
       where id = ${duplicateLead.id}
     `
     await client`
       update whatsapp_messages
-      set phone = ${duplicateMessageOwner.id}::text
-      where lead_id = ${duplicateMessageOwner.id}
+      set phone = ${duplicateMessageOwner.phone}, lead_id = ${duplicateMessageOwner.id}
+      where lead_id = ${duplicateLead.id}
     `
     const duplicateProbe = await import('../src/lib/inbox-conversations')
-    const duplicatePage = await duplicateProbe.loadInboxPage({ companyId: company.id, limit: TOTAL })
+    const duplicatePage = await duplicateProbe.loadInboxPage({ companyId: company.id, query: 'Duplicata sem histórico' })
     assert.equal(
       duplicatePage.conversations.some(conversation => conversation.id === duplicateLead.id),
       false,

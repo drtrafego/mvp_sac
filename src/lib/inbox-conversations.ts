@@ -212,7 +212,10 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
       createdAt: recoveryLeads.createdAt,
       updatedAt: recoveryLeads.updatedAt,
       miningTags: recoveryLeads.miningTags,
-      activityAt,
+      // Return text so every driver keeps PostgreSQL precision and the client
+      // receives an explicit UTC instant. Keep .sssZ for millisecond values.
+      activityAt: sql<string>`to_char(${activityAt}, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+        .mapWith((at: string) => at.replace(/000Z$/, 'Z')),
     })
     .from(recoveryLeads)
     .where(and(...whereConditions))
@@ -309,7 +312,6 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
 
   const conversations = leads.map((lead): ConversationSummary => {
     const lastMessage = msgByLead.get(lead.id) || msgByPhone.get(normalizePhoneDigits(lead.phone))
-    const activityAtIso = lead.activityAt instanceof Date ? lead.activityAt.toISOString() : String(lead.activityAt ?? '')
     return {
       id: lead.id,
       phone: lead.phone,
@@ -334,7 +336,7 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
       // Keep the displayed timestamp identical to the ordering/cursor key.
       // Otherwise updatedAt could make a card look newer than its position
       // when the lead has no directly linked message.
-      lastMessageAt: activityAtIso || lastMessage?.createdAt?.toISOString() || lead.updatedAt?.toISOString() || null,
+      lastMessageAt: lead.activityAt || lastMessage?.createdAt?.toISOString() || lead.updatedAt?.toISOString() || null,
       lastInboundAt: lastMessage?.direction === 'inbound' ? lastMessage.createdAt?.toISOString() ?? null : null,
       lastOutboundAt: lastMessage?.direction === 'outbound' ? lastMessage.createdAt?.toISOString() ?? null : null,
       unread: unreadCountByLead.get(lead.id) ?? 0,
@@ -346,12 +348,11 @@ export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPag
   })
 
   const last = leads.at(-1)!
-  const lastActivityAt = last.activityAt instanceof Date ? last.activityAt.toISOString() : String(last.activityAt)
   return {
     conversations,
     hasMore,
-    nextCursor: hasMore && Number.isFinite(Date.parse(lastActivityAt))
-      ? encodeCursor({ at: lastActivityAt, id: last.id })
+    nextCursor: hasMore && last.activityAt
+      ? encodeCursor({ at: last.activityAt, id: last.id })
       : null,
   }
 }
