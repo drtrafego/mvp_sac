@@ -1,4 +1,4 @@
-import type { InboxPage } from '@/lib/inbox-conversations'
+import type { ConversationSummary, InboxPage } from '@/lib/inbox-conversations'
 
 export type InboxClientErrorCode =
   | 'unauthorized'
@@ -83,4 +83,18 @@ export function inboxClientErrorMessage(error: unknown): string {
     return 'O carregamento das conversas demorou mais de 12 segundos. Tente novamente.'
   }
   return 'Falha de rede ao buscar conversas. Tente novamente.'
+}
+
+export function mergeInboxPage(
+  current: ConversationSummary[],
+  incoming: ConversationSummary[],
+  mode: 'replace' | 'poll' | 'append',
+): ConversationSummary[] {
+  // The API already orders by PostgreSQL timestamp and id. Parsing those
+  // timestamps with Date here would lose precision within a millisecond.
+  if (mode === 'replace') return incoming
+  const first = mode === 'poll' ? incoming : current
+  const rest = mode === 'poll' ? current : incoming
+  const seen = new Set(first.map(conversation => conversation.id))
+  return [...first, ...rest.filter(conversation => !seen.has(conversation.id))]
 }
