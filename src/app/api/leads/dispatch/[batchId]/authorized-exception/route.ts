@@ -1,4 +1,4 @@
-import { after, NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'node:crypto'
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
@@ -237,20 +237,20 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
 
   const cronSecret = process.env.CRON_SECRET
   let workerTriggered = false
+  let workerStatus: number | null = null
   if (cronSecret && results.some(result => ['pending', 'queued'].includes(String(result.status)))) {
-    workerTriggered = true
-    after(async () => {
-      try {
-        const workerRequest = new NextRequest(new URL('/api/cron?authorized_quiz_exception=isabella_batch_35', req.url), {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${cronSecret}` },
-        })
-        const workerResponse = await runDispatchCron(workerRequest)
-        if (!workerResponse.ok) console.error('[quiz-isabella-exception] worker não concluiu', { status: workerResponse.status })
-      } catch (error) {
-        console.error('[quiz-isabella-exception] falha ao acionar worker', { error })
-      }
-    })
+    try {
+      const workerRequest = new NextRequest(new URL('/api/cron?authorized_quiz_exception=isabella_batch_35', req.url), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cronSecret}` },
+      })
+      const workerResponse = await runDispatchCron(workerRequest)
+      workerStatus = workerResponse.status
+      workerTriggered = workerResponse.ok
+      if (!workerResponse.ok) console.error('[quiz-isabella-exception] worker não concluiu', { status: workerResponse.status })
+    } catch (error) {
+      console.error('[quiz-isabella-exception] falha ao acionar worker', { error })
+    }
   }
 
   return NextResponse.json({
@@ -259,6 +259,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
     batchId: QUIZ_BATCH_ID,
     queued: results.filter(result => ['pending', 'queued'].includes(String(result.status))).length,
     workerTriggered,
+    workerStatus,
     jobs: results,
     skipped,
     rejectedLeaseJobs: 25,
