@@ -116,6 +116,8 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
   const outboundPhones = new Set(outboundHistory.map(row => phoneDigits(row.phone)))
 
   const results: Array<Record<string, unknown>> = []
+  const skipped: Array<Record<string, unknown>> = []
+  const claimable = [] as typeof originalJobs
   for (const original of originalJobs) {
     const key = idempotencyKey(original.jobId)
     const existingJob = existingByKey.get(key)
@@ -123,13 +125,29 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
       results.push(responseJob(existingJob, existingJob.phone))
       continue
     }
-    if (original.status !== 'cancelled' || original.externalWamid || original.consent === 'opted_out') {
-      return NextResponse.json({ error: `Job ${original.jobId} não está elegível para esta exceção` }, { status: 409 })
+    if (original.status !== 'cancelled') {
+      skipped.push({ jobId: original.jobId, reason: 'original_job_no_longer_cancelled', hasWamid: Boolean(original.externalWamid) })
+      continue
+    }
+    if (original.externalWamid) {
+      skipped.push({ jobId: original.jobId, reason: 'original_job_has_wamid', hasWamid: true })
+      continue
+    }
+    if (original.consent === 'opted_out') {
+      skipped.push({ jobId: original.jobId, reason: 'opted_out' })
+      continue
     }
     const normalizedPhone = phoneDigits(original.phone)
     if (!normalizedPhone || outboundPhones.has(normalizedPhone)) {
-      return NextResponse.json({ error: `Job ${original.jobId} possui histórico de saída; envio bloqueado para evitar duplicação` }, { status: 409 })
+      skipped.push({ jobId: original.jobId, reason: normalizedPhone ? 'existing_outbound_history' : 'missing_phone' })
+      continue
     }
+    claimable.push(original)
+  }
+
+  for (const original of claimable) {
+    const key = idempotencyKey(original.jobId)
+    const normalizedPhone = phoneDigits(original.phone)
 
     await db.insert(sacAuditEvents).values({
       companyId: company.id,
@@ -205,9 +223,10 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
     success: true,
     scope: EXCEPTION_SCOPE,
     batchId: QUIZ_BATCH_ID,
-    queued: results.length,
+    queued: results.filter(result => ['pending', 'queued'].includes(String(result.status))).length,
     workerTriggered,
     jobs: results,
+    skipped,
     rejectedLeaseJobs: 25,
   })
 }
