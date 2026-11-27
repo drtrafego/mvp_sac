@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { recoveryLeads } from '@/lib/db/schema'
-import { summarizeDispatchEligibility } from '@/lib/mass-dispatch-eligibility'
+import { summarizeDispatchSelection } from '@/lib/mass-dispatch-eligibility'
 import { filterConditions } from '@/app/api/leads/dispatch/route'
 
 function parseIds(value: string | null): number[] | null {
@@ -21,10 +21,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (mode === 'ids') {
     const requestedIds = parseIds(searchParams.get('lead_ids'))
     if (!requestedIds) return NextResponse.json({ error: 'Seleção de leads inválida' }, { status: 400 })
-    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone })
+    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone, whatsappConsentStatus: recoveryLeads.whatsappConsentStatus })
       .from(recoveryLeads)
       .where(and(eq(recoveryLeads.companyId, company.id), inArray(recoveryLeads.id, [...new Set(requestedIds)])))
-    return NextResponse.json({ ok: true, eligibility: summarizeDispatchEligibility(requestedIds, rows) })
+    return NextResponse.json({ ok: true, eligibility: summarizeDispatchSelection(requestedIds, rows) })
   }
 
   if (mode === 'filter') {
@@ -36,10 +36,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     } catch {
       return NextResponse.json({ error: 'Filtro de leads inválido' }, { status: 400 })
     }
-    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone })
+    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone, whatsappConsentStatus: recoveryLeads.whatsappConsentStatus })
       .from(recoveryLeads)
       .where(and(...filterConditions(company.id, filter, { requirePhone: false })))
-    return NextResponse.json({ ok: true, eligibility: summarizeDispatchEligibility(rows.map(row => row.id), rows) })
+    return NextResponse.json({ ok: true, eligibility: summarizeDispatchSelection(rows.map(row => row.id), rows) })
   }
 
   return NextResponse.json({ error: 'Modo de seleção inválido' }, { status: 400 })

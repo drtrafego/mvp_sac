@@ -495,6 +495,28 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
         .limit(1)
       if (currentJob?.status !== 'processing') continue
 
+      // Barreira de defesa do disparo em massa: uma alteração de consentimento
+      // entre a seleção e o envio cancela apenas o job atual e deixa auditoria.
+      if (job.massDispatchBatchId != null && lead.whatsappConsentStatus !== 'opted_in') {
+        await db.update(messageJobs).set({
+          status: 'cancelled',
+          error: 'Disparo em massa bloqueado: consentimento de WhatsApp não está opted_in',
+          processingStartedAt: null,
+        }).where(eq(messageJobs.id, job.id))
+        await db.insert(schema.sacAuditEvents).values({
+          companyId,
+          leadId: lead.id,
+          type: 'mass_dispatch_blocked',
+          actorType: 'system',
+          actorId: 'mass_dispatch_consent_gate',
+          actorName: 'SAC disparo em massa',
+          referenceType: 'message_job',
+          referenceId: String(job.id),
+          payload: { reason: 'whatsapp_consent_not_opted_in', consentStatus: lead.whatsappConsentStatus },
+        }).catch(() => {})
+        continue
+      }
+
       const isabelaEventJob = companySlug === 'isabela-fanini' && isIsabelaJobType(job.jobType)
 
       // Nada retroativo: mesmo que um replay antigo ou outro handler tenha criado
@@ -966,7 +988,8 @@ async function runDispatchPendingJobs(lockClient: any, targetBatchId: number | n
           createdAt: outcome.sentAt,
         })
       }
-      await db.update(recoveryLeads).set({ status: 'in_progress', updatedAt: new Date() }).where(eq(recoveryLeads.id, lead.id))
+      const acceptedAt = outcome.status === 'sent' || outcome.status === 'sent_unconfirmed' ? outcome.sentAt : new Date()
+      await db.update(recoveryLeads).set({ status: 'in_progress', updatedAt: acceptedAt, lastActionAt: acceptedAt }).where(eq(recoveryLeads.id, lead.id))
       // Mensagem de verdade enviada: se for a primeira, marca a abordagem do lead
       await markLeadContacted(lead.id)
       if (job.jobType === PIX_FOLLOWUP_JOB_TYPE) {

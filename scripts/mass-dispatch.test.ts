@@ -138,14 +138,14 @@ test('productFilter usa a mesma regra do webhook e restringe destinatários', ()
 
   const queueSource = readFileSync(resolve(process.cwd(), 'src/lib/mass-dispatch.ts'), 'utf8')
   const routeSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/import/[batchId]/dispatch/route.ts'), 'utf8')
-  assert.match(queueSource, /candidate\.product_filter = l\.product_id/)
-  assert.match(queueSource, /candidate\.product_filter = l\.product_name/)
+  assert.match(queueSource, /candidate\.product_filter = e\.product_id/)
+  assert.match(queueSource, /candidate\.product_filter = e\.product_name/)
   assert.match(routeSource, /candidate\.product_filter = l\.product_id/)
   assert.match(routeSource, /candidate\.product_filter = l\.product_name/)
-  assert.match(routeSource, /count\(DISTINCT lead_id\)::int AS recipient_count/)
+  assert.match(routeSource, /count\(DISTINCT regexp_replace/)
 })
 
-test('preview e enfileiramento mantêm leads pausados e excluem somente opt-out', () => {
+test('preview e enfileiramento mantêm leads pausados e exigem consentimento explícito', () => {
   const queueSource = readFileSync(resolve(process.cwd(), 'src/lib/mass-dispatch.ts'), 'utf8')
   const routeSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/import/[batchId]/dispatch/route.ts'), 'utf8')
   const directRouteSource = readFileSync(resolve(process.cwd(), 'src/app/api/leads/dispatch/route.ts'), 'utf8')
@@ -156,9 +156,10 @@ test('preview e enfileiramento mantêm leads pausados e excluem somente opt-out'
   assert.doesNotMatch(directRouteSource, /botPaused.*IS NOT TRUE/)
   assert.doesNotMatch(importRouteSource, /pauseState\?\.botPaused/)
   assert.doesNotMatch(directRouteSource, /sem telefone ou pausados/)
-  assert.match(directRouteSource, /sem telefone elegível/)
-  assert.match(routeSource, /l\.whatsapp_consent_status IS DISTINCT FROM 'opted_out'/)
-  assert.match(queueSource, /l\.whatsapp_consent_status IS DISTINCT FROM 'opted_out'/)
+  assert.match(directRouteSource, /consentimento opted_in/)
+  assert.match(routeSource, /l\.whatsapp_consent_status = 'opted_in'/)
+  assert.match(queueSource, /l\.whatsapp_consent_status = 'opted_in'/)
+  assert.match(readFileSync(resolve(process.cwd(), 'src/app/api/cron/route.ts'), 'utf8'), /mass_dispatch_consent_gate/)
 })
 
 test('cron mantém a pausa no gate da IA e não usa botPaused para bloquear lote', () => {

@@ -219,8 +219,24 @@ export async function queueMassDispatchBatch(
         WHERE b.id = ${batchId}
           AND b.company_id = ${companyId}
           AND b.status = 'draft'
+      ), eligible_leads AS (
+        SELECT DISTINCT ON (regexp_replace(coalesce(l.phone, ''), '\\D', '', 'g'))
+          b.id AS batch_id, b.company_id, b.event_type, r.lead_id, l.product_id, l.product_name
+        FROM target_batch b
+        JOIN mass_dispatch_recipients r ON r.batch_id = b.id
+        JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = b.company_id
+        WHERE l.whatsapp_consent_status = 'opted_in'
+          AND l.phone IS NOT NULL
+          AND btrim(l.phone) <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM message_jobs existing_job
+            WHERE existing_job.lead_id = l.id
+              AND existing_job.mass_dispatch_batch_id IS NOT NULL
+              AND existing_job.status IN ('pending', 'processing')
+          )
+        ORDER BY regexp_replace(coalesce(l.phone, ''), '\\D', '', 'g'), l.id
       ), eligible_pairs AS (
-        SELECT r.lead_id, sm.id AS message_id, sm."order", sm.delay_minutes,
+        SELECT e.lead_id, sm.id AS message_id, sm."order", sm.delay_minutes,
           jsonb_build_object(
             'messageType', coalesce(sm.message_type, 'text'),
             'content', sm.content,
@@ -231,34 +247,22 @@ export async function queueMassDispatchBatch(
             'templateLanguage', sm.template_language,
             'templateVariablesMap', sm.template_variables_map
           ) AS message_snapshot
-        FROM target_batch b
-        JOIN mass_dispatch_recipients r ON r.batch_id = b.id
-        JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = b.company_id
+        FROM eligible_leads e
         JOIN LATERAL (
           SELECT candidate.id
           FROM recovery_sequences candidate
-          WHERE candidate.company_id = b.company_id
-            AND candidate.event_type = b.event_type
+          WHERE candidate.company_id = e.company_id
+            AND candidate.event_type = e.event_type
             AND candidate.is_active = true
             AND (
               nullif(candidate.product_filter, '') IS NULL
-              OR candidate.product_filter = l.product_id
-              OR candidate.product_filter = l.product_name
+              OR candidate.product_filter = e.product_id
+              OR candidate.product_filter = e.product_name
             )
           ORDER BY CASE WHEN nullif(candidate.product_filter, '') IS NULL THEN 1 ELSE 0 END
           LIMIT 1
         ) rs ON true
         JOIN sequence_messages sm ON sm.sequence_id = rs.id AND sm.is_active = true
-        -- A pausa controla somente o agente automático/IA. A seleção e a
-        -- campanha são operações do SAC e continuam elegíveis; opt-out é um
-        -- bloqueio de consentimento separado e permanece obrigatório.
-        WHERE l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
-          AND NOT EXISTS (
-            SELECT 1 FROM message_jobs existing_job
-            WHERE existing_job.lead_id = l.id
-              AND existing_job.mass_dispatch_batch_id IS NOT NULL
-              AND existing_job.status IN ('pending', 'processing')
-          )
       ), current_preview AS (
         SELECT coalesce(jsonb_agg(jsonb_build_object(
           'id', p.message_id,
@@ -409,13 +413,13 @@ export async function queueDirectTemplateMassDispatchBatch(
           AND b.status = 'draft'
           AND b.dispatch_source = 'direct_template'
       ), eligible_recipients AS (
-        SELECT r.lead_id
+        SELECT DISTINCT ON (regexp_replace(coalesce(l.phone, ''), '\\D', '', 'g')) r.lead_id
         FROM target_batch b
         JOIN mass_dispatch_recipients r ON r.batch_id = b.id
         JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = b.company_id
-        -- A pausa do agente não bloqueia lote/campanha. Opt-out continua
-        -- bloqueando o envio por ser consentimento, não pausa do agente.
-        WHERE l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
+        -- A pausa do agente não bloqueia lote/campanha. Consentimento
+        -- explícito continua obrigatório para qualquer novo disparo.
+        WHERE l.whatsapp_consent_status = 'opted_in'
           AND l.phone IS NOT NULL
           AND btrim(l.phone) <> ''
           AND NOT EXISTS (
@@ -424,6 +428,7 @@ export async function queueDirectTemplateMassDispatchBatch(
               AND existing_job.mass_dispatch_batch_id IS NOT NULL
               AND existing_job.status IN ('pending', 'processing')
           )
+        ORDER BY regexp_replace(coalesce(l.phone, ''), '\\D', '', 'g'), l.id
       ), current_preview AS (
         SELECT jsonb_build_array(jsonb_build_object(
           'id', 0,

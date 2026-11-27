@@ -61,8 +61,6 @@ export interface InboxPageOptions {
 
 type Cursor = { at: string; id: number }
 
-const activityAt = sql<Date>`COALESCE(${recoveryLeads.lastActionAt}, ${recoveryLeads.updatedAt}, ${recoveryLeads.createdAt})`
-
 function encodeCursor(cursor: Cursor): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
 }
@@ -100,6 +98,23 @@ export function createSafeSnippet(content: string | null | undefined, query: str
 
 export async function loadInboxPage(options: InboxPageOptions): Promise<InboxPage> {
   const limit = Math.min(INBOX_PAGE_SIZE_MAX, Math.max(1, options.limit ?? INBOX_PAGE_SIZE))
+  // A lead can retain an old lastActionAt from its creation or a CRM action.
+  // The inbox must rank by the latest real message first, then fall back to
+  // lead activity for contacts that have no message timestamp.
+  const activityAt = sql<Date>`COALESCE(
+    (
+      SELECT MAX(inbox_activity.created_at)
+      FROM whatsapp_messages inbox_activity
+      WHERE inbox_activity.company_id = ${options.companyId}
+        AND (
+          inbox_activity.lead_id = ${recoveryLeads.id}
+          OR regexp_replace(inbox_activity.phone, '\\D', '', 'g') = regexp_replace(${recoveryLeads.phone}, '\\D', '', 'g')
+        )
+    ),
+    ${recoveryLeads.lastActionAt},
+    ${recoveryLeads.updatedAt},
+    ${recoveryLeads.createdAt}
+  )`
   const sourceFilter = normalizeInboxSourceFilter(options.source)
   const cursor = decodeInboxCursor(options.cursor)
   const whereConditions: SQL[] = [eq(recoveryLeads.companyId, options.companyId)]

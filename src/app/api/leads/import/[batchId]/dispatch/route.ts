@@ -33,11 +33,13 @@ async function loadPreview(batchId: number, companyId: number) {
 
   if (batch.dispatchSource === 'direct_template') {
     const recipientRows = await db.execute<{ recipient_count: number }>(sql`
-      SELECT count(*)::int AS recipient_count
+      SELECT count(DISTINCT regexp_replace(coalesce(l.phone, ''), '\\D', '', 'g'))::int AS recipient_count
       FROM mass_dispatch_recipients r
       JOIN recovery_leads l ON l.id = r.lead_id AND l.company_id = ${companyId}
       WHERE r.batch_id = ${batchId}
-        AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
+        AND l.whatsapp_consent_status = 'opted_in'
+        AND l.phone IS NOT NULL
+        AND btrim(l.phone) <> ''
         AND NOT EXISTS (
           SELECT 1 FROM message_jobs existing_job
           WHERE existing_job.lead_id = l.id
@@ -80,7 +82,7 @@ async function loadPreview(batchId: number, companyId: number) {
     template_variables_map: unknown
   }>(sql`
     WITH eligible_pairs AS (
-      SELECT r.lead_id, sm.id, sm."order", sm.delay_minutes, sm.message_type, sm.content,
+      SELECT r.lead_id, l.phone, sm.id, sm."order", sm.delay_minutes, sm.message_type, sm.content,
              sm.template_name, sm.template_language, sm.template_variables_map
       FROM mass_dispatch_batches b
       JOIN mass_dispatch_recipients r ON r.batch_id = b.id
@@ -102,7 +104,9 @@ async function loadPreview(batchId: number, companyId: number) {
       JOIN sequence_messages sm ON sm.sequence_id = rs.id AND sm.is_active = true
       WHERE b.id = ${batchId}
         AND b.company_id = ${companyId}
-        AND l.whatsapp_consent_status IS DISTINCT FROM 'opted_out'
+        AND l.whatsapp_consent_status = 'opted_in'
+        AND l.phone IS NOT NULL
+        AND btrim(l.phone) <> ''
         AND NOT EXISTS (
           SELECT 1 FROM message_jobs existing_job
           WHERE existing_job.lead_id = l.id
@@ -110,7 +114,7 @@ async function loadPreview(batchId: number, companyId: number) {
             AND existing_job.status IN ('pending', 'processing')
         )
     ), recipient_summary AS (
-      SELECT count(DISTINCT lead_id)::int AS recipient_count FROM eligible_pairs
+      SELECT count(DISTINCT regexp_replace(coalesce(phone, ''), '\\D', '', 'g'))::int AS recipient_count FROM eligible_pairs
     )
     SELECT (SELECT recipient_count FROM recipient_summary) AS recipient_count,
            id, "order", delay_minutes, message_type, content, template_name,

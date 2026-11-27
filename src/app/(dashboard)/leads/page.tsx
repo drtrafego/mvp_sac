@@ -374,9 +374,12 @@ export default function LeadsPage() {
       ? '1 destinatário selecionado'
       : `${selectedLeadIds.length} destinatários selecionados`
   const dispatchHasBlockingEligibilityIssue = Boolean(dispatchEligibility && (dispatchEligibility.missingCount > 0 || dispatchEligibility.eligibleCount === 0))
-  const dispatchSkippedLabel = dispatchEligibility?.noPhoneCount === 1
-    ? '1 sem telefone será ignorado'
-    : `${dispatchEligibility?.noPhoneCount ?? 0} sem telefone serão ignorados`
+  const dispatchConsentBlockedCount = dispatchEligibility?.consentBlockedCount ?? 0
+  const dispatchDuplicatePhoneCount = dispatchEligibility?.duplicatePhoneCount ?? 0
+  const dispatchSkippedTotal = (dispatchEligibility?.noPhoneCount ?? 0) + dispatchConsentBlockedCount + dispatchDuplicatePhoneCount
+  const dispatchSkippedLabel = dispatchSkippedTotal === 1
+    ? '1 lead inelegível será ignorado'
+    : `${dispatchSkippedTotal} leads inelegíveis serão ignorados`
   const dispatchPreviewLeads = useMemo(() => {
     const candidates = selectAllFilter ? leads : leads.filter(lead => selectedLeadIds.includes(lead.id))
     const source = candidates.length ? candidates : leads.slice(0, 1)
@@ -507,21 +510,19 @@ export default function LeadsPage() {
         const data = await response.json().catch(() => ({}))
         if (!cancelled && response.ok) {
           const jobs = Array.isArray(data.jobs) ? data.jobs : []
-          const firstJob = jobs[0]
           const jobError = jobs.find((job: { error?: string | null }) => job.error)?.error ?? null
           const next = {
             batchId: dispatchStatus.batchId,
             status: typeof data.batch?.status === 'string' ? data.batch.status : 'processing',
-            deliveryStatus: firstJob?.deliveryStatus ?? null,
+            deliveryStatus: null,
             error: jobError,
             createdAt: typeof data.batch?.createdAt === 'string' ? data.batch.createdAt : null,
             confirmedAt: typeof data.batch?.confirmedAt === 'string' ? data.batch.confirmedAt : null,
-            processingStartedAt: typeof firstJob?.processingStartedAt === 'string' ? firstJob.processingStartedAt : null,
-            sentAt: typeof firstJob?.sentAt === 'string' ? firstJob.sentAt : null,
+            processingStartedAt: null,
+            sentAt: null,
           }
           setDispatchStatus(next)
-          const deliveryTerminal = ['delivered', 'read'].includes(next.deliveryStatus ?? '')
-          const processingTerminal = ['failed', 'partial_failure'].includes(next.status) || deliveryTerminal
+          const processingTerminal = ['failed', 'partial_failure', 'accepted', 'delivered', 'read'].includes(next.status)
           if (!processingTerminal) timer = window.setTimeout(() => void readStatus(), 2500)
         }
       } catch {
@@ -1050,7 +1051,7 @@ export default function LeadsPage() {
           {!dispatchStatus && dispatchEligibility && <p role="status" className={`rounded-lg border p-3 text-micro ${dispatchHasBlockingEligibilityIssue ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'}`}>
             Seleção: {dispatchEligibility.uniqueRequestedCount} selecionado(s); {dispatchEligibility.eligibleCount} receberão.
             {dispatchEligibility.missingCount > 0 && ` ${dispatchEligibility.missingCount} não existem ou não pertencem a esta empresa.`}
-            {dispatchEligibility.noPhoneCount > 0 && ` ${dispatchSkippedLabel} automaticamente.`}
+            {dispatchSkippedTotal > 0 && ` ${dispatchSkippedLabel} automaticamente (sem telefone, sem consentimento opted_in ou telefone duplicado).`}
             {dispatchEligibility.duplicateCount > 0 && ` ${dispatchEligibility.duplicateCount} seleção(ões) repetida(s).`}
             {dispatchHasBlockingEligibilityIssue && dispatchEligibility.missingCount > 0 && ' Revise a seleção antes de continuar.'}
             {dispatchHasBlockingEligibilityIssue && dispatchEligibility.eligibleCount === 0 && ' Não há destinatários com telefone elegível.'}
@@ -1058,7 +1059,7 @@ export default function LeadsPage() {
           {!dispatchStatus && <>
             <label className="flex items-start gap-2.5 rounded-lg border border-line-subtle bg-surface-inset p-3 text-body text-fg cursor-pointer">
               <input type="checkbox" checked={dispatchConfirmed} onChange={event => setDispatchConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4" disabled={!templateSelection || creatingDispatch || dispatchEligibilityLoading || !dispatchEligibility || dispatchHasBlockingEligibilityIssue} aria-describedby={dispatchValidationMessage ? 'dispatch-confirmation-reason' : undefined} />
-              <span aria-label={`Seleção original: ${dispatchRecipientLabel}`}>Confirmo a prévia e autorizo exatamente o envio para {dispatchEligibility?.eligibleCount ?? 0} destinatário(s) elegível(is){dispatchEligibility?.noPhoneCount ? `; ${dispatchSkippedLabel} automaticamente` : ''}.</span>
+              <span aria-label={`Seleção original: ${dispatchRecipientLabel}`}>Confirmo a prévia e autorizo exatamente o envio para {dispatchEligibility?.eligibleCount ?? 0} destinatário(s) elegível(is){dispatchSkippedTotal ? `; ${dispatchSkippedLabel} automaticamente` : ''}.</span>
             </label>
             {!templateSelection && dispatchValidationMessage && <p id="dispatch-confirmation-reason" role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-micro text-amber-200">{dispatchValidationMessage}</p>}
           </>}

@@ -7,7 +7,7 @@ import {
   renderTemplateVariableTextStrict,
   unresolvedTemplateVariableKeys,
 } from '../src/lib/lead-template-variables'
-import { summarizeDispatchEligibility } from '../src/lib/mass-dispatch-eligibility'
+import { selectUniqueOptedInDispatchRows, summarizeDispatchEligibility, summarizeDispatchSelection } from '../src/lib/mass-dispatch-eligibility'
 
 const leadsPage = readFileSync(resolve(process.cwd(), 'src/app/(dashboard)/leads/page.tsx'), 'utf8')
 const dispatchRoute = readFileSync(resolve(process.cwd(), 'src/app/api/leads/dispatch/route.ts'), 'utf8')
@@ -43,7 +43,7 @@ test('API de Leads só enfileira na ação start e retorna lote/jobs/contagem', 
 test('contrato global preserva tenant, telefone, opt-out, pausa e idempotência', () => {
   assert.match(dispatchRoute, /eq\(recoveryLeads\.companyId, company\.id\)/)
   assert.match(dispatchRoute, /recoveryLeads\.phone} IS NOT NULL AND .*recoveryLeads\.phone} != ''/)
-  assert.match(queueSource, /l\.whatsapp_consent_status IS DISTINCT FROM 'opted_out'/)
+  assert.match(queueSource, /l\.whatsapp_consent_status = 'opted_in'/)
   assert.doesNotMatch(queueSource, /l\.bot_paused\s*(=|IS|IN)/)
   assert.match(queueSource, /pg_advisory_xact_lock/)
   assert.match(queueSource, /ON CONFLICT \(mass_dispatch_batch_id, lead_id\)/)
@@ -87,18 +87,18 @@ test('seleção nova é validada por contagem e nunca permite disparo parcial', 
   assert.match(leadsPage, /openDispatchForSelection/)
   assert.match(leadsPage, /setDispatchStatus\(null\)/)
   assert.match(leadsPage, /dispatchEligibility\.eligibleCount === 0/)
-  assert.match(leadsPage, /sem telefone será ignorado/)
+  assert.match(leadsPage, /leads inelegíveis serão ignorados/)
   assert.match(leadsPage, /autorizo exatamente o envio para/)
   assert.match(leadsPage, /\/api\/leads\/dispatch\/validate\?\$\{params\}/)
   assert.match(validationRoute, /GET\(request: NextRequest\)/)
-  assert.match(validationRoute, /summarizeDispatchEligibility/)
+  assert.match(validationRoute, /summarizeDispatchSelection/)
   assert.match(validationRoute, /eq\(recoveryLeads\.companyId, company\.id\)/)
   assert.match(validationRoute, /requirePhone: false/)
   assert.match(dispatchRoute, /Nenhum destinatário foi enfileirado/)
   assert.match(dispatchRoute, /missingCount/)
   assert.match(dispatchRoute, /requirePhone: false/)
-  assert.match(dispatchRoute, /rows\.filter\(row => Boolean\(row\.phone\?\.trim\(\)\)\)/)
-  assert.match(queueSource, /l\.phone IS NOT NULL/)
+  assert.match(dispatchRoute, /selectUniqueOptedInDispatchRows\(rows\)/)
+  assert.match(queueSource, /DISTINCT ON \(regexp_replace/)
 })
 
 test('resumo da seleção separa IDs ausentes, sem telefone e duplicados sem expor PII', () => {
@@ -135,6 +135,27 @@ test('todos sem telefone não criam destinatário elegível', () => {
     { id: 1, phone: null },
     { id: 2, phone: '' },
   ]).eligibleCount, 0)
+})
+
+test('novo disparo exige opted_in e deduplica telefone de forma determinística', () => {
+  const rows = [
+    { id: 20, phone: '+55 (11) 99876-5432', whatsappConsentStatus: 'opted_in' },
+    { id: 21, phone: '5511998765432', whatsappConsentStatus: 'opted_in' },
+    { id: 22, phone: '5511999990000', whatsappConsentStatus: 'unknown' },
+    { id: 23, phone: '5511888880000', whatsappConsentStatus: 'denied' },
+    { id: 24, phone: '5511777770000', whatsappConsentStatus: 'opted_in' },
+  ]
+  assert.deepEqual(selectUniqueOptedInDispatchRows(rows).map(row => row.id), [20, 24])
+  assert.deepEqual(summarizeDispatchSelection(rows.map(row => row.id), rows), {
+    requestedCount: 5,
+    uniqueRequestedCount: 5,
+    duplicateCount: 0,
+    eligibleCount: 2,
+    missingCount: 0,
+    noPhoneCount: 0,
+    consentBlockedCount: 2,
+    duplicatePhoneCount: 1,
+  })
 })
 
 test('ID ausente/fora do tenant continua distinto de sem telefone e duplicidade não aumenta a seleção', () => {

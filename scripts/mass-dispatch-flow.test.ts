@@ -38,6 +38,7 @@ const validLead = {
   status: 'pending',
   channel: 'whatsapp',
   botPaused: false,
+  whatsappConsentStatus: 'opted_in',
   createdAt: new Date('2026-10-01T10:00:00.000Z'),
 }
 const emptyBatch = {

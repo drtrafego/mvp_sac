@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { after, NextRequest, NextResponse } from 'next/server'
 import { and, eq, gte, inArray, lte, or, sql } from 'drizzle-orm'
 import { requireCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
@@ -10,7 +10,7 @@ import { queueDirectTemplateMassDispatchBatch } from '@/lib/mass-dispatch'
 import { MassDispatchTemplateSelection } from '@/lib/validations/mass-dispatch'
 import { listMetaTemplates } from '@/lib/whatsapp/meta'
 import { renderTemplateVariableTextStrict, unresolvedTemplateVariableKeys, type TemplateLead } from '@/lib/lead-template-variables'
-import { summarizeDispatchEligibility } from '@/lib/mass-dispatch-eligibility'
+import { selectUniqueOptedInDispatchRows, summarizeDispatchSelection } from '@/lib/mass-dispatch-eligibility'
 import { POST as runDispatchCron } from '@/app/api/cron/route'
 
 const MAX_MASS_IMPORT_ROWS = 5000
@@ -131,34 +131,37 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let leadIds: number[]
   let requestedCount = 0
   let skippedCount = 0
+  let selectionEligibility: ReturnType<typeof summarizeDispatchSelection> | null = null
   if (mode === 'ids') {
     if (!Array.isArray(input.leadIds) || input.leadIds.length === 0 || input.leadIds.length > MAX_MASS_IMPORT_ROWS || input.leadIds.some(id => !Number.isInteger(id) || id <= 0)) {
       return NextResponse.json({ error: `Selecione de 1 a ${MAX_MASS_IMPORT_ROWS} leads válidos` }, { status: 400 })
     }
     const ids = [...new Set(input.leadIds as number[])]
-    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone }).from(recoveryLeads).where(and(
+    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone, whatsappConsentStatus: recoveryLeads.whatsappConsentStatus }).from(recoveryLeads).where(and(
       eq(recoveryLeads.companyId, company.id), inArray(recoveryLeads.id, ids),
     ))
-    const eligibility = summarizeDispatchEligibility(input.leadIds as number[], rows)
+    const eligibility = summarizeDispatchSelection(input.leadIds as number[], rows)
+    selectionEligibility = eligibility
     if (eligibility.missingCount) return NextResponse.json({
       error: `Seleção inválida: ${eligibility.missingCount} lead(s) não existem ou não pertencem à empresa. Nenhum destinatário foi enfileirado.`,
       eligibility,
     }, { status: 400 })
     requestedCount = eligibility.uniqueRequestedCount
-    skippedCount = eligibility.noPhoneCount
-    leadIds = rows.filter(row => Boolean(row.phone?.trim())).map(row => row.id)
+    skippedCount = eligibility.noPhoneCount + eligibility.consentBlockedCount + eligibility.duplicatePhoneCount
+    leadIds = selectUniqueOptedInDispatchRows(rows).map(row => row.id)
   } else {
     if (!input.filter || typeof input.filter !== 'object' || Array.isArray(input.filter)) return NextResponse.json({ error: 'Filtro inválido' }, { status: 400 })
-    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone }).from(recoveryLeads).where(and(...filterConditions(company.id, input.filter as DispatchFilter, { requirePhone: false }))).limit(MAX_MASS_IMPORT_ROWS + 1)
+    const rows = await db.select({ id: recoveryLeads.id, phone: recoveryLeads.phone, whatsappConsentStatus: recoveryLeads.whatsappConsentStatus }).from(recoveryLeads).where(and(...filterConditions(company.id, input.filter as DispatchFilter, { requirePhone: false }))).limit(MAX_MASS_IMPORT_ROWS + 1)
     if (rows.length > MAX_MASS_IMPORT_ROWS) return NextResponse.json({ error: `O filtro encontrou mais de ${MAX_MASS_IMPORT_ROWS} leads. Refine os filtros antes de criar o lote.` }, { status: 400 })
-    const eligibility = summarizeDispatchEligibility(rows.map(row => row.id), rows)
+    const eligibility = summarizeDispatchSelection(rows.map(row => row.id), rows)
+    selectionEligibility = eligibility
     requestedCount = eligibility.uniqueRequestedCount
-    skippedCount = eligibility.noPhoneCount
-    leadIds = rows.filter(row => Boolean(row.phone?.trim())).map(row => row.id)
+    skippedCount = eligibility.noPhoneCount + eligibility.consentBlockedCount + eligibility.duplicatePhoneCount
+    leadIds = selectUniqueOptedInDispatchRows(rows).map(row => row.id)
   }
   if (!leadIds.length) return NextResponse.json({
-    error: 'Nenhum lead selecionado possui telefone elegível; leads sem telefone elegível são ignorados e nenhum destinatário foi enfileirado.',
-    eligibility: { requestedCount, uniqueRequestedCount: requestedCount, duplicateCount: 0, eligibleCount: 0, missingCount: 0, noPhoneCount: skippedCount },
+    error: 'Nenhum lead selecionado possui telefone e consentimento opted_in; leads sem consentimento explícito ou com telefone duplicado são ignorados e nenhum destinatário foi enfileirado.',
+    eligibility: selectionEligibility ?? { requestedCount, uniqueRequestedCount: requestedCount, duplicateCount: 0, eligibleCount: 0, missingCount: 0, noPhoneCount: skippedCount },
   }, { status: 409 })
 
   const templateSnapshot = buildCanonicalSnapshot(template, { headerDocument: parsedTemplate.data.templateHeaderDocument })
@@ -236,23 +239,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'O template selecionado não pode ser enfileirado neste disparo', batchId: batch.id, status: 'draft' }, { status: 409 })
   }
 
-  // O lote foi confirmado pelo clique em Leads. Processá-lo nesta mesma
-  // requisição remove a espera pelo próximo Vercel Cron; o filtro batch_id
-  // impede que este acionamento toque em outros jobs da fila.
+  // O lote foi confirmado pelo clique em Leads. O worker deve rodar depois da
+  // resposta: executar a fila dentro do POST deixava o modal preso em
+  // "Iniciando disparo..." enquanto as mensagens eram processadas.
   let workerTriggered = false
   const cronSecret = process.env.CRON_SECRET
   if (cronSecret) {
-    try {
-      const workerRequest = new NextRequest(new URL(`/api/cron?batch_id=${batch.id}`, req.url), {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${cronSecret}` },
-      })
-      const workerResponse = await runDispatchCron(workerRequest)
-      workerTriggered = workerResponse.ok
-      if (!workerResponse.ok) console.error('[mass-dispatch] worker imediato não concluiu', { batchId: batch.id, status: workerResponse.status })
-    } catch (error) {
-      console.error('[mass-dispatch] falha ao acionar worker imediato', { batchId: batch.id, error })
-    }
+    workerTriggered = true
+    after(async () => {
+      try {
+        const workerRequest = new NextRequest(new URL(`/api/cron?batch_id=${batch.id}`, req.url), {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${cronSecret}` },
+        })
+        const workerResponse = await runDispatchCron(workerRequest)
+        if (!workerResponse.ok) console.error('[mass-dispatch] worker imediato não concluiu', { batchId: batch.id, status: workerResponse.status })
+      } catch (error) {
+        console.error('[mass-dispatch] falha ao acionar worker imediato', { batchId: batch.id, error })
+      }
+    })
   } else {
     console.error('[mass-dispatch] CRON_SECRET ausente; lote ficará para o cron agendado', { batchId: batch.id })
   }
