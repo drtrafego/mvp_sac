@@ -17,6 +17,11 @@ const QUIZ_BATCH_ID = 35
 const QUIZ_COMPANY_ID = 2
 const QUIZ_COMPANY_SLUG = 'isabela-fanini'
 const CANCELLED_JOB_IDS = [156, 160, 176, 254] as const
+// These six jobs have a provider status of failed and a WAMID. They are a
+// separate, fixed allowlist from the lease failures: a lease without a WAMID
+// is never eligible for this route because Meta acceptance is unknown.
+const FAILED_JOB_IDS = [174, 183, 186, 188, 190, 191] as const
+const EXCEPTION_JOB_IDS = [...CANCELLED_JOB_IDS, ...FAILED_JOB_IDS] as const
 const EXCEPTION_SCOPE = 'quiz_isabella_batch_35'
 const EXCEPTION_REFERENCE_TYPE = 'quiz_isabella_batch_35_original_job'
 
@@ -101,6 +106,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
     leadId: messageJobs.leadId,
     status: messageJobs.status,
     externalWamid: messageJobs.externalWamid,
+    deliveryStatus: messageJobs.deliveryStatus,
     idempotencyKey: messageJobs.idempotencyKey,
     error: messageJobs.error,
     phone: recoveryLeads.phone,
@@ -108,18 +114,19 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
   }).from(messageJobs).innerJoin(recoveryLeads, eq(recoveryLeads.id, messageJobs.leadId)).where(and(
     eq(messageJobs.massDispatchBatchId, QUIZ_BATCH_ID),
     eq(recoveryLeads.companyId, company.id),
-    inArray(messageJobs.id, [...CANCELLED_JOB_IDS]),
+    inArray(messageJobs.id, [...EXCEPTION_JOB_IDS]),
   ))
-  if (originalJobs.length !== CANCELLED_JOB_IDS.length) {
-    return NextResponse.json({ error: 'Os quatro jobs cancelados esperados não foram encontrados integralmente' }, { status: 409 })
+  if (originalJobs.length !== EXCEPTION_JOB_IDS.length) {
+    return NextResponse.json({ error: 'Os jobs fixos da exceção do Quiz não foram encontrados integralmente' }, { status: 409 })
   }
 
-  const existingKeys = CANCELLED_JOB_IDS.map(idempotencyKey)
+  const existingKeys = EXCEPTION_JOB_IDS.map(idempotencyKey)
   const existing = await db.select({
     id: messageJobs.id,
     leadId: messageJobs.leadId,
     status: messageJobs.status,
     externalWamid: messageJobs.externalWamid,
+    deliveryStatus: messageJobs.deliveryStatus,
     idempotencyKey: messageJobs.idempotencyKey,
     error: messageJobs.error,
     phone: recoveryLeads.phone,
@@ -131,17 +138,23 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
 
   const targetPhones = originalJobs.map(job => phoneDigits(job.phone))
   const outboundHistory = targetPhones.length > 0
-    ? await db.select({ phone: whatsappMessages.phone, leadId: whatsappMessages.leadId }).from(whatsappMessages).where(and(
+    ? await db.select({ phone: whatsappMessages.phone, leadId: whatsappMessages.leadId, externalId: whatsappMessages.externalId }).from(whatsappMessages).where(and(
       eq(whatsappMessages.companyId, company.id),
       eq(whatsappMessages.direction, 'outbound'),
       or(...targetPhones.map(phone => sql`regexp_replace(${whatsappMessages.phone}, '[^0-9]', '', 'g') = ${phone}`))!,
     ))
     : []
-  const outboundPhones = new Set(outboundHistory.map(row => phoneDigits(row.phone)))
+  const failedOriginalWamids = new Set(originalJobs
+    .filter(job => job.status === 'sent' && job.deliveryStatus === 'failed' && job.externalWamid)
+    .map(job => job.externalWamid!))
+  const outboundPhones = new Set(outboundHistory
+    .filter(row => !row.externalId || !failedOriginalWamids.has(row.externalId))
+    .map(row => phoneDigits(row.phone)))
 
   const results: Array<Record<string, unknown>> = []
   const skipped: Array<Record<string, unknown>> = []
   const claimable = [] as typeof originalJobs
+  const claimablePhones = new Set<string>()
   for (const original of originalJobs) {
     const key = idempotencyKey(original.jobId)
     const existingJob = existingByKey.get(key)
@@ -159,11 +172,13 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
       }
       continue
     }
-    if (original.status !== 'cancelled') {
-      skipped.push({ jobId: original.jobId, reason: 'original_job_no_longer_cancelled', hasWamid: Boolean(original.externalWamid) })
+    const isCancelledOriginal = original.status === 'cancelled' && !original.externalWamid && !original.deliveryStatus
+    const isFailedOriginal = original.status === 'sent' && original.deliveryStatus === 'failed' && Boolean(original.externalWamid)
+    if (!isCancelledOriginal && !isFailedOriginal) {
+      skipped.push({ jobId: original.jobId, reason: 'original_job_state_not_eligible', hasWamid: Boolean(original.externalWamid), deliveryStatus: original.deliveryStatus })
       continue
     }
-    if (original.externalWamid) {
+    if (isCancelledOriginal && original.externalWamid) {
       skipped.push({ jobId: original.jobId, reason: 'original_job_has_wamid', hasWamid: true })
       continue
     }
@@ -176,7 +191,12 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
       skipped.push({ jobId: original.jobId, reason: normalizedPhone ? 'existing_outbound_history' : 'missing_phone' })
       continue
     }
+    if (claimablePhones.has(normalizedPhone)) {
+      skipped.push({ jobId: original.jobId, reason: 'duplicate_phone_in_exception_scope' })
+      continue
+    }
     claimable.push(original)
+    claimablePhones.add(normalizedPhone)
   }
 
   for (const original of claimable) {
@@ -195,6 +215,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
       payload: {
         scope: EXCEPTION_SCOPE,
         originalJobId: original.jobId,
+        originalDeliveryStatus: original.deliveryStatus,
         reason: 'se a pessoa está no sistema é para enviar',
         consentStatusAtClaim: original.consent,
         phoneHash: createHash('sha256').update(normalizedPhone).digest('hex'),
@@ -263,5 +284,6 @@ export async function POST(req: NextRequest, context: { params: Promise<{ batchI
     jobs: results,
     skipped,
     rejectedLeaseJobs: 25,
+    failedOriginalJobs: FAILED_JOB_IDS,
   })
 }

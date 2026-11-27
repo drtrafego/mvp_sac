@@ -92,3 +92,15 @@ test('Brecha 1: verificação do índice único e arbiter cobrindo import_planil
     'import route deve usar onConflictDoUpdate com o predicado correto do índice'
   )
 })
+
+test('Quiz Isabella: exceção fixa só aceita falha Meta comprovada e deduplica telefone', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const routeSource = fs.readFileSync(path.resolve(__dirname, '../src/app/api/leads/dispatch/[batchId]/authorized-exception/route.ts'), 'utf8')
+
+  assert.match(routeSource, /const FAILED_JOB_IDS = \[174, 183, 186, 188, 190, 191\]/)
+  assert.match(routeSource, /original\.status === 'sent' && original\.deliveryStatus === 'failed' && Boolean\(original\.externalWamid\)/)
+  assert.match(routeSource, /duplicate_phone_in_exception_scope/)
+  assert.match(routeSource, /failedOriginalWamids/)
+  assert.match(routeSource, /rejectedLeaseJobs: 25/)
+})
